@@ -1,0 +1,138 @@
+{
+  "$schema": "https://opencode.ai/config.json",
+  "mcp": {
+    "CodeGraphContext": {
+      "type": "local",
+      "command": ["/Library/Frameworks/Python.framework/Versions/3.12/bin/cgc", "mcp", "start"],
+      "environment": {
+        "NEO4J_PASSWORD": "codegraphcontext",
+        "NEO4J_URI": "neo4j://localhost:7687",
+        "NEO4J_USERNAME": "neo4j",
+        "DEFAULT_DATABASE": "neo4j",
+        "FALKORDB_PATH": "/Users/vekomarnitskiy/.codegraphcontext/falkordb.db",
+        "FALKORDB_SOCKET_PATH": "/Users/vekomarnitskiy/.codegraphcontext/falkordb.sock",
+        "INDEX_VARIABLES": "true",
+        "ALLOW_DB_DELETION": "false",
+        "DEBUG_LOGS": "false",
+        "DEBUG_LOG_PATH": "/Users/vekomarnitskiy/mcp_debug.log",
+        "ENABLE_APP_LOGS": "CRITICAL",
+        "LOG_FILE_PATH": "/Users/vekomarnitskiy/.codegraphcontext/logs/cgc.log",
+        "MAX_FILE_SIZE_MB": "10",
+        "IGNORE_TEST_FILES": "false",
+        "IGNORE_HIDDEN_FILES": "true",
+        "ENABLE_AUTO_WATCH": "false",
+        "COMPLEXITY_THRESHOLD": "10",
+        "MAX_DEPTH": "unlimited",
+        "PARALLEL_WORKERS": "4",
+        "CACHE_ENABLED": "true",
+        "IGNORE_DIRS": "node_modules,venv,.venv,env,.env,dist,build,target,out,.git,.idea,.vscode,__pycache__",
+        "INDEX_SOURCE": "true",
+        "SCIP_INDEXER": "false",
+        "SCIP_LANGUAGES": "python,typescript,go,rust,java",
+        "SKIP_EXTERNAL_RESOLUTION": "false"
+      },
+    },
+    "atlassian": {
+      "type": "local",
+      "command": ["uvx", "mcp-atlassian", "--transport", "stdio", "-vv"],
+      "environment": {
+        "CONFLUENCE_URL": "https://wiki.cloud.ru",
+        "CONFLUENCE_PERSONAL_TOKEN": "MDc1MzM3NzY2NTMwOocmRSBh9kwxTNajQ2dHvtWtlQjM",
+        "JIRA_URL": "https://jira.cloud.ru",
+        "JIRA_PERSONAL_TOKEN": "ODUzODQ0MzI3MDE4OjT5R81cNrBhrAyoslgJotFaxyyg",
+        "CONFLUENCE_SPACES_FILTER": "OCP",
+        "JIRA_PROJECTS_FILTER": "EVODP"
+      },
+      "enabled": true
+    },
+    "context7": {
+      "type": "remote",
+      "url": "https://mcp.context7.com/mcp",
+      "headers": {
+        "CONTEXT7_API_KEY": "ctx7sk-7a26b6f9-fcb6-4b66-bcea-6f69ea473691"
+      },
+      "enabled": true
+    },
+    "proxmoxer": {
+      "type": "local",
+      "command": ["proxmoxer-mcp-server"],
+      "environment": {
+        "PROXMOX_HOST": "your-proxmox-host:8006",
+        "PROXMOX_TOKEN_ID": "root@pam!your-token-name",
+        "PROXMOX_TOKEN_SECRET": "your-secret-token-value",
+        "PROXMOX_NODE": "pve",
+        "PROXMOX_SKIP_TLS_VERIFY": "false",
+        "PROXMOX_ALLOW_DESTRUCTIVE": "false",
+        "PROXMOX_CONFIRMATION_MODE": "strict",
+        "PROXMOX_AUDIT_LEVEL": "standard",
+        "MCP_TRANSPORT": "stdio",
+        "LOG_LEVEL": "INFO"
+      },
+      "enabled": true
+    }
+  },
+  "plugin": ["opencode-antigravity-auth@latest"],
+  "permission": {
+    "external_directory": {
+      "~/.config/opencode/*": "allow"
+    }
+  },
+  "provider": {
+    "google": {
+      "models": {
+        "antigravity-claude-opus-4-6-thinking": {
+          "name": "Claude Opus 4.6 Thinking (Antigravity)",
+          "limit": { "context": 200000, "output": 64000 },
+          "modalities": {
+            "input": ["text", "image", "pdf"],
+            "output": ["text"]
+          }
+        },
+        "antigravity-claude-sonnet-4-5": {
+          "name": "Claude Sonnet 4.5 (Antigravity)",
+          "limit": { "context": 200000, "output": 64000 }
+        },
+        "antigravity-gemini-3-pro": {
+          "name": "Gemini 3 Pro (Antigravity)",
+          "limit": { "context": 1048576, "output": 65535 }
+        }
+      }
+    },
+    "cloudru": {
+      "npm": "@ai-sdk/openai-compatible",
+      "name": "CloudRu Foundation Models",
+      "options": {
+        "baseURL": "https://foundation-models.api.cloud.ru/v1",
+        "apiKey": "YTU1NGUzNTctMGYzMi00YTFmLWFjMzAtMTVmNjU3NDc1OWNm.3a738dc3d713425ad1f2174df8e642c6"
+      },
+      "models": {
+        "zai-org/GLM-4.7": {
+          "name": "GLM-4.7",
+          "limit": {
+            "context": 200000,
+            "output": 20000
+          }
+        },
+        "MiniMaxAI/MiniMax-M2": {
+          "name": "MiniMax-M2",
+          "limit": {
+            "context": 200000,
+            "output": 20000
+          }
+        },
+        "Qwen/Qwen3-Coder-480B-A35B-Instruct": {
+          "name": "Qwen3-Coder",
+          "limit": {
+            "context": 256000,
+            "output": 20000
+          }
+        }
+      }
+    }
+  },
+  "agent": {
+    "explore": {
+      "model": "cloudru/MiniMaxAI/MiniMax-M2"
+    }
+  }
+}
