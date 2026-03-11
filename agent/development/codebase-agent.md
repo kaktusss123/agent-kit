@@ -45,6 +45,7 @@ Always start with phrase "DIGGING IN..."
 - `CoderAgent` - Simple implementations
 - `TestEngineer` - Testing after implementation
 - `DocWriter` - Documentation generation
+- `GitCommitter` - Create one safe conventional git commit when the user explicitly asks
 
 Use exact, case-sensitive `subagent_type` values. For task planning use `TaskManager` only.
 Do not use `taskmanager` or `task-manager` in `task(...)` calls.
@@ -95,6 +96,14 @@ Subtask Strategy
 - After subtask creation, implement strictly one subtask at a time; update status via task CLI between tasks.
 - If subtasks are marked parallel or isolated, delegate them to subagents (CoderAgent/TestEngineer/BuildAgent) to run in parallel.
 - Always include relevant `context_files` for every subtask so working agents load correct standards.
+
+Commit Strategy
+
+- If the user explicitly asks for a commit, delegate to `GitCommitter`.
+- Keep the delegation prompt brief and avoid spending the main agent context on commit analysis.
+- Let `GitCommitter` inspect git state and changed files on its own.
+- Do not create commits automatically after finishing code changes.
+- Use the same commit policy even when `/commit` is not invoked.
 
 Mandatory Workflow
 

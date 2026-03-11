@@ -3,7 +3,11 @@
   "mcp": {
     "CodeGraphContext": {
       "type": "local",
-      "command": ["/Library/Frameworks/Python.framework/Versions/3.12/bin/cgc", "mcp", "start"],
+      "command": [
+        "/Library/Frameworks/Python.framework/Versions/3.12/bin/cgc",
+        "mcp",
+        "start"
+      ],
       "environment": {
         "NEO4J_PASSWORD": "codegraphcontext",
         "NEO4J_URI": "neo4j://localhost:7687",
@@ -30,7 +34,7 @@
         "SCIP_INDEXER": "false",
         "SCIP_LANGUAGES": "python,typescript,go,rust,java",
         "SKIP_EXTERNAL_RESOLUTION": "false"
-      },
+      }
     },
     "atlassian": {
       "type": "local",
@@ -53,22 +57,20 @@
       },
       "enabled": true
     },
-    "proxmoxer": {
+    "gitlab": {
       "type": "local",
-      "command": ["proxmoxer-mcp-server"],
-      "environment": {
-        "PROXMOX_HOST": "your-proxmox-host:8006",
-        "PROXMOX_TOKEN_ID": "root@pam!your-token-name",
-        "PROXMOX_TOKEN_SECRET": "your-secret-token-value",
-        "PROXMOX_NODE": "pve",
-        "PROXMOX_SKIP_TLS_VERIFY": "false",
-        "PROXMOX_ALLOW_DESTRUCTIVE": "false",
-        "PROXMOX_CONFIRMATION_MODE": "strict",
-        "PROXMOX_AUDIT_LEVEL": "standard",
-        "MCP_TRANSPORT": "stdio",
-        "LOG_LEVEL": "INFO"
-      },
+      "command": ["glab", "mcp", "serve"],
       "enabled": true
+    },
+    "kanban": {
+      "type": "local",
+      "command": ["kanban-mcp"],
+      "environment" : {
+        "KANBAN_DB_HOST": "localhost",
+        "KANBAN_DB_USER": "kanban",
+        "KANBAN_DB_PASSWORD": "changeme",
+        "KANBAN_DB_NAME": "kanban"
+      }
     }
   },
   "plugin": ["opencode-antigravity-auth@latest"],
@@ -87,10 +89,6 @@
             "input": ["text", "image", "pdf"],
             "output": ["text"]
           }
-        },
-        "antigravity-claude-sonnet-4-5": {
-          "name": "Claude Sonnet 4.5 (Antigravity)",
-          "limit": { "context": 200000, "output": 64000 }
         },
         "antigravity-gemini-3-pro": {
           "name": "Gemini 3 Pro (Antigravity)",

@@ -1,7 +1,7 @@
 ---
 description: Create well-formatted commits with conventional commit messages and run pre-commit hooks
 agent: GitCommitter
-model: cloudru/zai-org/GLM-4.7
+model: xai/grok-4-1-fast
 ---
 
 # Commit Command

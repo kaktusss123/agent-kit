@@ -289,6 +289,8 @@ git add .
 # Auto-generates: ✨ feat: add user authentication system
 ```
 
+Core agents can also delegate commit creation to `GitCommitter` directly when you explicitly ask for a commit, so the same policy applies even without `/commit`.
+
 ### Add Your Patterns
 ```bash
 # Edit your project context

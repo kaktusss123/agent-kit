@@ -104,6 +104,7 @@ CONSEQUENCE OF SKIPPING: Work that doesn't match project standards = wasted effo
 - `CoderAgent` - Simple implementations
 - `TestEngineer` - Testing after implementation
 - `DocWriter` - Documentation generation
+- `GitCommitter` - Create one safe conventional git commit when the user explicitly asks
 
 **Invocation syntax**:
 ```javascript
@@ -144,12 +145,23 @@ Code Standards
     <condition id="simple_task" trigger="focused_implementation" action="delegate_to_coder_agent">
       For simple, focused implementations to save time
     </condition>
+    <condition id="commit_task" trigger="explicit_git_commit_request" action="delegate_to_git_committer">
+      For user-requested commit creation, use the dedicated commit workflow
+    </condition>
   </delegate_when>
   
   <execute_directly_when>
     <condition trigger="single_file_simple_change">1-3 files, straightforward implementation</condition>
   </execute_directly_when>
 </delegation_rules>
+
+Commit Workflow
+
+- If the user explicitly asks for a commit, delegate to `GitCommitter` even when `/commit` was not used.
+- Keep the primary-agent handoff short and avoid doing commit analysis in the same context window.
+- Let `GitCommitter` inspect git status, diff, staging, and message details independently.
+- Do not create commits proactively after implementation.
+- Apply the same branch safety and message format every time.
 
 <workflow>
   <stage id="1" name="ContextDiscovery" required="true">

@@ -125,6 +125,7 @@ CONSEQUENCE OF SKIPPING: Work that doesn't match project standards = wasted effo
 - `ContextScout` - Discover context files BEFORE executing (saves time, avoids rework!)
 - `TaskManager` - Break down complex features (4+ files, >60min)
 - `DocWriter` - Generate comprehensive documentation
+- `GitCommitter` - Create one safe conventional git commit when the user explicitly asks
 
 Use exact, case-sensitive `subagent_type` values. For task breakdown use `TaskManager` only.
 Do not use `taskmanager` or `task-manager` in `task(...)` calls.
@@ -315,6 +316,7 @@ task(
     <condition id="perspective" trigger="fresh_eyes_or_alternatives" action="delegate"/>
     <condition id="simulation" trigger="edge_case_testing" action="delegate"/>
     <condition id="user_request" trigger="explicit_delegation" action="delegate"/>
+    <condition id="commit_request" trigger="explicit_git_commit_request" action="delegate"/>
   </delegate_when>
   
   <execute_directly_when>
@@ -324,6 +326,17 @@ task(
   </execute_directly_when>
   
   <specialized_routing>
+    <route to="GitCommitter" when="user_explicitly_requests_commit_creation">
+      <trigger>User asks to create a git commit, not just to explain or inspect git state</trigger>
+      <instruction>Delegate commit execution to `GitCommitter` immediately so commit workflow does not consume the primary agent context. Pass only a brief handoff summary when useful, and let `GitCommitter` inspect the actual git state and diff itself.</instruction>
+      <constraints>
+        - Never commit proactively
+        - Never push as part of commit flow
+        - Keep message in English and conventional format
+        - Do not analyze the full commit diff in the primary agent unless needed for another task
+      </constraints>
+    </route>
+
     <route to="TaskManager" when="complex_feature_breakdown">
       <trigger>Complex feature requiring task breakdown OR multi-step dependencies OR user requests task planning</trigger>
       <context_bundle>
