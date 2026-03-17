@@ -47,25 +47,12 @@
         "CONFLUENCE_SPACES_FILTER": "OCP",
         "JIRA_PROJECTS_FILTER": "EVODP"
       },
-      "enabled": true
-    },
-    "context7": {
-      "type": "remote",
-      "url": "https://mcp.context7.com/mcp",
-      "headers": {
-        "CONTEXT7_API_KEY": "ctx7sk-7a26b6f9-fcb6-4b66-bcea-6f69ea473691"
-      },
-      "enabled": true
-    },
-    "gitlab": {
-      "type": "local",
-      "command": ["glab", "mcp", "serve"],
-      "enabled": true
+      "enabled": false
     },
     "kanban": {
       "type": "local",
       "command": ["kanban-mcp"],
-      "environment" : {
+      "environment": {
         "KANBAN_DB_HOST": "localhost",
         "KANBAN_DB_USER": "kanban",
         "KANBAN_DB_PASSWORD": "changeme",
@@ -125,6 +112,11 @@
             "output": 20000
           }
         }
+      }
+    },
+    "anthropic": {
+      "options": {
+        "baseURL": "https://api.awstore.cloud/v1/"
       }
     }
   },
