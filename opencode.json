@@ -68,7 +68,11 @@
       "design-planner": "deny",
       "implementer": "deny",
       "verification-engineer": "deny",
-      "reviewer-against-plan": "deny"
+      "reviewer-minimax": "deny",
+      "reviewer-qwen": "deny",
+      "reviewer-against-plan": "deny",
+      "reviewer-deep": "deny",
+      "reviewer-security": "deny"
     },
     "skill": {
       "*": "allow",
@@ -128,6 +132,13 @@
             "output": 20000
           }
         },
+        "zai-org/GLM-4.7-Flash": {
+          "name": "GLM-4.7-Flash",
+          "limit": {
+            "context": 200000,
+            "output": 20000
+          }
+        },
         "MiniMaxAI/MiniMax-M2": {
           "name": "MiniMax-M2",
           "limit": {
@@ -139,6 +150,13 @@
           "name": "Qwen3-Coder",
           "limit": {
             "context": 256000,
+            "output": 20000
+          }
+        },
+        "Qwen/Qwen3-Coder-Next": {
+          "name": "Qwen3-Next",
+          "limit": {
+            "context": 262000,
             "output": 20000
           }
         }
@@ -168,7 +186,13 @@
           "design-planner": "allow",
           "implementer": "allow",
           "verification-engineer": "allow",
+          "helper-gpt54": "allow",
+          "helper-opus": "allow",
+          "reviewer-minimax": "allow",
+          "reviewer-qwen": "allow",
           "reviewer-against-plan": "allow",
+          "reviewer-deep": "allow",
+          "reviewer-security": "allow",
           "committer": "allow"
         },
         "skill": {
@@ -222,10 +246,59 @@
         "CodeGraphContext_*": false
       }
     },
-    "reviewer-against-plan": {
+    "helper-gpt54": {
+      "model": "openai/gpt-5.4",
       "hidden": true,
       "tools": {
-        "kanban_*": true,
+        "kanban_*": false,
+        "CodeGraphContext_*": false
+      }
+    },
+    "helper-opus": {
+      "model": "anthropic/claude-opus-4-6",
+      "hidden": true,
+      "tools": {
+        "kanban_*": false,
+        "CodeGraphContext_*": true
+      }
+    },
+    "reviewer-minimax": {
+      "model": "cloudru/MiniMaxAI/MiniMax-M2",
+      "hidden": true,
+      "tools": {
+        "kanban_*": false,
+        "CodeGraphContext_*": false
+      }
+    },
+    "reviewer-qwen": {
+      "model": "cloudru/Qwen/Qwen3-Coder-480B-A35B-Instruct",
+      "hidden": true,
+      "tools": {
+        "kanban_*": false,
+        "CodeGraphContext_*": false
+      }
+    },
+    "reviewer-against-plan": {
+      "model": "cloudru/MiniMaxAI/MiniMax-M2",
+      "hidden": true,
+      "tools": {
+        "kanban_*": false,
+        "CodeGraphContext_*": false
+      }
+    },
+    "reviewer-deep": {
+      "model": "anthropic/claude-opus-4-6",
+      "hidden": true,
+      "tools": {
+        "kanban_*": false,
+        "CodeGraphContext_*": true
+      }
+    },
+    "reviewer-security": {
+      "model": "openai/gpt-5.4",
+      "hidden": true,
+      "tools": {
+        "kanban_*": false,
         "CodeGraphContext_*": true
       }
     }

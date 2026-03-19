@@ -18,6 +18,8 @@ The new workflow is entered through:
 
 This keeps the new process opt-in while migration is in progress.
 
+The dedicated review entrypoint is `command/review.md`.
+
 ## Primary Agent Model
 
 `openagent-orchestrator` is a disciplined process manager, not a general coder.
@@ -39,7 +41,25 @@ Its responsibilities are:
 | `design-planner` | Produce design brief and execution plan | `kanban` |
 | `implementer` | Execute scoped changes | `kanban`, `CodeGraphContext` |
 | `verification-engineer` | Produce verification summary | `kanban` |
-| `reviewer-against-plan` | Review against intent and actual impact | `kanban`, `CodeGraphContext` |
+| `helper-gpt54` | Escalation helper for debugging and test failures | none |
+| `helper-opus` | Escalation helper for architecture and deep diagnosis | `CodeGraphContext` |
+| `reviewer-minimax` | Medium-depth broad implementation review | none |
+| `reviewer-qwen` | Medium-depth code and edge-case review | none |
+| `reviewer-against-plan` | Request, ADR, and execution-plan alignment review | none |
+| `reviewer-deep` | Deep correctness and architecture review | `CodeGraphContext` |
+| `reviewer-security` | Security-focused review | `CodeGraphContext` |
+
+### Review Model Split
+
+| Reviewer | Model | Purpose |
+|----------|-------|---------|
+| `reviewer-minimax` | `cloudru/MiniMaxAI/MiniMax-M2` | Broad medium-depth implementation review |
+| `reviewer-qwen` | `cloudru/Qwen/Qwen3-Coder-480B-A35B-Instruct` | Code-centric logic and edge-case review |
+| `reviewer-against-plan` | `cloudru/MiniMaxAI/MiniMax-M2` | Intent and plan alignment review |
+| `reviewer-deep` | `anthropic/claude-opus-4-6` | Deep correctness and architecture review |
+| `reviewer-security` | `openai/gpt-5.4` | Security and trust-boundary review |
+
+All review subagents are read-only, may read the repository for context, and may use only allowlisted `rtk git` inspection commands for scope-aware review.
 
 ## Workflow Stages
 
@@ -49,8 +69,9 @@ Its responsibilities are:
 4. **Execution Plan** - Order steps, checks, and definition of done
 5. **Implementation** - Make scoped changes only
 6. **Verification** - Run checks and summarize residual risk
-7. **Review** - Compare actual work against the plan and impact report
+7. **Review** - Fan out parallel reviewers, then aggregate findings into one verdict
 8. **Commit Readiness** - Confirm all gates passed before commit handoff
+9. **Await Approval** - After commit, wait for the user's approval before continuing unless the prompt explicitly waives it
 
 ## Workflow Skills
 
@@ -68,6 +89,70 @@ The orchestrator workflow uses dedicated skills:
 - `decision-log`
 
 Each skill owns a focused rule set plus `references/domain-knowledge.md` for durable details.
+
+## Parallel Review Model
+
+The orchestrator should run the review stage as a parallel fan-out:
+
+- `reviewer-minimax` for broad medium-depth findings
+- `reviewer-qwen` for code-path and edge-case findings
+- `reviewer-against-plan` for request, ADR, and plan drift
+- `reviewer-deep` for deep correctness and architecture fit
+- `reviewer-security` for concrete security concerns
+
+The reviewers must stay read-only and return findings to the orchestrator.
+Only the orchestrator aggregates the results and records the final review outcome in `kanban`.
+
+## Default Operating Mode
+
+Unless the task prompt explicitly says otherwise, the orchestrator should operate in this sequence:
+
+1. analyze
+2. implement
+3. review
+4. commit
+5. await user approval
+
+If the current request does not authorize a commit yet, the orchestrator should stop at commit-ready and wait for approval.
+
+## Escalation Helpers
+
+When cheaper agents get stuck, the orchestrator should use controlled escalation instead of letting them loop forever.
+
+### Helper Roles
+
+| Helper | Model | Use First For |
+|--------|-------|---------------|
+| `helper-gpt54` | `openai/gpt-5.4` | failing tests, debugging, concrete implementation blockers, security-sensitive bug diagnosis |
+| `helper-opus` | `anthropic/claude-opus-4-6` | architecture ambiguity, hidden coupling, replan, deep root-cause analysis |
+
+### Escalation Threshold
+
+- Escalate after 5 attempts against the same failure signature without meaningful progress.
+
+### Ownership Rule
+
+- Helpers are advisory by default.
+- The original agent keeps ownership.
+- The orchestrator returns helper output back to the original agent unless it explicitly switches to takeover mode.
+
+### Fallback Rule
+
+1. Use the best-fit helper first.
+2. If it is unavailable, use the other helper.
+3. If both are unavailable, return to the original agent with a `helpers_unavailable` note.
+4. Allow at most 2 additional local attempts with a new strategy.
+5. If still blocked, stop and wait for user approval.
+
+## Review Scope Sources
+
+The orchestrator should support review of:
+
+- uncommitted worktree changes
+- current state relative to `origin/develop`
+- a specific commit
+
+If no scope is provided, default to uncommitted worktree changes.
 
 ## Isolation Strategy
 
