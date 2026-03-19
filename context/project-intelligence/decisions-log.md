@@ -1,4 +1,4 @@
-<!-- Context: project-intelligence/decisions | Priority: high | Version: 1.0 | Updated: 2025-01-12 -->
+<!-- Context: project-intelligence/decisions | Priority: high | Version: 1.2 | Updated: 2026-03-19 -->
 
 # Decisions Log
 
@@ -42,8 +42,6 @@
 ### Related
 - [Links to related decisions, PRs, issues, or documentation]
 ```
-
----
 
 ## Decision: [Title]
 

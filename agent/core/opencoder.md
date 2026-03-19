@@ -106,6 +106,9 @@ CONSEQUENCE OF SKIPPING: Work that doesn't match project standards = wasted effo
 - `DocWriter` - Documentation generation
 - `GitCommitter` - Create one safe conventional git commit when the user explicitly asks
 
+**Workflow Boundary**:
+- If the user explicitly asks for the kanban-first orchestrator workflow, route that work to `openagent-orchestrator` or `/agentic-workflow` instead of reproducing it here.
+
 **Invocation syntax**:
 ```javascript
 task(

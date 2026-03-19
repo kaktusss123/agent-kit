@@ -60,12 +60,34 @@
       }
     }
   },
-  "plugin": ["opencode-antigravity-auth@latest"],
   "permission": {
+    "task": {
+      "*": "allow",
+      "feature-triager": "deny",
+      "graph-impact-analyst": "deny",
+      "design-planner": "deny",
+      "implementer": "deny",
+      "verification-engineer": "deny",
+      "reviewer-against-plan": "deny"
+    },
+    "skill": {
+      "*": "allow",
+      "workflow-gates": "deny",
+      "kanban-discipline": "deny",
+      "codegraph-impact-analysis": "deny",
+      "design-brief": "deny",
+      "execution-plan": "deny",
+      "replan-on-surprise": "deny",
+      "verification-gate": "deny",
+      "review-against-plan": "deny",
+      "commit-readiness": "deny",
+      "decision-log": "deny"
+    },
     "external_directory": {
       "~/.config/opencode/*": "allow"
     }
   },
+  "plugin": ["opencode-antigravity-auth@latest"],
   "provider": {
     "google": {
       "models": {
@@ -131,6 +153,81 @@
   "agent": {
     "explore": {
       "model": "cloudru/MiniMaxAI/MiniMax-M2"
+    },
+    "openagent-orchestrator": {
+      "tools": {
+        "kanban_*": true,
+        "CodeGraphContext_*": true
+      },
+      "permission": {
+        "task": {
+          "*": "deny",
+          "ContextScout": "allow",
+          "feature-triager": "allow",
+          "graph-impact-analyst": "allow",
+          "design-planner": "allow",
+          "implementer": "allow",
+          "verification-engineer": "allow",
+          "reviewer-against-plan": "allow",
+          "committer": "allow"
+        },
+        "skill": {
+          "*": "deny",
+          "workflow-gates": "allow",
+          "kanban-discipline": "allow",
+          "codegraph-impact-analysis": "allow",
+          "design-brief": "allow",
+          "execution-plan": "allow",
+          "replan-on-surprise": "allow",
+          "verification-gate": "allow",
+          "review-against-plan": "allow",
+          "commit-readiness": "allow",
+          "decision-log": "allow",
+          "git-commit": "allow"
+        }
+      }
+    },
+    "feature-triager": {
+      "hidden": true,
+      "tools": {
+        "kanban_*": true,
+        "CodeGraphContext_*": false
+      }
+    },
+    "graph-impact-analyst": {
+      "hidden": true,
+      "tools": {
+        "CodeGraphContext_*": true,
+        "kanban_*": true
+      }
+    },
+    "design-planner": {
+      "hidden": true,
+      "tools": {
+        "kanban_*": true,
+        "CodeGraphContext_*": false
+      }
+    },
+    "implementer": {
+      "hidden": true,
+      "tools": {
+        "kanban_*": true,
+        "CodeGraphContext_*": true
+      }
+    },
+    "verification-engineer": {
+      "hidden": true,
+      "tools": {
+        "kanban_*": true,
+        "CodeGraphContext_*": false
+      }
+    },
+    "reviewer-against-plan": {
+      "hidden": true,
+      "tools": {
+        "kanban_*": true,
+        "CodeGraphContext_*": true
+      }
     }
   }
 }

@@ -127,6 +127,10 @@ CONSEQUENCE OF SKIPPING: Work that doesn't match project standards = wasted effo
 - `DocWriter` - Generate comprehensive documentation
 - `GitCommitter` - Create one safe conventional git commit when the user explicitly asks
 
+**Workflow Boundary**:
+- If the user explicitly asks for the kanban-first orchestrator workflow, do not emulate it here.
+- Direct that request to `openagent-orchestrator` or the `/agentic-workflow` command so legacy behavior stays separate.
+
 Use exact, case-sensitive `subagent_type` values. For task breakdown use `TaskManager` only.
 Do not use `taskmanager` or `task-manager` in `task(...)` calls.
 

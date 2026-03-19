@@ -1,4 +1,4 @@
-<!-- Context: project-intelligence/notes | Priority: high | Version: 1.0 | Updated: 2025-01-12 -->
+<!-- Context: project-intelligence/notes | Priority: high | Version: 1.2 | Updated: 2026-03-19 -->
 
 # Living Notes
 
@@ -86,6 +86,7 @@
 
 | Project | Goal | Owner | Timeline |
 |---------|------|-------|----------|
+| Kanban-first orchestrator migration | Introduce isolated gated workflow behind `openagent-orchestrator`; see `docs/agentic-workflow/architecture.md` | Repository maintainer | In progress |
 | [Project] | [What we're doing] | [Who owns it] | [When it matters] |
 
 ## Archive (Resolved Items)

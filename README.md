@@ -257,7 +257,7 @@ User Request
 
 ### 📚 Context Files
 - `core/essential-patterns.md` - Universal coding patterns
-- `project/project-context.md` - Your project-specific patterns
+- `project-intelligence/technical-domain.md` - Your project-specific technical patterns
 
 ---
 
@@ -294,7 +294,7 @@ Core agents can also delegate commit creation to `GitCommitter` directly when yo
 ### Add Your Patterns
 ```bash
 # Edit your project context
-nano ~//Users/vekomarnitskiy/.config/opencode/context/project/project-context.md
+nano ~//Users/vekomarnitskiy/.config/opencode/context/project-intelligence/technical-domain.md
 
 # Add your patterns:
 # **API Endpoint Pattern:**
@@ -493,7 +493,7 @@ A: No, they're optional. Only install if you want Telegram notifications or Gemi
 A: Global (`~/.opencode/`) works for most. Project-specific (`.opencode/`) if you need different configs per project.
 
 **Q: How do I add my own coding patterns?**  
-A: Edit `~//Users/vekomarnitskiy/.config/opencode/context/project/project-context.md` - agents automatically load this file.
+A: Edit `~//Users/vekomarnitskiy/.config/opencode/context/project-intelligence/technical-domain.md` and keep project-specific technical patterns there.
 
 **Q: What languages are supported?**  
 A: The agents work with any language (TypeScript, Python, Go, Rust, etc.) and adapt based on your project files.
