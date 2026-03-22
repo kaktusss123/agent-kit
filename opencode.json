@@ -58,9 +58,19 @@
         "KANBAN_DB_PASSWORD": "changeme",
         "KANBAN_DB_NAME": "kanban"
       }
+    },
+    "playwright": {
+      "type": "local",
+      "command": ["npx", "@playwright/mcp@latest"],
+      "enabled": false
     }
   },
   "permission": {
+    "bash": {
+      "*": "allow",
+      "git push*": "ask",
+      "rtk git push*": "ask"
+    },
     "task": {
       "*": "allow",
       "feature-triager": "deny",
@@ -171,45 +181,6 @@
   "agent": {
     "explore": {
       "model": "cloudru/MiniMaxAI/MiniMax-M2"
-    },
-    "openagent-orchestrator": {
-      "tools": {
-        "kanban_*": true,
-        "CodeGraphContext_*": true
-      },
-      "permission": {
-        "task": {
-          "*": "deny",
-          "ContextScout": "allow",
-          "feature-triager": "allow",
-          "graph-impact-analyst": "allow",
-          "design-planner": "allow",
-          "implementer": "allow",
-          "verification-engineer": "allow",
-          "helper-gpt54": "allow",
-          "helper-opus": "allow",
-          "reviewer-minimax": "allow",
-          "reviewer-qwen": "allow",
-          "reviewer-against-plan": "allow",
-          "reviewer-deep": "allow",
-          "reviewer-security": "allow",
-          "committer": "allow"
-        },
-        "skill": {
-          "*": "deny",
-          "workflow-gates": "allow",
-          "kanban-discipline": "allow",
-          "codegraph-impact-analysis": "allow",
-          "design-brief": "allow",
-          "execution-plan": "allow",
-          "replan-on-surprise": "allow",
-          "verification-gate": "allow",
-          "review-against-plan": "allow",
-          "commit-readiness": "allow",
-          "decision-log": "allow",
-          "git-commit": "allow"
-        }
-      }
     },
     "feature-triager": {
       "hidden": true,

@@ -13,24 +13,34 @@ Replace ad hoc and task-file-heavy execution with a kanban-first workflow where:
 
 The new workflow is entered through:
 
+- primary agent `spec-analyst` for requirements discovery and handoff-ready specs
 - primary agent `openagent-orchestrator`
+- command `command/spec-discovery.md`
 - command `command/agentic-workflow.md`
 
 This keeps the new process opt-in while migration is in progress.
 
 The dedicated review entrypoint is `command/review.md`.
 
+When a task starts ambiguous, discovery should happen in `spec-analyst` before orchestration begins.
+
 ## Primary Agent Model
 
 `openagent-orchestrator` is a disciplined process manager, not a general coder.
 
-Its responsibilities are:
+`spec-analyst` is the interactive requirements analyst, not an implementation agent.
 
-- create or update kanban items
-- enforce stage order
-- delegate to hidden workflow subagents
-- refuse implementation before required gates pass
-- refuse commit flow without verification and review
+Primary responsibilities:
+
+- `spec-analyst` interrogates ambiguous requests until blocking unknowns are explicit
+- `spec-analyst` produces a handoff-ready spec in `docs/specs/`
+- `spec-analyst` stops before coding when requirements are still incomplete
+- `spec-analyst` asks blocking questions in chat before writing the spec artifact
+- `openagent-orchestrator` creates or updates kanban items
+- `openagent-orchestrator` enforces stage order
+- `openagent-orchestrator` delegates to hidden workflow subagents
+- `openagent-orchestrator` refuses implementation before required gates pass
+- `openagent-orchestrator` refuses commit flow without verification and review
 
 ## Hidden Workflow Subagents
 
@@ -63,6 +73,7 @@ All review subagents are read-only, may read the repository for context, and may
 
 ## Workflow Stages
 
+0. **Spec Discovery** - Interrogate requirements, inspect context, and write a handoff-ready spec when ambiguity is high
 1. **Triage** - Clarify objective, scope, assumptions, acceptance criteria
 2. **Impact Analysis** - Determine direct and indirect blast radius
 3. **Design Brief** - Compare options and define the intended approach
@@ -72,6 +83,20 @@ All review subagents are read-only, may read the repository for context, and may
 7. **Review** - Fan out parallel reviewers, then aggregate findings into one verdict
 8. **Commit Readiness** - Confirm all gates passed before commit handoff
 9. **Await Approval** - After commit, wait for the user's approval before continuing unless the prompt explicitly waives it
+
+## Discovery Gate Heuristics
+
+The orchestrator should stop and gather answers before implementation when any of these are true:
+
+- the repository is empty or nearly empty
+- the task is greenfield product work rather than a local patch
+- screenshots, mockups, or reference designs define the UX
+- an external backend, API, or sibling repository defines key behavior
+- acceptance criteria are not yet testable
+
+In those cases, use discovery-first behavior instead of treating the prompt as implementation-ready.
+
+`spec-analyst` should use a chat-first interview loop: inspect context, ask a small batch of blocking questions, wait for answers, repeat if needed, then write the spec once the ambiguity is reduced enough for a stable artifact.
 
 ## Workflow Skills
 
@@ -113,7 +138,9 @@ Unless the task prompt explicitly says otherwise, the orchestrator should operat
 4. commit
 5. await user approval
 
-If the current request does not authorize a commit yet, the orchestrator should stop at commit-ready and wait for approval.
+If the current request explicitly says to stop before commit, the orchestrator should stop at commit-ready and wait for approval.
+
+Remote git operations such as `push` or PR creation are outside this default mode and require explicit user authorization.
 
 ## Escalation Helpers
 
