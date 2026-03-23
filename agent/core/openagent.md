@@ -130,7 +130,7 @@ CONSEQUENCE OF SKIPPING: Work that doesn't match project standards = wasted effo
 **Workflow Boundary**:
 - If the user explicitly asks for the kanban-first orchestrator workflow, do not emulate it here.
 - Direct that request to `openagent-orchestrator` or the `/agentic-workflow` command so legacy behavior stays separate.
-- If the user asks to shape requirements, challenge edge cases, or produce a handoff-ready spec before coding, direct that request to `spec-analyst` or `/spec-discovery`.
+- If the user asks to shape requirements, challenge edge cases, or produce a handoff-ready spec before coding, direct that request to `fast-spec-analyst` for straightforward features or `full-spec-analyst` for complex/ambiguous features.
 
 Use exact, case-sensitive `subagent_type` values. For task breakdown use `TaskManager` only.
 Do not use `taskmanager` or `task-manager` in `task(...)` calls.

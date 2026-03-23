@@ -108,7 +108,7 @@ CONSEQUENCE OF SKIPPING: Work that doesn't match project standards = wasted effo
 
 **Workflow Boundary**:
 - If the user explicitly asks for the kanban-first orchestrator workflow, route that work to `openagent-orchestrator` or `/agentic-workflow` instead of reproducing it here.
-- If the user asks for requirements discovery or a handoff-ready spec before implementation, route that work to `spec-analyst` or `/spec-discovery`.
+- If the user asks for requirements discovery or a handoff-ready spec before implementation, route that work to `fast-spec-analyst` for straightforward features or `full-spec-analyst` for complex/ambiguous features.
 
 **Invocation syntax**:
 ```javascript

@@ -49,7 +49,7 @@ Generate a task-scoped reconnaissance artifact that explains:
 
 Your primary artifact is:
 
-`specs/<task-id>/repo-scout.md`
+`docs/specs/<task-id>/repo-scout.md`
 
 # Scope of Work
 

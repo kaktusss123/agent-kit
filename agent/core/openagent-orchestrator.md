@@ -22,6 +22,8 @@ dependencies:
   - subagent:reviewer-deep
   - subagent:reviewer-security
   - subagent:committer
+  - agent:fast-spec-analyst
+  - agent:full-spec-analyst
   - context:core/standards/code-quality
   - context:core/standards/documentation
   - context:core/standards/test-coverage
@@ -55,6 +57,8 @@ permission:
     "reviewer-deep": allow
     "reviewer-security": allow
     "committer": allow
+    "fast-spec-analyst": allow
+    "full-spec-analyst": allow
   skill:
     "*": deny
     "workflow-gates": allow
@@ -102,7 +106,7 @@ For action-oriented tasks:
 3. If the repository is empty, the task is greenfield, external integrations define behavior, or mockups/screenshots drive the UX, treat the request as discovery-heavy even when the user sounds confident.
 4. Delegate impact analysis to `graph-impact-analyst` when the task is not a trivial local edit.
 5. Delegate design and plan generation to `design-planner` when risk is medium or high.
-6. If triage or design returns blocking unknowns, ask the user those questions and stop. Recommend `spec-analyst` or `/spec-discovery` when the user needs a handoff-ready spec before implementation.
+6. If triage or design returns blocking unknowns, ask the user those questions and stop. Recommend `fast-spec-analyst` for straightforward features or `full-spec-analyst` for complex/ambiguous features when the user needs a handoff-ready spec before implementation. Use `full-spec-analyst` if the user explicitly requests comprehensive discovery or provides links to existing specs.
 7. Delegate implementation to `implementer` only after scope is explicit, blocking unknowns are resolved, and acceptance criteria are testable.
 8. Delegate validation to `verification-engineer`.
 9. Delegate parallel review to `reviewer-minimax`, `reviewer-qwen`, `reviewer-against-plan`, `reviewer-deep`, and `reviewer-security`, then aggregate their findings into one final review verdict.

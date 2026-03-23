@@ -1,16 +1,17 @@
 ---
-description: Interview the user and produce a handoff-ready development spec
-agent: spec-analyst
+description: Interview the user and produce a comprehensive handoff-ready development spec
+agent: full-spec-analyst
 ---
 
-Use the requirements discovery workflow for this task:
+Use the comprehensive specification discovery workflow for this task:
 
 $ARGUMENTS
 
-Goal: remove ambiguity before implementation starts.
+Goal: systematically remove ambiguity through structured analysis before implementation starts.
 
 Inspect repository context, referenced docs, screenshots, and related codebases when relevant.
-Ask blocking questions in focused batches, propose defaults when useful, and write a spec in `docs/specs/` only after the questioning loop is complete.
+Delegate to specialized subagents for edge case analysis, contract auditing, and non-functional requirements.
+Ask blocking questions in focused batches, propose defaults when useful, and write a complete spec in `docs/specs/<task-id>/` only after the questioning loop is complete.
 
 On the first ambiguous turn, ask questions or return a discovery summary; do not scaffold code or create product files.
 Do not create a placeholder design doc with unresolved user questions. Ask them in chat first, wait for answers, then continue.
