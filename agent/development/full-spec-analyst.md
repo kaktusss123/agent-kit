@@ -6,7 +6,7 @@ category: development
 type: agent
 version: 2.0.0
 author: opencode
-mode: agent
+mode: primary
 model: openai/gpt-5.4
 temperature: 0.2
 dependencies:
