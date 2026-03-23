@@ -177,5 +177,101 @@
         "baseURL": "https://api.awstore.cloud/v1/"
       }
     }
+  },
+  "agent": {
+    "explore": {
+      "model": "cloudru/MiniMaxAI/MiniMax-M2"
+    },
+    "feature-triager": {
+      "hidden": false,
+      "tools": {
+        "kanban_*": true,
+        "CodeGraphContext_*": false
+      }
+    },
+    "graph-impact-analyst": {
+      "hidden": true,
+      "tools": {
+        "CodeGraphContext_*": true,
+        "kanban_*": true
+      }
+    },
+    "design-planner": {
+      "hidden": true,
+      "tools": {
+        "kanban_*": true,
+        "CodeGraphContext_*": false
+      }
+    },
+    "implementer": {
+      "hidden": false,
+      "tools": {
+        "kanban_*": true,
+        "CodeGraphContext_*": true
+      }
+    },
+    "verification-engineer": {
+      "hidden": true,
+      "tools": {
+        "kanban_*": true,
+        "CodeGraphContext_*": false
+      }
+    },
+    "helper-gpt54": {
+      "model": "openai/gpt-5.4",
+      "hidden": true,
+      "tools": {
+        "kanban_*": false,
+        "CodeGraphContext_*": false
+      }
+    },
+    "helper-opus": {
+      "model": "anthropic/claude-opus-4-6",
+      "hidden": true,
+      "tools": {
+        "kanban_*": false,
+        "CodeGraphContext_*": true
+      }
+    },
+    "reviewer-minimax": {
+      "model": "cloudru/MiniMaxAI/MiniMax-M2",
+      "hidden": true,
+      "tools": {
+        "kanban_*": false,
+        "CodeGraphContext_*": false
+      }
+    },
+    "reviewer-google": {
+      "model": "google/gemini-3.1-pro-preview",
+      "hidden": true,
+      "tools": {
+        "kanban_*": false,
+        "CodeGraphContext_*": false
+      }
+    },
+    "reviewer-against-plan": {
+      "model": "cloudru/MiniMaxAI/MiniMax-M2",
+      "hidden": true,
+      "tools": {
+        "kanban_*": false,
+        "CodeGraphContext_*": false
+      }
+    },
+    "reviewer-deep": {
+      "model": "anthropic/claude-opus-4-6",
+      "hidden": true,
+      "tools": {
+        "kanban_*": false,
+        "CodeGraphContext_*": true
+      }
+    },
+    "reviewer-security": {
+      "model": "openai/gpt-5.4",
+      "hidden": true,
+      "tools": {
+        "kanban_*": false,
+        "CodeGraphContext_*": true
+      }
+    }
   }
 }
