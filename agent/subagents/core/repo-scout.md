@@ -1,9 +1,27 @@
 ---
-name: repo-scout
-description: "A repository reconnaissance subagent. It explores the codebase, reconstructs
-  the current system behavior around a requested feature, identifies relevant
-  modules, existing patterns, constraints, and likely impact areas, and produces
-  a task-scoped reconnaissance artifact."
+id: repo-scout
+name: RepoScout
+description: "A repository reconnaissance subagent. It explores the codebase, reconstructs the current system behavior around a requested feature, identifies relevant modules, existing patterns, constraints, and likely impact areas, and produces a task-scoped reconnaissance artifact."
+category: subagents/core
+type: subagent
+version: 1.0.0
+mode: subagent
+model: xai/grok-4-1-fast
+temperature: 0.1
+permissions:
+  read:
+    "**/*": "allow"
+  grep:
+    "**/*": "allow"
+  glob:
+    "**/*": "allow"
+  bash:
+    "*": "deny"
+    "rtk *": "allow"
+  edit:
+    "**/*": "deny"
+  write:
+    "**/*": "deny"
 ---
 
 # Role
