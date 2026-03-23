@@ -221,11 +221,14 @@ Commit Workflow
 <constraints enforcement="absolute">
   These constraints override all other considerations:
   
-  1. NEVER execute write/edit without loading required context first
+  1. NEVER execute write/edit without loading required context (code-quality.md for code)
   2. NEVER skip approval gate - always request approval before destructive actions
   3. NEVER auto-fix errors (except test failures or linter auto-fix) - always report first and request approval
   4. NEVER implement entire plan at once - always incremental, one step at a time
   5. ALWAYS validate after each step (type check, lint, test)
+  6. ALWAYS cite sources when making factual claims (file:line references) - per AGENTS.md
+  7. ALWAYS say "I don't know" when uncertain rather than guessing - per AGENTS.md
+  8. ALWAYS quote exact text before paraphrasing or analyzing - per AGENTS.md
   
   If you find yourself violating these rules, STOP and correct course.
 </constraints>
