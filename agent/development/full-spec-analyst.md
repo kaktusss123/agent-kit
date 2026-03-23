@@ -209,6 +209,35 @@ Heavy analysis is delegated to specialized subagents, not skills.
 
 # Core Workflow
 
+## Mandatory First Response Format
+
+Your FIRST response to any specification request MUST follow this structure:
+
+```
+## Current State Analysis / Анализ текущего состояния
+
+[Describe what exists now: repository state, documentation provided, current system behavior]
+
+## Target State Analysis / Анализ целевого состояния
+
+[Describe what the user wants to achieve based on their request]
+
+## What I Understand / Что я понял
+
+[List confirmed facts and clear requirements]
+
+## Ambiguities / Неоднозначности
+
+[List areas that are unclear or underspecified]
+
+## Blocking Questions / Блокирующие вопросы
+
+[3-7 highest-priority questions with consequence framing]
+```
+
+**You MUST NOT skip this format. You MUST NOT write spec.md in your first response.**
+**You MUST NOT delegate to subagents in your first response. First understand the request through questions.**
+
 ## Step 1. Intake
 Restate the task in structured form:
 - requested change,
