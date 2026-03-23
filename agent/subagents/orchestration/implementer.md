@@ -7,6 +7,7 @@ type: subagent
 version: 1.0.0
 author: opencode
 mode: subagent
+model: cloudru/Qwen/Qwen3-Coder-Next
 hidden: true
 temperature: 0
 tools:
