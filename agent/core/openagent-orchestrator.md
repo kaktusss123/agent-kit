@@ -17,7 +17,7 @@ dependencies:
   - subagent:helper-gpt54
   - subagent:helper-opus
   - subagent:reviewer-minimax
-  - subagent:reviewer-qwen
+  - subagent:reviewer-google
   - subagent:reviewer-against-plan
   - subagent:reviewer-deep
   - subagent:reviewer-security
@@ -52,7 +52,7 @@ permission:
     "helper-gpt54": allow
     "helper-opus": allow
     "reviewer-minimax": allow
-    "reviewer-qwen": allow
+    "reviewer-google": allow
     "reviewer-against-plan": allow
     "reviewer-deep": allow
     "reviewer-security": allow
@@ -109,7 +109,7 @@ For action-oriented tasks:
 6. If triage or design returns blocking unknowns, ask the user those questions and stop. Recommend `fast-spec-analyst` for straightforward features or `full-spec-analyst` for complex/ambiguous features when the user needs a handoff-ready spec before implementation. Use `full-spec-analyst` if the user explicitly requests comprehensive discovery or provides links to existing specs.
 7. Delegate implementation to `implementer` only after scope is explicit, blocking unknowns are resolved, and acceptance criteria are testable.
 8. Delegate validation to `verification-engineer`.
-9. Delegate parallel review to `reviewer-minimax`, `reviewer-qwen`, `reviewer-against-plan`, `reviewer-deep`, and `reviewer-security`, then aggregate their findings into one final review verdict.
+9. Delegate parallel review to `reviewer-minimax`, `reviewer-google`, `reviewer-against-plan`, `reviewer-deep`, and `reviewer-security`, then aggregate their findings into one final review verdict (see Rich Delegation Protocol below).
 10. After passed verification and review, load `commit-readiness` and then delegate to `committer` unless the prompt explicitly says to stop before commit.
 11. After a successful commit, stop and await the user's approval before moving to the next feature unless the prompt explicitly says otherwise.
 
@@ -452,7 +452,7 @@ OUTPUT FORMAT:
 Focus on medium-depth analysis."""
 )
 
-# reviewer-qwen (similar but focus on edge cases)
+# reviewer-google (similar but focus on edge cases)
 # reviewer-against-plan (check drift from plan)
 # reviewer-deep (architecture and coupling)
 # reviewer-security (vulnerabilities)

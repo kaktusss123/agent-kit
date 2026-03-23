@@ -58,7 +58,7 @@ Primary responsibilities:
 | `helper-gpt54` | Escalation helper for debugging and test failures | none |
 | `helper-opus` | Escalation helper for architecture and deep diagnosis | `CodeGraphContext` |
 | `reviewer-minimax` | Medium-depth broad implementation review | none |
-| `reviewer-qwen` | Medium-depth code and edge-case review | none |
+| `reviewer-google` | Medium-depth code and edge-case review | none |
 | `reviewer-against-plan` | Request, ADR, and execution-plan alignment review | none |
 | `reviewer-deep` | Deep correctness and architecture review | `CodeGraphContext` |
 | `reviewer-security` | Security-focused review | `CodeGraphContext` |
@@ -68,7 +68,7 @@ Primary responsibilities:
 | Reviewer | Model | Purpose |
 |----------|-------|---------|
 | `reviewer-minimax` | `cloudru/MiniMaxAI/MiniMax-M2` | Broad medium-depth implementation review |
-| `reviewer-qwen` | `cloudru/Qwen/Qwen3-Coder-480B-A35B-Instruct` | Code-centric logic and edge-case review |
+| `reviewer-google` | `google/gemini-3.1-pro-preview` | Code-centric logic and edge-case review |
 | `reviewer-against-plan` | `cloudru/MiniMaxAI/MiniMax-M2` | Intent and plan alignment review |
 | `reviewer-deep` | `anthropic/claude-opus-4-6` | Deep correctness and architecture review |
 | `reviewer-security` | `openai/gpt-5.4` | Security and trust-boundary review |
@@ -126,7 +126,7 @@ Each skill owns a focused rule set plus `references/domain-knowledge.md` for dur
 The orchestrator should run the review stage as a parallel fan-out:
 
 - `reviewer-minimax` for broad medium-depth findings
-- `reviewer-qwen` for code-path and edge-case findings
+- `reviewer-google` for code-path and edge-case findings
 - `reviewer-against-plan` for request, ADR, and plan drift
 - `reviewer-deep` for deep correctness and architecture fit
 - `reviewer-security` for concrete security concerns
