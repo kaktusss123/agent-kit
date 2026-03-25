@@ -7,7 +7,7 @@ type: subagent
 version: 1.0.0
 author: opencode
 mode: subagent
-model: google/gemini-3.1-pro-preview
+model: google/gemini-3-flash-preview
 hidden: true
 temperature: 0.1
 tools:
