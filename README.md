@@ -175,7 +175,7 @@ opencode --agent OpenAgent
 1. OpenAgent analyzes your request (question or task)
 2. For tasks: proposes a plan and asks for approval
 3. Executes step-by-step with validation
-4. Delegates to specialists (`TaskManager`, `TestEngineer`, `CodeReviewer`) when needed
+4. Delegates to specialists when needed
 5. Confirms completion and offers cleanup
 
 ---
@@ -196,7 +196,7 @@ User Request
 ┌───────────────────────────────────────┐
 │  Specialized Subagents                │
 ├───────────────────────────────────────┤
-│  Core:         task-manager, docs     │
+│  Core:         docs                   │
 │  Code:         coder, tester, reviewer│
 │  Utils:        image-specialist       │
 │  Meta:         domain-analyzer, etc.  │
@@ -211,7 +211,7 @@ User Request
 5. **Quality checks** run automatically (tests, types, linting)
 6. **Subagents handle** specialized tasks (testing, review, docs)
 
-**Context-aware:** Agents automatically load patterns from `/Users/vekomarnitskiy/.config/opencode/context/` to follow your coding standards.
+**Context-aware:** Legacy agents may load patterns from `/Users/vekomarnitskiy/.config/opencode/context/` to follow your coding standards.
 
 ---
 
@@ -225,7 +225,6 @@ User Request
 ### 🔧 Specialized Subagents (Auto-delegated)
 
 **Core Coordination:**
-- **task-manager** - Task breakdown and planning
 - **documentation** - Documentation authoring
 
 **Code Specialists:**
@@ -250,14 +249,12 @@ User Request
 - **/optimize** - Code optimization
 - **/test** - Testing workflows
 - **/clean** - Cleanup operations
-- **/context** - Context management
 - **/prompt-enhancer** - Improve your prompts
 - **/worktrees** - Git worktree management
 - **/validate-repo** - Validate repository consistency
 
 ### 📚 Context Files
 - `core/essential-patterns.md` - Universal coding patterns
-- `project-intelligence/technical-domain.md` - Your project-specific technical patterns
 
 ---
 
@@ -272,7 +269,7 @@ opencode --agent OpenAgent
 # 1. Analyze the request (complex task)
 # 2. Propose implementation plan
 # 3. Wait for your approval
-# 4. Delegate via task(subagent_type="TaskManager", ...) (creates task breakdown)
+# 4. Delegate to the relevant specialist workflow
 # 5. Coordinate implementation step-by-step
 # 6. Use @tester for tests and @reviewer for security
 # 7. Validate, summarize, and confirm completion
@@ -290,22 +287,6 @@ git add .
 ```
 
 Core agents can also delegate commit creation to `GitCommitter` directly when you explicitly ask for a commit, so the same policy applies even without `/commit`.
-
-### Add Your Patterns
-```bash
-# Edit your project context
-nano ~//Users/vekomarnitskiy/.config/opencode/context/project-intelligence/technical-domain.md
-
-# Add your patterns:
-# **API Endpoint Pattern:**
-# ```typescript
-# export async function POST(request: Request) {
-#   // Your standard pattern
-# }
-# ```
-
-# Agents will automatically use these patterns!
-```
 
 ---
 
@@ -468,7 +449,7 @@ cd /path/to/opencode-agents/integrations/claude-code
 
 **Manual workaround** if plugin doesn't trigger:
 ```
-"Load context from /Users/vekomarnitskiy/.config/opencode/context/ then help me create a new agent"
+"Load the relevant configuration and help me create a new agent"
 ```
 
 </details>
@@ -493,7 +474,7 @@ A: No, they're optional. Only install if you want Telegram notifications or Gemi
 A: Global (`~/.opencode/`) works for most. Project-specific (`.opencode/`) if you need different configs per project.
 
 **Q: How do I add my own coding patterns?**  
-A: Edit `~//Users/vekomarnitskiy/.config/opencode/context/project-intelligence/technical-domain.md` and keep project-specific technical patterns there.
+A: Update the relevant active standards or repository-specific guidance that your current agents actually read.
 
 **Q: What languages are supported?**  
 A: The agents work with any language (TypeScript, Python, Go, Rust, etc.) and adapt based on your project files.
