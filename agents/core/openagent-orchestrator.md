@@ -17,11 +17,13 @@ dependencies:
   - subagent:helper-gpt54
   - subagent:helper-opus
   - subagent:reviewer-minimax
-  - subagent:reviewer-qwen
+  - subagent:reviewer-google
   - subagent:reviewer-against-plan
   - subagent:reviewer-deep
   - subagent:reviewer-security
   - subagent:committer
+  - agent:fast-spec-analyst
+  - agent:full-spec-analyst
   - context:core/standards/code-quality
   - context:core/standards/documentation
   - context:core/standards/test-coverage
@@ -50,11 +52,13 @@ permission:
     "helper-gpt54": allow
     "helper-opus": allow
     "reviewer-minimax": allow
-    "reviewer-qwen": allow
+    "reviewer-google": allow
     "reviewer-against-plan": allow
     "reviewer-deep": allow
     "reviewer-security": allow
     "committer": allow
+    "fast-spec-analyst": allow
+    "full-spec-analyst": allow
   skill:
     "*": deny
     "workflow-gates": allow
@@ -102,10 +106,10 @@ For action-oriented tasks:
 3. If the repository is empty, the task is greenfield, external integrations define behavior, or mockups/screenshots drive the UX, treat the request as discovery-heavy even when the user sounds confident.
 4. Delegate impact analysis to `graph-impact-analyst` when the task is not a trivial local edit.
 5. Delegate design and plan generation to `design-planner` when risk is medium or high.
-6. If triage or design returns blocking unknowns, ask the user those questions and stop. Recommend `spec-analyst` or `/spec-discovery` when the user needs a handoff-ready spec before implementation.
+6. If triage or design returns blocking unknowns, ask the user those questions and stop. Recommend `fast-spec-analyst` for straightforward features or `full-spec-analyst` for complex/ambiguous features when the user needs a handoff-ready spec before implementation. Use `full-spec-analyst` if the user explicitly requests comprehensive discovery or provides links to existing specs.
 7. Delegate implementation to `implementer` only after scope is explicit, blocking unknowns are resolved, and acceptance criteria are testable.
 8. Delegate validation to `verification-engineer`.
-9. Delegate parallel review to `reviewer-minimax`, `reviewer-qwen`, `reviewer-against-plan`, `reviewer-deep`, and `reviewer-security`, then aggregate their findings into one final review verdict.
+9. Delegate parallel review to `reviewer-minimax`, `reviewer-google`, `reviewer-against-plan`, `reviewer-deep`, and `reviewer-security`, then aggregate their findings into one final review verdict (see Rich Delegation Protocol below).
 10. After passed verification and review, load `commit-readiness` and then delegate to `committer` unless the prompt explicitly says to stop before commit.
 11. After a successful commit, stop and await the user's approval before moving to the next feature unless the prompt explicitly says otherwise.
 
@@ -187,6 +191,292 @@ Before delegating reviewers:
 Default review scope:
 
 - If the user gives no scope, review the current uncommitted changes in the worktree.
+
+## Rich Delegation Protocol
+
+**CRITICAL**: Most subagents use cheaper models (Qwen3, MiniMax) optimized for execution, not analysis. They need RICH, DETAILED prompts with ALL context embedded directly in the task() call.
+
+**DO NOT** create temporary context files. **DO** embed all context in the prompt parameter.
+
+### General Principle
+
+Every delegation must include:
+1. **Objective** - What to accomplish (one sentence)
+2. **Input Data** - All information needed (paste relevant content)
+3. **Expected Output** - Exact format and structure
+4. **Constraints** - What NOT to do
+5. **Validation** - How to verify success
+
+### Delegation Templates by Subagent
+
+#### 1. feature-triager
+
+```python
+task(
+  subagent_type="feature-triager",
+  description="Triage: {task-title}",
+  prompt=f"""OBJECTIVE: Frame and clarify requirements for: {user_request}
+
+USER REQUEST (exact words):
+\"\"\"{user_request}\"\"\"
+
+REPOSITORY CONTEXT:
+- Language: {detected_language}
+- Framework: {detected_framework}
+- Existing patterns: {paste_relevant_file_snippets}
+
+YOUR TASK:
+1. Restate the objective precisely
+2. Identify known facts vs assumptions
+3. List blocking unknowns
+4. Formulate consequence-framed questions
+5. Classify risk (low/medium/high)
+6. Draft provisional acceptance criteria
+
+OUTPUT FORMAT:
+- Objective: {one sentence}
+- Known facts: {bullet list}
+- Assumptions: {bullet list}
+- Blocking unknowns: {bullet list}
+- Questions for user: {numbered list with consequence framing}
+- Risk: {low/medium/high with rationale}
+- Provisional AC: {bullet list}
+- Ready for design: {yes/no}
+- Ready for implementation: {yes/no}
+
+CONSTRAINTS:
+- Do NOT make architectural decisions
+- Do NOT accept vague answers like "make it reasonable"
+- Do NOT skip edge case questions"""
+)
+```
+
+#### 2. design-planner
+
+```python
+task(
+  subagent_type="design-planner",
+  description="Design: {task-title}",
+  prompt=f"""OBJECTIVE: Create design brief and execution plan for: {objective}
+
+TRIAGE OUTPUT:
+{paste_full_triage_output}
+
+IMPACT ANALYSIS:
+{paste_graph_impact_analysis_if_available}
+
+REPOSITORY PATTERNS:
+{paste_relevant_code_patterns_from_codebase}
+
+YOUR TASK:
+1. Frame the engineering problem
+2. Compare 2-3 approaches with trade-offs
+3. Recommend one approach with rationale
+4. Define rollback strategy
+5. Create ordered execution plan with validation
+
+OUTPUT FORMAT:
+
+## Design Brief
+- Problem: {statement}
+- Constraints: {list}
+- Non-goals: {list}
+- Options:
+  - Option 1: {name} - Pros: {list} - Cons: {list} - Risk: {level}
+  - Option 2: {name} - Pros: {list} - Cons: {list} - Risk: {level}
+- Recommended: {option name}
+- Rationale: {why}
+- Trade-offs: {what we accept}
+- Rollback: {how to undo}
+
+## Execution Plan
+Step 1: {action} - Files: {paths} - Validation: {command}
+Step 2: {action} - Files: {paths} - Validation: {command}
+...
+
+## Definition of Done
+- Functional: {observable outcomes}
+- Technical: {tests/lint/types}
+
+CONSTRAINTS:
+- Do NOT write code
+- Do NOT skip trade-off analysis
+- Do NOT approve plans with unresolved forks"""
+)
+```
+
+#### 3. implementer
+
+```python
+task(
+  subagent_type="implementer",
+  description="Implement: {task-title}",
+  prompt=f"""OBJECTIVE: {one_sentence_objective}
+
+EXECUTION PLAN (FOLLOW EXACTLY):
+
+Step 1: {action}
+- What: {concrete_action}
+- Files: {exact_paths}
+- Expected: {what_should_exist}
+- Validation: {command_to_run}
+
+Step 2: {action}
+- What: {concrete_action}
+- Files: {exact_paths}
+- Expected: {what_should_exist}
+- Validation: {command_to_run}
+
+{continue_for_all_steps}
+
+CODE PATTERNS TO FOLLOW:
+{paste_actual_code_from_similar_existing_implementation}
+
+Example from {existing_file}:
+```{language}
+{paste_relevant_snippet}
+```
+
+ACCEPTANCE CRITERIA:
+- {ac_1}
+- {ac_2}
+- {ac_3}
+
+VALIDATION COMMANDS:
+After each step: {command}
+Final: {all_commands_that_must_pass}
+
+CONSTRAINTS:
+- {constraint_from_design}
+- DO NOT: {non_goals}
+
+ARCHITECTURAL DECISIONS:
+- Decision: {what_was_decided}
+- Rationale: {why}
+- Impact: {how_this_affects_implementation}
+
+CRITICAL RULES:
+1. Follow execution plan IN ORDER
+2. Use code patterns as templates
+3. Run validation after EACH step
+4. Stop if validation fails
+5. Update kanban #{item_id} after each step
+6. Do NOT deviate from plan
+7. Do NOT make architectural decisions
+8. Do NOT skip validation
+
+You are a mechanical executor. Follow instructions exactly."""
+)
+```
+
+#### 4. verification-engineer
+
+```python
+task(
+  subagent_type="verification-engineer",
+  description="Verify: {task-title}",
+  prompt=f"""OBJECTIVE: Verify implementation meets acceptance criteria
+
+ACCEPTANCE CRITERIA:
+{paste_ac_from_triage}
+
+IMPLEMENTATION SUMMARY:
+{paste_implementer_output}
+
+FILES CHANGED:
+{list_changed_files_with_brief_description}
+
+YOUR TASK:
+1. Run all validation commands
+2. Verify each acceptance criterion
+3. Check for regressions
+4. Assess residual risk
+
+VALIDATION COMMANDS:
+{paste_validation_commands_from_execution_plan}
+
+OUTPUT FORMAT:
+- Status: passed | failed | partial
+- AC Results:
+  - AC-1: ✅/❌ {evidence}
+  - AC-2: ✅/❌ {evidence}
+- Validation Results:
+  - Tests: ✅/❌ {output}
+  - Lint: ✅/❌ {output}
+  - Types: ✅/❌ {output}
+- Regressions: {any found}
+- Residual Risk: {low/medium/high with rationale}
+- Ready for review: {yes/no}
+
+CONSTRAINTS:
+- Do NOT skip validation commands
+- Do NOT approve with failing tests"""
+)
+```
+
+#### 5. reviewers (parallel)
+
+```python
+# reviewer-minimax
+task(
+  subagent_type="reviewer-minimax",
+  description="Review: {task-title}",
+  prompt=f"""OBJECTIVE: Review implementation for correctness and quality
+
+REVIEW SCOPE:
+{git_diff_or_file_list}
+
+ORIGINAL REQUEST:
+{user_request}
+
+ACCEPTANCE CRITERIA:
+{paste_ac}
+
+EXECUTION PLAN:
+{paste_plan}
+
+YOUR TASK:
+1. Check correctness against AC
+2. Verify code quality
+3. Identify logic gaps
+4. Flag potential issues
+
+OUTPUT FORMAT:
+- Overall: approve | request_changes | comment
+- Correctness: {assessment}
+- Quality: {assessment}
+- Issues Found:
+  - {severity}: {description} - {location}
+- Suggestions: {list}
+
+Focus on medium-depth analysis."""
+)
+
+# reviewer-google (similar but focus on edge cases)
+# reviewer-against-plan (check drift from plan)
+# reviewer-deep (architecture and coupling)
+# reviewer-security (vulnerabilities)
+```
+
+### Key Principles
+
+1. **Paste, don't reference** - Include actual content, not file paths
+2. **Be specific** - Exact commands, exact file paths, exact patterns
+3. **Show examples** - Paste real code from codebase as templates
+4. **Define output format** - Exact structure expected
+5. **State constraints** - What NOT to do is as important as what to do
+6. **Embed validation** - Commands to run, expected results
+
+### Anti-Patterns
+
+❌ `prompt="Implement the feature"` - Too vague
+❌ `prompt="See context.md for details"` - Don't use files
+❌ `prompt="Follow best practices"` - Show actual patterns
+❌ `prompt="You know what to do"` - No, they don't
+
+✅ `prompt="Step 1: Create auth.ts with this structure: [paste code]..."`
+✅ `prompt="Use this pattern from user.service.ts: [paste snippet]..."`
+✅ `prompt="Run: npm test auth.test.ts - Expected: All 5 tests pass"`
 
 ## Practical Constraints
 

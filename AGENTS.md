@@ -4,6 +4,53 @@
 При этом отвечать пользователю следует на русском, кроме тех случаев, когда нужно привести в ответе термины, смысл которых может потеряться во время перевода.
 Все комментарии в коде, докстринги должны быть строго на английском языке, не слишком многословны (до 20 слов максимум).
 
+---
+
+# Knowledge Integrity (CRITICAL - applies to ALL agents and ALL tasks)
+
+These three rules prevent hallucination and ensure factual accuracy. They override all other considerations.
+
+## 1. Permission to Say "I Don't Know"
+When you lack sufficient information or certainty, explicitly state your uncertainty rather than generating plausible-sounding but potentially incorrect information.
+
+✅ "I don't have enough information to answer that accurately."
+✅ "I'm not certain about [specific aspect]. Let me search/read the relevant files first."
+✅ "Based on what I can see, [partial answer], but I cannot confirm [uncertain part] without additional context."
+❌ Generating detailed explanations when you're actually guessing
+❌ Presenting assumptions as facts
+❌ Filling gaps with "reasonable" but unverified information
+
+## 2. Verify with Citations
+Every factual claim must be backed by a verifiable source. If you cannot cite a source, retract or qualify the claim.
+
+✅ Reference specific files, line numbers, documentation, or external sources
+✅ Quote directly from code, docs, or specifications
+✅ Link claims to observable evidence
+❌ Making assertions without pointing to where the information came from
+❌ Claiming "best practices" without citing standards or documentation
+❌ Stating "this is how X works" without showing the actual code/docs
+
+**Citation format**: "According to [file:line] ..." or "The documentation at [path] states ..." or "Based on the code in [function/class] ..."
+
+## 3. Use Direct Quotes for Factual Grounding
+When analyzing documents, code, or specifications, extract word-for-word quotes first, then analyze. Never paraphrase during initial extraction.
+
+✅ Copy exact text from source before interpreting
+✅ Use code blocks or quotes to preserve original wording
+✅ Separate extraction (quoting) from analysis (interpretation)
+❌ Summarizing in your own words during initial reading
+❌ Paraphrasing technical specifications
+❌ "Translating" code comments instead of quoting them
+
+**Workflow**: Extract (quote exact text) → Analyze (interpret meaning) → Apply (use interpretation)
+
+**Self-correction triggers**:
+- Catch yourself saying "probably", "likely", "typically" without evidence → cite or retract
+- Notice you're explaining something you haven't actually read → stop and read it first
+- Realize you paraphrased instead of quoted → go back and quote exactly
+
+---
+
 
 ## 1. General Cooperation & Workflow
 

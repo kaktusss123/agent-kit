@@ -13,29 +13,33 @@ Replace ad hoc and task-file-heavy execution with a kanban-first workflow where:
 
 The new workflow is entered through:
 
-- primary agent `spec-analyst` for requirements discovery and handoff-ready specs
+- primary agent `fast-spec-analyst` for straightforward requirements discovery
+- primary agent `full-spec-analyst` for comprehensive specification discovery
 - primary agent `openagent-orchestrator`
-- command `command/spec-discovery.md`
+- command `command/spec-discovery.md` (launches `full-spec-analyst`)
 - command `command/agentic-workflow.md`
 
 This keeps the new process opt-in while migration is in progress.
 
 The dedicated review entrypoint is `command/review.md`.
 
-When a task starts ambiguous, discovery should happen in `spec-analyst` before orchestration begins.
+When a task starts ambiguous, discovery should happen in `fast-spec-analyst` (for straightforward features) or `full-spec-analyst` (for complex features) before orchestration begins.
 
 ## Primary Agent Model
 
 `openagent-orchestrator` is a disciplined process manager, not a general coder.
 
-`spec-analyst` is the interactive requirements analyst, not an implementation agent.
+`fast-spec-analyst` is the lightweight requirements analyst for straightforward features.
+`full-spec-analyst` is the comprehensive specification discovery agent for complex features.
 
 Primary responsibilities:
 
-- `spec-analyst` interrogates ambiguous requests until blocking unknowns are explicit
-- `spec-analyst` produces a handoff-ready spec in `docs/specs/`
-- `spec-analyst` stops before coding when requirements are still incomplete
-- `spec-analyst` asks blocking questions in chat before writing the spec artifact
+- `fast-spec-analyst` interrogates straightforward requests through focused interview loops
+- `fast-spec-analyst` produces a single-file handoff-ready spec in `docs/specs/<slug>.md`
+- `full-spec-analyst` orchestrates comprehensive discovery through specialized subagents
+- `full-spec-analyst` produces a workspace-based spec in `docs/specs/<task-id>/` with full traceability
+- Both spec analysts stop before coding when requirements are still incomplete
+- Both spec analysts ask blocking questions in chat before writing the spec artifact
 - `openagent-orchestrator` creates or updates kanban items
 - `openagent-orchestrator` enforces stage order
 - `openagent-orchestrator` delegates to hidden workflow subagents
@@ -54,7 +58,7 @@ Primary responsibilities:
 | `helper-gpt54` | Escalation helper for debugging and test failures | none |
 | `helper-opus` | Escalation helper for architecture and deep diagnosis | `CodeGraphContext` |
 | `reviewer-minimax` | Medium-depth broad implementation review | none |
-| `reviewer-qwen` | Medium-depth code and edge-case review | none |
+| `reviewer-google` | Medium-depth code and edge-case review | none |
 | `reviewer-against-plan` | Request, ADR, and execution-plan alignment review | none |
 | `reviewer-deep` | Deep correctness and architecture review | `CodeGraphContext` |
 | `reviewer-security` | Security-focused review | `CodeGraphContext` |
@@ -64,7 +68,7 @@ Primary responsibilities:
 | Reviewer | Model | Purpose |
 |----------|-------|---------|
 | `reviewer-minimax` | `cloudru/MiniMaxAI/MiniMax-M2` | Broad medium-depth implementation review |
-| `reviewer-qwen` | `cloudru/Qwen/Qwen3-Coder-480B-A35B-Instruct` | Code-centric logic and edge-case review |
+| `reviewer-google` | `google/gemini-3.1-pro-preview` | Code-centric logic and edge-case review |
 | `reviewer-against-plan` | `cloudru/MiniMaxAI/MiniMax-M2` | Intent and plan alignment review |
 | `reviewer-deep` | `anthropic/claude-opus-4-6` | Deep correctness and architecture review |
 | `reviewer-security` | `openai/gpt-5.4` | Security and trust-boundary review |
@@ -96,7 +100,9 @@ The orchestrator should stop and gather answers before implementation when any o
 
 In those cases, use discovery-first behavior instead of treating the prompt as implementation-ready.
 
-`spec-analyst` should use a chat-first interview loop: inspect context, ask a small batch of blocking questions, wait for answers, repeat if needed, then write the spec once the ambiguity is reduced enough for a stable artifact.
+`fast-spec-analyst` should use a chat-first interview loop: inspect context, ask a small batch of blocking questions, wait for answers, repeat if needed, then write the spec once the ambiguity is reduced enough for a stable artifact.
+
+`full-spec-analyst` should orchestrate comprehensive discovery: delegate to `repo-scout` for repository analysis, `feature-triager` for structured clarification, specialized analysis subagents (`edge-case-harvester`, `contract-impact-auditor`, `non-functional-prober`), and `traceability-checker` for completeness verification.
 
 ## Workflow Skills
 
@@ -120,7 +126,7 @@ Each skill owns a focused rule set plus `references/domain-knowledge.md` for dur
 The orchestrator should run the review stage as a parallel fan-out:
 
 - `reviewer-minimax` for broad medium-depth findings
-- `reviewer-qwen` for code-path and edge-case findings
+- `reviewer-google` for code-path and edge-case findings
 - `reviewer-against-plan` for request, ADR, and plan drift
 - `reviewer-deep` for deep correctness and architecture fit
 - `reviewer-security` for concrete security concerns

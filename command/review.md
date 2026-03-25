@@ -23,7 +23,7 @@ Supported forms:
 1. Resolve and state the exact review scope.
 2. Gather git evidence for that scope.
 3. Build a concise review packet for the reviewers.
-4. Launch `reviewer-minimax`, `reviewer-qwen`, `reviewer-against-plan`, `reviewer-deep`, and `reviewer-security` in parallel.
+4. Launch `reviewer-minimax`, `reviewer-google`, `reviewer-against-plan`, `reviewer-deep`, and `reviewer-security` in parallel.
 5. Aggregate findings into:
    - consensus defects
    - plan deviations
