@@ -159,7 +159,7 @@ cd OpenAgentsControl
 mkdir -p ~/.opencode
 cp -r .opencode/agent ~/.opencode/
 cp -r .opencode/command ~/.opencode/
-cp -r /Users/vekomarnitskiy/.config/opencode/context ~/.opencode/
+cp -r .opencode/context ~/.opencode/
 ```
 
 ### Step 3: Start Building
@@ -211,7 +211,7 @@ User Request
 5. **Quality checks** run automatically (tests, types, linting)
 6. **Subagents handle** specialized tasks (testing, review, docs)
 
-**Context-aware:** Legacy agents may load patterns from `/Users/vekomarnitskiy/.config/opencode/context/` to follow your coding standards.
+**Context-aware:** Agents load patterns from `.opencode/context/` to follow your coding standards.
 
 ---
 
@@ -240,7 +240,6 @@ User Request
 **System Builder (Meta-Level):**
 - **domain-analyzer** - Domain analysis and agent recommendations
 - **agent-generator** - XML-optimized agent generation
-- **context-organizer** - Context file organization
 - **workflow-designer** - Workflow design
 - **command-creator** - Custom command creation
 
@@ -544,7 +543,7 @@ Everything included - all agents, subagents, tools, and plugins.
 Full installation plus **System Builder** for creating custom AI architectures.
 - Everything in Full, plus:
 - **Agents**: system-builder
-- **System Builder Subagents**: domain-analyzer, agent-generator, context-organizer, workflow-designer, command-creator
+- **System Builder Subagents**: domain-analyzer, agent-generator, workflow-designer, command-creator
 - **Commands**: build-context-system
 - **Best for**: Building custom AI systems, contributors, learning the architecture
 

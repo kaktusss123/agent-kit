@@ -9,7 +9,6 @@
 ```
 core/
 ├── navigation.md
-├── context-system.md
 ├── essential-patterns.md
 │
 ├── standards/
@@ -30,12 +29,6 @@ core/
 │
 ├── system/
 │   └── context-guide.md
-│
-└── context-system/
-    ├── guides/
-    ├── examples/
-    ├── standards/
-    └── operations/
 ```
 
 ---
@@ -51,7 +44,6 @@ core/
 | **Review code** | `workflows/code-review.md` |
 | **Delegate task** | `workflows/task-delegation.md` |
 | **Break down feature** | `workflows/feature-breakdown.md` |
-| **Context system** | `context-system.md` |
 
 ---
 

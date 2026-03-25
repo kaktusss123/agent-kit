@@ -14,7 +14,7 @@ temperature: 0.2
 dependencies:
   # Subagents for delegation
   - subagent:documentation
-  - subagent:contextscout
+  - subagent:repo-scout
   - subagent:committer
   
   # Context files (loaded based on task type)
@@ -121,7 +121,7 @@ CONSEQUENCE OF SKIPPING: Work that doesn't match project standards = wasted effo
 ## Available Subagents (invoke via task tool)
 
 **Core Subagents**:
-- `ContextScout` - Discover context files BEFORE executing (saves time, avoids rework!)
+- `RepoScout` - Discover repository structure and current behavior BEFORE executing (saves time, avoids rework!)
 - `DocWriter` - Generate comprehensive documentation
 - `GitCommitter` - Create one safe conventional git commit when the user explicitly asks
 
@@ -135,7 +135,7 @@ Use exact, case-sensitive `subagent_type` values.
 **Invocation syntax**:
 ```javascript
 task(
-  subagent_type="ContextScout",
+  subagent_type="RepoScout",
   description="Brief description",
   prompt="Detailed instructions for the subagent"
 )
@@ -195,12 +195,12 @@ task(
   </stage>
 
   <stage id="1.5" name="Discover" when="task_path" required="true">
-    Use ContextScout to discover relevant context files, patterns, and standards BEFORE planning.
+    Use RepoScout to discover relevant repository structure, current behavior, and implementation patterns BEFORE planning.
     
     task(
-      subagent_type="ContextScout",
+      subagent_type="RepoScout",
       description="Find context for {task-type}",
-      prompt="Search for context files related to: {task description}..."
+      prompt="Discover relevant repository structure, current behavior, and implementation patterns for: {task description}..."
     )
     
     <checkpoint>Context discovered</checkpoint>
@@ -227,7 +227,7 @@ task(
          - delegate (using task tool) → Read /Users/vekomarnitskiy/.config/opencode/context/core/workflows/task-delegation.md NOW
          - bash-only → No context needed, proceed to 3.2
          
-         NOTE: Load all files discovered by ContextScout in Stage 1.5 if not already loaded.
+         NOTE: Load all repository findings from RepoScout in Stage 1.5 if not already loaded.
       
       3. Apply context:
          IF delegating: Tell subagent "Load [context-file] before starting"
@@ -375,31 +375,7 @@ task(
   Context files loaded per @critical_context_requirement.
 </static_context>
 
-<context_retrieval>
-  <!-- How to get context when needed -->
-  <when_to_use>
-    Use /context command for context management operations (not task execution)
-  </when_to_use>
-  
-  <operations>
-    /context harvest     - Extract knowledge from summaries → permanent context
-    /context extract     - Extract from docs/code/URLs
-    /context organize    - Restructure flat files → function-based
-    /context map         - View context structure
-    /context validate    - Check context integrity
-  </operations>
-  
-  <routing>
-    /context operations automatically route to specialized subagents:
-    - harvest/extract/organize/update/error/create → context-organizer
-    - map/validate → contextscout
-  </routing>
-  
-  <when_not_to_use>
-    DO NOT use /context for loading task-specific context (code/docs/tests).
-    Use Read tool directly per @critical_context_requirement.
-  </when_not_to_use>
-</context_retrieval>
+
 
 <constraints enforcement="absolute">
   These constraints override all other considerations:

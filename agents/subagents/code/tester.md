@@ -25,7 +25,6 @@ permissions:
     "**/*.key": "deny"
     "**/*.secret": "deny"
   task:
-    contextscout: "allow"
     "*": "deny"
 
 # Tags
@@ -50,18 +49,13 @@ Responsibilities:
 
 ## Context Discovery
 
-Before writing tests, if you need context about testing standards:
+Before writing tests, read testing standards directly:
 
-1. **Call ContextScout** to discover testing guidelines:
-   ```
-   task(subagent_type="ContextScout", description="Find test standards", prompt="Find test coverage and TDD guidelines")
-   ```
+1. **Read** `/Users/vekomarnitskiy/.config/opencode/context/core/standards/test-coverage.md`
+2. **Load** project-specific testing guidelines as needed
+3. **Apply** testing standards (e.g., test coverage requirements, TDD patterns)
 
-2. **Load discovered files** using the `read` tool.
-
-3. **Apply testing standards** (e.g., test coverage requirements, TDD patterns).
-
-**When to call ContextScout:**
+**When to read directly:**
 - When you need test coverage requirements
 - When you need TDD or testing patterns
 - When you need to verify test structure conventions

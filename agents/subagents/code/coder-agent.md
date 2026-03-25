@@ -27,7 +27,6 @@ permissions:
     "node_modules/**": "deny"
     ".git/**": "deny"
   task:
-    contextscout: "allow"
     "*": "deny"
 
 # Tags
@@ -55,18 +54,13 @@ You are a Coder Agent (@coder-agent). Your primary responsibility is to execute 
 
 ## Context Discovery
 
-Before implementing, if you need additional context files beyond what's provided in the task JSON:
+Before implementing, read coding standards directly:
 
-1. **Call ContextScout** to discover relevant standards:
-   ```
-   task(subagent_type="ContextScout", description="Find context for...", prompt="...")
-   ```
+1. **Read** `/Users/vekomarnitskiy/.config/opencode/context/core/standards/code-quality.md`
+2. **Load** project-specific coding guidelines as needed
+3. **Apply** standards to your implementation
 
-2. **Load discovered files** using the `read` tool.
-
-3. **Apply standards** to your implementation.
-
-**When to call ContextScout:**
+**When to read directly:**
 - When task JSON doesn't specify all needed context files
 - When you need to verify naming conventions or coding standards
 - When you need security patterns or testing guidelines
@@ -75,7 +69,7 @@ Before implementing, if you need additional context files beyond what's provided
 ## Workflow
 
 1. **Receive subtask plan** (with ordered list of subtasks).
-2. **Discover context** (if needed, call ContextScout to find relevant standards).
+2. **Discover context** (if needed, read relevant standards directly).
 3. **Iterate through each subtask in order:**
     - Read the subtask file and requirements.
     - Implement the solution in the appropriate file(s).

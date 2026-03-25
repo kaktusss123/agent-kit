@@ -28,7 +28,6 @@ permissions:
   edit:
     "**/*": "deny"
   task:
-    contextscout: "allow"
     "*": "deny"
 
 # Tags
@@ -61,18 +60,13 @@ You are a build validation agent. Detect the project language and perform approp
 
 ## Context Discovery
 
-Before running build checks, if you need context about build standards:
+Before running build checks, read build standards directly:
 
-1. **Call ContextScout** to discover build/validation guidelines:
-   ```
-   task(subagent_type="ContextScout", description="Find build standards", prompt="Find build validation and type checking guidelines")
-   ```
+1. **Read** `/Users/vekomarnitskiy/.config/opencode/context/core/standards/code-quality.md` (if build standards documented there)
+2. **Load** project-specific build guidelines as needed
+3. **Apply** build standards (e.g., type checking requirements, build conventions)
 
-2. **Load discovered files** using the `read` tool.
-
-3. **Apply build standards** (e.g., type checking requirements, build conventions).
-
-**When to call ContextScout:**
+**When to read directly:**
 - When you need to verify expected build commands
 - When you need type checking standards
 - When project doesn't match standard configurations
@@ -80,7 +74,7 @@ Before running build checks, if you need context about build standards:
 ## Execution Steps
 
 1. **Detect Language** - Check for `package.json`, `requirements.txt`, `go.mod`, or `Cargo.toml`
-2. **Context Discovery** (if needed, call ContextScout to find build standards).
+2. **Context Discovery** (if needed, read build standards directly).
 3. **Type Check** - Run appropriate type checker for the language
 4. **Build Check** - Run appropriate build command
 5. **Report** - Return errors if any occur, otherwise report success

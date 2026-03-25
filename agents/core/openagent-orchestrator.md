@@ -48,7 +48,7 @@ permission:
     "rtk git merge-base*": allow
   task:
     "*": deny
-    "ContextScout": allow
+    "RepoScout": allow
     "feature-triager": allow
     "graph-impact-analyst": allow
     "design-planner": allow

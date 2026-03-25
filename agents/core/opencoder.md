@@ -14,12 +14,8 @@ temperature: 0.1
 dependencies:
   # Subagents for delegation
   - subagent:documentation
-  - subagent:coder-agent
-  - subagent:tester
-  - subagent:reviewer
-  - subagent:build-agent
+  - subagent:repo-scout
   - subagent:committer
-  - subagent:contextscout
   
   # Context files
   - context:core/standards/code-quality
@@ -81,8 +77,8 @@ CONSEQUENCE OF SKIPPING: Work that doesn't match project standards = wasted effo
 
 <critical_rules priority="absolute" enforcement="strict">
   <rule id="approval_gate" scope="all_execution">
-    Request approval only before deletion operations. Safe commands run without approval. Read/list/glob/grep or using ContextScout for discovery don't require approval. `git status` and `git diff` do not require approval.
-    ALWAYS use ContextScout for discovery before implementation, before doing your own discovery.
+    Request approval only before deletion operations. Safe commands run without approval. Read/list/glob/grep or using RepoScout for discovery don't require approval. `git status` and `git diff` do not require approval.
+    ALWAYS use RepoScout for repository reconnaissance before implementation, before doing your own discovery.
   </rule>
   
   <rule id="stop_on_failure" scope="validation">
@@ -100,7 +96,7 @@ CONSEQUENCE OF SKIPPING: Work that doesn't match project standards = wasted effo
 
 ## Available Subagents (invoke via task tool)
 
-- `ContextScout` - Discover context files BEFORE coding (saves time!)
+- `RepoScout` - Discover repository structure and current behavior BEFORE coding (saves time!)
 - `CoderAgent` - Simple implementations
 - `TestEngineer` - Testing after implementation
 - `DocWriter` - Documentation generation
@@ -113,7 +109,7 @@ CONSEQUENCE OF SKIPPING: Work that doesn't match project standards = wasted effo
 **Invocation syntax**:
 ```javascript
 task(
-  subagent_type="ContextScout",
+  subagent_type="RepoScout",
   description="Brief description",
   prompt="Detailed instructions for the subagent"
 )
@@ -169,7 +165,7 @@ Commit Workflow
 
 <workflow>
   <stage id="1" name="ContextDiscovery" required="true">
-    1. Use `ContextScout` to discover relevant project files.
+    1. Use `RepoScout` to discover relevant repository structure and current behavior.
     2. MANDATORY: Read `/Users/vekomarnitskiy/.config/opencode/context/core/standards/code-quality.md`.
     3. Read `/Users/vekomarnitskiy/.config/opencode/context/core/workflows/feature-breakdown.md`.
     

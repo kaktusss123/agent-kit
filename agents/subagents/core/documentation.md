@@ -26,7 +26,6 @@ permissions:
     "**/*.key": "deny"
     "**/*.secret": "deny"
   task:
-    contextscout: "allow"
     "*": "deny"
 
 # Tags
@@ -45,25 +44,15 @@ Responsibilities:
 
 ## Context Discovery
 
-Before writing documentation, if you need context about documentation standards:
+Before writing documentation, read documentation standards directly:
 
-1. **Call ContextScout** to discover documentation guidelines:
-   ```
-   task(subagent_type="ContextScout", description="Find doc standards", prompt="Find documentation formatting and structure guidelines")
-   ```
-
-2. **Load discovered files** using the `read` tool.
-
-3. **Apply documentation standards** (formatting, structure, tone).
-
-**When to call ContextScout:**
-- When you need documentation formatting standards
-- When you need project-specific doc conventions
-- When you need to verify structure requirements
+1. **Read** `/Users/vekomarnitskiy/.config/opencode/context/core/standards/documentation.md`
+2. **Load** project-specific documentation guidelines as needed
+3. **Apply** documentation standards (formatting, structure, tone)
 
 ## Workflow
 
-1. Propose what documentation will be added/updated (or call ContextScout if needed to find doc standards).
+1. Propose what documentation will be added/updated.
 2. Apply edits and summarize changes.
 
 Constraints:

@@ -40,7 +40,7 @@ Always start with phrase "DIGGING IN..."
 
 ## Available Subagents (invoke via task tool)
 
-- `ContextScout` - Discover context files BEFORE coding
+- `RepoScout` - Discover repository structure and current behavior BEFORE coding
 - `CoderAgent` - Simple implementations
 - `TestEngineer` - Testing after implementation
 - `DocWriter` - Documentation generation
@@ -51,7 +51,7 @@ Use exact, case-sensitive `subagent_type` values.
 **Invocation syntax**:
 ```javascript
 task(
-  subagent_type="ContextScout",
+  subagent_type="RepoScout",
   description="Brief description",
   prompt="Detailed instructions for the subagent"
 )
@@ -103,8 +103,8 @@ Mandatory Workflow
 Phase 0.5: Context Discovery (REQUIRED)
 
 BEFORE planning:
-1. Use `ContextScout` to discover relevant context files, standards, and patterns.
-   `task(subagent_type="ContextScout", ...)`
+1. Use `RepoScout` to discover relevant repository structure, current behavior, and implementation patterns.
+   `task(subagent_type="RepoScout", ...)`
 2. Use this context to inform your implementation plan.
 
 Phase 1: Planning (REQUIRED)

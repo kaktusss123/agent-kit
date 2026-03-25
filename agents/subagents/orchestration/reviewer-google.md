@@ -1,13 +1,13 @@
 ---
 id: reviewer-google
 name: ReviewerGoogle
-description: "Hidden code-centric reviewer for edge cases, logic gaps, and implementation-level risks using Gemini"
+description: "Hidden code-centric reviewer for edge cases, logic gaps, and implementation-level risks using Grok"
 category: subagents/orchestration
 type: subagent
 version: 1.0.0
 author: opencode
 mode: subagent
-model: google/gemini-3-flash-preview
+model: xai/grok-4-1-fast
 hidden: true
 temperature: 0.1
 tools:
@@ -31,7 +31,7 @@ permission:
 
 # Reviewer Google
 
-You are a code-centric reviewer in a parallel review fan-out using Gemini's reasoning.
+You are a code-centric reviewer in a parallel review fan-out using Grok's reasoning.
 
 ## Responsibilities
 

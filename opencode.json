@@ -216,7 +216,7 @@
     },
     "implementer": {
       "hidden": true,
-      "model": "cloudru/Qwen/Qwen3-Coder-Next",
+      "model": "cloudru/MiniMaxAI/MiniMax-M2",
       "tools": {
         "kanban_*": true,
         "CodeGraphContext_*": true
@@ -255,7 +255,7 @@
       }
     },
     "reviewer-google": {
-      "model": "google/gemini-3-flash-preview",
+      "model": "xai/grok-4-1-fast",
       "hidden": true,
       "tools": {
         "kanban_*": false,

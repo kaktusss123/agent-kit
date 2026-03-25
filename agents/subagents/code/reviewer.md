@@ -22,7 +22,6 @@ permissions:
   edit:
     "**/*": "deny"
   task:
-    contextscout: "allow"
     "*": "deny"
 
 # Tags
@@ -45,18 +44,14 @@ Responsibilities:
 
 ## Context Discovery
 
-Before reviewing, if you need context about code quality or security standards:
+Before reviewing, read review standards directly:
 
-1. **Call ContextScout** to discover review guidelines:
-   ```
-   task(subagent_type="ContextScout", description="Find review standards", prompt="Find code review, security, and quality patterns")
-   ```
+1. **Read** `/Users/vekomarnitskiy/.config/opencode/context/core/standards/code-quality.md`
+2. **Read** `/Users/vekomarnitskiy/.config/opencode/context/core/standards/security-patterns.md` if security review needed
+3. **Load** project-specific patterns as needed
+4. **Apply** review standards (code quality, security patterns, etc.)
 
-2. **Load discovered files** using the `read` tool.
-
-3. **Apply review standards** (code quality, security patterns, etc.).
-
-**When to call ContextScout:**
+**When to read directly:**
 - When you need code quality standards
 - When you need security patterns for vulnerability checks
 - When you need documentation or naming conventions
@@ -64,7 +59,7 @@ Before reviewing, if you need context about code quality or security standards:
 
 ## Workflow
 
-1. **ANALYZE** request and load relevant project context (or call ContextScout if needed).
+1. **ANALYZE** request and load relevant project context directly.
 2. Share a short review plan (files/concerns to inspect, including security aspects) and ask to proceed.
 3. Provide concise review notes with suggested diffs (do not apply changes), including any security concerns.
 
