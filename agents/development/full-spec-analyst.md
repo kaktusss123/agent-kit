@@ -7,7 +7,7 @@ type: agent
 version: 2.0.0
 author: opencode
 mode: primary
-model: openai/gpt-5.4
+model: anthropic/claude-opus-4-6
 temperature: 0.2
 dependencies:
   - subagent:repo-scout

@@ -6,7 +6,7 @@ category: core
 type: core
 version: 2.0.0
 author: opencode
-model: openai/gpt-5.4
+model: anthropic/claude-sonnet-4-6
 mode: primary
 temperature: 0.1
 dependencies:

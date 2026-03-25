@@ -192,6 +192,7 @@
     },
     "feature-triager": {
       "hidden": true,
+      "model": "github-copilot/gpt-5.4-mini",
       "tools": {
         "kanban_*": true,
         "CodeGraphContext_*": false
@@ -199,6 +200,7 @@
     },
     "graph-impact-analyst": {
       "hidden": true,
+      "model": "xai/grok-4-1-fast",
       "tools": {
         "CodeGraphContext_*": true,
         "kanban_*": true
@@ -206,6 +208,7 @@
     },
     "design-planner": {
       "hidden": true,
+      "model": "github-copilot/gpt-5.4-mini",
       "tools": {
         "kanban_*": true,
         "CodeGraphContext_*": false
@@ -213,6 +216,7 @@
     },
     "implementer": {
       "hidden": true,
+      "model": "cloudru/Qwen/Qwen3-Coder-Next",
       "tools": {
         "kanban_*": true,
         "CodeGraphContext_*": true
@@ -220,6 +224,7 @@
     },
     "verification-engineer": {
       "hidden": true,
+      "model": "github-copilot/gpt-5.4-mini",
       "tools": {
         "kanban_*": true,
         "CodeGraphContext_*": false
