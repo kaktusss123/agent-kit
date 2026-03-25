@@ -60,12 +60,12 @@
   "context_files": {
     "features/user-auth-context.md": {
       "created": "2025-01-18T14:30:22Z",
-      "for": "@TaskManager",
+      "for": "@Planner",
       "keywords": ["user-auth", "authentication", "features"]
     },
     "tasks/user-auth-tasks.md": {
       "created": "2025-01-18T14:32:15Z",
-      "for": "@TaskManager",
+      "for": "@Planner",
       "keywords": ["user-auth", "tasks", "breakdown"]
     }
   },
@@ -143,7 +143,7 @@ After task completion:
 # → Complex task, needs context file
 # → Create session: 20250118-143022-a4f2
 # → Create: .tmp/sessions/20250118-143022-a4f2/features/user-auth-context.md
-# → Delegate via task(subagent_type="TaskManager", ...)
+# → Delegate via task(subagent_type="PlannerAgent", ...)
 
 # User: "Implement login component"
 # → Same session, add context

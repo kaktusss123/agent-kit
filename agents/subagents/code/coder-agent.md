@@ -85,60 +85,15 @@ Before implementing, if you need additional context files beyond what's provided
 
 ---
 
-## JSON Task Integration
+## Delegated Task Integration
 
-When delegated a JSON-based task from TaskManager:
+When delegated an implementation task by a caller:
 
-### 1. Read Task JSON
-
-```
-Location: .tmp/tasks/{feature}/subtask_{seq}.json
-```
-
-Read the subtask JSON to understand:
-- `title` - What to implement
-- `acceptance_criteria` - What defines success
-- `deliverables` - Files/endpoints to create
-- `context_files` - Reference docs to load (lazy loading)
-
-### 2. Update Status to In Progress
-
-Update the subtask JSON file:
-```json
-{
-  "status": "in_progress",
-  "agent_id": "coder-agent",
-  "started_at": "2026-01-11T14:30:00Z"
-}
-```
-
-### 3. Load Context Files
-
-Read each file in `context_files` array for relevant patterns and standards.
-Only load what's needed (lazy loading).
-
-### 4. Implement Deliverables
-
-For each item in `deliverables`:
-- Create or modify the specified file
-- Follow acceptance criteria
-- Write tests if specified
-
-### 5. Add Completion Summary
-
-When finished, prepare a summary (max 200 characters):
-- What was created/modified
-- Key decisions made
-- Any notes for verification
-
-Example: "Created JWT service with RS256 signing, added unit tests"
-
-### 6. Signal Completion
-
-Report to orchestrator that task is ready for TaskManager verification:
-- Do NOT mark as `completed` yourself (TaskManager does this)
-- Include your completion summary
-- List deliverables created
+1. Read the provided task description and acceptance criteria.
+2. Load only the context files or references that are actually needed.
+3. Implement the requested deliverables.
+4. Prepare a short completion summary describing what changed.
+5. Report completion back to the calling agent with deliverables and notes for verification.
 
 ---
 

@@ -13,7 +13,6 @@ temperature: 0.2
 # Dependencies
 dependencies:
   # Subagents for delegation
-  - subagent:task-manager
   - subagent:documentation
   - subagent:contextscout
   - subagent:committer
@@ -123,7 +122,6 @@ CONSEQUENCE OF SKIPPING: Work that doesn't match project standards = wasted effo
 
 **Core Subagents**:
 - `ContextScout` - Discover context files BEFORE executing (saves time, avoids rework!)
-- `TaskManager` - Break down complex features (4+ files, >60min)
 - `DocWriter` - Generate comprehensive documentation
 - `GitCommitter` - Create one safe conventional git commit when the user explicitly asks
 
@@ -132,8 +130,7 @@ CONSEQUENCE OF SKIPPING: Work that doesn't match project standards = wasted effo
 - Direct that request to `openagent-orchestrator` or the `/agentic-workflow` command so legacy behavior stays separate.
 - If the user asks to shape requirements, challenge edge cases, or produce a handoff-ready spec before coding, direct that request to `fast-spec-analyst` for straightforward features or `full-spec-analyst` for complex/ambiguous features.
 
-Use exact, case-sensitive `subagent_type` values. For task breakdown use `TaskManager` only.
-Do not use `taskmanager` or `task-manager` in `task(...)` calls.
+Use exact, case-sensitive `subagent_type` values.
 
 **Invocation syntax**:
 ```javascript
@@ -342,28 +339,12 @@ task(
       </constraints>
     </route>
 
-    <route to="TaskManager" when="complex_feature_breakdown">
-      <trigger>Complex feature requiring task breakdown OR multi-step dependencies OR user requests task planning</trigger>
-      <context_bundle>
-        Create .tmp/sessions/{timestamp}-{task-slug}/context.md containing:
-        - Feature description and objectives
-        - Scope boundaries and out-of-scope items
-        - Technical requirements, constraints, and risks
-        - Relevant context file paths (standards/patterns relevant to feature)
-        - Expected deliverables and acceptance criteria
-      </context_bundle>
-      <delegation_prompt>
-        "Load context from .tmp/sessions/{timestamp}-{task-slug}/context.md.
-         If information is missing, respond with the Missing Information format and stop.
-         Otherwise, break down this feature into JSON subtasks and create .tmp/tasks/{feature}/task.json + subtask_NN.json files.
-         Mark isolated/parallel tasks with parallel: true so they can be delegated."
-      </delegation_prompt>
+    <route to="openagent-orchestrator" when="complex_feature_breakdown">
+      <trigger>Complex feature requiring task breakdown OR multi-step dependencies OR user requests structured planning</trigger>
+      <instruction>Do not emulate the removed TaskManager workflow. Direct the user to `openagent-orchestrator` or `/agentic-workflow` for gated planning and execution.</instruction>
       <expected_return>
-        - .tmp/tasks/{feature}/task.json
-        - .tmp/tasks/{feature}/subtask_01.json, subtask_02.json...
-        - Next suggested task to start with
-        - Parallel/isolated tasks clearly flagged
-        - If missing info: Missing Information block + suggested prompt
+        - user is redirected to the kanban-first workflow
+        - no `.tmp/tasks/**` artifacts are created
       </expected_return>
     </route>
   </specialized_routing>

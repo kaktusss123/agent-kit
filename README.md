@@ -506,8 +506,8 @@ The installer offers five pre-configured profiles:
 ### 🎯 Essential (Minimal - 9 components)
 Minimal starter kit - universal agent with core subagents.
 - **Agents**: openagent
-- **Subagents**: task-manager, documentation
-- **Commands**: context, clean
+- **Subagents**: documentation
+- **Commands**: clean
 - **Tools**: env
 - **Context**: essential-patterns, project-context
 - **Config**: env-example
@@ -526,8 +526,8 @@ Complete software development environment with code generation, testing, review,
 ### 📊 Business (15 components)
 Business process automation, content creation, and visual workflows.
 - **Agents**: openagent
-- **Subagents**: task-manager, documentation, image-specialist
-- **Commands**: context, clean, prompt-enhancer
+- **Subagents**: documentation, image-specialist
+- **Commands**: clean, prompt-enhancer
 - **Tools**: env, gemini (AI image generation)
 - **Plugins**: notify, telegram-notify
 - **Context**: essential-patterns, project-context

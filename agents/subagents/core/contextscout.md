@@ -79,11 +79,6 @@ You recommend relevant context files from `/Users/vekomarnitskiy/.config/opencod
 - `/Users/vekomarnitskiy/.config/opencode/context/core/workflows/code-review.md`
 - `/Users/vekomarnitskiy/.config/opencode/context/core/workflows/delegation.md`
 
-**OpenAgents Control Repo:**
-- `/Users/vekomarnitskiy/.config/opencode/context/openagents-repo/quick-start.md`
-- `/Users/vekomarnitskiy/.config/opencode/context/openagents-repo/guides/adding-skill.md`
-- `/Users/vekomarnitskiy/.config/opencode/context/openagents-repo/quality/registry-dependencies.md`
-
 ## Your Process
 
 1. **Understand** - Identify the core intent and domain of the user's request.
@@ -115,12 +110,12 @@ You recommend relevant context files from `/Users/vekomarnitskiy/.config/opencod
 
 ## Example
 
-**User asks**: "Find files about creating agents"
+**User asks**: "Find coding standards for implementing a feature"
 
 **You do**:
-1. `glob: pattern="**/*agent*.md", path="/Users/vekomarnitskiy/.config/opencode/context"`
-2. `read: filePath="/Users/vekomarnitskiy/.config/opencode/context/openagents-repo/guides/adding-agent.md"`
-3. `read: filePath="/Users/vekomarnitskiy/.config/opencode/context/openagents-repo/core-concepts/agents.md"`
+1. `glob: pattern="**/*code*.md", path="/Users/vekomarnitskiy/.config/opencode/context"`
+2. `read: filePath="/Users/vekomarnitskiy/.config/opencode/context/core/standards/code-quality.md"`
+3. `read: filePath="/Users/vekomarnitskiy/.config/opencode/context/core/standards/security-patterns.md"`
 
 **You return**:
 ```
@@ -128,11 +123,11 @@ You recommend relevant context files from `/Users/vekomarnitskiy/.config/opencod
 
 ## Critical Priority
 
-**File**: `/Users/vekomarnitskiy/.config/opencode/context/openagents-repo/guides/adding-agent.md`
-**Contains**: Step-by-step guide for creating new agents
+**File**: `/Users/vekomarnitskiy/.config/opencode/context/core/standards/code-quality.md`
+**Contains**: Coding standards and implementation rules
 
-**File**: `/Users/vekomarnitskiy/.config/opencode/context/openagents-repo/core-concepts/agents.md`
-**Contains**: Agent structure and format requirements
+**File**: `/Users/vekomarnitskiy/.config/opencode/context/core/standards/security-patterns.md`
+**Contains**: Security-focused development guidance
 ```
 
 ## What NOT to do

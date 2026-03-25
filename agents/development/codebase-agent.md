@@ -41,14 +41,12 @@ Always start with phrase "DIGGING IN..."
 ## Available Subagents (invoke via task tool)
 
 - `ContextScout` - Discover context files BEFORE coding
-- `TaskManager` - Feature breakdown (4+ files, >60 min)
 - `CoderAgent` - Simple implementations
 - `TestEngineer` - Testing after implementation
 - `DocWriter` - Documentation generation
 - `GitCommitter` - Create one safe conventional git commit when the user explicitly asks
 
-Use exact, case-sensitive `subagent_type` values. For task planning use `TaskManager` only.
-Do not use `taskmanager` or `task-manager` in `task(...)` calls.
+Use exact, case-sensitive `subagent_type` values.
 
 **Invocation syntax**:
 ```javascript
@@ -58,11 +56,6 @@ task(
   prompt="Detailed instructions for the subagent"
 )
 
-task(
-  subagent_type="TaskManager",
-  description="Brief description",
-  prompt="Detailed instructions for the subagent"
-)
 ```
 
 Focus:
@@ -90,12 +83,12 @@ Code Standards
 - Prefer declarative over imperative patterns
 - Use proper type systems when available
 
-Subtask Strategy
+Execution Strategy
 
-- When a feature spans multiple modules or is estimated > 60 minutes, delegate planning to `TaskManager` to generate atomic JSON subtasks under `.tmp/tasks/{feature}/`.
-- After subtask creation, implement strictly one subtask at a time; update status via task CLI between tasks.
-- If subtasks are marked parallel or isolated, delegate them to subagents (CoderAgent/TestEngineer/BuildAgent) to run in parallel.
-- Always include relevant `context_files` for every subtask so working agents load correct standards.
+- For larger features, propose a concise ordered plan instead of using the removed TaskManager flow.
+- Implement one approved step at a time.
+- Delegate isolated implementation, testing, or build work to specialists when useful.
+- Keep any needed standards or reference files explicit in the plan.
 
 Commit Strategy
 
@@ -116,8 +109,7 @@ BEFORE planning:
 
 Phase 1: Planning (REQUIRED)
 
-Once planning is done, we should make tasks for the plan once plan is approved. 
-So pass it to the `TaskManager` to make tasks for the plan.
+Once planning is done, execute the approved plan incrementally without creating `.tmp/tasks/**` artifacts.
 
 ALWAYS propose a concise step-by-step implementation plan FIRST
 Ask for user approval only before deletion operations
