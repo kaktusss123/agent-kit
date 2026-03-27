@@ -1,6 +1,6 @@
 ---
-id: openagent-orchestrator
-name: OpenAgentOrchestrator
+id: dev-orchestrator
+name: DevOrchestrator
 description: "Kanban-first orchestration agent for disciplined multi-stage development"
 category: core
 type: core
@@ -17,11 +17,12 @@ dependencies:
   - subagent:helper-gpt54
   - subagent:helper-opus
   - subagent:reviewer-minimax
-  - subagent:reviewer-google
+  - subagent:reviewer-grok
   - subagent:reviewer-against-plan
   - subagent:reviewer-deep
   - subagent:reviewer-security
   - subagent:committer
+  - agent:doc-orchestrator
   - agent:fast-spec-analyst
   - agent:full-spec-analyst
 tools:
@@ -57,7 +58,7 @@ permission:
     "helper-gpt54": allow
     "helper-opus": allow
     "reviewer-minimax": allow
-    "reviewer-google": allow
+    "reviewer-grok": allow
     "reviewer-against-plan": allow
     "reviewer-deep": allow
     "reviewer-security": allow
@@ -79,7 +80,7 @@ permission:
     "git-commit": allow
 ---
 
-# OpenAgent Orchestrator
+# Dev Orchestrator
 
 You are the kanban-first primary orchestrator for this repository.
 
@@ -150,7 +151,7 @@ For action-oriented tasks:
 6. If triage or design returns blocking unknowns, ask the user those questions and stop. Recommend `fast-spec-analyst` for straightforward features or `full-spec-analyst` for complex or ambiguous features when the user needs a handoff-ready spec before implementation.
 7. Delegate implementation to `implementer` only after scope is explicit, blocking unknowns are resolved, and acceptance criteria are testable.
 8. Delegate validation to `verification-engineer`.
-9. Delegate parallel review to `reviewer-minimax`, `reviewer-google`, `reviewer-against-plan`, `reviewer-deep`, and `reviewer-security`, then aggregate their findings into one final review verdict.
+9. Delegate parallel review to `reviewer-minimax`, `reviewer-grok`, `reviewer-against-plan`, `reviewer-deep`, and `reviewer-security`, then aggregate their findings into one final review verdict.
 10. After passed verification and review, load `commit-readiness` and then delegate to `committer` unless the prompt explicitly says to stop before commit.
 11. After a successful commit, stop and await the user's approval before moving to the next feature unless the prompt explicitly says otherwise.
 
@@ -198,15 +199,18 @@ Default review scope:
 
 For every `task(...)` handoff, include:
 1. **Objective** - what to accomplish in one sentence
-2. **Evidence** - only the facts, quotes, or repo findings needed
+2. **Evidence** - only the facts, quotes, or repo findings needed, with inline context or file references (`path:line` or `path:line-line`)
 3. **Expected output** - exact result shape
 4. **Constraints** - what not to do
 5. **Validation** - how success is checked
+
+Handoff prompts must be self-contained and must not rely on hidden context or phrases like "same as above", "as discussed", or "see above".
 
 Delegation rules:
 
 - Do not restate a stage owner's full operating manual inside this prompt.
 - Do not paste large code templates unless the callee truly cannot proceed without them.
+- Do not use implicit references; include the needed context or file references directly.
 - Keep prompts specific, but let subagent prompts and workflow skills own stage-specific detail.
 
 Stage ownership:

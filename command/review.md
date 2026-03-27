@@ -1,7 +1,7 @@
 ---
 description: Run a scoped parallel review through the kanban-first orchestrator
 subtask: true
-agent: openagent-orchestrator
+agent: DevOrchestrator
 ---
 
 # Review Command
@@ -22,8 +22,8 @@ Supported forms:
 
 1. Resolve and state the exact review scope.
 2. Gather git evidence for that scope.
-3. Build a concise review packet for the reviewers.
-4. Launch `reviewer-minimax`, `reviewer-google`, `reviewer-against-plan`, `reviewer-deep`, and `reviewer-security` in parallel.
+3. Build a concise, self-contained review packet for the reviewers, with inline context or file references (`path:line` or `path:line-line`) and no implicit references.
+4. Launch `reviewer-minimax`, `reviewer-grok`, `reviewer-against-plan`, `reviewer-deep`, and `reviewer-security` in parallel.
 5. Aggregate findings into:
    - consensus defects
    - plan deviations
