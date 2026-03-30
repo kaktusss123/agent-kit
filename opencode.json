@@ -79,7 +79,7 @@
       "implementer": "deny",
       "verification-engineer": "deny",
       "reviewer-minimax": "deny",
-      "reviewer-google": "deny",
+      "reviewer-grok": "deny",
       "reviewer-against-plan": "deny",
       "reviewer-deep": "deny",
       "reviewer-security": "deny"
@@ -95,38 +95,13 @@
       "verification-gate": "deny",
       "review-against-plan": "deny",
       "commit-readiness": "deny",
-      "decision-log": "deny"
+      "decision-log": "deny",
     },
     "external_directory": {
       "~/.config/opencode/*": "allow"
     }
   },
-  "plugin": ["opencode-antigravity-auth@latest"],
   "provider": {
-    "google": {
-      "models": {
-        "antigravity-claude-opus-4-6-thinking": {
-          "name": "Claude Opus 4.6 Thinking (Antigravity)",
-          "limit": { "context": 200000, "output": 64000 },
-          "modalities": {
-            "input": ["text", "image", "pdf"],
-            "output": ["text"]
-          }
-        },
-        "antigravity-claude-sonnet-4-6-thinking": {
-          "name": "Claude Sonnet 4.6 Thinking (Antigravity)",
-          "limit": { "context": 200000, "output": 64000 },
-          "modalities": {
-            "input": ["text", "image", "pdf"],
-            "output": ["text"]
-          }
-        },
-        "antigravity-gemini-3-pro": {
-          "name": "Gemini 3 Pro (Antigravity)",
-          "limit": { "context": 1048576, "output": 65535 }
-        }
-      }
-    },
     "cloudru": {
       "npm": "@ai-sdk/openai-compatible",
       "name": "CloudRu Foundation Models",
@@ -188,11 +163,11 @@
   },
   "agent": {
     "explore": {
-      "model": "cloudru/MiniMaxAI/MiniMax-M2"
+      "model": "xai/grok-4-1-fast"
     },
     "feature-triager": {
       "hidden": true,
-      "model": "github-copilot/gpt-5.4-mini",
+      "model": "anthropic/claude-sonnet-4-6",
       "tools": {
         "kanban_*": true,
         "CodeGraphContext_*": false
@@ -208,7 +183,7 @@
     },
     "design-planner": {
       "hidden": true,
-      "model": "github-copilot/gpt-5.4-mini",
+      "model": "anthropic/claude-sonnet-4-6",
       "tools": {
         "kanban_*": true,
         "CodeGraphContext_*": false
@@ -216,7 +191,7 @@
     },
     "implementer": {
       "hidden": true,
-      "model": "cloudru/MiniMaxAI/MiniMax-M2",
+      "model": "github-copilot/gpt-5.4-mini",
       "tools": {
         "kanban_*": true,
         "CodeGraphContext_*": true
@@ -247,14 +222,14 @@
       }
     },
     "reviewer-minimax": {
-      "model": "cloudru/MiniMaxAI/MiniMax-M2",
+      "model": "opencode/minimax-m2.5-free",
       "hidden": true,
       "tools": {
         "kanban_*": false,
         "CodeGraphContext_*": false
       }
     },
-    "reviewer-google": {
+    "reviewer-grok": {
       "model": "xai/grok-4-1-fast",
       "hidden": true,
       "tools": {
@@ -263,7 +238,7 @@
       }
     },
     "reviewer-against-plan": {
-      "model": "cloudru/MiniMaxAI/MiniMax-M2",
+      "model": "opencode/minimax-m2.5-free",
       "hidden": true,
       "tools": {
         "kanban_*": false,
