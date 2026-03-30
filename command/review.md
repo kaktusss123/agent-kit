@@ -23,6 +23,10 @@ Supported forms:
 1. Resolve and state the exact review scope.
 2. Gather git evidence for that scope.
 3. Build a concise, self-contained review packet for the reviewers, with inline context or file references (`path:line` or `path:line-line`) and no implicit references.
+   - Include explicit `Objective`, `Evidence`, `Expected output`, `Constraints`, and `Validation` sections.
+   - Include explicit scope in the same packet (exact files/commit/diff target).
+   - Do not use relative-only phrases like "same as above", "unchanged", or "as discussed" without full restatement in the same packet.
+   - Do not use ambiguous path shorthands like `templates/01..13`; use explicit file lists or clear rooted glob patterns.
 4. Launch `reviewer-minimax`, `reviewer-grok`, `reviewer-against-plan`, `reviewer-deep`, and `reviewer-security` in parallel.
 5. Aggregate findings into:
    - consensus defects

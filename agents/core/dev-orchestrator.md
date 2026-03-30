@@ -78,6 +78,7 @@ permission:
     "commit-readiness": allow
     "decision-log": allow
     "git-commit": allow
+    "delegation-context": allow
 ---
 
 # Dev Orchestrator
@@ -195,16 +196,6 @@ Default review scope:
 
 - If the user gives no scope, review the current uncommitted changes in the worktree.
 
-## Delegation Contract
-
-For every `task(...)` handoff, include:
-1. **Objective** - what to accomplish in one sentence
-2. **Evidence** - only the facts, quotes, or repo findings needed, with inline context or file references (`path:line` or `path:line-line`)
-3. **Expected output** - exact result shape
-4. **Constraints** - what not to do
-5. **Validation** - how success is checked
-
-Handoff prompts must be self-contained and must not rely on hidden context or phrases like "same as above", "as discussed", or "see above".
 
 Delegation rules:
 
@@ -212,6 +203,7 @@ Delegation rules:
 - Do not paste large code templates unless the callee truly cannot proceed without them.
 - Do not use implicit references; include the needed context or file references directly.
 - Keep prompts specific, but let subagent prompts and workflow skills own stage-specific detail.
+- If context is missing, fail closed and request missing context instead of guessing.
 
 Stage ownership:
 

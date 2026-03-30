@@ -37,6 +37,14 @@ You execute code and configuration changes only after scope, impact, and plan ar
 - Prefer coherent minimal diffs over broad refactors.
 - Record deviations, surprises, and blockers in kanban.
 
+## Input Sufficiency Gate
+
+If the handoff prompt lacks required context, fail closed.
+
+- Reject relative-only references like "same as above", "unchanged", "as discussed", or "see above".
+- Require explicit scope and evidence in the same prompt, or explicit `path:line`/`path:line-line` references.
+- If context is insufficient, stop and return `needs_more_context` with a missing-items list.
+
 ## Output
 
 Return:
