@@ -95,13 +95,31 @@
       "verification-gate": "deny",
       "review-against-plan": "deny",
       "commit-readiness": "deny",
-      "decision-log": "deny",
+      "decision-log": "deny"
     },
     "external_directory": {
-      "~/.config/opencode/*": "allow"
+      "~/.config/opencode/*": "allow",
+      "/tmp/*": "allow"
     }
   },
   "provider": {
+    "fireworks": {
+      "npm": "@ai-sdk/openai-compatible",
+      "name": "Fireworks AI",
+      "options": {
+        "baseURL": "https://api.fireworks.ai/inference/v1",
+        "apiKey": "fw_9oqpDctgSMzyZxLMLbCJbw"
+      },
+      "models": {
+        "accounts/fireworks/routers/kimi-k2p5-turbo": {
+          "name": "Kimi K2.5 Turbo (Fireworks)",
+          "limit": {
+            "context": 262000,
+            "output": 131072
+          }
+        }
+      }
+    },
     "cloudru": {
       "npm": "@ai-sdk/openai-compatible",
       "name": "CloudRu Foundation Models",
@@ -162,9 +180,6 @@
     }
   },
   "agent": {
-    "explore": {
-      "model": "xai/grok-4-1-fast"
-    },
     "feature-triager": {
       "hidden": true,
       "model": "anthropic/claude-sonnet-4-6",
@@ -175,7 +190,7 @@
     },
     "graph-impact-analyst": {
       "hidden": true,
-      "model": "xai/grok-4-1-fast",
+      "model": "fireworks/accounts/fireworks/routers/kimi-k2p5-turbo",
       "tools": {
         "CodeGraphContext_*": true,
         "kanban_*": true
@@ -191,7 +206,7 @@
     },
     "implementer": {
       "hidden": true,
-      "model": "github-copilot/gpt-5.4-mini",
+      "model": "fireworks/accounts/fireworks/routers/kimi-k2p5-turbo",
       "tools": {
         "kanban_*": true,
         "CodeGraphContext_*": true
@@ -199,7 +214,7 @@
     },
     "verification-engineer": {
       "hidden": true,
-      "model": "github-copilot/gpt-5.4-mini",
+      "model": "fireworks/accounts/fireworks/routers/kimi-k2p5-turbo",
       "tools": {
         "kanban_*": true,
         "CodeGraphContext_*": false
@@ -230,7 +245,7 @@
       }
     },
     "reviewer-grok": {
-      "model": "xai/grok-4-1-fast",
+      "model": "opencode/qwen3.6-plus-free",
       "hidden": true,
       "tools": {
         "kanban_*": false,
