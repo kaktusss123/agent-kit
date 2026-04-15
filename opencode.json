@@ -202,7 +202,7 @@
     },
     "graph-impact-analyst": {
       "hidden": true,
-      "model": "opencode/minimax-m2.5-free",
+      "model": "opencode-go/minimax-m2.7",
       "tools": {
         "CodeGraphContext_*": true,
         "kanban_*": true
@@ -218,7 +218,7 @@
     },
     "edge-case-harvester": {
       "hidden": true,
-      "model": "opencode/minimax-m2.5-free",
+      "model": "opencode-go/minimax-m2.7",
       "tools": {
         "kanban_*": false,
         "CodeGraphContext_*": false
@@ -234,7 +234,7 @@
     },
     "non-functional-prober": {
       "hidden": true,
-      "model": "opencode/minimax-m2.5-free",
+      "model": "opencode-go/kimi-k2.5",
       "tools": {
         "kanban_*": false,
         "CodeGraphContext_*": false
@@ -250,7 +250,7 @@
     },
     "implementer": {
       "hidden": true,
-      "model": "opencode/minimax-m2.5-free",
+      "model": "opencode-go/kimi-k2.5",
       "tools": {
         "kanban_*": true,
         "CodeGraphContext_*": true
@@ -258,7 +258,7 @@
     },
     "verification-engineer": {
       "hidden": true,
-      "model": "opencode/minimax-m2.5-free",
+      "model": "opencode-go/minimax-m2.7",
       "tools": {
         "kanban_*": true,
         "CodeGraphContext_*": false
@@ -281,7 +281,7 @@
       }
     },
     "reviewer-minimax": {
-      "model": "opencode/minimax-m2.5-free",
+      "model": "opencode-go/minimax-m2.7",
       "hidden": true,
       "tools": {
         "kanban_*": false,
@@ -289,7 +289,7 @@
       }
     },
     "reviewer-grok": {
-      "model": "opencode/nemotron-3-super-free",
+      "model": "opencode-go/kimi-k2.5",
       "hidden": true,
       "tools": {
         "kanban_*": false,
@@ -297,7 +297,7 @@
       }
     },
     "reviewer-against-plan": {
-      "model": "opencode/minimax-m2.5-free",
+      "model": "opencode-go/minimax-m2.7",
       "hidden": true,
       "tools": {
         "kanban_*": false,
