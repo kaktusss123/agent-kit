@@ -1,5 +1,6 @@
 {
   "$schema": "https://opencode.ai/config.json",
+  "plugin": ["@slkiser/opencode-quota", "@warp-dot-dev/opencode-warp"],
   "mcp": {
     "CodeGraphContext": {
       "type": "local",
@@ -180,9 +181,20 @@
     }
   },
   "agent": {
+    "explore": {
+      "disable": true
+    },
+    "repo-scout": {
+      "hidden": true,
+      "model": "xai/grok-4-1-fast",
+      "tools": {
+        "kanban_*": false,
+        "CodeGraphContext_*": true
+      }
+    },
     "feature-triager": {
       "hidden": true,
-      "model": "anthropic/claude-sonnet-4-6",
+      "model": "github-copilot/claude-sonnet-4.6",
       "tools": {
         "kanban_*": true,
         "CodeGraphContext_*": false
@@ -190,7 +202,7 @@
     },
     "graph-impact-analyst": {
       "hidden": true,
-      "model": "fireworks/accounts/fireworks/routers/kimi-k2p5-turbo",
+      "model": "opencode/minimax-m2.5-free",
       "tools": {
         "CodeGraphContext_*": true,
         "kanban_*": true
@@ -198,15 +210,47 @@
     },
     "design-planner": {
       "hidden": true,
-      "model": "anthropic/claude-sonnet-4-6",
+      "model": "github-copilot/claude-sonnet-4.6",
       "tools": {
         "kanban_*": true,
         "CodeGraphContext_*": false
       }
     },
+    "edge-case-harvester": {
+      "hidden": true,
+      "model": "opencode/minimax-m2.5-free",
+      "tools": {
+        "kanban_*": false,
+        "CodeGraphContext_*": false
+      }
+    },
+    "contract-impact-auditor": {
+      "hidden": true,
+      "model": "github-copilot/claude-sonnet-4.6",
+      "tools": {
+        "kanban_*": false,
+        "CodeGraphContext_*": false
+      }
+    },
+    "non-functional-prober": {
+      "hidden": true,
+      "model": "opencode/minimax-m2.5-free",
+      "tools": {
+        "kanban_*": false,
+        "CodeGraphContext_*": false
+      }
+    },
+    "traceability-checker": {
+      "hidden": true,
+      "model": "github-copilot/claude-sonnet-4.6",
+      "tools": {
+        "kanban_*": false,
+        "CodeGraphContext_*": false
+      }
+    },
     "implementer": {
       "hidden": true,
-      "model": "fireworks/accounts/fireworks/routers/kimi-k2p5-turbo",
+      "model": "opencode/minimax-m2.5-free",
       "tools": {
         "kanban_*": true,
         "CodeGraphContext_*": true
@@ -214,7 +258,7 @@
     },
     "verification-engineer": {
       "hidden": true,
-      "model": "fireworks/accounts/fireworks/routers/kimi-k2p5-turbo",
+      "model": "opencode/minimax-m2.5-free",
       "tools": {
         "kanban_*": true,
         "CodeGraphContext_*": false
@@ -229,7 +273,7 @@
       }
     },
     "helper-opus": {
-      "model": "anthropic/claude-opus-4-6",
+      "model": "github-copilot/claude-opus-4.6",
       "hidden": true,
       "tools": {
         "kanban_*": false,
@@ -245,7 +289,7 @@
       }
     },
     "reviewer-grok": {
-      "model": "opencode/qwen3.6-plus-free",
+      "model": "opencode/nemotron-3-super-free",
       "hidden": true,
       "tools": {
         "kanban_*": false,
@@ -261,7 +305,7 @@
       }
     },
     "reviewer-deep": {
-      "model": "anthropic/claude-opus-4-6",
+      "model": "github-copilot/claude-opus-4.6",
       "hidden": true,
       "tools": {
         "kanban_*": false,
@@ -269,7 +313,7 @@
       }
     },
     "reviewer-security": {
-      "model": "anthropic/claude-opus-4-6",
+      "model": "github-copilot/claude-opus-4.6",
       "hidden": true,
       "tools": {
         "kanban_*": false,

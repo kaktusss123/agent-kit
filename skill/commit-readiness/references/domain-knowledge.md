@@ -2,9 +2,8 @@
 
 ## Preconditions
 
-- Kanban task is ready or done
-- Verification passed
-- Review passed
+- Kanban task is in an implementation or fix stage
+- Commit authority exists for the current implementation pass
 - No unresolved blockers
 - Working tree matches intended task scope
 
@@ -12,4 +11,4 @@
 
 - Ready or not ready
 - Suggested commit type
-- Short rationale and verification note for handoff
+- Short rationale and next-gate note for handoff

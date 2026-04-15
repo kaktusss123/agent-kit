@@ -1,8 +1,8 @@
 ---
 name: workflow-gates
 description: >
-  Enforce triage, impact analysis, design, implementation, verification, review,
-  and commit gates for non-trivial engineering work.
+  Enforce triage, impact analysis, design, implementation, per-pass commit,
+  verification, and review gates for non-trivial engineering work.
 ---
 
 # Workflow Gates
@@ -28,7 +28,7 @@ Use this skill to stop agents from jumping straight into code.
 Decide whether the task is trivial, direct, design-first, or approval-sensitive.
 
 1. **Assess scope** - Estimate impact, file spread, public surface risk, and unknowns.
-2. **Select gates** - Mark whether triage, impact, design, verify, review, and commit-readiness are required.
+2. **Select gates** - Mark whether triage, impact, design, implement, per-pass commit, verify, and review are required.
 
 **Verification:** Every non-trivial task has an explicit next gate before code changes begin.
 
@@ -37,7 +37,8 @@ Decide whether the task is trivial, direct, design-first, or approval-sensitive.
 Drive the task through the chosen gates without skipping required stages.
 
 1. **Block early coding** - Do not allow implementation before required analysis and planning complete.
-2. **Block premature commit** - Do not allow commit until verification and review both pass.
+2. **Require per-pass commit** - When `implementer` changes files, require a commit before verification or review.
+3. **Repeat the fix loop** - If verification or review require code changes, return to `implementer` and repeat implement -> commit before re-running the gates.
 
 **Verification:** The current stage, satisfied gates, and next stage are all visible in kanban.
 
@@ -46,7 +47,8 @@ Drive the task through the chosen gates without skipping required stages.
 | Avoid | Why | Instead |
 |-------|-----|---------|
 | Coding before impact analysis | Hides radius of change | Run triage and impact first |
-| Treating review as optional | Lets scope creep through | Require review before commit |
+| Treating review as optional | Lets scope creep through | Require review after each implementation commit |
+| Delaying commit until review | Breaks checkpoint discipline | Commit immediately after each changed implementation pass |
 
 ## Verification
 

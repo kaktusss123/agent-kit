@@ -1,13 +1,13 @@
 ---
 name: commit-readiness
 description: >
-  Confirm that kanban state, verification, review, blockers, and commit scope
-  are ready before delegating to the commit agent.
+  Confirm that kanban state, current stage, blockers, and commit scope are ready
+  before delegating to the commit agent.
 ---
 
 # Commit Readiness
 
-Use this skill immediately before any requested commit.
+Use this skill immediately before any orchestrator-driven commit.
 
 ## Triggers
 
@@ -19,25 +19,25 @@ Use this skill immediately before any requested commit.
 
 | Input | Output | Duration |
 |-------|--------|----------|
-| Kanban state + verification + review + worktree | Ready or not ready result | Short |
+| Kanban state + current stage + worktree | Ready or not ready result | Short |
 
 ## Process
 
-### Phase 1: Check Workflow Completion
+### Phase 1: Check Stage Readiness
 
-Confirm all required gates have completed successfully.
+Confirm the current workflow stage allows a safe commit.
 
-1. **Check kanban state** - Ensure the task is at a ready or done stage with no unresolved blockers.
-2. **Check evidence** - Ensure verification and review both exist and passed.
+1. **Check kanban state** - Ensure the task is in an implementation or fix stage with no unresolved blockers that would invalidate the commit.
+2. **Check authority** - Ensure the orchestrator is allowed to create a commit for this implementation pass.
 
-**Verification:** Missing gates are named explicitly.
+**Verification:** Missing stage requirements are named explicitly.
 
 ### Phase 2: Check Commit Scope
 
 Make sure the working tree is coherent for one safe commit.
 
 1. **Inspect scope** - Confirm the staged or intended changes match the task boundary.
-2. **Prepare handoff notes** - Suggest commit type, rationale, and verification summary for the commit agent.
+2. **Prepare handoff notes** - Suggest commit type, rationale, implementation-pass summary, and the next gate for the commit agent.
 
 **Verification:** The result is either ready with scope notes or blocked with exact gaps.
 
@@ -45,7 +45,7 @@ Make sure the working tree is coherent for one safe commit.
 
 | Avoid | Why | Instead |
 |-------|-----|---------|
-| Committing with failed or missing gates | Breaks workflow discipline | Refuse and explain missing evidence |
+| Delaying a changed implementation pass until after verification or review | Breaks the orchestrator loop | Commit immediately after `implementer` finishes |
 | Mixing unrelated changes | Weakens traceability | Keep commit scope coherent |
 
 ## Verification
@@ -53,7 +53,7 @@ Make sure the working tree is coherent for one safe commit.
 After execution:
 
 - [ ] Kanban readiness is confirmed.
-- [ ] Verification and review status are confirmed.
+- [ ] The current stage allows a commit.
 - [ ] Commit scope is coherent or explicitly blocked.
 
 ## References
