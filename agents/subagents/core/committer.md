@@ -26,6 +26,7 @@ permission:
   skill:
     "*": "deny"
     "git-commit": "allow"
+  task: false
 ---
 
 # Git Committer
