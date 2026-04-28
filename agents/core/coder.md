@@ -32,6 +32,7 @@ tools:
   bash: true
   patch: true
 permissions:
+  task: deny
   bash:
     "rm -rf *": "ask"
     "sudo *": "deny"

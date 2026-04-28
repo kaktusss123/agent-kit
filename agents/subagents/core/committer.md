@@ -5,6 +5,7 @@ description: "Creates one safe git commit with a conventional message and pre-co
 mode: subagent
 model: xai/grok-4-1-fast
 permission:
+  task: deny
   bash:
     "*": "deny"
     "git status*": "allow"
@@ -26,7 +27,6 @@ permission:
   skill:
     "*": "deny"
     "git-commit": "allow"
-  task: false
 ---
 
 # Git Committer

@@ -18,6 +18,7 @@ tools:
   patch: false
 permission:
   edit: deny
+  task: deny
   bash:
     "*": deny
     "rtk git status*": allow

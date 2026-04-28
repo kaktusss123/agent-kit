@@ -42,7 +42,7 @@
       "command": ["uvx", "mcp-atlassian", "--transport", "stdio", "-vv"],
       "environment": {
         "CONFLUENCE_URL": "https://wiki.cloud.ru",
-        "CONFLUENCE_PERSONAL_TOKEN": "MDc1MzM3NzY2NTMwOocmRSBh9kwxTNajQ2dHvtWtlQjM",
+        "CONFLUENCE_PERSONAL_TOKEN": "ODE1MjIzMzI3OTg2Ok0BSb/2qwvWTfrHOXAFVlclOlPN",
         "JIRA_URL": "https://jira.cloud.ru",
         "JIRA_PERSONAL_TOKEN": "ODUzODQ0MzI3MDE4OjT5R81cNrBhrAyoslgJotFaxyyg",
         "CONFLUENCE_SPACES_FILTER": "OCP",
@@ -234,7 +234,7 @@
     },
     "non-functional-prober": {
       "hidden": true,
-      "model": "opencode-go/kimi-k2.5",
+      "model": "opencode-go/kimi-k2.6",
       "tools": {
         "kanban_*": false,
         "CodeGraphContext_*": false
@@ -250,7 +250,7 @@
     },
     "implementer": {
       "hidden": true,
-      "model": "opencode-go/kimi-k2.5",
+      "model": "opencode-go/minimax-m2.7",
       "tools": {
         "kanban_*": true,
         "CodeGraphContext_*": true
@@ -273,7 +273,7 @@
       }
     },
     "helper-opus": {
-      "model": "github-copilot/claude-opus-4.6",
+      "model": "opencode-go/kimi-k2.6",
       "hidden": true,
       "tools": {
         "kanban_*": false,
@@ -289,7 +289,7 @@
       }
     },
     "reviewer-grok": {
-      "model": "opencode-go/kimi-k2.5",
+      "model": "opencode-go/kimi-k2.6",
       "hidden": true,
       "tools": {
         "kanban_*": false,
@@ -305,7 +305,7 @@
       }
     },
     "reviewer-deep": {
-      "model": "github-copilot/claude-opus-4.6",
+      "model": "opencode-go/qwen3.6-plus",
       "hidden": true,
       "tools": {
         "kanban_*": false,
@@ -313,7 +313,7 @@
       }
     },
     "reviewer-security": {
-      "model": "github-copilot/claude-opus-4.6",
+      "model": "github-copilot/gpt-5.4",
       "hidden": true,
       "tools": {
         "kanban_*": false,
