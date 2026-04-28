@@ -1,110 +1,18 @@
 # Canonical pyproject.toml Configuration
 
-Copy-paste template for new projects. Explanations for each setting.
+Copy-paste templates for new projects. Version numbers below are the range this skill was tested against, not a strict requirement.
 
 ---
 
-## Full [tool.pytest.ini_options]
+## Versioning Note
 
-```toml
-[tool.pytest.ini_options]
-# Test discovery
-testpaths = ["tests"]
-pythonpath = ["."]
+**The versions in this reference are what the skill was tested with. They are NOT rules.** Different projects may use different versions. The only hard requirement is the set of packages themselves (pytest, pytest-asyncio, faker, etc.) and the ruff/flake8-pytest-style configuration.
 
-# Async support — preferred: auto mode (no @pytest.mark.asyncio needed)
-asyncio_mode = "auto"
-asyncio_default_fixture_loop_scope = "function"
-
-# Warnings
-filterwarnings = [
-    "ignore:datetime.datetime.utcnow\\(\\) is deprecated:DeprecationWarning",
-]
-```
+When adopting this skill, check your project's existing versions. Update the skill's tested range if your project uses a newer major version successfully.
 
 ---
 
-## Full Dev Dependencies
-
-```toml
-[dependency-groups]
-dev = [
-    # ============================================================
-    # Core pytest + plugins
-    # ============================================================
-    "pytest>=8.4,<10",
-    "pytest-asyncio>=0.24,<1",
-    "pytest-cov>=6.0,<9",
-    "pytest-mock>=3.15,<5",         # Only if using mocker fixture
-
-    # ============================================================
-    # Quality (non-optional)
-    # ============================================================
-    "pytest-deadfixtures>=2.2,<3",   # Detect unused fixtures
-    "pytest-randomly>=3.15,<4",      # Random test order
-    "pytest-xdist>=3.6,<4",          # Parallel execution (-n auto)
-    "pytest-sugar>=1.0,<2",          # Better output formatting
-
-    # ============================================================
-    # Test data generation (non-optional)
-    # ============================================================
-    "faker>=30,<40",
-    "polyfactory>=2.16,<3",          # Optional: Pydantic model factories
-    "freezegun>=1.5,<2",             # Optional: freeze time in tests
-
-    # ============================================================
-    # Integration testing (optional)
-    # ============================================================
-    "testcontainers>=4.0,<5",        # Real DB containers
-    "pytest-alembic>=0.11,<1",       # Migration tests
-    "pytest-async-sqlalchemy>=0.2,<1", # Async SQLAlchemy tests
-
-    # ============================================================
-    # Fuzzing (optional)
-    # ============================================================
-    "hypothesis>=6.150,<7",
-
-    # ============================================================
-    # Architecture testing (planned adoption)
-    # ============================================================
-    "pytestarch>=3.1,<4",
-
-    # ============================================================
-    # Linting (non-optional)
-    # ============================================================
-    "ruff>=0.5,<1",
-    "flake8-pytest-style>=2.0,<3",
-]
-```
-
----
-
-## Full ruff Configuration for Tests
-
-```toml
-[tool.ruff.lint]
-select = [
-    "PT",      # flake8-pytest-style
-    "S101",    # assert usage (suppressed in tests/)
-]
-
-[tool.ruff.lint.flake8-pytest-style]
-pytest-fixture-no-parentheses = true
-pytest-mark-no-parentheses = true
-pytest-parametrize-names-type = "csv"
-
-[tool.ruff.lint.per-file-ignores]
-"tests/**/*.py" = [
-    "S101",    # assert is expected in tests
-    "SLF001",  # Private member access allowed in tests
-]
-```
-
----
-
-## Minimal New Project Config
-
-For a brand new project, the minimum viable pyproject.toml test section:
+## Minimum Viable New Project
 
 ```toml
 [project]
@@ -113,15 +21,22 @@ requires-python = ">=3.11"
 
 [dependency-groups]
 dev = [
-    "pytest>=8.4,<10",
+    # Core (required)
+    "pytest>=8,<10",
     "pytest-asyncio>=0.24,<1",
-    "pytest-cov>=6.0,<9",
-    "pytest-deadfixtures>=2.2,<3",
-    "pytest-randomly>=3.15,<4",
-    "pytest-xdist>=3.6,<4",
-    "faker>=30,<40",
+    "pytest-cov>=6,<10",
+
+    # Quality (required)
+    "pytest-deadfixtures>=2,<3",
+    "pytest-randomly>=3,<4",
+    "pytest-xdist>=3,<4",
+
+    # Test data (required)
+    "faker>=25,<40",
+
+    # Linting (required)
     "ruff>=0.5,<1",
-    "flake8-pytest-style>=2.0,<3",
+    "flake8-pytest-style>=2,<3",
 ]
 
 [tool.pytest.ini_options]
@@ -144,75 +59,168 @@ pytest-parametrize-names-type = "csv"
 
 ---
 
-## Configuration Decision Explanations
+## Full Dependencies (with optional additions)
 
-### Why `asyncio_mode = "auto"`?
+```toml
+[dependency-groups]
+dev = [
+    # ============================================================
+    # Core (required)
+    # ============================================================
+    "pytest>=8,<10",
+    "pytest-asyncio>=0.24,<1",
+    "pytest-cov>=6,<10",
 
-Without it, every async test function needs `@pytest.mark.asyncio`. With auto mode, pytest detects `async def` test functions and handles event loop automatically. One less decorator to forget.
+    # ============================================================
+    # Quality (required)
+    # ============================================================
+    "pytest-deadfixtures>=2,<3",
+    "pytest-randomly>=3,<4",
+    "pytest-xdist>=3,<4",
 
-### Why `asyncio_default_fixture_loop_scope = "function"`?
+    # ============================================================
+    # Test data (required)
+    # ============================================================
+    "faker>=25,<40",
 
-Ensures each test gets its own event loop. Prevents event loop state leaks between tests (open connections, pending tasks). `"session"` scope is tempting for performance but causes hard-to-debug leaks.
+    # ============================================================
+    # Recommended (install by default, remove if not needed)
+    # ============================================================
+    "pytest-sugar>=1,<2",
 
-### Why `pytest-deadfixtures`?
+    # ============================================================
+    # Optional
+    # ============================================================
+    "pytest-mock>=3,<5",             # Only if using mocker fixture
+    "polyfactory>=2,<3",             # Model factories
+    "freezegun>=1,<2",               # Freeze time in tests
+    "testcontainers>=4,<5",          # Real DB containers
+    "pytest-alembic>=0.11,<1",       # Migration tests
+    "pytest-async-sqlalchemy>=0.2,<1", # Async SQLAlchemy
+    "hypothesis>=6,<7",              # Property-based testing
+    "pytestarch>=3,<4",              # Architecture testing
 
-Detects fixtures that are defined but never used. Catches rot in conftest.py as code evolves. Example output:
-
+    # ============================================================
+    # Linting (required)
+    # ============================================================
+    "ruff>=0.5,<1",
+    "flake8-pytest-style>=2,<3",
+]
 ```
-ERROR: Dead fixtures found:
-  - mock_old_service (conftest.py:42): Defined but never requested by any test
-```
-
-### Why `pytest-randomly`?
-
-Randomizes test execution order. Exposes hidden test dependencies (tests that pass only because a previous test set up global state). Must be combined with proper isolation (no session-scoped mutable fixtures).
-
-### Why `pytest-xdist`?
-
-Parallel test execution via `-n auto`. Not required for CI but strongly recommended for developer experience. Combined with `pytest-randomly`, each worker gets a different random seed.
-
-### Why `pytest-parametrize-names-type = "csv"`?
-
-Enforces consistent parametrize syntax:
-
-```python
-# Enforced (CSV)
-@pytest.mark.parametrize("a,b,expected", [...])
-
-# Also accepted but less common
-@pytest.mark.parametrize(("a", "b", "expected"), [...])
-```
-
-### Why `flake8-pytest-style`?
-
-Catches pytest-specific anti-patterns at lint time:
-
-- `PT001`: `@pytest.fixture()` used with empty parens
-- `PT003`: `@pytest.mark.skip()` used with empty parens  
-- `PT006`: Parametrize values not matching number of names
-- `PT027`: `@pytest.mark.asyncio` on non-async function
-
-### Why `S101` and `SLF001` disabled in tests?
-
-- `S101`: `assert` is expected and encouraged in tests
-- `SLF001`: `obj._private_attr` access is sometimes necessary for state verification or private method mocking (e.g., `orchestrator._Orchestrator__start_workflow`)
 
 ---
 
-## Checking Current Configuration
+## ruff Configuration for Tests
 
-To validate an existing project's config against this standard:
+```toml
+[tool.ruff.lint]
+select = [
+    "PT",      # flake8-pytest-style
+]
+
+[tool.ruff.lint.flake8-pytest-style]
+pytest-fixture-no-parentheses = true
+pytest-mark-no-parentheses = true
+pytest-parametrize-names-type = "csv"
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**/*.py" = [
+    "S101",    # assert is expected in tests
+    "SLF001",  # Private member access allowed in tests
+]
+```
+
+### What These Rules Enforce
+
+| Rule | Before | After |
+|------|--------|-------|
+| PT001 | `@pytest.fixture()` | `@pytest.fixture` |
+| PT003 | `@pytest.mark.skip()` | `@pytest.mark.skip` |
+| PT006 | names count ≠ values count | Error at lint time |
+| parametrize-names-type | `("a", "b")` not allowed | Must be `"a,b"` (CSV) |
+
+### Why S101 and SLF001 are allowed in tests
+
+- `S101` (`assert` usage): Tests must use `assert`
+- `SLF001` (private access): Occasionally needed for private method mocking or state verification
+
+---
+
+## Enforcing `spec=` on Mocks
+
+`AsyncMock(spec=InterfaceClass)` is mandatory (see SKILL.md R4). To enforce mechanically, add a conftest check or CI script:
+
+### Option A: conftest hook (run-time warning)
+
+```python
+# tests/conftest.py
+import unittest.mock
+from unittest.mock import AsyncMock
+
+_original_init = AsyncMock.__init__
+
+def _require_spec(self, *args, **kwargs):
+    if "spec" not in kwargs and not args:
+        import warnings
+        warnings.warn(
+            f"AsyncMock created without spec= in {__file__}. "
+            "Add spec=InterfaceClass for type safety.",
+            RuntimeWarning,
+        )
+    _original_init(self, *args, **kwargs)
+
+AsyncMock.__init__ = _require_spec
+```
+
+### Option B: CI grep check
 
 ```bash
-# Check pytest config
+# Fail CI if AsyncMock() used without spec= in test files
+! rg 'AsyncMock\(' tests/ --no-filename | rg -v 'spec=' && \
+  echo "❌ Found AsyncMock() without spec=" && exit 1
+```
+
+---
+
+## Configuration Decisions
+
+### Why `asyncio_mode = "auto"`?
+
+Without it, every async test needs `@pytest.mark.asyncio`. Auto mode detects `async def` automatically.
+
+### Why `asyncio_default_fixture_loop_scope = "function"`?
+
+Each test gets its own event loop. Prevents state leaks. `"session"` scope causes hard-to-debug leaks.
+
+### Why `pytest-deadfixtures`?
+
+Detects fixtures defined but never used. Catches conftest.py rot.
+
+### Why `pytest-randomly`?
+
+Randomizes execution order. Exposes hidden test dependencies. Must be paired with proper isolation.
+
+### Why `pytest-xdist`?
+
+Parallel test execution via `pytest -n auto`. Each worker gets a different random seed.
+
+---
+
+## Check Commands
+
+```bash
+# Validate config
 python -m pytest --collect-only 2>&1 | head -20
 
-# Check ruff config
+# Check lint
 ruff check tests/
 
-# Check for unused fixtures
+# Find unused fixtures
 python -m pytest --dead-fixtures
 
-# Check random seed (for reproducing failures)
-python -m pytest --randomly-seed=42
+# Reproduce a random failure
+python -m pytest --randomly-seed=<seed-from-failure>
+
+# Check for mocks without spec=
+rg 'AsyncMock\(' tests/ --no-filename | rg -v 'spec='
 ```

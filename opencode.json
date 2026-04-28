@@ -218,7 +218,7 @@
     },
     "edge-case-harvester": {
       "hidden": true,
-      "model": "opencode-go/minimax-m2.7",
+      "model": "opencode-go/kimi-k2.6",
       "tools": {
         "kanban_*": false,
         "CodeGraphContext_*": false
@@ -250,7 +250,7 @@
     },
     "implementer": {
       "hidden": true,
-      "model": "opencode-go/minimax-m2.7",
+      "model": "opencode-go/deepseek-v4-flash",
       "tools": {
         "kanban_*": true,
         "CodeGraphContext_*": true
@@ -258,7 +258,7 @@
     },
     "verification-engineer": {
       "hidden": true,
-      "model": "opencode-go/minimax-m2.7",
+      "model": "opencode-go/deepseek-v4-pro",
       "tools": {
         "kanban_*": true,
         "CodeGraphContext_*": false
@@ -297,7 +297,7 @@
       }
     },
     "reviewer-against-plan": {
-      "model": "opencode-go/minimax-m2.7",
+      "model": "opencode-go/deepseek-v4-pro",
       "hidden": true,
       "tools": {
         "kanban_*": false,
