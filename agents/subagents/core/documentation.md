@@ -44,11 +44,11 @@ Responsibilities:
 
 ## Context Discovery
 
-Before writing documentation, read documentation standards directly:
+Before writing documentation, use the standards that actually exist:
 
-1. **Read** `/Users/vekomarnitskiy/.config/opencode/context/core/standards/documentation.md`
-2. **Load** project-specific documentation guidelines as needed
-3. **Apply** documentation standards (formatting, structure, tone)
+1. **Apply** `AGENTS.md` project-wide language, citation, and reporting rules.
+2. **Inspect** nearby documentation to match structure, tone, and terminology.
+3. **Load** a relevant documentation skill when the task maps to one, such as `llm-wiki` or `confluence-article-editor`.
 
 ## Workflow
 
@@ -58,5 +58,4 @@ Before writing documentation, read documentation standards directly:
 Constraints:
 
 - No bash. Only edit markdown and docs.
-
 

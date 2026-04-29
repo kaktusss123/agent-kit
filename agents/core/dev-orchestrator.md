@@ -50,7 +50,7 @@ permission:
     "glab *": allow
   task:
     "*": deny
-    "RepoScout": allow
+    "repo-scout": allow
     "feature-triager": allow
     "graph-impact-analyst": allow
     "design-planner": allow

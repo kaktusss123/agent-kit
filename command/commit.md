@@ -18,6 +18,7 @@ Create exactly one git commit in the current repository following the git-commit
 All commit rules, message format, and execution steps are defined in the `git-commit` skill.
 
 The `committer` subagent will:
+
 1. Check branch safety (block main/master/develop)
 2. Inspect staged and unstaged changes
 3. Require a valid `EVODP-<number>` ticket in the branch name

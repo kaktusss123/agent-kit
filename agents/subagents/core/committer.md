@@ -1,5 +1,4 @@
 ---
-id: committer
 name: committer
 description: "Creates one safe git commit with a conventional message and pre-commit hooks"
 mode: subagent
@@ -27,6 +26,8 @@ permission:
   skill:
     "*": "deny"
     "git-commit": "allow"
+metadata:
+  version: 1.0.0
 ---
 
 # Git Committer

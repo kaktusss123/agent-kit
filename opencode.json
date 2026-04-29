@@ -2,41 +2,6 @@
   "$schema": "https://opencode.ai/config.json",
   "plugin": ["@slkiser/opencode-quota", "@warp-dot-dev/opencode-warp"],
   "mcp": {
-    "CodeGraphContext": {
-      "type": "local",
-      "command": [
-        "/Library/Frameworks/Python.framework/Versions/3.12/bin/cgc",
-        "mcp",
-        "start"
-      ],
-      "environment": {
-        "NEO4J_PASSWORD": "codegraphcontext",
-        "NEO4J_URI": "neo4j://localhost:7687",
-        "NEO4J_USERNAME": "neo4j",
-        "DEFAULT_DATABASE": "neo4j",
-        "FALKORDB_PATH": "/Users/vekomarnitskiy/.codegraphcontext/falkordb.db",
-        "FALKORDB_SOCKET_PATH": "/Users/vekomarnitskiy/.codegraphcontext/falkordb.sock",
-        "INDEX_VARIABLES": "true",
-        "ALLOW_DB_DELETION": "false",
-        "DEBUG_LOGS": "false",
-        "DEBUG_LOG_PATH": "/Users/vekomarnitskiy/mcp_debug.log",
-        "ENABLE_APP_LOGS": "CRITICAL",
-        "LOG_FILE_PATH": "/Users/vekomarnitskiy/.codegraphcontext/logs/cgc.log",
-        "MAX_FILE_SIZE_MB": "10",
-        "IGNORE_TEST_FILES": "false",
-        "IGNORE_HIDDEN_FILES": "true",
-        "ENABLE_AUTO_WATCH": "false",
-        "COMPLEXITY_THRESHOLD": "10",
-        "MAX_DEPTH": "unlimited",
-        "PARALLEL_WORKERS": "4",
-        "CACHE_ENABLED": "true",
-        "IGNORE_DIRS": "node_modules,venv,.venv,env,.env,dist,build,target,out,.git,.idea,.vscode,__pycache__",
-        "INDEX_SOURCE": "true",
-        "SCIP_INDEXER": "false",
-        "SCIP_LANGUAGES": "python,typescript,go,rust,java",
-        "SKIP_EXTERNAL_RESOLUTION": "false"
-      }
-    },
     "atlassian": {
       "type": "local",
       "command": ["uvx", "mcp-atlassian", "--transport", "stdio", "-vv"],
