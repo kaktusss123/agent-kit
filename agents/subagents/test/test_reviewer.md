@@ -63,6 +63,7 @@ Before reviewing, load the `python-test-guide` skill. Check against all invarian
 - unit/integration boundaries;
 - known antipatterns.
 - fixture and factory placement.
+- skip reasons, import placement, helper placement, data realism, parametrization, and docstring usage.
 
 Run or manually perform the focused checks required by the `python-test-guide` sections named by the plan on changed test files and include counts in the report.
 
@@ -76,6 +77,8 @@ Check that:
 - coverage delta exists or lack of delta is explained.
 - writer self-audit results are present and plausible.
 - dependency changes for test factory tooling are limited to dev/test dependencies.
+- low-value standalone wrapper or ID-generator tests are justified by public contract risk.
+- skipped tests are not masking writer implementation failure.
 
 ### 5. Final diff
 
@@ -86,6 +89,10 @@ Check that:
 - helper duplication is not excessive;
 - production code changes are minimal and justified.
 - reusable fixtures and factories are placed according to `python-test-guide` unless an explicit approved exception exists.
+- committed tests do not reference temporary agent artifacts.
+- imports are not interleaved with test logic unless an exception is justified.
+- arbitrary data uses Faker/Polyfactory and boundary dimensions use parametrization where appropriate.
+- duplicated generic helpers are not added to `test_*.py` without a placement analysis.
 
 ## Verdict
 
@@ -102,5 +109,7 @@ Use `FAIL` for any of these:
 - collection failure caused by generated tests;
 - final verification not run and not explicitly blocked.
 - reusable factory or fixture definitions added directly to `test_*.py` without an explicit approved exception.
+- skip reasons that reference `.tmp/agent-testing`, plan files, capsule files, writer reports, or reviewer reports.
+- skipped tests that exist only because the writer could not implement the branch.
 
 Save the review report exactly to the output path provided in the prompt.

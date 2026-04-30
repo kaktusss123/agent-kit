@@ -140,6 +140,8 @@ mock_repo.get_by_id.assert_awaited_once_with(entity_id)
 | Distinct behaviours | Separate functions |
 | Complex multi-step setups | Separate functions |
 
+When generated coverage exposes multiple values for the same input dimension, prefer `pytest.mark.parametrize` over copy-pasted tests. Include representative valid and invalid values for parsers, validators, mappers, IP/hostname/version fields, enum/status transitions, and optional fields.
+
 ### Simple parametrize
 
 ```python
@@ -388,6 +390,74 @@ assert mock_repo.delete.called
 ```
 
 **Don't:** `self.assertEqual()` (unittest style), manual `try/except` for expected exceptions, bare `assert result` without context.
+
+### Avoid trivial wrapper-only assertions
+
+Standalone tests for trivial wrappers and ID generators are low value when they only assert the underlying runtime type:
+
+```python
+# Low value by itself: ClusterID is a NewType over UUID at runtime.
+def test_generate_new_cluster_id_returns_uuid():
+    result = generate_new_cluster_id()
+
+    assert isinstance(result, uuid.UUID)
+```
+
+Prefer behavior tests that prove the generated value is used correctly by a public contract:
+
+```python
+def test_cluster_mapper_serializes_generated_cluster_id(cluster_factory):
+    cluster = cluster_factory.build(id=generate_new_cluster_id())
+
+    result = map_cluster_to_proto(cluster)
+
+    assert result.id == str(cluster.id)
+```
+
+Keep a standalone generator smoke test only when the helper is itself a public boundary contract or has a realistic history of regressions. Do not add these tests only to increase coverage.
+
+### Use realistic data for arbitrary fields
+
+Do not hard-code low-entropy placeholders such as `"test-name"`, `"test-ns"`, `"1.2.3.4"`, or `"v1"` unless the exact literal is semantically important. Use Faker or Polyfactory defaults for arbitrary values:
+
+```python
+def test_builds_deployment_command(faker):
+    command = CreateComponentCommand.model_construct(
+        name=faker.slug(),
+        kind="deployment",
+        namespace=faker.slug(),
+    )
+
+    result = build_component(command)
+
+    assert result.kind == "deployment"
+```
+
+Keep hard-coded values for domain-significant literals such as Kubernetes kinds, enum names, protocol constants, and documented API examples.
+
+For validation boundaries, parametrize valid and invalid values:
+
+```python
+@pytest.mark.parametrize(
+    "host,expectation",
+    [
+        ("node-1.example.test", does_not_raise()),
+        ("not an ip but valid host", does_not_raise()),
+        ("999.999.999.999", pytest.raises(ValidationError)),
+    ],
+)
+def test_validates_host_field(host, expectation):
+    with expectation:
+        HostConfig(host=host)
+```
+
+Polyfactory `ModelFactory.build()` respects Pydantic validations and field constraints. Use `factory_use_construct=True` only when bypassing validation is intentional and documented in the test.
+
+### Imports and docstrings
+
+Imports belong at module level. Inline imports inside `test_*` functions need an explicit comment explaining the exceptional reason, such as optional dependency behavior or circular-import isolation.
+
+Avoid module docstrings that only say the file contains tests. Test function docstrings are allowed when they are one-line clarifications and do not duplicate the test name.
 
 ---
 

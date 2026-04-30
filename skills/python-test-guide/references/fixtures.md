@@ -177,6 +177,19 @@ def patch_session(monkeypatch):
 
 Replace `target_module` with the actual module where `session_context_manager` is used.
 
+### Placement rule for reusable patch helpers
+
+Do not duplicate generic helper classes in multiple `test_*.py` files. Before moving a helper, verify the existing parent `conftest.py` hierarchy and the exact modules each patch targets.
+
+Use this placement order:
+
+1. If a parent `conftest.py` already defines the helper and patches the target module, reuse it.
+2. If several tests in one subtree need the same helper, place the helper or autouse patch in the nearest subtree `conftest.py`.
+3. If only one test module needs a module-specific patch, keep the patch local but import any generic helper from shared test infrastructure.
+4. If the helper behavior differs per module, do not centralize it until the differences are explicit in the plan.
+
+Run collection after moving patch helpers because autouse fixture scope changes can affect unrelated tests.
+
 ---
 
 ## 9. Hypothesis Profile (OPTIONAL)

@@ -131,6 +131,26 @@ Reusable test data builders, Polyfactory classes, and pytest fixtures belong in 
 
 Use Polyfactory for reusable Pydantic/domain model factories. If `polyfactory` is missing from dev/test dependencies, add it there. `model_construct()` is acceptable inside factories or for one-off simple local setup, but it is not the preferred reusable factory API.
 
+### R11. Prefer contract behavior over trivial wrapper coverage
+
+Do not add standalone tests whose only assertion is that a trivial type wrapper, `NewType` constructor, or ID generator returns its underlying runtime type unless that helper is a public boundary contract with a realistic regression risk. Prefer tests where the generated value participates in behavior: entity creation, mapper/serializer output, repository keys, protobuf conversion, or validation.
+
+### R12. Keep committed tests independent from agent artifacts
+
+Committed test code must not reference temporary agent artifacts such as `.tmp/agent-testing`, `plan-*.yaml`, capsule files, writer reports, or reviewer reports. Skip reasons must be self-contained and may reference only stable sources such as product tickets, permanent documentation, or explicit product limitations.
+
+### R13. Keep imports at module level
+
+Place imports at the top of `test_*.py` files. Imports inside test functions are allowed only for explicitly documented exceptional cases such as optional dependency probes or circular-import isolation. Do not interleave imports with arrange/act/assert logic.
+
+### R14. Prefer realistic generated data and parametrized boundaries
+
+Use Faker and Polyfactory for arbitrary strings, names, namespaces, hostnames, IP addresses, versions, and IDs. Keep hard-coded literals only when the literal itself is semantically important, such as `kind="deployment"`. When a field has validation, parsing, serialization, or boundary behavior, cover representative valid and invalid values with `pytest.mark.parametrize`.
+
+### R15. Avoid boilerplate docstrings
+
+Do not add module docstrings that only restate that a file contains tests. Test function docstrings are optional and must be one-line clarifications when the test name alone cannot explain the behavior.
+
 ---
 
 ## Cheap Writer Safety
@@ -142,13 +162,18 @@ Use this compact checklist whenever a low-cost writer model implements tests.
 3. Polyfactory-backed factories for reusable entities, commands, and mapper inputs.
 4. Real system under test with mocked dependencies; never mock the SUT or its method under test.
 5. Module-level test functions by default; classes require explicit plan approval.
-6. Test names describe behavior; test function docstrings are not needed.
+6. Test names describe behavior; one-line test docstrings are allowed only for clarification.
 7. One behavior per test; mapper/validator tests may assert one output object's fields.
 8. `assert result is not None` must be paired with behavior assertions.
 9. Config changes use `monkeypatch` or `try/finally` restoration.
 10. Skips always include `reason=`.
 11. Reusable factories and fixtures are not defined directly in `test_*.py` files.
 12. If Polyfactory is absent, add it to dev/test dependencies before adding reusable model factories.
+13. Do not chase coverage with standalone runtime-type assertions for trivial wrappers or ID generators.
+14. Do not reference temporary agent artifacts in committed tests or skip reasons.
+15. Keep imports at module level; do not interleave imports with test logic.
+16. Use Faker/Polyfactory and parametrization for arbitrary and boundary data.
+17. Avoid boilerplate module docstrings such as `"""Tests for ..."""`.
 
 ---
 
@@ -285,8 +310,11 @@ After writing or reviewing tests, group checks by test type:
 - [ ] `tests/integration/` directory exists
 - [ ] Test file mirrors source path
 - [ ] No `@pytest.mark.skip` without `reason="..."`
+- [ ] Skip reasons do not mention temporary agent artifacts or non-committed files
 - [ ] No session-scoped mutable fixtures (except `faker`)
 - [ ] No reusable `_make_*`, `make_*`, `create_test_*`, or `@pytest.fixture` definitions in `test_*.py`
+- [ ] Imports are at module level unless an exceptional inline import is justified
+- [ ] No boilerplate module docstrings that only restate the file contains tests
 - [ ] `asyncio_mode = "auto"` in pyproject.toml
 - [ ] flake8-pytest-style rules active (PT checks pass)
 
@@ -297,7 +325,7 @@ After writing or reviewing tests, group checks by test type:
 - [ ] Reusable Pydantic/domain model test data uses Polyfactory
 - [ ] Config override fixtures use try/finally
 - [ ] No `MagicMock` is used as a domain/Pydantic/protobuf data object
-- [ ] No test function docstrings replace descriptive test names
+- [ ] One-line test function docstrings clarify behavior instead of duplicating the test name
 - [ ] No new `class Test...` unless the plan explicitly allowed it
 
 ### Low-cost writer audit
@@ -309,6 +337,11 @@ After writing or reviewing tests, group checks by test type:
 - [ ] Search changed tests for `assert result is not None` and confirm behavior assertions
 - [ ] Search changed `test_*.py` files for reusable `_make_*`, `make_*`, `create_test_*`, and `@pytest.fixture`
 - [ ] Confirm reusable Pydantic/domain factories use Polyfactory or document why the setup is one-off local data
+- [ ] Confirm new tests exercise behavior or public contracts, not only trivial runtime type wrappers
+- [ ] Search changed tests for inline imports and move them to module level unless explicitly justified
+- [ ] Search skip reasons for `.tmp/agent-testing`, `plan-`, `capsule`, `writer-report`, and `review-report`
+- [ ] Search changed tests for hard-coded `test-*`, fixed IPs, versions, and namespaces; replace arbitrary values with Faker/Polyfactory
+- [ ] Confirm repeated input/output variants use `pytest.mark.parametrize`
 
 ### Integration tests
 
@@ -328,6 +361,11 @@ After writing or reviewing tests, group checks by test type:
 | In-memory repos over testcontainers | Faster, no Docker dependency |
 | Polyfactory for reusable model factories | Consistent reusable test data construction |
 | `model_construct()` inside factories or one-off setup | Don't validate unrelated fields when reusable factory overhead is not needed |
+| Avoid standalone trivial wrapper tests | Coverage should protect behavior and public contracts |
+| Self-contained skip reasons | Committed tests must not depend on temporary agent artifacts |
+| Module-level imports | Tests stay readable and dependency failures appear at collection time |
+| Faker/Polyfactory for arbitrary values | Generated data catches invalid assumptions and keeps tests realistic |
+| Parametrize boundary cases | Variants are explicit and easier to review |
 | `tests/integration/` required even if empty | Standardises structure |
 | `deepcopy` in in-memory repos | Prevents mutation leaks |
 | Alembic over `create_all` | Mirrors production deployment path |

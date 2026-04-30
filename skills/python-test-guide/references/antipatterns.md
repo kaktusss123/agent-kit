@@ -426,6 +426,147 @@ def test_parse_invalid():
 
 ---
 
+## 13. Coverage-Only Type Wrapper Tests
+
+### ❌ Anti-Pattern
+
+```python
+# BAD: only checks the runtime base type of a NewType wrapper.
+def test_generate_new_cluster_id_returns_valid_id():
+    result = generate_new_cluster_id()
+
+    assert isinstance(result, uuid.UUID)
+```
+
+### ✅ Fixed
+
+```python
+# GOOD: verifies the public contract that consumes the generated ID.
+def test_cluster_mapper_serializes_generated_cluster_id(cluster_factory):
+    cluster = cluster_factory.build(id=generate_new_cluster_id())
+
+    result = map_cluster_to_proto(cluster)
+
+    assert result.id == str(cluster.id)
+```
+
+Standalone smoke tests for ID generators are acceptable only when the generator is itself a public boundary contract or has a documented regression risk.
+
+---
+
+## 14. Skip Reasons Referencing Agent Artifacts
+
+### ❌ Anti-Pattern
+
+```python
+@pytest.mark.skip(
+    reason="Branch unreachable. See plan-c.yaml blocked_tests for details."
+)
+def test_unreachable_branch():
+    ...
+```
+
+### ✅ Fixed
+
+```python
+@pytest.mark.skip(
+    reason="Product limitation: deleting Pydantic entity state is read-only at runtime. TICKET-123 tracks the branch cleanup."
+)
+def test_unreachable_branch():
+    ...
+```
+
+Never reference `.tmp/agent-testing`, `plan-*.yaml`, capsules, writer reports, or reviewer reports from committed tests.
+
+---
+
+## 15. Imports Interleaved With Test Logic
+
+### ❌ Anti-Pattern
+
+```python
+async def test_import_conflict_raises_precondition():
+    orch, service = create_orchestrator()
+
+    from project.transfer_models import encode_payload_to_base64
+
+    payload = encode_payload_to_base64(...)
+```
+
+### ✅ Fixed
+
+```python
+from project.transfer_models import encode_payload_to_base64
+
+
+async def test_import_conflict_raises_precondition():
+    orch, service = create_orchestrator()
+
+    payload = encode_payload_to_base64(...)
+```
+
+Inline imports need an explicit exceptional reason. Do not hide dependencies inside arrange logic.
+
+---
+
+## 16. Low-Entropy Test Data and Missing Boundaries
+
+### ❌ Anti-Pattern
+
+```python
+cmd.name = "test-component"
+cmd.kind = "deployment"
+cmd.namespace = "test-ns"
+```
+
+### ✅ Fixed
+
+```python
+cmd.name = faker.slug()
+cmd.kind = "deployment"
+cmd.namespace = faker.slug()
+```
+
+Use hard-coded literals for semantic constants only. For fields with parsing or validation behavior, add parametrized valid and invalid cases.
+
+---
+
+## 17. Boilerplate Test Module Docstrings
+
+### ❌ Anti-Pattern
+
+```python
+"""Tests for admin_api mapper functions."""
+```
+
+### ✅ Fixed
+
+Remove the docstring unless it explains a non-obvious test module constraint. One-line test function docstrings are allowed when they clarify behavior.
+
+---
+
+## 18. Duplicated Generic Patch Helpers
+
+### ❌ Anti-Pattern
+
+```python
+class DummySessionContextManager:
+    async def __aenter__(self):
+        return None
+
+    async def __aexit__(self, exc_type, exc, tb):
+        return None
+
+    def __call__(self, *args, **kwargs):
+        return self
+```
+
+### ✅ Fixed
+
+Reuse an existing parent `conftest.py` helper when it patches the target module. Otherwise, move shared helpers or autouse patches to the nearest subtree `conftest.py` after verifying patch targets and fixture scope.
+
+---
+
 ## Summary Table
 
 | # | Anti-Pattern | Severity | Detection |
@@ -442,3 +583,9 @@ def test_parse_invalid():
 | 10 | Config leak | High | grep `config.* = ` in test functions without fixture |
 | 11 | No deepcopy in in-memory repos | Medium | Review in-memory repo implementations |
 | 12 | Manual try/except | Low | grep `except ValueError:` in test files |
+| 13 | Coverage-only type wrapper tests | Low | Review tests with only `isinstance(result, uuid.UUID)` or equivalent wrapper assertions |
+| 14 | Skip references agent artifacts | High | grep `.tmp/agent-testing\|plan-.*yaml\|writer-report\|review-report` in tests |
+| 15 | Inline imports in test logic | Medium | grep indented `from ... import` or `import ...` inside `test_*` functions |
+| 16 | Low-entropy test data | Medium | review hard-coded `test-*`, fixed IPs, versions, namespaces |
+| 17 | Boilerplate module docstrings | Low | first line starts with `"""Tests for` |
+| 18 | Duplicated generic patch helpers | Medium | grep helper class names across `test_*.py` and `conftest.py` |

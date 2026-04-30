@@ -41,6 +41,9 @@ If any required input is missing, stop and report what is missing.
 - Before planning, load the `python-test-guide` skill and follow all invariant rules.
 - Treat uncovered lines as symptoms, not as test cases.
 - Plan tests for behavior, not for line coverage alone.
+- Do not plan standalone trivial wrapper or ID-generator tests unless the plan identifies a public contract risk.
+- Identify boundary dimensions and prefer parametrized cases when one behavior has multiple input variants.
+- Do not plan skipped tests as a workaround for branches that cannot be implemented reliably.
 - Mark uncertainty explicitly instead of guessing.
 - Return `blocked` or `partial` when the capsule cannot be turned into a reliable implementation plan from the provided evidence.
 
@@ -62,6 +65,7 @@ Before writing the plan, read:
 - local context around target code.
 - construction patterns for domain, Pydantic, protobuf, and command objects used by the target code.
 - existing fixture, conftest, and test factory placement patterns inside the capsule scope.
+- existing reusable helper placement, import style, skip usage, and boundary parametrization patterns.
 
 Use text search and file reading to find:
 
@@ -70,6 +74,7 @@ Use text search and file reading to find:
 - related models, schemas, dataclasses, exceptions, and constants;
 - existing test style and fixture patterns.
 - reusable test data factories and where they are defined.
+- duplicated generic helpers and whether a parent `conftest.py` already covers their target modules.
 
 ## Output
 
@@ -93,6 +98,8 @@ The plan must include:
 - system under test and dependency map;
 - data construction strategy;
 - fixture and factory placement strategy;
+- helper placement strategy;
+- data generation and boundary parametrization strategy;
 - exact mock specs;
 - applicable `python-test-guide` sections;
 - anti-pattern checks to run after implementation.

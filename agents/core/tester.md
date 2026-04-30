@@ -66,6 +66,7 @@ A capsule is not a test plan. It contains:
 - exact expected output paths.
 - relevant `python-test-guide` sections and exact verification commands.
 - existing fixture/factory context needed to apply `python-test-guide` placement rules.
+- reusable helper, data-generation, and boundary-case context needed by `python-test-guide`.
 
 Create capsules before invoking planners.
 
@@ -80,6 +81,8 @@ Prioritize:
 - validators, parsers, serializers, calculations, and service-level business logic;
 - code with nearby tests or reusable fixtures;
 - code without heavy dependency on network, external databases, cloud credentials, or complex runtime setup.
+- behavior where generated IDs, typed wrappers, or value objects cross mapper, serializer, repository, protobuf, or validation boundaries.
+- code with meaningful input dimensions that can be covered with parametrized boundary cases.
 
 Deprioritize:
 
@@ -89,6 +92,8 @@ Deprioritize:
 - config-only files;
 - entrypoint boilerplate;
 - code that requires real external services without test infrastructure.
+- trivial wrappers or ID generators when the only planned assertion is the underlying runtime type.
+- files where coverage would come only from boilerplate docstrings, inline imports, or copied helper setup.
 
 ## Workflow
 
@@ -130,6 +135,7 @@ Deprioritize:
      - reject plans that exceed their capsule scope;
      - detect overlapping writes to the same test files or shared fixtures.
      - detect conflicting fixture/factory placement across approved plans.
+     - detect duplicated reusable helpers or conflicting conftest/autouse fixture changes.
      - write the result to:
        `.tmp/agent-testing/<run-id>/sanity-report.yaml`
 
@@ -174,6 +180,7 @@ When invoking `test_planner`, include:
 - relevant `python-test-guide` sections;
 - explicit scope budget and split conditions.
 - fixture/factory placement context from the capsule.
+- data-generation, helper-placement, and boundary-case context from the capsule.
 
 When invoking `test_writer`, include:
 
@@ -191,6 +198,7 @@ When invoking `test_writer`, include:
 - relevant `python-test-guide` sections;
 - exact anti-pattern grep checks the writer must run or manually evaluate before reporting.
 - instruction to apply `python-test-guide` placement rules when the plan omits fixture or factory placement details.
+- instruction to keep committed tests free of temporary agent artifact references.
 
 When invoking `test_reviewer`, include:
 
@@ -209,6 +217,7 @@ When invoking `test_reviewer`, include:
 - relevant `python-test-guide` sections;
 - the list of approved plan IDs and expected writer report paths.
 - instruction to verify fixture/factory placement against `python-test-guide` and report any approved exceptions.
+- instruction to verify skip reasons, import placement, data realism, parametrization, helper placement, and docstrings against `python-test-guide`.
 
 ## Success criteria
 

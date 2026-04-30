@@ -50,6 +50,13 @@ fixture_and_factory_context:
   existing_conftest_files: []
   existing_factory_modules: []
   dependency_notes: []
+helper_placement_context:
+  reusable_helpers_found: []
+  parent_conftest_coverage: []
+data_and_boundary_context:
+  arbitrary_fields: []
+  semantic_literals: []
+  boundary_dimensions: []
 testing_standards:
   - "python-test-guide: invariant rules"
   - "python-test-guide: cheap writer safety"
@@ -77,6 +84,9 @@ implementation_details:
   data_construction: []
   fixture_placement: []
   factory_strategy: []
+  helper_placement: []
+  data_strategy: []
+  parametrization: []
   expected_assertions: []
 implementation_order: []
 blocked_reasons: []
@@ -113,6 +123,9 @@ self_audit:
   standards_checked: []
   findings: []
   factory_placement_findings: []
+  skip_reason_findings: []
+  import_placement_findings: []
+  data_boundary_findings: []
 remaining_problems: []
 ```
 ---
