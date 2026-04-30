@@ -39,6 +39,7 @@ Choose one mode from the user request:
 - Subagents must not invent top-level artifact IDs.
 - The canonical test command prefix is `uv run pytest`.
 - Do not use bare `pytest`, `python -m pytest`, `tox`, `nox`, or `make test` unless explicitly requested.
+- Do not pass `--real-db` or start testcontainers unless the user explicitly requests real database verification.
 - In diff-oriented mode, compare against `develop` using `git diff develop...HEAD`.
 - If `develop` is unavailable, try `origin/develop`.
 - If no develop base is available, record the fallback explicitly.
@@ -83,6 +84,8 @@ Prioritize:
 - code without heavy dependency on network, external databases, cloud credentials, or complex runtime setup.
 - behavior where generated IDs, typed wrappers, or value objects cross mapper, serializer, repository, protobuf, or validation boundaries.
 - code with meaningful input dimensions that can be covered with parametrized boundary cases.
+- in-memory integration tests that exercise real project layers without Docker.
+- backend-agnostic integration tests where the same behavior can run against in-memory by default and real DB by explicit flag.
 
 Deprioritize:
 
@@ -94,6 +97,7 @@ Deprioritize:
 - code that requires real external services without test infrastructure.
 - trivial wrappers or ID generators when the only planned assertion is the underlying runtime type.
 - files where coverage would come only from boilerplate docstrings, inline imports, or copied helper setup.
+- testcontainer or real DB coverage unless the scope is migrations or DB-specific behavior and the user requested it.
 
 ## Workflow
 
@@ -152,9 +156,10 @@ Deprioritize:
     If the reviewer verdict is `FAIL`, do not write a success final report. Either run a bounded repair pass or write a blocked final report.
 
 14. Run final verification:
-   - targeted tests;
-   - full `uv run pytest ...` when reasonable;
-   - coverage delta for the affected scope when available.
+    - targeted tests;
+    - full `uv run pytest ...` when reasonable;
+    - coverage delta for the affected scope when available.
+    - omit `--real-db` unless explicitly requested; record a follow-up if DB-specific behavior still needs real DB verification.
 
 15. Write:
     `.tmp/agent-testing/<run-id>/final-report.md`
@@ -199,6 +204,8 @@ When invoking `test_writer`, include:
 - exact anti-pattern grep checks the writer must run or manually evaluate before reporting.
 - instruction to apply `python-test-guide` placement rules when the plan omits fixture or factory placement details.
 - instruction to keep committed tests free of temporary agent artifact references.
+- instruction not to use `--real-db` unless explicitly requested and to report real DB verification as blocked/follow-up otherwise.
+- instruction to keep backend selection project-specific and avoid hard-coding a universal real DB fixture pattern.
 
 When invoking `test_reviewer`, include:
 

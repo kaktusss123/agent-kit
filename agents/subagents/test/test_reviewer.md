@@ -64,6 +64,7 @@ Before reviewing, load the `python-test-guide` skill. Check against all invarian
 - known antipatterns.
 - fixture and factory placement.
 - skip reasons, import placement, helper placement, data realism, parametrization, and docstring usage.
+- repository backend selection and real DB gating.
 
 Run or manually perform the focused checks required by the `python-test-guide` sections named by the plan on changed test files and include counts in the report.
 
@@ -79,6 +80,7 @@ Check that:
 - dependency changes for test factory tooling are limited to dev/test dependencies.
 - low-value standalone wrapper or ID-generator tests are justified by public contract risk.
 - skipped tests are not masking writer implementation failure.
+- testcontainers or real DB verification are used only when explicitly requested or required for DB-specific behavior.
 
 ### 5. Final diff
 
@@ -93,6 +95,10 @@ Check that:
 - imports are not interleaved with test logic unless an exception is justified.
 - arbitrary data uses Faker/Polyfactory and boundary dimensions use parametrization where appropriate.
 - duplicated generic helpers are not added to `test_*.py` without a placement analysis.
+- default test commands do not require Docker or real DB services.
+- real DB or migration tests are gated by `--real-db` and appropriate markers.
+- backend-agnostic integration tests do not duplicate test bodies for in-memory and real DB modes without justification.
+- dummy session stores and in-memory patches are disabled when real DB mode is active.
 
 ## Verdict
 
@@ -111,5 +117,7 @@ Use `FAIL` for any of these:
 - reusable factory or fixture definitions added directly to `test_*.py` without an explicit approved exception.
 - skip reasons that reference `.tmp/agent-testing`, plan files, capsule files, writer reports, or reviewer reports.
 - skipped tests that exist only because the writer could not implement the branch.
+- ungated testcontainer setup that runs during default `uv run pytest`.
+- dummy session or in-memory store usage in real DB mode.
 
 Save the review report exactly to the output path provided in the prompt.

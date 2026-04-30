@@ -41,6 +41,8 @@ If any required input is missing, stop and report what is missing.
 - If the plan omits fixture or factory placement details, apply the placement rules from `python-test-guide` within the allowed modification areas.
 - Do not commit skips that exist only because implementation failed; report them as blocked work instead.
 - Do not mention temporary run artifacts from `.tmp/agent-testing` in committed tests.
+- Do not add testcontainer setup or run `--real-db` unless the plan and user request explicitly require real DB verification.
+- Do not copy a generic real DB fixture template blindly; adapt backend wiring to the project's existing config/session/repository patterns.
 
 ## Quality standards
 
@@ -60,6 +62,7 @@ Read:
 - the plan's system-under-test map, data construction strategy, exact mock specs, and anti-pattern checks.
 - nearby `conftest.py` and test factory modules relevant to the plan's scope.
 - helper placement, import style, skip reason, data realism, and parametrization guidance from the plan and `python-test-guide`.
+- repository backend strategy and whether real DB verification is in scope.
 
 ## Implementation boundaries
 
@@ -72,6 +75,8 @@ You may make local engineering decisions such as:
 - how to minimally mock external dependencies.
 - how to place reusable fixtures and factories according to `python-test-guide` when the plan is incomplete.
 - how to place imports at module level and use Faker/Polyfactory for arbitrary data.
+- how to keep default integration tests on in-memory backends unless real DB scope is explicit.
+- how to keep backend-agnostic test bodies independent from whether fixtures provide in-memory or real DB repositories.
 
 You may not change the purpose of planned tests or add unrelated coverage.
 
@@ -101,4 +106,6 @@ The report must include:
 - self-audit results for the `python-test-guide` sections named by the plan;
 - fixture and factory placement decisions;
 - helper placement, skip reason, import placement, and parametrization decisions;
+- repository backend and real DB verification decisions;
+- dummy session or in-memory patch guards for real DB mode;
 - remaining problems.

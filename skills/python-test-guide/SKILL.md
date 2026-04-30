@@ -151,6 +151,12 @@ Use Faker and Polyfactory for arbitrary strings, names, namespaces, hostnames, I
 
 Do not add module docstrings that only restate that a file contains tests. Test function docstrings are optional and must be one-line clarifications when the test name alone cannot explain the behavior.
 
+### R16. Real DB tests are opt-in
+
+In-memory integration tests run by default. Testcontainers and real database tests are reserved for migrations and DB-specific behavior and must require an explicit flag such as `--real-db`. Agent workflows must not start Docker or require a database unless the user explicitly requests real DB verification.
+
+Backend-agnostic integration tests are preferred when the same repository/service behavior should hold for both in-memory and real DB backends. The exact fixture/session/config wiring is project-specific. In real DB mode, dummy session stores and in-memory session patches must be disabled.
+
 ---
 
 ## Cheap Writer Safety
@@ -174,6 +180,8 @@ Use this compact checklist whenever a low-cost writer model implements tests.
 15. Keep imports at module level; do not interleave imports with test logic.
 16. Use Faker/Polyfactory and parametrization for arbitrary and boundary data.
 17. Avoid boilerplate module docstrings such as `"""Tests for ..."""`.
+18. Keep testcontainers behind `--real-db`; default test commands use in-memory backends.
+19. Prefer backend-agnostic integration tests when behavior should match across in-memory and real DB backends.
 
 ---
 
@@ -317,6 +325,7 @@ After writing or reviewing tests, group checks by test type:
 - [ ] No boilerplate module docstrings that only restate the file contains tests
 - [ ] `asyncio_mode = "auto"` in pyproject.toml
 - [ ] flake8-pytest-style rules active (PT checks pass)
+- [ ] Default test command does not start Docker or require real DB services
 
 ### Unit tests
 
@@ -346,6 +355,9 @@ After writing or reviewing tests, group checks by test type:
 ### Integration tests
 
 - [ ] In-memory repos or testcontainers used (not mocks at repo level)
+- [ ] Testcontainers are used only for `real_db` or `migration` tests gated by an explicit flag
+- [ ] Backend-agnostic integration tests use the same test body across in-memory and real DB modes when applicable
+- [ ] Dummy session stores and in-memory patches are disabled in real DB mode
 - [ ] `deepcopy` used on read/write in in-memory repos
 - [ ] LRU caches cleared in `autouse` fixtures
 
@@ -358,7 +370,7 @@ After writing or reviewing tests, group checks by test type:
 | `asyncio_mode = "auto"` | Less boilerplate than `@pytest.mark.asyncio` |
 | Module-level functions over classes | Fixtures replace setUp/tearDown; flatter |
 | `AsyncMock(spec=)` mandatory | Catches interface mismatches at setup time |
-| In-memory repos over testcontainers | Faster, no Docker dependency |
+| In-memory repos by default; testcontainers by flag | Fast agent workflow plus opt-in DB semantics coverage |
 | Polyfactory for reusable model factories | Consistent reusable test data construction |
 | `model_construct()` inside factories or one-off setup | Don't validate unrelated fields when reusable factory overhead is not needed |
 | Avoid standalone trivial wrapper tests | Coverage should protect behavior and public contracts |
@@ -366,6 +378,7 @@ After writing or reviewing tests, group checks by test type:
 | Module-level imports | Tests stay readable and dependency failures appear at collection time |
 | Faker/Polyfactory for arbitrary values | Generated data catches invalid assumptions and keeps tests realistic |
 | Parametrize boundary cases | Variants are explicit and easier to review |
+| In-memory by default, real DB by flag | Agent workflows stay fast while CI can verify DB semantics |
 | `tests/integration/` required even if empty | Standardises structure |
 | `deepcopy` in in-memory repos | Prevents mutation leaks |
 | Alembic over `create_all` | Mirrors production deployment path |

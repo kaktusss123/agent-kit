@@ -44,6 +44,9 @@ If any required input is missing, stop and report what is missing.
 - Do not plan standalone trivial wrapper or ID-generator tests unless the plan identifies a public contract risk.
 - Identify boundary dimensions and prefer parametrized cases when one behavior has multiple input variants.
 - Do not plan skipped tests as a workaround for branches that cannot be implemented reliably.
+- Plan in-memory integration coverage by default; mark real DB verification separately for migrations or DB-specific behavior.
+- When appropriate, plan backend-agnostic integration tests whose fixtures select in-memory by default and real DB only under an explicit flag.
+- Identify project-specific session/config/repository factory surfaces before proposing real DB wiring.
 - Mark uncertainty explicitly instead of guessing.
 - Return `blocked` or `partial` when the capsule cannot be turned into a reliable implementation plan from the provided evidence.
 
@@ -66,6 +69,7 @@ Before writing the plan, read:
 - construction patterns for domain, Pydantic, protobuf, and command objects used by the target code.
 - existing fixture, conftest, and test factory placement patterns inside the capsule scope.
 - existing reusable helper placement, import style, skip usage, and boundary parametrization patterns.
+- whether the target behavior requires in-memory integration, real DB verification, or migration testing.
 
 Use text search and file reading to find:
 
@@ -100,6 +104,8 @@ The plan must include:
 - fixture and factory placement strategy;
 - helper placement strategy;
 - data generation and boundary parametrization strategy;
+- repository backend strategy, including any `--real-db` follow-up requirement;
+- dummy session or in-memory patch behavior that must be disabled under real DB mode;
 - exact mock specs;
 - applicable `python-test-guide` sections;
 - anti-pattern checks to run after implementation.

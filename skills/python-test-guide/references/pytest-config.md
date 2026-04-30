@@ -45,6 +45,11 @@ testpaths = ["tests"]
 pythonpath = ["."]
 asyncio_mode = "auto"
 asyncio_default_fixture_loop_scope = "function"
+markers = [
+    "integration: in-memory integration tests that run by default",
+    "real_db: PostgreSQL testcontainer tests, require --real-db",
+    "migration: Alembic migration tests, require --real-db",
+]
 
 [tool.ruff.lint]
 select = ["PT"]
@@ -225,3 +230,33 @@ python -m pytest --randomly-seed=<seed-from-failure>
 # Check for mocks without spec=
 rg 'AsyncMock\(' tests/ --no-filename | rg -v 'spec='
 ```
+
+---
+
+## Real DB Opt-In Configuration
+
+Register `real_db` and `migration` markers, but do not exclude all integration tests by default. In-memory integration tests are fast and should run with ordinary `uv run pytest`; only PostgreSQL/testcontainer tests are opt-in.
+
+```toml
+[tool.pytest.ini_options]
+markers = [
+    "integration: in-memory integration tests that run by default",
+    "real_db: PostgreSQL testcontainer tests, require --real-db",
+    "migration: Alembic migration tests, require --real-db",
+]
+```
+
+Preferred commands:
+
+```bash
+# Agent and local default; must not start Docker
+uv run pytest
+
+# CI/manual real DB verification
+uv run pytest --real-db -m real_db
+
+# CI/manual migration verification
+uv run pytest --real-db -m migration
+```
+
+Do not add `-m "not integration"` to default `addopts` unless the project explicitly wants unit-only default runs. That would hide in-memory integration coverage from agents and local developers.
