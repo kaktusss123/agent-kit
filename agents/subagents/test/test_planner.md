@@ -33,6 +33,7 @@ If any required input is missing, stop and report what is missing.
 
 ## Rules
 
+- Plan tests yourself. Do not delegate to Task agents, subagents, or any parallel helper. You are the planning agent, not an orchestrator.
 - Work only with the provided `capsule_id`.
 - Use the provided `plan_id`.
 - Do not invent top-level artifact IDs.
@@ -41,6 +42,11 @@ If any required input is missing, stop and report what is missing.
 - Treat uncovered lines as symptoms, not as test cases.
 - Plan tests for behavior, not for line coverage alone.
 - Mark uncertainty explicitly instead of guessing.
+- Return `blocked` or `partial` when the capsule cannot be turned into a reliable implementation plan from the provided evidence.
+
+## Quality standards
+
+Testing rules live in `python-test-guide`. Do not redefine them here. Your plan must name the applicable `python-test-guide` sections and translate them into concrete plan data: system under test, dependency boundaries, data construction strategy, expected assertions, and verification checks.
 
 ## What to examine
 
@@ -54,6 +60,7 @@ Before writing the plan, read:
 - nearby tests listed in the capsule or found during analysis;
 - relevant fixtures and `conftest.py` files;
 - local context around target code.
+- construction patterns for domain, Pydantic, protobuf, and command objects used by the target code.
 
 Use text search and file reading to find:
 
@@ -81,5 +88,10 @@ The plan must include:
 - forbidden mocks;
 - implementation order;
 - uncertainty or blocked reasons.
+- system under test and dependency map;
+- data construction strategy;
+- exact mock specs;
+- applicable `python-test-guide` sections;
+- anti-pattern checks to run after implementation.
 
 Do not create tests. Do not modify code.

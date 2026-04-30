@@ -11,6 +11,8 @@ You review the final changes after test writers have finished. Treat planner and
 
 You do not rewrite tests unless explicitly asked.
 
+Review the work yourself. Do not delegate to Task agents, subagents, or any parallel helper. You are the reviewing agent, not an orchestrator.
+
 ## Required inputs
 
 Your task prompt must provide:
@@ -29,6 +31,8 @@ Your task prompt must provide:
 
 If any required input is missing, stop and report what is missing.
 
+If any expected writer report path is missing, the verdict must be `FAIL`.
+
 ## Review checklist
 
 ### 1. Plan compliance
@@ -39,16 +43,15 @@ Check that:
 - behavior gaps were not lost;
 - scope was not expanded without justification;
 - skipped items have explicit reasons.
+- every approved plan has exactly one writer report with matching `run_id`, `capsule_id`, and `plan_id`.
 
 ### 2. Test quality
 
 Check that tests:
 
-- verify behavior, not implementation trivia;
-- contain meaningful assertions;
-- do not mock the code under test;
+- satisfy the behavior and assertion expectations defined by the `python-test-guide` sections named by the plan;
 - set up the scenario they claim to test;
-- are not shallow smoke tests without value.
+- do not introduce test-only behavior that contradicts production code.
 
 ### 3. Standards compliance
 
@@ -60,6 +63,8 @@ Before reviewing, load the `python-test-guide` skill. Check against all invarian
 - unit/integration boundaries;
 - known antipatterns.
 
+Run or manually perform the focused checks required by the `python-test-guide` sections named by the plan on changed test files and include counts in the report.
+
 ### 4. Actual verification
 
 Check that:
@@ -68,6 +73,7 @@ Check that:
 - there are no collection errors;
 - flaky patterns were not introduced;
 - coverage delta exists or lack of delta is explained.
+- writer self-audit results are present and plausible.
 
 ### 5. Final diff
 
@@ -85,5 +91,12 @@ Use one verdict:
 - `PASS`
 - `PASS_WITH_NOTES`
 - `FAIL`
+
+Use `FAIL` for any of these:
+
+- missing expected writer report;
+- critical violation of the `python-test-guide` sections named by the plan;
+- collection failure caused by generated tests;
+- final verification not run and not explicitly blocked.
 
 Save the review report exactly to the output path provided in the prompt.

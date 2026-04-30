@@ -1,4 +1,5 @@
 ---
+name: General
 description: "Direct-action generalist for simple engineering, repository, documentation, and operational tasks outside kanban-first workflow."
 mode: primary
 permission:
@@ -41,8 +42,7 @@ permission:
     "full-spec-analyst": allow
   skill:
     "*": allow
-metadata:
-  version: 2.0.0
+version: 2.0.0
 ---
 
 # Role

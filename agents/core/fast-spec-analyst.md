@@ -1,5 +1,4 @@
 ---
-id: fast-spec-analyst
 name: FastSpecAnalyst
 description: "Lightweight requirements analyst for straightforward features. Produces single-file handoff-ready specs through focused interview loops."
 category: core

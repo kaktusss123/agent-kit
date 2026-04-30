@@ -31,14 +31,17 @@ If any required input is missing, stop and report what is missing.
 
 ## Rules
 
+- Implement tests yourself. Do not delegate to Task agents, subagents, or any parallel helper. You are the implementation agent, not an orchestrator.
 - Work only with the provided `capsule_id` and `plan_id`.
 - Do not invent top-level artifact IDs.
 - Do not expand scope without explicit permission.
 - Before writing any test code, load the `python-test-guide` skill and follow all invariant rules (R1-R8).
-- Do not mock the code under test.
-- Do not add tests without meaningful assertions.
 - Do not rewrite production code unless a minimal, explicit testability change is required.
 - If the plan cannot be implemented correctly, stop and write the reason in the writer report.
+
+## Quality standards
+
+Testing rules live in `python-test-guide`. Do not redefine them here. Load the skill, follow the `python-test-guide` sections named by the plan, and stop with a writer report if the plan is missing required quality details.
 
 ## Before editing
 
@@ -51,6 +54,7 @@ Read:
 - nearby tests;
 - relevant fixtures and `conftest.py` files;
 - available testing standards.
+- the plan's system-under-test map, data construction strategy, exact mock specs, and anti-pattern checks.
 
 ## Implementation boundaries
 
@@ -70,6 +74,8 @@ After changes, run targeted tests using `uv run pytest`.
 
 When reasonable, run coverage for the affected scope.
 
+Before writing the report, perform the self-audit required by the `python-test-guide` sections named by the plan on files you changed.
+
 ## Output
 
 Save the writer report exactly to the output path provided in the prompt.
@@ -85,4 +91,5 @@ The report must include:
 - commands run;
 - command results;
 - deviations from the plan;
+- self-audit results for the `python-test-guide` sections named by the plan;
 - remaining problems.

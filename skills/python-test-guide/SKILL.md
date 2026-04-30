@@ -25,6 +25,7 @@ User: "write unit tests for {module}"
 | Testing controller → service → repository flow | [references/integration-tests.md](references/integration-tests.md) |
 | Enforcing import layering rules | [references/architecture-tests.md](references/architecture-tests.md) |
 | Need a specific fixture recipe | [references/fixtures.md](references/fixtures.md) |
+| Testing gRPC/protobuf mappers | [references/grpc-protobuf-tests.md](references/grpc-protobuf-tests.md) |
 | Setting up a new project's test infra | [references/pytest-config.md](references/pytest-config.md) |
 | Reviewing existing tests for quality | [references/antipatterns.md](references/antipatterns.md) |
 
@@ -119,6 +120,23 @@ def test_feature():
 ```python
 @pytest.mark.skip(reason="Not implemented: inactive entity handling (TICKET-123)")
 ```
+
+---
+
+## Cheap Writer Safety
+
+Use this compact checklist whenever a low-cost writer model implements tests.
+
+1. `AsyncMock(spec=Interface)` for async dependencies; no bare dependency `AsyncMock()`.
+2. `MagicMock(spec=Interface)` only for sync dependencies; never for domain/Pydantic/protobuf data.
+3. Real constructor, factory, or `model_construct()` for entities, commands, and mapper inputs.
+4. Real system under test with mocked dependencies; never mock the SUT or its method under test.
+5. Module-level test functions by default; classes require explicit plan approval.
+6. Test names describe behavior; test function docstrings are not needed.
+7. One behavior per test; mapper/validator tests may assert one output object's fields.
+8. `assert result is not None` must be paired with behavior assertions.
+9. Config changes use `monkeypatch` or `try/finally` restoration.
+10. Skips always include `reason=`.
 
 ---
 
@@ -221,6 +239,7 @@ pytest-parametrize-names-type = "csv"
 | Override factory functions | [integration-tests.md](references/integration-tests.md) |
 | Set up a real DB for testing | [integration-tests.md](references/integration-tests.md) |
 | Mock gRPC context | [fixtures.md](references/fixtures.md) |
+| Test gRPC/protobuf mappers | [grpc-protobuf-tests.md](references/grpc-protobuf-tests.md) |
 | Override config in a test | [fixtures.md](references/fixtures.md) |
 | Enforce layering rules | [architecture-tests.md](references/architecture-tests.md) |
 | Set up project test infra | [pytest-config.md](references/pytest-config.md) |
@@ -248,6 +267,17 @@ After writing or reviewing tests, group checks by test type:
 - [ ] Service under test is real, not mocked
 - [ ] `model_construct()` used for Pydantic models in test data
 - [ ] Config override fixtures use try/finally
+- [ ] No `MagicMock` is used as a domain/Pydantic/protobuf data object
+- [ ] No test function docstrings replace descriptive test names
+- [ ] No new `class Test...` unless the plan explicitly allowed it
+
+### Low-cost writer audit
+
+- [ ] Search changed tests for bare `AsyncMock()` and justify or fix every occurrence
+- [ ] Search changed tests for `MagicMock()` and verify each use is a dependency mock, not data
+- [ ] Search changed tests for `class Test` and confirm explicit plan approval
+- [ ] Search changed tests for direct `config.` assignment and confirm restoration
+- [ ] Search changed tests for `assert result is not None` and confirm behavior assertions
 
 ### Integration tests
 

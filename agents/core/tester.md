@@ -13,12 +13,14 @@ Subagents are stateless. Every delegation prompt must include all required IDs, 
 
 Use these project-local references when relevant:
 
-- Artifact templates: `references/testing-artifact-templates.md`
+- Artifact templates: `skills/python-test-guide/references/testing-artifact-templates.md`
 - Planner subagent: `agents/subagents/test/test_planner.md`
 - Writer subagent: `agents/subagents/test/test_writer.md`
 - Reviewer subagent: `agents/subagents/test/test_reviewer.md`
 
-Before delegating to any test subagent, load the `python-test-guide` skill. Include its key invariant rules (R1-R8) in every delegation prompt so subagents have the standards inline.
+Before delegating to any test subagent, load the `python-test-guide` skill.
+
+Testing standards live in `python-test-guide`. This orchestrator owns workflow, scope, IDs, artifacts, and gates. It must not redefine test-writing rules locally. Delegation prompts should reference the relevant `python-test-guide` sections instead of restating their contents.
 
 ## Operating modes
 
@@ -42,10 +44,16 @@ Choose one mode from the user request:
 - If no develop base is available, record the fallback explicitly.
 - Do not add tests on top of an unexplained red baseline.
 - Do not try to cover a large repository with one huge plan.
+- Collect baseline and coverage for every run, including continuation rounds.
+- Never write a final report until every approved plan has a writer report and one reviewer report exists.
+- Treat a missing expected artifact as a failed run, not as a warning.
+- Record any aborted run or failed delegation in `.tmp/agent-testing/<run-id>/orchestration-errors.yaml` before stopping.
 
 ## Planning capsule
 
 A planning capsule is a small, bounded scope for one planner.
+
+Keep capsules bounded enough for one planner and one writer pass. Split a capsule when the scope would require unrelated setup, unrelated dependency boundaries, or multiple independent test strategies.
 
 A capsule is not a test plan. It contains:
 
@@ -56,6 +64,7 @@ A capsule is not a test plan. It contains:
 - initial hints;
 - constraints;
 - exact expected output paths.
+- relevant `python-test-guide` sections and exact verification commands.
 
 Create capsules before invoking planners.
 
@@ -88,7 +97,7 @@ Deprioritize:
 2. Write the user goal to:
    `.tmp/agent-testing/<run-id>/goal.md`
 
-3. Read `references/testing-artifact-templates.md`.
+3. Read `skills/python-test-guide/references/testing-artifact-templates.md`.
 
 4. Collect baseline:
    - run an appropriate `uv run pytest ...` command;
@@ -116,16 +125,23 @@ Deprioritize:
    `.tmp/agent-testing/<run-id>/plans/`
 
 10. Perform a top-level sanity check of plans:
-   - reject plans with unsupported assumptions;
-   - reject plans that exceed their capsule scope;
-   - detect overlapping writes to the same test files or shared fixtures.
+    - reject plans with unsupported assumptions;
+    - reject plans that exceed their capsule scope;
+    - detect overlapping writes to the same test files or shared fixtures.
+    - write the result to:
+      `.tmp/agent-testing/<run-id>/sanity-report.yaml`
 
 11. Run writers sequentially, one approved plan at a time.
+    After each writer returns, verify that the exact writer report path exists and contains the expected `run_id`, `capsule_id`, and `plan_id`. Stop on any mismatch.
 
 12. Collect writer reports from:
-   `.tmp/agent-testing/<run-id>/writer-reports/`
+    `.tmp/agent-testing/<run-id>/writer-reports/`
+    The number of writer reports must equal the number of approved plans.
 
 13. Invoke one reviewer after all writer work is complete.
+    The review report path is:
+    `.tmp/agent-testing/<run-id>/review-report.md`
+    If the reviewer verdict is `FAIL`, do not write a success final report. Either run a bounded repair pass or write a blocked final report.
 
 14. Run final verification:
    - targeted tests;
@@ -133,7 +149,8 @@ Deprioritize:
    - coverage delta for the affected scope when available.
 
 15. Write:
-   `.tmp/agent-testing/<run-id>/final-report.md`
+    `.tmp/agent-testing/<run-id>/final-report.md`
+    The final report must cite baseline, coverage, sanity, writer, reviewer, and verification artifacts.
 
 ## Delegation prompt requirements
 
@@ -151,7 +168,9 @@ When invoking `test_planner`, include:
 - capsule file path;
 - exact plan output path;
 - scope boundaries;
-- instruction to use available testing standards.
+- instruction to use available testing standards;
+- relevant `python-test-guide` sections;
+- explicit scope budget and split conditions.
 
 When invoking `test_writer`, include:
 
@@ -165,7 +184,9 @@ When invoking `test_writer`, include:
 - plan file path;
 - exact writer report output path;
 - allowed and forbidden modification areas;
-- instruction to use available testing standards.
+- instruction to use available testing standards;
+- relevant `python-test-guide` sections;
+- exact anti-pattern grep checks the writer must run or manually evaluate before reporting.
 
 When invoking `test_reviewer`, include:
 
@@ -180,7 +201,9 @@ When invoking `test_reviewer`, include:
 - final diff;
 - test command results;
 - exact review report output path;
-- instruction to use available testing standards.
+- instruction to use available testing standards;
+- relevant `python-test-guide` sections;
+- the list of approved plan IDs and expected writer report paths.
 
 ## Success criteria
 
@@ -193,5 +216,7 @@ A successful run must produce a final report explaining:
 - commands run;
 - test results;
 - coverage before and after, if available;
+- reviewer verdict and review report path;
+- sanity report path;
 - skipped or blocked work;
 - remaining risks or follow-up items.

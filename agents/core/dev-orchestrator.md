@@ -1,5 +1,4 @@
 ---
-id: dev-orchestrator
 name: DevOrchestrator
 description: "Kanban-first orchestration agent for disciplined multi-stage development"
 category: core

@@ -23,6 +23,11 @@ permission:
     "rtk git symbolic-ref*": "allow"
     "rtk git branch*": "allow"
     "rtk git log*": "allow"
+    "uv run ruff format *": "allow"
+    "uv run ruff check *": "allow"
+    "uv run mypy *": "allow"
+    "uv run pytest *": "allow"
+    "uv run bandit *": "allow"
   skill:
     "*": "deny"
     "git-commit": "allow"
