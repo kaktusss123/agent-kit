@@ -55,13 +55,14 @@ Check that tests:
 
 ### 3. Standards compliance
 
-Before reviewing, load the `python-test-guide` skill. Check against all invariant rules (R1-R8) and the verification checklist:
+Before reviewing, load the `python-test-guide` skill. Check against all invariant rules and the verification checklist:
 
 - test structure;
 - fixtures;
 - mocks;
 - unit/integration boundaries;
 - known antipatterns.
+- fixture and factory placement.
 
 Run or manually perform the focused checks required by the `python-test-guide` sections named by the plan on changed test files and include counts in the report.
 
@@ -74,6 +75,7 @@ Check that:
 - flaky patterns were not introduced;
 - coverage delta exists or lack of delta is explained.
 - writer self-audit results are present and plausible.
+- dependency changes for test factory tooling are limited to dev/test dependencies.
 
 ### 5. Final diff
 
@@ -83,6 +85,7 @@ Check that:
 - fixtures do not conflict;
 - helper duplication is not excessive;
 - production code changes are minimal and justified.
+- reusable fixtures and factories are placed according to `python-test-guide` unless an explicit approved exception exists.
 
 ## Verdict
 
@@ -98,5 +101,6 @@ Use `FAIL` for any of these:
 - critical violation of the `python-test-guide` sections named by the plan;
 - collection failure caused by generated tests;
 - final verification not run and not explicitly blocked.
+- reusable factory or fixture definitions added directly to `test_*.py` without an explicit approved exception.
 
 Save the review report exactly to the output path provided in the prompt.

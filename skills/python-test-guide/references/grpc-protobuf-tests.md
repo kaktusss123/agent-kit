@@ -11,28 +11,31 @@ Do not use `MagicMock` as mapper input data. Mappers usually read concrete field
 Use the most concrete object that is cheap to construct:
 
 1. Real protobuf messages for protobuf input.
-2. Real domain/Pydantic objects with `model_construct()` for domain input.
-3. Small helper factories for repeated object graphs.
+2. Real domain/Pydantic objects from Polyfactory-backed factories for domain input.
+3. `model_construct()` only inside factories or one-off local setup.
 4. `MagicMock(spec=ClientInterface)` only for external clients or context objects.
 
 ```python
-def create_test_instance(instance_id: UUID) -> Instance:
-    return Instance.model_construct(
-        id=InstanceID(instance_id),
-        name="test-instance",
-        status=Status.running,
-    )
+class InstanceFactory(ModelFactory[Instance]):
+    __model__ = Instance
+    __use_examples__ = True
 
 
 def test_map_instance_to_grpc_sets_identity_fields():
     instance_id = uuid.uuid4()
-    instance = create_test_instance(instance_id)
+    instance = InstanceFactory.build(
+        id=InstanceID(instance_id),
+        name="test-instance",
+        status=Status.running,
+    )
 
     result = map_instance_to_grpc(instance)
 
     assert result.id == str(instance_id)
     assert result.name == "test-instance"
 ```
+
+For repeated mapper inputs, move the reusable construction into a Polyfactory class in the nearest `conftest.py` or `factories.py`.
 
 ## Mock only boundaries
 

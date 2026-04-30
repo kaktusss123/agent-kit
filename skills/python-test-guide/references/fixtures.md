@@ -55,7 +55,39 @@ Pattern: outer fixture sets up service and dependencies, inner closure provides 
 
 ---
 
-## 3. Config Override Fixture (REQUIRED for config tests)
+## 3. Factory Placement (REQUIRED)
+
+Reusable factories and fixture builders are part of test infrastructure, not individual test scenarios. Place them where pytest can discover and reuse them without copying helper functions across `test_*.py` files.
+
+| Scope | Placement | Contents |
+|-------|-----------|----------|
+| Global | `tests/conftest.py` | `faker`, environment patches, shared plugin setup |
+| Domain/unit | nearest `tests/<pkg>/<mod>/conftest.py` | mock dependency fixtures, Polyfactory fixtures, imported local factories |
+| Dedicated factories | `tests/<pkg>/<mod>/factories.py` | Polyfactory classes imported by nearby `conftest.py` |
+| Integration | `tests/integration/conftest.py` | in-memory repositories, factory overrides, cache clearing |
+
+```python
+# tests/project/controller/grpc/admin_api/mapper/factories.py
+from polyfactory.factories.pydantic_factory import ModelFactory
+
+
+class FlavorFactory(ModelFactory[Flavor]):
+    __model__ = Flavor
+    __use_examples__ = True
+```
+
+```python
+# tests/project/controller/grpc/admin_api/mapper/conftest.py
+@pytest.fixture
+def flavor_factory() -> type[FlavorFactory]:
+    return FlavorFactory
+```
+
+Do not add reusable `_make_*`, `make_*`, `create_test_*`, or `@pytest.fixture` definitions directly to `test_*.py` files. A small one-off object created inside a single test function is acceptable.
+
+---
+
+## 4. Config Override Fixture (REQUIRED for config tests)
 
 ```python
 @pytest.fixture
@@ -72,7 +104,7 @@ def feature_enabled():
 
 ---
 
-## 4. gRPC Context Mock (RECOMMENDED)
+## 5. gRPC Context Mock (RECOMMENDED)
 
 ```python
 @pytest.fixture
@@ -87,7 +119,7 @@ def mock_grpc_context() -> MagicMock:
 
 ---
 
-## 5. Split conftest Package (ADVANCED)
+## 6. Split conftest Package (ADVANCED)
 
 When `tests/conftest.py` exceeds ~200 lines, split by domain:
 
@@ -104,7 +136,7 @@ tests/conftest.py:
 
 ---
 
-## 6. Polyfactory ModelFactory (OPTIONAL)
+## 7. Polyfactory ModelFactory (REQUIRED for reusable model factories)
 
 ```python
 from polyfactory.factories.pydantic_factory import ModelFactory
@@ -116,11 +148,12 @@ class EntityModelFactory(ModelFactory[Entity]):
 entity = EntityModelFactory.build(status="active")
 ```
 
-Use for complex nested model trees. Most tests are fine with `model_construct()` + faker.
+Use for reusable Pydantic/domain model construction. Keep one-off `model_construct()` setup inside a single test function only when it is not reused.
+If `polyfactory` is missing from dev/test dependencies, add it there before introducing reusable model factories.
 
 ---
 
-## 7. Dummy Async Context Manager (ADVANCED)
+## 8. Dummy Async Context Manager (ADVANCED)
 
 When you need to mock a `with session_context_manager():` block — a pattern where an async context manager is used as both callable and context manager:
 
@@ -146,7 +179,7 @@ Replace `target_module` with the actual module where `session_context_manager` i
 
 ---
 
-## 8. Hypothesis Profile (OPTIONAL)
+## 9. Hypothesis Profile (OPTIONAL)
 
 ```python
 from hypothesis import settings

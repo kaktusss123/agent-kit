@@ -213,6 +213,39 @@ def test_something(faker):
     email = faker.email()
 ```
 
+### Polyfactory for reusable model factories
+
+Reusable Pydantic/domain model factories use Polyfactory by default. Place factory classes in the nearest domain `conftest.py` or a sibling `factories.py` imported by that `conftest.py`.
+
+```python
+# tests/<package>/<module>/factories.py
+from polyfactory.factories.pydantic_factory import ModelFactory
+
+
+class EntityFactory(ModelFactory[Entity]):
+    __model__ = Entity
+    __use_examples__ = True
+
+
+# tests/<package>/<module>/conftest.py
+@pytest.fixture
+def entity_factory() -> type[EntityFactory]:
+    return EntityFactory
+```
+
+Use the factory from tests instead of defining local `_make_*` helpers:
+
+```python
+def test_maps_entity_identity(entity_factory):
+    entity = entity_factory.build(status=EntityStatus.ACTIVE)
+
+    result = map_entity(entity)
+
+    assert result.status == ENTITY_STATUS_ACTIVE
+```
+
+If `polyfactory` is missing, add it to dev/test dependencies. Do not place reusable factory helpers directly in `test_*.py` files.
+
 ### model_construct() for Pydantic v2 models
 
 ```python
@@ -223,35 +256,35 @@ entity = Entity.model_construct(
 )
 ```
 
-`model_construct()` is a Pydantic v2 method that creates a model instance **without running validators**. This makes tests faster and isolates them from unrelated validation rules. Not applicable to dataclasses or attrs.
+`model_construct()` is a Pydantic v2 method that creates a model instance **without running validators**. This makes tests faster and isolates them from unrelated validation rules. Use it inside Polyfactory overrides or one-off local setup. Not applicable to dataclasses or attrs.
 
-### Helper factory functions
+### Fixture factory functions for persisted data
 
-```python
-def create_test_entity(
-    entity_id: uuid.UUID | None = None,
-    status: EntityStatus = EntityStatus.ACTIVE,
-) -> Entity:
-    return Entity(
-        id=EntityID(entity_id or uuid.uuid4()),
-        name=f"test-{faker.word()}",
-        status=status,
-    )
-```
-
-### Polyfactory (optional)
+Use a fixture that returns a factory closure when tests must create data through a real service or repository. Place it in `conftest.py`, not in `test_*.py`.
 
 ```python
-from polyfactory.factories.pydantic_factory import ModelFactory
+@pytest_asyncio.fixture
+async def create_test_entity(entity_service, entity_factory):
+    async def _create(**overrides: object) -> Entity:
+        entity = entity_factory.build(**overrides)
+        return await entity_service.create(entity)
 
-class EntityFactory(ModelFactory[Entity]):
-    __model__ = Entity
-    __use_examples__ = True
-
-entity = EntityFactory.build(status="active")
+    return _create
 ```
 
-Use for complex nested model trees. `model_construct()` + faker suffices for most cases.
+### One-off local setup
+
+Small object setup may stay inside a single test function when it is not reused:
+
+```python
+def test_rejects_empty_name():
+    command = CreateEntityCommand.model_construct(name="")
+
+    with pytest.raises(ValidationError, match="name"):
+        validate(command)
+```
+
+Do not extract this into `_make_command()` unless it becomes reusable. Reusable setup belongs in a factory or fixture.
 
 ### Hypothesis (optional — property-based)
 

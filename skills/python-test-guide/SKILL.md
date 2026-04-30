@@ -1,7 +1,7 @@
 ---
 name: python-test-guide
 description: "Use when asked to write, review, or audit pytest tests for a Python service. Covers unit, integration, and architecture tests — when to use each, how to structure them, what patterns to follow."
-version: 1.1.1
+version: 1.2.0
 ---
 
 # Python Test Guide
@@ -121,6 +121,16 @@ def test_feature():
 @pytest.mark.skip(reason="Not implemented: inactive entity handling (TICKET-123)")
 ```
 
+### R9. Reusable fixtures and factories live outside test modules
+
+Reusable test data builders, Polyfactory classes, and pytest fixtures belong in the nearest appropriate `conftest.py` or a dedicated test factory module imported by that `conftest.py`. Do not add reusable `_make_*`, `make_*`, `create_test_*`, or `@pytest.fixture` definitions directly to `test_*.py` files.
+
+**Exception:** a one-off local object setup may stay inside a single test function when it is not reused and does not define a fixture or helper function.
+
+### R10. Polyfactory is the standard reusable factory mechanism
+
+Use Polyfactory for reusable Pydantic/domain model factories. If `polyfactory` is missing from dev/test dependencies, add it there. `model_construct()` is acceptable inside factories or for one-off simple local setup, but it is not the preferred reusable factory API.
+
 ---
 
 ## Cheap Writer Safety
@@ -129,7 +139,7 @@ Use this compact checklist whenever a low-cost writer model implements tests.
 
 1. `AsyncMock(spec=Interface)` for async dependencies; no bare dependency `AsyncMock()`.
 2. `MagicMock(spec=Interface)` only for sync dependencies; never for domain/Pydantic/protobuf data.
-3. Real constructor, factory, or `model_construct()` for entities, commands, and mapper inputs.
+3. Polyfactory-backed factories for reusable entities, commands, and mapper inputs.
 4. Real system under test with mocked dependencies; never mock the SUT or its method under test.
 5. Module-level test functions by default; classes require explicit plan approval.
 6. Test names describe behavior; test function docstrings are not needed.
@@ -137,6 +147,8 @@ Use this compact checklist whenever a low-cost writer model implements tests.
 8. `assert result is not None` must be paired with behavior assertions.
 9. Config changes use `monkeypatch` or `try/finally` restoration.
 10. Skips always include `reason=`.
+11. Reusable factories and fixtures are not defined directly in `test_*.py` files.
+12. If Polyfactory is absent, add it to dev/test dependencies before adding reusable model factories.
 
 ---
 
@@ -167,6 +179,7 @@ Use this compact checklist whenever a low-cost writer model implements tests.
         ├── controller/
         │   └── grpc/test_*_mapper.py
         └── builders/
+            ├── factories.py       # Optional: shared Polyfactory classes
             └── test_*.py
 ```
 
@@ -178,11 +191,14 @@ Use this compact checklist whenever a low-cost writer model implements tests.
 | Integration | `tests/integration/conftest.py` | In-memory repos, `autouse` factory overrides | `tests/integration/*` only |
 | Domain | `tests/<pkg>/<mod>/conftest.py` | Mock repos, mock clients for unit tests | Unit tests in that subtree |
 
+Reusable factories may live directly in the nearest domain `conftest.py` or in a sibling `factories.py` imported by that `conftest.py`. Keep `test_*.py` files focused on scenarios and assertions.
+
 ### Naming conventions
 
 - Files: `test_<module>.py`
 - Functions: `test_<action>_<expected_outcome>(...)`
-- Helpers: `create_test_<entity>(...)` — takes default kwargs
+- Factory classes: `<Entity>Factory` — Polyfactory-backed reusable builders
+- Fixture factories: `create_test_<entity>(...)` — returned by fixtures when persistence or async setup is required
 
 ---
 
@@ -206,6 +222,17 @@ def faker() -> Faker:
 3. **`pyproject.toml`** with:
 
 ```toml
+[dependency-groups]
+dev = [
+    "pytest>=8,<10",
+    "pytest-asyncio>=0.24,<1",
+    "pytest-cov>=6,<10",
+    "faker>=25,<40",
+    "polyfactory>=2,<3",
+    "ruff>=0.5,<1",
+    "flake8-pytest-style>=2,<3",
+]
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 pythonpath = ["."]
@@ -233,6 +260,7 @@ pytest-parametrize-names-type = "csv"
 | Mock an async repository | [unit-tests.md](references/unit-tests.md) |
 | Create real service with mock deps | [unit-tests.md](references/unit-tests.md) |
 | Generate test data | [unit-tests.md](references/unit-tests.md) |
+| Place reusable factories and fixtures | [fixtures.md](references/fixtures.md) |
 | Parametrize a test | [unit-tests.md](references/unit-tests.md) |
 | Write async tests | [unit-tests.md](references/unit-tests.md) |
 | Build an in-memory repository | [integration-tests.md](references/integration-tests.md) |
@@ -258,6 +286,7 @@ After writing or reviewing tests, group checks by test type:
 - [ ] Test file mirrors source path
 - [ ] No `@pytest.mark.skip` without `reason="..."`
 - [ ] No session-scoped mutable fixtures (except `faker`)
+- [ ] No reusable `_make_*`, `make_*`, `create_test_*`, or `@pytest.fixture` definitions in `test_*.py`
 - [ ] `asyncio_mode = "auto"` in pyproject.toml
 - [ ] flake8-pytest-style rules active (PT checks pass)
 
@@ -265,7 +294,7 @@ After writing or reviewing tests, group checks by test type:
 
 - [ ] All async mocks use `AsyncMock(spec=Interface)`
 - [ ] Service under test is real, not mocked
-- [ ] `model_construct()` used for Pydantic models in test data
+- [ ] Reusable Pydantic/domain model test data uses Polyfactory
 - [ ] Config override fixtures use try/finally
 - [ ] No `MagicMock` is used as a domain/Pydantic/protobuf data object
 - [ ] No test function docstrings replace descriptive test names
@@ -278,6 +307,8 @@ After writing or reviewing tests, group checks by test type:
 - [ ] Search changed tests for `class Test` and confirm explicit plan approval
 - [ ] Search changed tests for direct `config.` assignment and confirm restoration
 - [ ] Search changed tests for `assert result is not None` and confirm behavior assertions
+- [ ] Search changed `test_*.py` files for reusable `_make_*`, `make_*`, `create_test_*`, and `@pytest.fixture`
+- [ ] Confirm reusable Pydantic/domain factories use Polyfactory or document why the setup is one-off local data
 
 ### Integration tests
 
@@ -295,7 +326,8 @@ After writing or reviewing tests, group checks by test type:
 | Module-level functions over classes | Fixtures replace setUp/tearDown; flatter |
 | `AsyncMock(spec=)` mandatory | Catches interface mismatches at setup time |
 | In-memory repos over testcontainers | Faster, no Docker dependency |
-| `model_construct()` for test models | Don't validate unrelated fields |
+| Polyfactory for reusable model factories | Consistent reusable test data construction |
+| `model_construct()` inside factories or one-off setup | Don't validate unrelated fields when reusable factory overhead is not needed |
 | `tests/integration/` required even if empty | Standardises structure |
 | `deepcopy` in in-memory repos | Prevents mutation leaks |
 | Alembic over `create_all` | Mirrors production deployment path |

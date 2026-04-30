@@ -46,6 +46,10 @@ initial_hints:
   likely_focus: []
   useful_searches: []
 constraints: []
+fixture_and_factory_context:
+  existing_conftest_files: []
+  existing_factory_modules: []
+  dependency_notes: []
 testing_standards:
   - "python-test-guide: invariant rules"
   - "python-test-guide: cheap writer safety"
@@ -71,6 +75,8 @@ implementation_details:
   system_under_test: {}
   dependency_boundaries: []
   data_construction: []
+  fixture_placement: []
+  factory_strategy: []
   expected_assertions: []
 implementation_order: []
 blocked_reasons: []
@@ -85,6 +91,7 @@ status: "passed | failed"
 approved_plans: []
 rejected_plans: []
 overlapping_writes: []
+fixture_factory_conflicts: []
 oversized_scopes: []
 unsupported_assumptions: []
 required_repairs: []
@@ -105,6 +112,7 @@ deviations: []
 self_audit:
   standards_checked: []
   findings: []
+  factory_placement_findings: []
 remaining_problems: []
 ```
 ---

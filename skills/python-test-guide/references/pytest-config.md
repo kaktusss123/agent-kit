@@ -6,7 +6,7 @@ Copy-paste templates for new projects. Version numbers below are the range this 
 
 ## Versioning Note
 
-**The versions in this reference are what the skill was tested with. They are NOT rules.** Different projects may use different versions. The only hard requirement is the set of packages themselves (pytest, pytest-asyncio, faker, etc.) and the ruff/flake8-pytest-style configuration.
+**The versions in this reference are what the skill was tested with. They are NOT rules.** Different projects may use different versions. The only hard requirement is the set of packages themselves (pytest, pytest-asyncio, faker, polyfactory, etc.) and the ruff/flake8-pytest-style configuration.
 
 When adopting this skill, check your project's existing versions. Update the skill's tested range if your project uses a newer major version successfully.
 
@@ -33,6 +33,7 @@ dev = [
 
     # Test data (required)
     "faker>=25,<40",
+    "polyfactory>=2,<3",
 
     # Linting (required)
     "ruff>=0.5,<1",
@@ -82,6 +83,7 @@ dev = [
     # Test data (required)
     # ============================================================
     "faker>=25,<40",
+    "polyfactory>=2,<3",
 
     # ============================================================
     # Recommended (install by default, remove if not needed)
@@ -92,7 +94,6 @@ dev = [
     # Optional
     # ============================================================
     "pytest-mock>=3,<5",             # Only if using mocker fixture
-    "polyfactory>=2,<3",             # Model factories
     "freezegun>=1,<2",               # Freeze time in tests
     "testcontainers>=4,<5",          # Real DB containers
     "pytest-alembic>=0.11,<1",       # Migration tests

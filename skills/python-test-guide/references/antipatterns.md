@@ -136,7 +136,55 @@ def test_user_name(faker):
 
 ---
 
-## 5. Missing tests/integration/ Directory
+## 5. Reusable Local Factories in test_*.py
+
+### ❌ Anti-Pattern
+
+```python
+# BAD: reusable test infrastructure is hidden inside one test module
+def _make_flavor(**kwargs) -> Flavor:
+    defaults = {
+        "id": FlavorID(uuid.uuid4()),
+        "name": "test-flavor",
+        "status": Status.active,
+    }
+    defaults.update(kwargs)
+    return Flavor.model_construct(**defaults)
+
+
+def test_map_flavor_sets_identity_fields():
+    flavor = _make_flavor(name="small")
+    result = map_flavor(flavor)
+    assert result.name == "small"
+```
+
+### ✅ Fixed
+
+```python
+# tests/project/controller/grpc/admin_api/mapper/factories.py
+class FlavorFactory(ModelFactory[Flavor]):
+    __model__ = Flavor
+    __use_examples__ = True
+
+
+# tests/project/controller/grpc/admin_api/mapper/conftest.py
+@pytest.fixture
+def flavor_factory() -> type[FlavorFactory]:
+    return FlavorFactory
+
+
+# test_flavor.py
+def test_map_flavor_sets_identity_fields(flavor_factory):
+    flavor = flavor_factory.build(name="small")
+    result = map_flavor(flavor)
+    assert result.name == "small"
+```
+
+Use `conftest.py` or a dedicated `factories.py` for reusable builders. Keep `test_*.py` focused on scenario setup and assertions.
+
+---
+
+## 6. Missing tests/integration/ Directory
 
 ### ❌ Anti-Pattern
 
@@ -165,7 +213,7 @@ tests/
 
 ---
 
-## 6. mock.patch Inside Test Body
+## 7. mock.patch Inside Test Body
 
 ### ❌ Anti-Pattern
 
@@ -202,7 +250,7 @@ async def test_something(mock_dependencies):
 
 ---
 
-## 7. skip Without reason
+## 8. skip Without reason
 
 ### ❌ Anti-Pattern
 
@@ -227,7 +275,7 @@ async def test_update_to_add_inactive():
 
 ---
 
-## 8. DB-Dependent Unit Tests
+## 9. DB-Dependent Unit Tests
 
 ### ❌ Anti-Pattern
 
@@ -267,7 +315,7 @@ async def test_entity_service_create(entity_service, mock_entity_repository):
 
 ---
 
-## 9. Config Mutation Without Restoration
+## 10. Config Mutation Without Restoration
 
 ### ❌ Anti-Pattern
 
@@ -305,7 +353,7 @@ async def test_with_feature_enabled(feature_enabled):
 
 ---
 
-## 10. In-Memory Repository Without deepcopy
+## 11. In-Memory Repository Without deepcopy
 
 ### ❌ Anti-Pattern
 
@@ -353,7 +401,7 @@ class InMemoryRepo:
 
 ---
 
-## 11. Manual try/except for Expected Exceptions
+## 12. Manual try/except for Expected Exceptions
 
 ### ❌ Anti-Pattern
 
@@ -386,10 +434,11 @@ def test_parse_invalid():
 | 2 | No spec= on mock | High | CI grep: `AsyncMock(` without `spec=` |
 | 3 | Session-scoped mutable state | High | grep `scope="session"` in conftest |
 | 4 | Inline Faker() | Low | grep `Faker()` in test files |
-| 5 | Missing tests/integration/ | Medium | glob `tests/integration/` not found |
-| 6 | patch inside test body | Low | grep `with patch` in test functions |
-| 7 | skip without reason | Low | grep `@pytest.mark.skip\b` (no following text) |
-| 8 | DB-dependent unit tests | High | Real DB fixture usage in non-integration tests |
-| 9 | Config leak | High | grep `config.* = ` in test functions without fixture |
-| 10 | No deepcopy in in-memory repos | Medium | Review in-memory repo implementations |
-| 11 | Manual try/except | Low | grep `except ValueError:` in test files |
+| 5 | Reusable local factories in `test_*.py` | Medium | grep `def _(make|create)|def make_|def create_test_|@pytest.fixture` in changed test modules |
+| 6 | Missing tests/integration/ | Medium | glob `tests/integration/` not found |
+| 7 | patch inside test body | Low | grep `with patch` in test functions |
+| 8 | skip without reason | Low | grep `@pytest.mark.skip\b` (no following text) |
+| 9 | DB-dependent unit tests | High | Real DB fixture usage in non-integration tests |
+| 10 | Config leak | High | grep `config.* = ` in test functions without fixture |
+| 11 | No deepcopy in in-memory repos | Medium | Review in-memory repo implementations |
+| 12 | Manual try/except | Low | grep `except ValueError:` in test files |

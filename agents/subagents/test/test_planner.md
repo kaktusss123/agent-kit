@@ -38,7 +38,7 @@ If any required input is missing, stop and report what is missing.
 - Use the provided `plan_id`.
 - Do not invent top-level artifact IDs.
 - Do not expand scope unless the plan explicitly marks the reason as an escalation.
-- Before planning, load the `python-test-guide` skill and follow all invariant rules (R1-R8).
+- Before planning, load the `python-test-guide` skill and follow all invariant rules.
 - Treat uncovered lines as symptoms, not as test cases.
 - Plan tests for behavior, not for line coverage alone.
 - Mark uncertainty explicitly instead of guessing.
@@ -61,6 +61,7 @@ Before writing the plan, read:
 - relevant fixtures and `conftest.py` files;
 - local context around target code.
 - construction patterns for domain, Pydantic, protobuf, and command objects used by the target code.
+- existing fixture, conftest, and test factory placement patterns inside the capsule scope.
 
 Use text search and file reading to find:
 
@@ -68,6 +69,7 @@ Use text search and file reading to find:
 - public call sites;
 - related models, schemas, dataclasses, exceptions, and constants;
 - existing test style and fixture patterns.
+- reusable test data factories and where they are defined.
 
 ## Output
 
@@ -90,6 +92,7 @@ The plan must include:
 - uncertainty or blocked reasons.
 - system under test and dependency map;
 - data construction strategy;
+- fixture and factory placement strategy;
 - exact mock specs;
 - applicable `python-test-guide` sections;
 - anti-pattern checks to run after implementation.

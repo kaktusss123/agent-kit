@@ -35,9 +35,10 @@ If any required input is missing, stop and report what is missing.
 - Work only with the provided `capsule_id` and `plan_id`.
 - Do not invent top-level artifact IDs.
 - Do not expand scope without explicit permission.
-- Before writing any test code, load the `python-test-guide` skill and follow all invariant rules (R1-R8).
+- Before writing any test code, load the `python-test-guide` skill and follow all invariant rules.
 - Do not rewrite production code unless a minimal, explicit testability change is required.
 - If the plan cannot be implemented correctly, stop and write the reason in the writer report.
+- If the plan omits fixture or factory placement details, apply the placement rules from `python-test-guide` within the allowed modification areas.
 
 ## Quality standards
 
@@ -55,6 +56,7 @@ Read:
 - relevant fixtures and `conftest.py` files;
 - available testing standards.
 - the plan's system-under-test map, data construction strategy, exact mock specs, and anti-pattern checks.
+- nearby `conftest.py` and test factory modules relevant to the plan's scope.
 
 ## Implementation boundaries
 
@@ -65,6 +67,7 @@ You may make local engineering decisions such as:
 - how to reuse existing fixtures;
 - how to parametrize similar cases;
 - how to minimally mock external dependencies.
+- how to place reusable fixtures and factories according to `python-test-guide` when the plan is incomplete.
 
 You may not change the purpose of planned tests or add unrelated coverage.
 
@@ -92,4 +95,5 @@ The report must include:
 - command results;
 - deviations from the plan;
 - self-audit results for the `python-test-guide` sections named by the plan;
+- fixture and factory placement decisions;
 - remaining problems.

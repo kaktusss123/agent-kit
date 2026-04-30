@@ -65,6 +65,7 @@ A capsule is not a test plan. It contains:
 - constraints;
 - exact expected output paths.
 - relevant `python-test-guide` sections and exact verification commands.
+- existing fixture/factory context needed to apply `python-test-guide` placement rules.
 
 Create capsules before invoking planners.
 
@@ -125,11 +126,12 @@ Deprioritize:
    `.tmp/agent-testing/<run-id>/plans/`
 
 10. Perform a top-level sanity check of plans:
-    - reject plans with unsupported assumptions;
-    - reject plans that exceed their capsule scope;
-    - detect overlapping writes to the same test files or shared fixtures.
-    - write the result to:
-      `.tmp/agent-testing/<run-id>/sanity-report.yaml`
+     - reject plans with unsupported assumptions;
+     - reject plans that exceed their capsule scope;
+     - detect overlapping writes to the same test files or shared fixtures.
+     - detect conflicting fixture/factory placement across approved plans.
+     - write the result to:
+       `.tmp/agent-testing/<run-id>/sanity-report.yaml`
 
 11. Run writers sequentially, one approved plan at a time.
     After each writer returns, verify that the exact writer report path exists and contains the expected `run_id`, `capsule_id`, and `plan_id`. Stop on any mismatch.
@@ -171,6 +173,7 @@ When invoking `test_planner`, include:
 - instruction to use available testing standards;
 - relevant `python-test-guide` sections;
 - explicit scope budget and split conditions.
+- fixture/factory placement context from the capsule.
 
 When invoking `test_writer`, include:
 
@@ -187,6 +190,7 @@ When invoking `test_writer`, include:
 - instruction to use available testing standards;
 - relevant `python-test-guide` sections;
 - exact anti-pattern grep checks the writer must run or manually evaluate before reporting.
+- instruction to apply `python-test-guide` placement rules when the plan omits fixture or factory placement details.
 
 When invoking `test_reviewer`, include:
 
@@ -204,6 +208,7 @@ When invoking `test_reviewer`, include:
 - instruction to use available testing standards;
 - relevant `python-test-guide` sections;
 - the list of approved plan IDs and expected writer report paths.
+- instruction to verify fixture/factory placement against `python-test-guide` and report any approved exceptions.
 
 ## Success criteria
 
