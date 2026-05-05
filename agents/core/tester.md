@@ -97,7 +97,7 @@ Deprioritize:
 - code that requires real external services without test infrastructure.
 - trivial wrappers or ID generators when the only planned assertion is the underlying runtime type.
 - files where coverage would come only from boilerplate docstrings, inline imports, or copied helper setup.
-- testcontainer or real DB coverage unless the scope is migrations or DB-specific behavior and the user requested it.
+- testcontainer or real DB coverage unless the user explicitly requested dual-backend parity or the scope is DB-specific behavior or migrations.
 
 ## Workflow
 
@@ -115,10 +115,13 @@ Deprioritize:
    - do not proceed with new tests if the baseline is red for unknown reasons.
 
 5. Collect coverage:
-   - use `uv run pytest ...` with coverage arguments;
-   - prefer a machine-readable JSON report when possible;
-   - write normalized coverage data to:
-     `.tmp/agent-testing/<run-id>/coverage-summary.yaml`
+    - use `uv run pytest ...` with coverage arguments;
+   - prefer the repository's standard `pytest-cov` workflow for broad package coverage;
+   - for narrow Python targets, prefer path-based `--cov=package/subpackage` over dotted import names;
+   - use `coverage run` only when the repository documents a compatible coverage config or you explicitly pass a compatible `--rcfile`;
+    - prefer a machine-readable JSON report when possible;
+    - write normalized coverage data to:
+      `.tmp/agent-testing/<run-id>/coverage-summary.yaml`
 
 6. Determine scope:
    - for `diff-oriented`, start from `git diff develop...HEAD`;
@@ -135,13 +138,14 @@ Deprioritize:
    `.tmp/agent-testing/<run-id>/plans/`
 
 10. Perform a top-level sanity check of plans:
-     - reject plans with unsupported assumptions;
-     - reject plans that exceed their capsule scope;
-     - detect overlapping writes to the same test files or shared fixtures.
-     - detect conflicting fixture/factory placement across approved plans.
-     - detect duplicated reusable helpers or conflicting conftest/autouse fixture changes.
-     - write the result to:
-       `.tmp/agent-testing/<run-id>/sanity-report.yaml`
+      - reject plans with unsupported assumptions;
+      - reject plans that exceed their capsule scope;
+      - detect overlapping writes to the same test files or shared fixtures.
+      - detect conflicting fixture/factory placement across approved plans.
+      - detect duplicated reusable helpers or conflicting conftest/autouse fixture changes.
+      - detect backend parity plans that would introduce eager backend fixture resolution, per-module container startup for a shared run, or cleanup steps with likely FK-order conflicts.
+      - write the result to:
+        `.tmp/agent-testing/<run-id>/sanity-report.yaml`
 
 11. Run writers sequentially, one approved plan at a time.
     After each writer returns, verify that the exact writer report path exists and contains the expected `run_id`, `capsule_id`, and `plan_id`. Stop on any mismatch.
@@ -159,6 +163,7 @@ Deprioritize:
     - targeted tests;
     - full `uv run pytest ...` when reasonable;
     - coverage delta for the affected scope when available.
+    - when the user explicitly requested dual-backend or real DB verification for backend-agnostic integration behavior, rerun the same integration selection with `--real-db` before any DB-specific marker-only commands.
     - omit `--real-db` unless explicitly requested; record a follow-up if DB-specific behavior still needs real DB verification.
 
 15. Write:
@@ -186,6 +191,8 @@ When invoking `test_planner`, include:
 - explicit scope budget and split conditions.
 - fixture/factory placement context from the capsule.
 - data-generation, helper-placement, and boundary-case context from the capsule.
+- whether dual-backend parity is required and the expected in-memory and real DB verification commands.
+- any known unique constraints, query-builder field naming rules, cleanup-order constraints, or contract-drift risks between in-memory and real repositories.
 
 When invoking `test_writer`, include:
 
@@ -206,6 +213,8 @@ When invoking `test_writer`, include:
 - instruction to keep committed tests free of temporary agent artifact references.
 - instruction not to use `--real-db` unless explicitly requested and to report real DB verification as blocked/follow-up otherwise.
 - instruction to keep backend selection project-specific and avoid hard-coding a universal real DB fixture pattern.
+- instruction to keep one shared test body for backend-agnostic parity scenarios unless the plan explicitly approves a DB-specific split.
+- instruction to avoid eager resolution of the unused backend fixture chain and to prefer session-scoped containers plus function-scoped cleanup when one parity run spans several modules.
 
 When invoking `test_reviewer`, include:
 
@@ -225,6 +234,8 @@ When invoking `test_reviewer`, include:
 - the list of approved plan IDs and expected writer report paths.
 - instruction to verify fixture/factory placement against `python-test-guide` and report any approved exceptions.
 - instruction to verify skip reasons, import placement, data realism, parametrization, helper placement, and docstrings against `python-test-guide`.
+- instruction to fail or note missing real DB parity verification when the approved plan required a dual-backend integration rerun.
+- instruction to check for cleanup-order mistakes, in-memory semantic drift, non-unique parity data, and bare query-builder field names where the real repository expects `table.column`.
 
 ## Success criteria
 

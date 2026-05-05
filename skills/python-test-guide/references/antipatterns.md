@@ -567,6 +567,118 @@ Reuse an existing parent `conftest.py` helper when it patches the target module.
 
 ---
 
+## 19. Eager Backend Fixture Resolution
+
+### ❌ Anti-Pattern
+
+```python
+@pytest.fixture
+def project_repository(in_memory_project_repository, real_project_repository, request):
+    if request.config.getoption("--real-db"):
+        return real_project_repository
+    return in_memory_project_repository
+```
+
+### ✅ Fixed
+
+```python
+@pytest.fixture
+def project_repository(request):
+    if request.config.getoption("--real-db"):
+        return request.getfixturevalue("real_project_repository")
+    return request.getfixturevalue("in_memory_project_repository")
+```
+
+The fixed version avoids resolving the unused backend chain. Default runs stay Docker-free even when real DB fixtures import optional dependencies or start containers.
+
+---
+
+## 20. Real DB Cleanup Without FK Order
+
+### ❌ Anti-Pattern
+
+```python
+await session.execute(text("DELETE FROM public.parent_table"))
+await session.execute(text("DELETE FROM public.child_table"))
+```
+
+### ✅ Fixed
+
+```python
+await session.execute(text("DELETE FROM public.child_table"))
+await session.execute(text("DELETE FROM public.parent_table"))
+```
+
+Delete junction and child tables first. Real DB cleanup must follow actual FK direction.
+
+---
+
+## 21. Parity Test Data Violates Unique Constraints
+
+### ❌ Anti-Pattern
+
+```python
+cv1 = _make_cluster_version(faker)
+cv2 = _make_cluster_version(faker)
+cv3 = _make_cluster_version(faker)
+```
+
+### ✅ Fixed
+
+```python
+cv1 = _make_cluster_version(faker, version=1)
+cv2 = _make_cluster_version(faker, version=2)
+cv3 = _make_cluster_version(faker, version=3)
+```
+
+Reusable factory defaults may be safe in-memory but invalid under real DB uniqueness rules. Parity tests need realistic unique values unless the test explicitly asserts the constraint error.
+
+---
+
+## 22. Bare Query-Builder Field Names in Real DB Pagination
+
+### ❌ Anti-Pattern
+
+```python
+OffsetPagination(page_size=10, direction=Direction.ASC, field="version", offset=0)
+```
+
+### ✅ Fixed
+
+```python
+OffsetPagination(
+    page_size=10,
+    direction=Direction.ASC,
+    field="cluster_version.version",
+    offset=0,
+)
+```
+
+If the underlying query builder expects `table.column`, parity tests must use the same qualified field naming as production queries.
+
+---
+
+## 23. Claiming Parity While In-Memory Semantics Drift
+
+### ❌ Anti-Pattern
+
+```python
+# In-memory helper filters deleted rows here,
+# but the real repository returns all rows for this method.
+result = [p for p in self._store.values() if p.status != ManagementStatus.DELETED]
+```
+
+### ✅ Fixed
+
+```python
+# Match the production repository contract for this method.
+return [deepcopy(p) for p in self._store.values()]
+```
+
+Dual-backend tests must validate business behavior, not preserve an accidental in-memory-only rule.
+
+---
+
 ## Summary Table
 
 | # | Anti-Pattern | Severity | Detection |
@@ -589,3 +701,8 @@ Reuse an existing parent `conftest.py` helper when it patches the target module.
 | 16 | Low-entropy test data | Medium | review hard-coded `test-*`, fixed IPs, versions, namespaces |
 | 17 | Boilerplate module docstrings | Low | first line starts with `"""Tests for` |
 | 18 | Duplicated generic patch helpers | Medium | grep helper class names across `test_*.py` and `conftest.py` |
+| 19 | Eager backend fixture resolution | High | backend selector fixture takes both in-memory and real fixtures as eager args |
+| 20 | Real DB cleanup without FK order | High | review DELETE order in real DB fixtures |
+| 21 | Parity test data violates unique constraints | Medium | repeated factory defaults on unique columns |
+| 22 | Bare query-builder field names | Medium | pagination/sort fields omit `table.` prefix where builder requires it |
+| 23 | Claimed parity with in-memory semantic drift | High | compare in-memory helpers with production repository behavior |

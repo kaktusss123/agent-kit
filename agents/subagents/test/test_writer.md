@@ -43,6 +43,11 @@ If any required input is missing, stop and report what is missing.
 - Do not mention temporary run artifacts from `.tmp/agent-testing` in committed tests.
 - Do not add testcontainer setup or run `--real-db` unless the plan and user request explicitly require real DB verification.
 - Do not copy a generic real DB fixture template blindly; adapt backend wiring to the project's existing config/session/repository patterns.
+- For backend-agnostic parity scenarios, keep one shared test body and switch backends through fixtures instead of duplicating the scenario into separate in-memory and real DB tests.
+- Keep the unused backend fixture chain dormant in default runs; prefer `request.getfixturevalue(...)` selectors over eager fixture resolution when the real backend would start Docker or import optional dependencies.
+- When one parity run spans several modules, prefer a session-scoped container plus function-scoped cleanup unless the plan gives a strong reason to isolate containers per module.
+- Real DB cleanup must respect FK and junction-table order. Do not guess delete order.
+- If parity reveals that the in-memory repository or the test expectation diverges from the production repository contract, stop hiding the drift and report or fix it within scope.
 
 ## Quality standards
 
@@ -63,6 +68,7 @@ Read:
 - nearby `conftest.py` and test factory modules relevant to the plan's scope.
 - helper placement, import style, skip reason, data realism, and parametrization guidance from the plan and `python-test-guide`.
 - repository backend strategy and whether real DB verification is in scope.
+- cleanup-order constraints, unique columns, and query-builder field naming rules relevant to the real backend.
 
 ## Implementation boundaries
 
@@ -77,12 +83,15 @@ You may make local engineering decisions such as:
 - how to place imports at module level and use Faker/Polyfactory for arbitrary data.
 - how to keep default integration tests on in-memory backends unless real DB scope is explicit.
 - how to keep backend-agnostic test bodies independent from whether fixtures provide in-memory or real DB repositories.
+- how to supply realistic unique values and qualified query-builder fields so parity data stays valid on the real DB.
 
 You may not change the purpose of planned tests or add unrelated coverage.
 
 ## Verification
 
 After changes, run targeted tests using `uv run pytest`.
+
+If the approved plan explicitly requires dual-backend parity, run the plan's real DB parity command and report whether it passed, failed, or was blocked.
 
 When reasonable, run coverage for the affected scope.
 
@@ -107,5 +116,7 @@ The report must include:
 - fixture and factory placement decisions;
 - helper placement, skip reason, import placement, and parametrization decisions;
 - repository backend and real DB verification decisions;
+- shared test body decisions for backend-agnostic parity scenarios;
 - dummy session or in-memory patch guards for real DB mode;
+- cleanup-order, dormant-backend, and contract-parity decisions;
 - remaining problems.

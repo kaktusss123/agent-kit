@@ -18,6 +18,12 @@ diff:
   base_branch: "develop"
   status: "available | unavailable | not_applicable"
   changed_files: []
+backend_strategy:
+  default_backend: "in_memory | project_default | unknown"
+  parity_scope: "not_requested | requested | not_applicable"
+  parity_commands: []
+  db_specific_commands: []
+  container_scope: "function | module | session | unknown"
 environment_notes: []
 pre_existing_failures:
   explained: false
@@ -53,6 +59,15 @@ fixture_and_factory_context:
 helper_placement_context:
   reusable_helpers_found: []
   parent_conftest_coverage: []
+backend_context:
+  pytest_option: ""
+  markers: []
+  in_memory_surfaces: []
+  real_db_surfaces: []
+  dummy_patches_to_disable: []
+  cleanup_order: []
+  unique_constraints: []
+  qualified_field_rules: []
 data_and_boundary_context:
   arbitrary_fields: []
   semantic_literals: []
@@ -81,6 +96,19 @@ test_targets: []
 implementation_details:
   system_under_test: {}
   dependency_boundaries: []
+  backend_strategy:
+    mode: "in_memory_only | dual_backend | real_db_only"
+    shared_test_body_required: false
+    backend_selector_fixtures: []
+    dormant_backend_strategy: ""
+    container_scope: ""
+    cleanup_order: []
+    contract_parity_notes: []
+    qualified_field_rules: []
+    in_memory_command: ""
+    real_db_parity_command: ""
+    real_db_specific_command: ""
+    migration_command: ""
   data_construction: []
   fixture_placement: []
   factory_strategy: []
@@ -119,6 +147,12 @@ files_changed: []
 commands_run: []
 command_results: []
 deviations: []
+backend_verification:
+  in_memory_commands: []
+  real_db_commands: []
+  parity_result: "not_requested | passed | failed | blocked"
+  cleanup_strategy_checked: false
+  contract_drift_findings: []
 self_audit:
   standards_checked: []
   findings: []

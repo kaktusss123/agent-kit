@@ -1,6 +1,6 @@
 # Integration Test Patterns
 
-Tests that exercise more than one real layer. Two strategies: in-memory repositories by default and opt-in testcontainers for DB-centric or migration tests.
+Tests that exercise more than one real layer. Two strategies: in-memory repositories by default and opt-in testcontainers for dual-backend parity or DB-centric verification.
 
 ---
 
@@ -112,19 +112,25 @@ Note: With `asyncio_mode = "auto"` (see [pytest-config.md](pytest-config.md)), `
 
 ---
 
-## Strategy 2: Testcontainers (OPT-IN FOR DB-CENTRIC CODE)
+## Strategy 2: Testcontainers (OPT-IN FOR PARITY OR DB-CENTRIC CODE)
 
-Use only when testing SQL-specific behaviour: migrations, foreign keys, unique constraints, JSONB/ARRAY/enums, transaction rollback/isolation, locking, upserts, complex queries, or ORM mappings.
+Use a real DB backend only when either of these is true:
 
-Do not use testcontainers for domain entities, mappers, validators, unit-level orchestrator tests, or integration flows that can be honestly covered through in-memory repositories.
+1. You are rerunning backend-agnostic integration tests for parity against the real repository/session wiring.
+2. You are testing SQL-specific behaviour: migrations, foreign keys, unique constraints, JSONB/ARRAY/enums, transaction rollback/isolation, locking, upserts, complex queries, or ORM mappings.
+
+Do not use testcontainers for domain entities, mappers, validators, unit-level orchestrator tests, or as a replacement for the fast in-memory default path.
 
 ### Real DB flag pattern
 
-Real DB tests are opt-in. Default `uv run pytest` must not start Docker or require a database. Users and CI can enable real DB coverage explicitly:
+Real DB tests are opt-in. Default `uv run pytest` must not start Docker or require a database. Users and CI can enable parity and DB-specific coverage explicitly:
 
 ```bash
 # Fast default path for agents and local work
 uv run pytest
+
+# Same backend-agnostic integration tests against the real DB
+uv run pytest --real-db -m integration
 
 # Real PostgreSQL path for CI or manual verification
 uv run pytest --real-db -m real_db
@@ -165,6 +171,46 @@ def pytest_collection_modifyitems(config, items):
 
 Do not set default `addopts` that excludes all integration tests. Only real DB and migration tests should be gated by `--real-db`; in-memory integration tests should keep running by default.
 
+Backend-agnostic parity tests should usually carry `@pytest.mark.integration` only. The backend switch belongs in fixtures, not in duplicated test bodies or a second marker.
+
+### Backend parity is the default shape for backend-agnostic behavior
+
+When the same repository or service behavior should hold for both in-memory and real DB backends, prefer this workflow:
+
+1. Write one `@pytest.mark.integration` test body.
+2. Make repository or service fixtures choose the backend.
+3. Run that same integration selection twice when parity matters:
+
+```bash
+# Fast local and agent verification
+uv run pytest -m integration
+
+# CI or manual parity rerun against the real DB
+uv run pytest --real-db -m integration
+```
+
+Reserve `@pytest.mark.real_db` for assertions that depend on PostgreSQL-specific semantics. Reserve `@pytest.mark.migration` for schema migration coverage.
+
+### Coverage command shape for real DB verification
+
+Prefer `pytest-cov` for the default repository workflow when it already works for broad package coverage:
+
+```bash
+# Broad package coverage
+uv run pytest --real-db tests/integration -q --cov=package_name --cov-report=xml --cov-fail-under=0
+```
+
+For narrow scopes, prefer filesystem paths in `--cov`:
+
+```bash
+# Narrow directory coverage
+uv run pytest --real-db tests/integration/path/to/test_file.py -q --cov=package_name/subpackage --cov-report=term
+```
+
+Avoid dotted narrow sources such as `--cov=package_name.subpackage.module` unless the repository explicitly documents them as safe. Coverage treats non-directory `--cov` values as importable names, which can trigger early import side effects before tests run.
+
+Use `coverage run` only when the repository documents a compatible config for `PyTracer`. If the active coverage config uses unsupported concurrency options such as `greenlet`, `coverage run --timid` can fail unless a dedicated config or `--rcfile` override is provided.
+
 ### Dual backend fixture pattern
 
 Prefer backend-agnostic integration tests when the same behavior should hold for both in-memory and real database repositories. The exact implementation is project-specific and must be planned from the repository's existing session/config patterns.
@@ -175,13 +221,15 @@ Example shape, not a universal template:
 
 ```python
 @pytest.fixture
-def project_repository(request, in_memory_project_repository, real_project_repository):
+def project_repository(request):
     if request.config.getoption("--real-db"):
-        return real_project_repository
-    return in_memory_project_repository
+        return request.getfixturevalue("real_project_repository")
+    return request.getfixturevalue("in_memory_project_repository")
 ```
 
 Use this pattern only for tests that are intentionally backend-agnostic. Prefer separate `@pytest.mark.real_db` tests when the assertion depends on PostgreSQL-specific semantics.
+
+Using `request.getfixturevalue(...)` avoids resolving the unused backend chain. This matters when the real DB backend would start Docker or require optional dependencies that should stay dormant during the default in-memory run.
 
 ### Real DB mode disables dummy session patches
 
@@ -208,23 +256,45 @@ from alembic import command
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
-@pytest.fixture(scope="module")
-def migrated_db():
-    """Spin up Postgres and run alembic migrations."""
+@pytest.fixture(scope="session")
+def postgres_container_url():
+    """Start Postgres once and apply Alembic migrations."""
     with PostgresContainer("postgres:16") as psql:
         connection_url = psql.get_connection_url()
-        engine = create_engine(connection_url)
-
         alembic_cfg = Config("alembic.ini")
         alembic_cfg.set_main_option("sqlalchemy.url", connection_url)
         command.upgrade(alembic_cfg, "head")
+        yield connection_url
 
-        Session = sessionmaker(bind=engine)
-        with Session() as session:
-            yield session
+
+@pytest.fixture
+def migrated_db(postgres_container_url):
+    engine = create_engine(postgres_container_url)
+    Session = sessionmaker(bind=engine)
+    with Session() as session:
+        yield session
 ```
 
 **Why alembic over `create_all`:** Alembic applies the full migration history, catching issues with your migration chain. Mirrors production deployment.
+
+Prefer a session-scoped container when one run verifies several test modules against the same real DB backend. Recreating the container per module slows verification and can introduce avoidable startup flakiness.
+
+If the repository's Alembic environment rewrites the DB URL from application config, prefer a shared-connection migration flow instead of mutating global config in tests. Example shape:
+
+```python
+def _run_upgrade(connection, cfg: AlembicConfig) -> None:
+    cfg.attributes["connection"] = connection
+    alembic.command.upgrade(cfg, "head")
+
+
+async def _apply_migrations(async_url: str) -> None:
+    engine = create_async_engine(async_url, pool_pre_ping=True)
+    try:
+        async with engine.begin() as conn:
+            await conn.run_sync(_run_upgrade, AlembicConfig("alembic.ini"))
+    finally:
+        await engine.dispose()
+```
 
 ### Seeding Data
 
@@ -243,6 +313,65 @@ def seeded_db(migrated_db):
     return entities
 ```
 
+### Real DB cleanup and isolation
+
+Keep the container long-lived for the test session, but keep database state isolated per test with a function-scoped cleanup fixture.
+
+Cleanup must respect foreign-key order and repository-specific persistence surfaces. Example shape:
+
+```python
+@pytest.fixture
+async def real_db_session(postgres_container_url):
+    engine = create_async_engine(postgres_container_url, pool_pre_ping=True)
+    factory = async_sessionmaker(bind=engine, class_=AsyncSession, expire_on_commit=False)
+    async with factory() as session:
+        await session.execute(text("DELETE FROM public.child_table"))
+        await session.execute(text("DELETE FROM public.parent_table"))
+        await session.commit()
+        yield session
+    await engine.dispose()
+```
+
+Do not guess cleanup order. Read the repository tables, junction tables, and FK directions first.
+
+### Contract parity checks
+
+Backend parity work does not only validate fixture wiring. It also validates that the in-memory repository and the real repository implement the same contract.
+
+Before claiming parity, compare:
+
+1. filtering semantics such as whether soft-deleted rows are excluded;
+2. pagination/count behavior such as whether totals exist only when pagination is requested;
+3. update semantics for missing rows;
+4. uniqueness and foreign-key constraints enforced only by the real DB.
+
+If the real repository defines the production contract, fix the in-memory repository or the test expectation instead of keeping a knowingly divergent parity test.
+
+### QueryBuilder field naming
+
+When pagination, sorting, or filtering is delegated to a query builder that expects qualified field names, use the repository table prefix from the actual model mapping.
+
+Example:
+
+```python
+FilterParams(
+    pagination=OffsetPagination(
+        page_size=10,
+        direction=Direction.ASC,
+        field="cluster_version.version",
+        offset=0,
+    )
+)
+```
+
+Do not assume bare field names such as `"version"` are accepted in real DB mode.
+
+### Realistic unique data
+
+When real DB tables enforce uniqueness, test data must respect those constraints unless the test intentionally verifies the error.
+
+For example, if `cluster_version.version` is unique, create explicit distinct versions in parity tests instead of relying on a reusable factory default that returns the same value repeatedly.
+
 ---
 
 ## Optional: Integration Test Markers
@@ -250,7 +379,7 @@ def seeded_db(migrated_db):
 ```toml
 [tool.pytest.ini_options]
 markers = [
-    "integration: Full-flow tests using in-memory repos; runs by default",
+    "integration: Backend-agnostic integration tests; run by default and can rerun with --real-db",
     "real_db: PostgreSQL testcontainer tests; require --real-db",
     "migration: Alembic migration tests; require --real-db",
 ]
@@ -262,10 +391,11 @@ async def test_full_create_flow():
     ...
 ```
 
-Run unit only: `pytest -m "not integration"`
-Run integration only: `pytest -m integration`
-Run real DB only: `pytest --real-db -m real_db`
-Run migrations only: `pytest --real-db -m migration`
+Run unit only: `uv run pytest -m "not integration"`
+Run integration only: `uv run pytest -m integration`
+Run integration parity: `uv run pytest --real-db -m integration`
+Run real DB only: `uv run pytest --real-db -m real_db`
+Run migrations only: `uv run pytest --real-db -m migration`
 
 ---
 
@@ -290,3 +420,8 @@ Run migrations only: `pytest --real-db -m migration`
 3. **No `deepcopy` in in-memory repos** — tests mutate stored objects, leaking state.
 4. **Trying to test external API integration** — that's end-to-end, not integration. Mock external boundaries.
 5. **Using testcontainers for simple CRUD** — overkill. In-memory repos are faster and sufficient.
+6. **Resolving both backend fixture chains eagerly** — the default run may start Docker or require optional deps by accident. Use `request.getfixturevalue(...)` in backend selectors.
+7. **Per-module container startup for multi-module parity runs** — slower and flakier than a session-scoped container.
+8. **Unordered cleanup in real DB fixtures** — foreign-key tables or junction tables can block cleanup unless deleted first.
+9. **Assuming in-memory semantics equal production semantics** — parity can fail on soft-delete, totals, missing-row updates, or uniqueness constraints.
+10. **Bare query-builder field names in parity tests** — real DB filtering and pagination may require fully qualified fields like `table.column`.

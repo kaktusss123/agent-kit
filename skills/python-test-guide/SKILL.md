@@ -1,7 +1,7 @@
 ---
 name: python-test-guide
 description: "Use when asked to write, review, or audit pytest tests for a Python service. Covers unit, integration, and architecture tests — when to use each, how to structure them, what patterns to follow."
-version: 1.2.0
+version: 1.3.0
 ---
 
 # Python Test Guide
@@ -153,9 +153,23 @@ Do not add module docstrings that only restate that a file contains tests. Test 
 
 ### R16. Real DB tests are opt-in
 
-In-memory integration tests run by default. Testcontainers and real database tests are reserved for migrations and DB-specific behavior and must require an explicit flag such as `--real-db`. Agent workflows must not start Docker or require a database unless the user explicitly requests real DB verification.
+In-memory integration tests run by default. Real DB and testcontainer execution must require an explicit flag such as `--real-db`. Agent workflows must not start Docker or require a database unless the user explicitly requests real DB verification.
 
-Backend-agnostic integration tests are preferred when the same repository/service behavior should hold for both in-memory and real DB backends. The exact fixture/session/config wiring is project-specific. In real DB mode, dummy session stores and in-memory session patches must be disabled.
+Backend-agnostic integration tests are preferred when the same repository/service behavior should hold for both in-memory and real DB backends. Prefer one integration test body with backend-selecting fixtures, then rerun that same integration selection with `--real-db` when dual-backend parity is in scope. Separate `@pytest.mark.real_db` or `@pytest.mark.migration` tests remain for PostgreSQL-specific semantics or migration coverage. The exact fixture/session/config wiring is project-specific. In real DB mode, dummy session stores and in-memory session patches must be disabled.
+
+### R17. Prefer Ruff autofix before manual lint cleanup
+
+When Ruff reports fixable issues in files changed for the current task, prefer applying Ruff autofix before planning a separate manual cleanup. Use `uv run ruff check <scope> --fix` for safe fixes. `--unsafe-fixes` is allowed only after reviewing the proposed scope and confirming the change is safe for the touched tests and fixtures. Keep the Ruff scope as narrow as practical and do not use autofix to rewrite unrelated files.
+
+### R18. Prefer path-based `--cov` for narrow Python targets
+
+When collecting coverage for a narrow Python package or module, prefer filesystem paths in `--cov`, such as `--cov=package/subpackage`, instead of dotted import names such as `--cov=package.subpackage`. Coverage treats dotted values as importable names and may resolve them through import machinery before tests run. In repositories with heavy package `__init__.py` side effects, that can trigger early runtime setup or crash-prone imports.
+
+Use dotted `--cov=<package>` only when the project already uses that safely for broad package coverage. For narrow scopes, prefer directory paths. If a single file must be targeted, prefer the containing directory over a dotted module name unless the repository explicitly documents file-level `--cov` support.
+
+### R19. Use `coverage run` only with compatible config
+
+If `coverage run --timid` is needed, first verify that the active coverage config is compatible with the Python tracer. Configurations that enable unsupported concurrency modes such as `greenlet` can fail even before tests run. In that case, use a dedicated coverage config for that workflow or an explicit `--rcfile` override. Do not silently swap a repository from `pytest-cov` to `coverage run`; record the reason and keep the command consistent with project documentation.
 
 ---
 
@@ -181,7 +195,12 @@ Use this compact checklist whenever a low-cost writer model implements tests.
 16. Use Faker/Polyfactory and parametrization for arbitrary and boundary data.
 17. Avoid boilerplate module docstrings such as `"""Tests for ..."""`.
 18. Keep testcontainers behind `--real-db`; default test commands use in-memory backends.
-19. Prefer backend-agnostic integration tests when behavior should match across in-memory and real DB backends.
+19. Prefer one backend-agnostic integration test body for behavior that should match across in-memory and real DB backends.
+20. When dual-backend parity is in scope, rerun the same integration selection with `uv run pytest --real-db -m integration` or an equivalent project-specific command.
+21. Reserve `real_db` and `migration` markers for PostgreSQL-specific semantics and migration coverage.
+22. For narrow coverage, prefer path-based `--cov=package/subpackage` over dotted `--cov=package.subpackage`.
+23. Use `coverage run` only when the repository config is compatible with `PyTracer`, or when a dedicated compatible coverage config is provided.
+24. Prefer `uv run ruff check <changed-scope> --fix` for autofixable lint issues; use `--unsafe-fixes` only after a safety review.
 
 ---
 
@@ -284,6 +303,77 @@ pytest-parametrize-names-type = "csv"
 "tests/**/*.py" = ["S101", "SLF001"]
 ```
 
+## Minimum Viable Dual-Backend Setup
+
+For a new project that must run the same integration behavior against in-memory repositories by default and a real DB on demand, add these pieces on top of the minimum setup:
+
+1. **A `--real-db` pytest option and markers** in `tests/conftest.py` or `tests/integration/conftest.py`.
+
+```python
+import pytest
+
+
+def pytest_addoption(parser):
+    parser.addoption(
+        "--real-db",
+        action="store_true",
+        default=False,
+        help="Run real database integration tests.",
+    )
+
+
+def pytest_configure(config):
+    config.addinivalue_line("markers", "integration: backend-agnostic integration tests")
+    config.addinivalue_line("markers", "real_db: PostgreSQL-specific integration tests")
+    config.addinivalue_line("markers", "migration: Alembic migration tests")
+```
+
+2. **Backend-selecting integration fixtures** in `tests/integration/conftest.py`.
+
+```python
+@pytest.fixture
+def project_repository(request, in_memory_project_repository, real_project_repository):
+    if request.config.getoption("--real-db"):
+        return real_project_repository
+    return in_memory_project_repository
+```
+
+3. **Dedicated integration infrastructure paths**:
+   - `tests/integration/repositories/` for in-memory implementations;
+   - `tests/integration/conftest.py` for backend selection, factory overrides, and cache clearing;
+   - project-specific real DB fixtures that apply migrations before repository tests run.
+
+4. **Optional dev/test dependencies when real DB parity is required**:
+   - `testcontainers` for containerized databases;
+   - `pytest-alembic` when migration checks are part of the suite.
+
+5. **Command matrix that agents and CI can follow without guessing**:
+
+```bash
+# Default fast path
+uv run pytest -m integration
+
+# Same backend-agnostic integration tests against the real DB
+uv run pytest --real-db -m integration
+
+# PostgreSQL-specific assertions only
+uv run pytest --real-db -m real_db
+
+# Migration coverage only
+uv run pytest --real-db -m migration
+```
+
+Backend-agnostic tests should usually carry only the `integration` marker. The backend switch belongs in fixtures, not in duplicated test functions.
+
+For real DB parity infrastructure, prefer:
+
+- session-scoped Postgres containers when several modules share the same parity run;
+- function-scoped cleanup fixtures for test isolation;
+- cleanup order that respects FK and junction-table dependencies;
+- backend selectors that use `request.getfixturevalue(...)` so the unused backend chain stays dormant;
+- explicit, realistic unique values for fields protected by real DB constraints;
+- fully qualified query-builder field names such as `table.column` when pagination or sorting is exercised.
+
 ---
 
 ## Common Pattern Index
@@ -298,6 +388,7 @@ pytest-parametrize-names-type = "csv"
 | Write async tests | [unit-tests.md](references/unit-tests.md) |
 | Build an in-memory repository | [integration-tests.md](references/integration-tests.md) |
 | Override factory functions | [integration-tests.md](references/integration-tests.md) |
+| Run backend parity verification | [integration-tests.md](references/integration-tests.md) |
 | Set up a real DB for testing | [integration-tests.md](references/integration-tests.md) |
 | Mock gRPC context | [fixtures.md](references/fixtures.md) |
 | Test gRPC/protobuf mappers | [grpc-protobuf-tests.md](references/grpc-protobuf-tests.md) |
@@ -326,6 +417,7 @@ After writing or reviewing tests, group checks by test type:
 - [ ] `asyncio_mode = "auto"` in pyproject.toml
 - [ ] flake8-pytest-style rules active (PT checks pass)
 - [ ] Default test command does not start Docker or require real DB services
+- [ ] Ruff issues in changed test files are checked; autofixable issues are fixed with scoped `uv run ruff check ... --fix` when safe
 
 ### Unit tests
 
@@ -357,7 +449,15 @@ After writing or reviewing tests, group checks by test type:
 - [ ] In-memory repos or testcontainers used (not mocks at repo level)
 - [ ] Testcontainers are used only for `real_db` or `migration` tests gated by an explicit flag
 - [ ] Backend-agnostic integration tests use the same test body across in-memory and real DB modes when applicable
+- [ ] Backend parity commands are explicit when dual-backend verification is in scope
+- [ ] `integration` markers are used for backend-agnostic parity flows; `real_db` and `migration` stay reserved for DB-specific coverage
 - [ ] Dummy session stores and in-memory patches are disabled in real DB mode
+- [ ] Backend-selecting fixtures do not eagerly resolve the unused backend chain
+- [ ] Session-scoped containers are preferred when several modules share one real DB parity run
+- [ ] Real DB cleanup order respects FK and junction-table dependencies
+- [ ] In-memory repository semantics match the asserted production contract for parity-covered behaviors
+- [ ] Query-builder pagination and sorting fields use the qualified names required by the real repository
+- [ ] Real DB parity test data respects unique constraints unless the test intentionally covers the violation
 - [ ] `deepcopy` used on read/write in in-memory repos
 - [ ] LRU caches cleared in `autouse` fixtures
 
@@ -379,6 +479,10 @@ After writing or reviewing tests, group checks by test type:
 | Faker/Polyfactory for arbitrary values | Generated data catches invalid assumptions and keeps tests realistic |
 | Parametrize boundary cases | Variants are explicit and easier to review |
 | In-memory by default, real DB by flag | Agent workflows stay fast while CI can verify DB semantics |
+| One integration body across both backends | Prevents drift between in-memory and real DB parity suites |
+| Session-scoped real DB container + function-scoped cleanup | Balances parity stability, startup cost, and per-test isolation |
+| Contract parity over fixture parity | Dual-backend tests must expose semantic drift, not hide it |
+| Ruff autofix before manual lint cleanup | Fast, consistent fixes for machine-fixable issues within task scope |
 | `tests/integration/` required even if empty | Standardises structure |
 | `deepcopy` in in-memory repos | Prevents mutation leaks |
 | Alembic over `create_all` | Mirrors production deployment path |

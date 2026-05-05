@@ -65,6 +65,7 @@ Before reviewing, load the `python-test-guide` skill. Check against all invarian
 - fixture and factory placement.
 - skip reasons, import placement, helper placement, data realism, parametrization, and docstring usage.
 - repository backend selection and real DB gating.
+- shared-test-body parity expectations for backend-agnostic integration coverage.
 
 Run or manually perform the focused checks required by the `python-test-guide` sections named by the plan on changed test files and include counts in the report.
 
@@ -81,6 +82,8 @@ Check that:
 - low-value standalone wrapper or ID-generator tests are justified by public contract risk.
 - skipped tests are not masking writer implementation failure.
 - testcontainers or real DB verification are used only when explicitly requested or required for DB-specific behavior.
+- when dual-backend parity is required, the same integration selection is rerun with `--real-db` or an equivalent project-specific command.
+- real DB parity setup does not restart avoidable containers per module when one shared session-scoped container would cover the reviewed scope.
 
 ### 5. Final diff
 
@@ -98,7 +101,13 @@ Check that:
 - default test commands do not require Docker or real DB services.
 - real DB or migration tests are gated by `--real-db` and appropriate markers.
 - backend-agnostic integration tests do not duplicate test bodies for in-memory and real DB modes without justification.
+- backend-agnostic parity tests use `integration` selection for both backends unless an approved exception exists.
 - dummy session stores and in-memory patches are disabled when real DB mode is active.
+- backend selectors keep the unused backend chain dormant instead of eagerly resolving both fixture trees.
+- real DB cleanup order respects FK and junction-table dependencies.
+- parity-covered in-memory repositories match the asserted production contract instead of hiding semantic drift.
+- query-builder pagination and sorting fields use the qualified names required by the real repository.
+- parity data respects real DB unique constraints unless the test intentionally covers the violation.
 
 ## Verdict
 
@@ -118,6 +127,9 @@ Use `FAIL` for any of these:
 - skip reasons that reference `.tmp/agent-testing`, plan files, capsule files, writer reports, or reviewer reports.
 - skipped tests that exist only because the writer could not implement the branch.
 - ungated testcontainer setup that runs during default `uv run pytest`.
+- dual-backend parity was required but the verification ran only `-m real_db` or another DB-specific selection without rerunning the backend-agnostic integration selection.
 - dummy session or in-memory store usage in real DB mode.
+- eager backend fixture resolution starts Docker or imports optional real DB dependencies during the default in-memory run.
+- parity was claimed even though the in-memory repository or test expectation still diverged from the production repository contract for the covered behavior.
 
 Save the review report exactly to the output path provided in the prompt.

@@ -215,7 +215,7 @@
     },
     "implementer": {
       "hidden": true,
-      "model": "opencode-go/deepseek-v4-flash",
+      "model": "opencode-go/kimi-k2.6",
       "tools": {
         "kanban_*": true,
         "CodeGraphContext_*": true

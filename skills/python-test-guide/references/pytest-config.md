@@ -46,7 +46,7 @@ pythonpath = ["."]
 asyncio_mode = "auto"
 asyncio_default_fixture_loop_scope = "function"
 markers = [
-    "integration: in-memory integration tests that run by default",
+    "integration: backend-agnostic integration tests; runs by default and can rerun with --real-db",
     "real_db: PostgreSQL testcontainer tests, require --real-db",
     "migration: Alembic migration tests, require --real-db",
 ]
@@ -100,7 +100,7 @@ dev = [
     # ============================================================
     "pytest-mock>=3,<5",             # Only if using mocker fixture
     "freezegun>=1,<2",               # Freeze time in tests
-    "testcontainers>=4,<5",          # Real DB containers
+    "testcontainers>=4,<5",          # Real DB parity and DB-specific containers
     "pytest-alembic>=0.11,<1",       # Migration tests
     "pytest-async-sqlalchemy>=0.2,<1", # Async SQLAlchemy
     "hypothesis>=6,<7",              # Property-based testing
@@ -216,16 +216,16 @@ Parallel test execution via `pytest -n auto`. Each worker gets a different rando
 
 ```bash
 # Validate config
-python -m pytest --collect-only 2>&1 | head -20
+uv run pytest --collect-only
 
 # Check lint
 ruff check tests/
 
 # Find unused fixtures
-python -m pytest --dead-fixtures
+uv run pytest --dead-fixtures
 
 # Reproduce a random failure
-python -m pytest --randomly-seed=<seed-from-failure>
+uv run pytest --randomly-seed=<seed-from-failure>
 
 # Check for mocks without spec=
 rg 'AsyncMock\(' tests/ --no-filename | rg -v 'spec='
@@ -240,7 +240,7 @@ Register `real_db` and `migration` markers, but do not exclude all integration t
 ```toml
 [tool.pytest.ini_options]
 markers = [
-    "integration: in-memory integration tests that run by default",
+    "integration: backend-agnostic integration tests; runs by default and can rerun with --real-db",
     "real_db: PostgreSQL testcontainer tests, require --real-db",
     "migration: Alembic migration tests, require --real-db",
 ]
@@ -252,7 +252,13 @@ Preferred commands:
 # Agent and local default; must not start Docker
 uv run pytest
 
-# CI/manual real DB verification
+# Fast backend-agnostic integration path
+uv run pytest -m integration
+
+# CI/manual parity rerun for the same integration tests
+uv run pytest --real-db -m integration
+
+# CI/manual PostgreSQL-specific verification
 uv run pytest --real-db -m real_db
 
 # CI/manual migration verification
@@ -260,3 +266,9 @@ uv run pytest --real-db -m migration
 ```
 
 Do not add `-m "not integration"` to default `addopts` unless the project explicitly wants unit-only default runs. That would hide in-memory integration coverage from agents and local developers.
+
+Backend-agnostic tests should usually use the `integration` marker only. Reserve `real_db` for PostgreSQL-specific assertions and `migration` for migration coverage.
+
+For coverage commands, prefer the repository's default `pytest-cov` workflow when it already works for broad package coverage, for example `--cov=package_name`. For narrow scopes, prefer path-based values such as `--cov=package_name/subpackage` instead of dotted import names such as `--cov=package_name.subpackage`. Coverage treats directory values as source directories and non-directory values as importable names.
+
+If a project also uses `coverage run --timid`, verify that its active coverage config is compatible with `PyTracer`. Configs that enable unsupported concurrency modes, such as `greenlet`, need a dedicated config file or explicit `--rcfile` override for `coverage run` workflows.
