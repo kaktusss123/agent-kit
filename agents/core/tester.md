@@ -44,6 +44,11 @@ Choose one mode from the user request:
 - If `develop` is unavailable, try `origin/develop`.
 - If no develop base is available, record the fallback explicitly.
 - Do not add tests on top of an unexplained red baseline.
+- Do not refactor or migrate tests on top of a red relevant baseline. Fix the relevant baseline first or stop as blocked; do not defer failures as "pre-existing" after implementation.
+- If the user defines a repository-wide invariant, verify that invariant across the entire target tree, not only changed files or capsule scope.
+- Persist exact regression sets discovered during verification and rerun those exact files/tests in every repair and final verification pass.
+- Compute review and verification diff bases from Git facts. Do not assume the parent/base commit from chat history.
+- Stale comments, docstrings, helper names, and test data labels in changed files are part of the implementation and must be fixed before the writer report or final report.
 - Do not try to cover a large repository with one huge plan.
 - Collect baseline and coverage for every run, including continuation rounds.
 - Never write a final report until every approved plan has a writer report and one reviewer report exists.
@@ -110,9 +115,10 @@ Deprioritize:
 3. Read `skills/python-test-guide/references/testing-artifact-templates.md`.
 
 4. Collect baseline:
-   - run an appropriate `uv run pytest ...` command;
-   - classify failures if tests fail;
-   - do not proceed with new tests if the baseline is red for unknown reasons.
+    - run an appropriate `uv run pytest ...` command;
+    - classify failures if tests fail;
+    - do not proceed with new tests if the baseline is red for unknown reasons.
+    - for refactor or migration work, require the relevant baseline to be green before implementation; otherwise create a repair capsule first or stop as blocked.
 
 5. Collect coverage:
     - use `uv run pytest ...` with coverage arguments;
@@ -124,9 +130,10 @@ Deprioritize:
       `.tmp/agent-testing/<run-id>/coverage-summary.yaml`
 
 6. Determine scope:
-   - for `diff-oriented`, start from `git diff develop...HEAD`;
-   - for `bootstrap-coverage`, select high-value coverage areas;
-   - for `targeted`, use the user-specified target.
+    - for `diff-oriented`, start from `git diff develop...HEAD`;
+    - for `bootstrap-coverage`, select high-value coverage areas;
+    - for `targeted`, use the user-specified target.
+    - when the user goal includes a global invariant, add a whole-target-tree invariant check independent from capsule boundaries.
 
 7. Create planning capsules in:
    `.tmp/agent-testing/<run-id>/capsules/`
@@ -163,12 +170,16 @@ Deprioritize:
     - targeted tests;
     - full `uv run pytest ...` when reasonable;
     - coverage delta for the affected scope when available.
+    - exact regression sets recorded during earlier verification or repair passes.
+    - whole-target-tree invariant checks requested by the user goal.
     - when the user explicitly requested dual-backend or real DB verification for backend-agnostic integration behavior, rerun the same integration selection with `--real-db` before any DB-specific marker-only commands.
     - omit `--real-db` unless explicitly requested; record a follow-up if DB-specific behavior still needs real DB verification.
 
 15. Write:
     `.tmp/agent-testing/<run-id>/final-report.md`
     The final report must cite baseline, coverage, sanity, writer, reviewer, and verification artifacts.
+
+Before the final report, compute and record the exact diff/review base from Git, plus the final changed-file list. If the computed base differs from any earlier assumption, rerun scope-sensitive checks with the computed base.
 
 ## Delegation prompt requirements
 

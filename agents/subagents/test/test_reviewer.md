@@ -77,6 +77,8 @@ Check that:
 - there are no collection errors;
 - flaky patterns were not introduced;
 - coverage delta exists or lack of delta is explained.
+- exact regression sets from baseline, writer reports, or repair passes were rerun exactly, not replaced by a different subset.
+- repository-wide invariants requested by the user were checked across the whole target tree.
 - writer self-audit results are present and plausible.
 - dependency changes for test factory tooling are limited to dev/test dependencies.
 - low-value standalone wrapper or ID-generator tests are justified by public contract risk.
@@ -93,6 +95,7 @@ Check that:
 - fixtures do not conflict;
 - helper duplication is not excessive;
 - production code changes are minimal and justified.
+- changed comments, docstrings, helper names, and test data labels do not describe outdated behavior or construction mechanisms.
 - reusable fixtures and factories are placed according to `python-test-guide` unless an explicit approved exception exists.
 - committed tests do not reference temporary agent artifacts.
 - imports are not interleaved with test logic unless an exception is justified.
@@ -123,6 +126,9 @@ Use `FAIL` for any of these:
 - critical violation of the `python-test-guide` sections named by the plan;
 - collection failure caused by generated tests;
 - final verification not run and not explicitly blocked.
+- an exact regression set was known but not rerun exactly.
+- a user-defined repository-wide invariant was verified only on changed files or capsule scope.
+- refactor or migration work proceeded on a red relevant baseline without a repair-first plan.
 - reusable factory or fixture definitions added directly to `test_*.py` without an explicit approved exception.
 - skip reasons that reference `.tmp/agent-testing`, plan files, capsule files, writer reports, or reviewer reports.
 - skipped tests that exist only because the writer could not implement the branch.

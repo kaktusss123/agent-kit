@@ -679,6 +679,69 @@ Dual-backend tests must validate business behavior, not preserve an accidental i
 
 ---
 
+## 24. Scoped Verification for a Global Invariant
+
+### ❌ Anti-Pattern
+
+```text
+User goal: "No direct X under tests/"
+Verification: "No direct X in the files I changed."
+```
+
+### ✅ Fixed
+
+```text
+Inventory: all tests/ files
+Result: every X occurrence listed and classified
+```
+
+A repository-wide invariant is not satisfied by a scoped diff check.
+
+---
+
+## 25. Refactoring on a Red Baseline
+
+### ❌ Anti-Pattern
+
+```text
+Baseline: relevant tests fail
+Action: migrate helpers anyway
+Report: remaining failures are pre-existing
+```
+
+### ✅ Fixed
+
+```text
+Baseline: relevant tests fail
+Action: repair baseline first or stop as blocked
+```
+
+Refactors and migrations need a green relevant baseline so regressions are attributable.
+
+---
+
+## 26. Stale Test Terminology After Migration
+
+### ❌ Anti-Pattern
+
+```python
+def make_entity() -> Entity:
+    """Create an Entity via old_constructor."""
+    return EntityFactory.build()
+```
+
+### ✅ Fixed
+
+```python
+def make_entity() -> Entity:
+    """Create an Entity with the shared factory."""
+    return EntityFactory.build()
+```
+
+Stale comments and docstrings teach future tests to copy the old pattern.
+
+---
+
 ## Summary Table
 
 | # | Anti-Pattern | Severity | Detection |
@@ -706,3 +769,6 @@ Dual-backend tests must validate business behavior, not preserve an accidental i
 | 21 | Parity test data violates unique constraints | Medium | repeated factory defaults on unique columns |
 | 22 | Bare query-builder field names | Medium | pagination/sort fields omit `table.` prefix where builder requires it |
 | 23 | Claimed parity with in-memory semantic drift | High | compare in-memory helpers with production repository behavior |
+| 24 | Scoped verification for global invariant | High | compare user goal with whole-tree inventory command |
+| 25 | Refactoring on a red baseline | Critical | baseline has relevant failures before writer edits |
+| 26 | Stale test terminology after migration | Medium | search changed files for old helper names, comments, and docstrings |

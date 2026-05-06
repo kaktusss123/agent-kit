@@ -1,5 +1,7 @@
 These templates define required handoff fields. Agents may choose nested structure below these fields when it makes the artifact clearer, but they must preserve IDs, paths, status, and traceability between artifacts.
 
+Baseline failures are recorded before editing. They are not a post-hoc excuse for regressions introduced during implementation.
+
 ```yaml
 # baseline.yaml
 run_id: ""
@@ -25,9 +27,17 @@ backend_strategy:
   db_specific_commands: []
   container_scope: "function | module | session | unknown"
 environment_notes: []
-pre_existing_failures:
+baseline_failures:
   explained: false
+  repair_required_before_refactor: false
   items: []
+global_invariants:
+  requested: []
+  commands: []
+  results: []
+regression_sets:
+  exact_commands: []
+  exact_files_or_tests: []
 ```
 ---
 
@@ -52,6 +62,12 @@ initial_hints:
   likely_focus: []
   useful_searches: []
 constraints: []
+global_invariants:
+  requested: []
+  whole_tree_commands: []
+regression_sets:
+  exact_files_or_tests: []
+  exact_commands: []
 fixture_and_factory_context:
   existing_conftest_files: []
   existing_factory_modules: []
@@ -116,6 +132,9 @@ implementation_details:
   data_strategy: []
   parametrization: []
   expected_assertions: []
+  global_invariant_checks: []
+  regression_set_reruns: []
+  stale_terminology_checks: []
 implementation_order: []
 blocked_reasons: []
 verification_commands: []
@@ -160,6 +179,9 @@ self_audit:
   skip_reason_findings: []
   import_placement_findings: []
   data_boundary_findings: []
+  global_invariant_findings: []
+  regression_set_results: []
+  stale_terminology_findings: []
 remaining_problems: []
 ```
 ---

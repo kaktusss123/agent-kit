@@ -1,7 +1,7 @@
 ---
 name: python-test-guide
 description: "Use when asked to write, review, or audit pytest tests for a Python service. Covers unit, integration, and architecture tests — when to use each, how to structure them, what patterns to follow."
-version: 1.3.0
+version: 1.3.1
 ---
 
 # Python Test Guide
@@ -171,6 +171,22 @@ Use dotted `--cov=<package>` only when the project already uses that safely for 
 
 If `coverage run --timid` is needed, first verify that the active coverage config is compatible with the Python tracer. Configurations that enable unsupported concurrency modes such as `greenlet` can fail even before tests run. In that case, use a dedicated coverage config for that workflow or an explicit `--rcfile` override. Do not silently swap a repository from `pytest-cov` to `coverage run`; record the reason and keep the command consistent with project documentation.
 
+### R20. Global invariants require whole-tree checks
+
+When a user defines a repository-wide invariant, verify it against the entire target tree, not only changed files. Examples include "no direct X under `tests/`", "all tests use shared factories", or "no skipped tests without issue IDs". A scoped pass is not enough; record the exact inventory command and classify every exception.
+
+### R21. Fix relevant red baselines before refactors
+
+Do not refactor, migrate, or rewrite tests on top of a red relevant baseline. First fix the relevant failing tests or stop as blocked. A failure can be treated as out of scope only when the baseline evidence was collected before editing and the current work does not depend on that failing area.
+
+### R22. Rerun exact regression sets
+
+When verification identifies a set of failing or previously repaired tests, preserve the exact file/test list and rerun it after every repair and in final verification. Do not replace an exact regression set with a nearby subset, structural argument, or general confidence claim.
+
+### R23. Keep test terminology current
+
+When changing a construction mechanism, fixture behavior, helper purpose, or expected behavior, update related comments, docstrings, helper names, and test data labels in the files you touch. Stale terminology is a defect because future tests will copy the wrong pattern.
+
 ---
 
 ## Cheap Writer Safety
@@ -201,6 +217,10 @@ Use this compact checklist whenever a low-cost writer model implements tests.
 22. For narrow coverage, prefer path-based `--cov=package/subpackage` over dotted `--cov=package.subpackage`.
 23. Use `coverage run` only when the repository config is compatible with `PyTracer`, or when a dedicated compatible coverage config is provided.
 24. Prefer `uv run ruff check <changed-scope> --fix` for autofixable lint issues; use `--unsafe-fixes` only after a safety review.
+25. Verify repository-wide invariants across the whole target tree, not only changed files.
+26. Do not refactor tests on a red relevant baseline; repair first or stop as blocked.
+27. Rerun exact regression sets after repairs and during final verification.
+28. Update stale comments, docstrings, helper names, and labels in touched files immediately.
 
 ---
 

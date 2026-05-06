@@ -48,6 +48,10 @@ If any required input is missing, stop and report what is missing.
 - When one parity run spans several modules, prefer a session-scoped container plus function-scoped cleanup unless the plan gives a strong reason to isolate containers per module.
 - Real DB cleanup must respect FK and junction-table order. Do not guess delete order.
 - If parity reveals that the in-memory repository or the test expectation diverges from the production repository contract, stop hiding the drift and report or fix it within scope.
+- If the relevant baseline is red, stop and report it instead of refactoring tests on top of it unless the approved plan is explicitly a repair-first plan.
+- If the plan contains a repository-wide invariant, run the whole-target-tree invariant check after editing, not only checks for files you changed.
+- If a previous verification or plan names an exact regression set, rerun that exact set before writing the report.
+- Update stale comments, docstrings, helper names, and test data labels in every file you touch; do not leave old construction mechanisms or outdated behavior descriptions behind.
 
 ## Quality standards
 
@@ -91,6 +95,8 @@ You may not change the purpose of planned tests or add unrelated coverage.
 
 After changes, run targeted tests using `uv run pytest`.
 
+Run any exact regression-set and global invariant commands required by the plan. If they fail or cannot be run, write a `partial` or `blocked` report instead of claiming success.
+
 If the approved plan explicitly requires dual-backend parity, run the plan's real DB parity command and report whether it passed, failed, or was blocked.
 
 When reasonable, run coverage for the affected scope.
@@ -120,3 +126,6 @@ The report must include:
 - dummy session or in-memory patch guards for real DB mode;
 - cleanup-order, dormant-backend, and contract-parity decisions;
 - remaining problems.
+- exact regression-set rerun results when applicable;
+- global invariant check results when applicable;
+- stale comment/docstring cleanup performed in changed files.

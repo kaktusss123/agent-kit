@@ -44,6 +44,8 @@ If any required input is missing, stop and report what is missing.
 - Do not plan standalone trivial wrapper or ID-generator tests unless the plan identifies a public contract risk.
 - Identify boundary dimensions and prefer parametrized cases when one behavior has multiple input variants.
 - Do not plan skipped tests as a workaround for branches that cannot be implemented reliably.
+- Do not plan refactor or migration work until the relevant baseline is green. If baseline failures exist in the planned scope, plan a repair-first capsule or return `blocked`.
+- When the user goal defines a repository-wide invariant, include a whole-target-tree invariant verification command in the plan, even if the capsule scope is smaller.
 - Plan in-memory integration coverage by default.
 - When backend-agnostic behavior must be verified against both repository backends, prefer one integration test body whose fixtures select in-memory by default and real DB only under an explicit flag.
 - Reserve separate `real_db` or `migration` tests for PostgreSQL-specific semantics or migration coverage.
@@ -109,6 +111,8 @@ The plan must include:
 - repository backend strategy, including any `--real-db` follow-up requirement;
 - whether a shared test body across in-memory and real DB backends is required;
 - exact in-memory, real DB parity, and DB-specific verification commands when applicable;
+- exact regression-set rerun commands if the baseline or capsule evidence identifies known failing or previously fixed tests;
+- exact global invariant inventory commands when the user goal defines one;
 - dummy session or in-memory patch behavior that must be disabled under real DB mode;
 - whether backend selectors must use `request.getfixturevalue(...)` to keep the unused backend dormant;
 - whether one session-scoped container should serve multiple parity modules in the same run;
