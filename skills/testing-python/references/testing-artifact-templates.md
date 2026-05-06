@@ -1,6 +1,22 @@
+# Testing Artifact Templates
+
+## Contents
+
+- Purpose
+- baseline.yaml
+- capsule.yaml
+- plan.yaml
+- sanity-report.yaml
+- writer-report.yaml
+- review-report.md front matter
+
+## Purpose
+
 These templates define required handoff fields. Agents may choose nested structure below these fields when it makes the artifact clearer, but they must preserve IDs, paths, status, and traceability between artifacts.
 
 Baseline failures are recorded before editing. They are not a post-hoc excuse for regressions introduced during implementation.
+
+For filled examples, see [example-artifacts.md](example-artifacts.md).
 
 ```yaml
 # baseline.yaml
@@ -89,8 +105,8 @@ data_and_boundary_context:
   semantic_literals: []
   boundary_dimensions: []
 testing_standards:
-  - "python-test-guide: invariant rules"
-  - "python-test-guide: cheap writer safety"
+  - "testing-python: invariant rules"
+  - "testing-python: cheap writer safety"
 expected_outputs:
   plan_file: ""
   writer_report_file: ""

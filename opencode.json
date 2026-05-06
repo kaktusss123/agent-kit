@@ -284,6 +284,15 @@
         "kanban_*": false,
         "CodeGraphContext_*": true
       }
+    },
+    "test_planner": {
+      "model": "opencode-go/deepseek-v4-pro"
+    },
+    "test_reviewer": {
+      "model": "opencode-go/kimi-k2.6"
+    },
+    "test_writer": {
+      "model": "opencode-go/deepseek-v4-flash"
     }
   }
 }

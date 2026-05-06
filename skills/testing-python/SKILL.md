@@ -1,10 +1,10 @@
 ---
-name: python-test-guide
-description: "Use when asked to write, review, or audit pytest tests for a Python service. Covers unit, integration, and architecture tests — when to use each, how to structure them, what patterns to follow."
+name: testing-python
+description: "Pytest testing standards for Python services: unit, integration, architecture, and gRPC/protobuf tests. Use when asked to write, review, audit, or improve pytest tests, coverage, or test quality. Covers fixtures, mocks, parametrization, in-memory repositories, real DB testing, and common antipatterns."
 version: 1.3.1
 ---
 
-# Python Test Guide
+# Testing Python
 
 Navigator for writing pytest tests. Load the appropriate reference for the test type you need.
 
@@ -27,6 +27,8 @@ User: "write unit tests for {module}"
 | Need a specific fixture recipe | [references/fixtures.md](references/fixtures.md) |
 | Testing gRPC/protobuf mappers | [references/grpc-protobuf-tests.md](references/grpc-protobuf-tests.md) |
 | Setting up a new project's test infra | [references/pytest-config.md](references/pytest-config.md) |
+| Need filled orchestration artifact examples | [references/example-artifacts.md](references/example-artifacts.md) |
+| Auditing low-cost writer output | [references/cheap-writer-safety.md](references/cheap-writer-safety.md) |
 | Reviewing existing tests for quality | [references/antipatterns.md](references/antipatterns.md) |
 
 ### Step 2 — Obey the invariant rules
@@ -186,43 +188,6 @@ When verification identifies a set of failing or previously repaired tests, pres
 ### R23. Keep test terminology current
 
 When changing a construction mechanism, fixture behavior, helper purpose, or expected behavior, update related comments, docstrings, helper names, and test data labels in the files you touch. Stale terminology is a defect because future tests will copy the wrong pattern.
-
----
-
-## Cheap Writer Safety
-
-Use this compact checklist whenever a low-cost writer model implements tests.
-
-1. `AsyncMock(spec=Interface)` for async dependencies; no bare dependency `AsyncMock()`.
-2. `MagicMock(spec=Interface)` only for sync dependencies; never for domain/Pydantic/protobuf data.
-3. Polyfactory-backed factories for reusable entities, commands, and mapper inputs.
-4. Real system under test with mocked dependencies; never mock the SUT or its method under test.
-5. Module-level test functions by default; classes require explicit plan approval.
-6. Test names describe behavior; one-line test docstrings are allowed only for clarification.
-7. One behavior per test; mapper/validator tests may assert one output object's fields.
-8. `assert result is not None` must be paired with behavior assertions.
-9. Config changes use `monkeypatch` or `try/finally` restoration.
-10. Skips always include `reason=`.
-11. Reusable factories and fixtures are not defined directly in `test_*.py` files.
-12. If Polyfactory is absent, add it to dev/test dependencies before adding reusable model factories.
-13. Do not chase coverage with standalone runtime-type assertions for trivial wrappers or ID generators.
-14. Do not reference temporary agent artifacts in committed tests or skip reasons.
-15. Keep imports at module level; do not interleave imports with test logic.
-16. Use Faker/Polyfactory and parametrization for arbitrary and boundary data.
-17. Avoid boilerplate module docstrings such as `"""Tests for ..."""`.
-18. Keep testcontainers behind `--real-db`; default test commands use in-memory backends.
-19. Prefer one backend-agnostic integration test body for behavior that should match across in-memory and real DB backends.
-20. When dual-backend parity is in scope, rerun the same integration selection with `uv run pytest --real-db -m integration` or an equivalent project-specific command.
-21. Reserve `real_db` and `migration` markers for PostgreSQL-specific semantics and migration coverage.
-22. For narrow coverage, prefer path-based `--cov=package/subpackage` over dotted `--cov=package.subpackage`.
-23. Use `coverage run` only when the repository config is compatible with `PyTracer`, or when a dedicated compatible coverage config is provided.
-24. Prefer `uv run ruff check <changed-scope> --fix` for autofixable lint issues; use `--unsafe-fixes` only after a safety review.
-25. Verify repository-wide invariants across the whole target tree, not only changed files.
-26. Do not refactor tests on a red relevant baseline; repair first or stop as blocked.
-27. Rerun exact regression sets after repairs and during final verification.
-28. Update stale comments, docstrings, helper names, and labels in touched files immediately.
-
----
 
 ## Test Directory Layout
 
@@ -423,30 +388,32 @@ For real DB parity infrastructure, prefer:
 
 After writing or reviewing tests, group checks by test type:
 
+Each checklist item maps back to one or more invariant rules where applicable.
+
 ### All tests
 
-- [ ] `tests/conftest.py` exists with session-scoped `faker`
-- [ ] `tests/integration/` directory exists
+- [ ] `tests/conftest.py` exists with session-scoped `faker` (project setup)
+- [ ] `tests/integration/` directory exists (R5)
 - [ ] Test file mirrors source path
-- [ ] No `@pytest.mark.skip` without `reason="..."`
+- [ ] No `@pytest.mark.skip` without `reason="..."` (R8)
 - [ ] Skip reasons do not mention temporary agent artifacts or non-committed files
 - [ ] No session-scoped mutable fixtures (except `faker`)
-- [ ] No reusable `_make_*`, `make_*`, `create_test_*`, or `@pytest.fixture` definitions in `test_*.py`
-- [ ] Imports are at module level unless an exceptional inline import is justified
-- [ ] No boilerplate module docstrings that only restate the file contains tests
+- [ ] No reusable `_make_*`, `make_*`, `create_test_*`, or `@pytest.fixture` definitions in `test_*.py` (R9)
+- [ ] Imports are at module level unless an exceptional inline import is justified (R13)
+- [ ] No boilerplate module docstrings that only restate the file contains tests (R15)
 - [ ] `asyncio_mode = "auto"` in pyproject.toml
 - [ ] flake8-pytest-style rules active (PT checks pass)
-- [ ] Default test command does not start Docker or require real DB services
+- [ ] Default test command does not start Docker or require real DB services (R16)
 - [ ] Ruff issues in changed test files are checked; autofixable issues are fixed with scoped `uv run ruff check ... --fix` when safe
 
 ### Unit tests
 
-- [ ] All async mocks use `AsyncMock(spec=Interface)`
-- [ ] Service under test is real, not mocked
-- [ ] Reusable Pydantic/domain model test data uses Polyfactory
-- [ ] Config override fixtures use try/finally
+- [ ] All async mocks use `AsyncMock(spec=Interface)` (R4)
+- [ ] Service under test is real, not mocked (R3)
+- [ ] Reusable Pydantic/domain model test data uses Polyfactory (R10)
+- [ ] Config override fixtures use try/finally (R7)
 - [ ] No `MagicMock` is used as a domain/Pydantic/protobuf data object
-- [ ] One-line test function docstrings clarify behavior instead of duplicating the test name
+- [ ] One-line test function docstrings clarify behavior instead of duplicating the test name (R15)
 - [ ] No new `class Test...` unless the plan explicitly allowed it
 
 ### Low-cost writer audit
@@ -457,11 +424,11 @@ After writing or reviewing tests, group checks by test type:
 - [ ] Search changed tests for direct `config.` assignment and confirm restoration
 - [ ] Search changed tests for `assert result is not None` and confirm behavior assertions
 - [ ] Search changed `test_*.py` files for reusable `_make_*`, `make_*`, `create_test_*`, and `@pytest.fixture`
-- [ ] Confirm reusable Pydantic/domain factories use Polyfactory or document why the setup is one-off local data
-- [ ] Confirm new tests exercise behavior or public contracts, not only trivial runtime type wrappers
-- [ ] Search changed tests for inline imports and move them to module level unless explicitly justified
+- [ ] Confirm reusable Pydantic/domain factories use Polyfactory or document why the setup is one-off local data (R10)
+- [ ] Confirm new tests exercise behavior or public contracts, not only trivial runtime type wrappers (R11)
+- [ ] Search changed tests for inline imports and move them to module level unless explicitly justified (R13)
 - [ ] Search skip reasons for `.tmp/agent-testing`, `plan-`, `capsule`, `writer-report`, and `review-report`
-- [ ] Search changed tests for hard-coded `test-*`, fixed IPs, versions, and namespaces; replace arbitrary values with Faker/Polyfactory
+- [ ] Search changed tests for hard-coded `test-*`, fixed IPs, versions, and namespaces; replace arbitrary values with Faker/Polyfactory (R14)
 - [ ] Confirm repeated input/output variants use `pytest.mark.parametrize`
 
 ### Integration tests

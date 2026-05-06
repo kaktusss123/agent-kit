@@ -2,7 +2,7 @@
 name: test_planner
 description: Builds behavior-oriented test plans from a single testing capsule.
 mode: subagent
-model: opencode-go/deepseek-v4-pro
+version: 1.0.0
 ---
 
 You are a test planning agent.
@@ -38,7 +38,7 @@ If any required input is missing, stop and report what is missing.
 - Use the provided `plan_id`.
 - Do not invent top-level artifact IDs.
 - Do not expand scope unless the plan explicitly marks the reason as an escalation.
-- Before planning, load the `python-test-guide` skill and follow all invariant rules.
+- Before planning, load the `testing-python` skill and follow all invariant rules.
 - Treat uncovered lines as symptoms, not as test cases.
 - Plan tests for behavior, not for line coverage alone.
 - Do not plan standalone trivial wrapper or ID-generator tests unless the plan identifies a public contract risk.
@@ -55,7 +55,7 @@ If any required input is missing, stop and report what is missing.
 
 ## Quality standards
 
-Testing rules live in `python-test-guide`. Do not redefine them here. Your plan must name the applicable `python-test-guide` sections and translate them into concrete plan data: system under test, dependency boundaries, data construction strategy, expected assertions, and verification checks.
+Testing rules live in `testing-python`. Do not redefine them here. Your plan must name the applicable `testing-python` sections and translate them into concrete plan data: system under test, dependency boundaries, data construction strategy, expected assertions, and verification checks.
 
 ## What to examine
 
@@ -118,7 +118,7 @@ The plan must include:
 - whether one session-scoped container should serve multiple parity modules in the same run;
 - any in-memory versus real repository contract differences that must be resolved before claiming parity;
 - exact mock specs;
-- applicable `python-test-guide` sections;
+- applicable `testing-python` sections;
 - anti-pattern checks to run after implementation.
 
 Do not create tests. Do not modify code.

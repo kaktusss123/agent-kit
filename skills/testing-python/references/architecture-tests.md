@@ -1,5 +1,14 @@
 # Architecture Test Patterns
 
+## Contents
+
+- Motivation
+- Canonical test file
+- Target architecture rules
+- Setup
+- Running
+- Handling known violations
+
 Layer-dependency tests using pytestarch. Enforce that your project's import graph matches its intended architecture.
 
 ---

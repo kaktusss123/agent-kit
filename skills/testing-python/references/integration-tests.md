@@ -1,5 +1,14 @@
 # Integration Test Patterns
 
+## Contents
+
+- When to Write an Integration Test
+- Strategy 1: In-Memory Repositories
+- Strategy 2: Testcontainers
+- Optional: Integration Test Markers
+- Integration vs Unit Quick Reference
+- Common Mistakes
+
 Tests that exercise more than one real layer. Two strategies: in-memory repositories by default and opt-in testcontainers for dual-backend parity or DB-centric verification.
 
 ---

@@ -79,7 +79,7 @@ Route instead of executing directly when the task has a better owner:
 | Multi-stage product implementation, planned commit/verify/review loops | Route to `dev-orchestrator` and stop. |
 | Straightforward requirements or handoff-ready spec | Route to `fast-spec-analyst` and stop. |
 | Complex or ambiguous requirements discovery | Route to `full-spec-analyst` and stop. |
-| Broad Python test coverage work | Route to `tester`; handle narrow test fixes directly with `python-test-guide`. |
+| Broad Python test coverage work | Route to `tester`; handle narrow test fixes directly with `testing-python`. |
 | Explicit git commit request | Delegate to `committer`; never commit proactively. |
 | Large documentation authoring | Delegate to `documentation`; handle small docs edits directly. |
 | External API or library uncertainty | Load `find-docs` and cite official documentation. |

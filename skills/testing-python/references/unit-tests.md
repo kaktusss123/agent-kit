@@ -1,5 +1,16 @@
 # Unit Test Patterns
 
+## Contents
+
+- Core Pattern: Real Service + Mocked Dependencies
+- Mocking Rules
+- Async Testing
+- Parametrization
+- Test Data Generation
+- Testing Time-Dependent Code
+- Assertion Style
+- Test Functions vs Classes
+
 How to write isolated unit tests. All dependencies are mocked.
 
 Test files go in `tests/<package>/<module>/` — mirror the source structure.

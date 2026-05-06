@@ -1,5 +1,16 @@
 # Canonical pyproject.toml Configuration
 
+## Contents
+
+- Versioning Note
+- Minimum Viable New Project
+- Full Dependencies
+- Ruff Configuration for Tests
+- Enforcing `spec=` on Mocks
+- Configuration Decisions
+- Check Commands
+- Real DB Opt-In Configuration
+
 Copy-paste templates for new projects. Version numbers below are the range this skill was tested against, not a strict requirement.
 
 ---

@@ -1,5 +1,13 @@
 # gRPC and Protobuf Mapper Tests
 
+## Contents
+
+- Core rule
+- Prefer real data objects
+- Mock only boundaries
+- Forbidden patterns
+- Required mapper assertions
+
 Use this reference when testing gRPC handlers, protobuf mappers, and code that converts between protobuf messages and domain/Pydantic models.
 
 ## Core rule

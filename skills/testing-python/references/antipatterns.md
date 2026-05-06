@@ -1,5 +1,35 @@
 # Anti-Patterns Deep Dive
 
+## Contents
+
+- 1. Mocking the Service Under Test
+- 2. AsyncMock Without spec=
+- 3. Session-Scoped Mutable Fixtures
+- 4. Inline Faker() Per Test
+- 5. Reusable Local Factories in `test_*.py`
+- 6. Missing tests/integration/ Directory
+- 7. mock.patch Inside Test Body
+- 8. skip Without reason
+- 9. DB-Dependent Unit Tests
+- 10. Config Mutation Without Restoration
+- 11. In-Memory Repository Without deepcopy
+- 12. Manual try/except for Expected Exceptions
+- 13. Coverage-Only Type Wrapper Tests
+- 14. Skip Reasons Referencing Agent Artifacts
+- 15. Imports Interleaved With Test Logic
+- 16. Low-Entropy Test Data and Missing Boundaries
+- 17. Boilerplate Test Module Docstrings
+- 18. Duplicated Generic Patch Helpers
+- 19. Eager Backend Fixture Resolution
+- 20. Real DB Cleanup Without FK Order
+- 21. Parity Test Data Violates Unique Constraints
+- 22. Bare Query-Builder Field Names in Real DB Pagination
+- 23. Claiming Parity While In-Memory Semantics Drift
+- 24. Scoped Verification for a Global Invariant
+- 25. Refactoring on a Red Baseline
+- 26. Stale Test Terminology After Migration
+- Summary Table
+
 Concrete anti-patterns found in real test suites, with before/after examples and severity ratings.
 
 ---
