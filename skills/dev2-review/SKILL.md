@@ -78,7 +78,9 @@ Verdict: PASS | PASS_WITH_NOTES | FAIL | BLOCKED
 Findings:
 | id | severity | location | finding | evidence | remediation |
 |---|---|---|---|---|---|
-| R1 | Critical/High/Medium/Low/Info | file:line | issue | quote or command result | required action |
+| R1 | <severity> | file:line | issue | quote or command result | required action |
+
+Severity is one of: Critical, High, Medium, Low, Info.
 Plan deviations:
 - none | item
 Residual risks:

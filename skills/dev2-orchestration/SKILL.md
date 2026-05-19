@@ -32,6 +32,7 @@ Every delegated prompt must include:
 ```text
 Stage: <stage>
 Mode: <plan_check | commit_verify | n/a>
+# Use n/a only when the receiving agent has no mode-specific workflow.
 Objective: <one paragraph>
 Scope:
 - allowed files/modules
@@ -48,7 +49,7 @@ Stop conditions:
 - needs_more_context triggers
 ```
 
-Use `n/a` only when the receiving agent has no mode-specific workflow.
+`commit_verify` corresponds to the `verify` stage after a commit hash exists.
 
 ## Default Procedure
 
