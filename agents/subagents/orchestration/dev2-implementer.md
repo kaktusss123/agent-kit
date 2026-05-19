@@ -34,10 +34,7 @@ permission:
     "uv run ruff*": "allow"
     "uv run mypy*": "allow"
     "npm test*": "allow"
-    "npm run*": "allow"
     "pnpm test*": "allow"
-    "pnpm run*": "allow"
-    "make*": "allow"
   skill:
     "*": "deny"
     "testing-python": "allow"
