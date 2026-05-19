@@ -1,6 +1,6 @@
 ---
 name: complexity-review
-description: "Reference playbook and report template for manual algorithmic complexity review. Phase one: no scanner execution."
+description: "Reference playbook and report template for manual algorithmic complexity review."
 ---
 
 # Complexity Review
@@ -9,7 +9,7 @@ This skill provides reference material for manual algorithmic complexity review 
 
 ## Scope
 
-Phase one: `dev2-reviewer-complexity` performs manual read-only complexity analysis using the references in this skill. No automated scanner execution.
+`dev2-reviewer-complexity` performs manual read-only complexity analysis using the references in this skill.
 
 ## Triggers
 
@@ -63,6 +63,4 @@ Phase one: `dev2-reviewer-complexity` performs manual read-only complexity analy
 
 ## Non-Goals
 
-- Phase one does NOT execute `scripts/analyze_complexity.py`.
-- Scanner output (if enabled later) is treated as leads, not proof.
 - This skill does not replace domain-specific performance review.
