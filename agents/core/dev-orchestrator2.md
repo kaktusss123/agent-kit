@@ -46,7 +46,6 @@ permission:
     "rtk git show*": allow
     "rtk git rev-parse*": allow
     "rtk git merge-base*": allow
-    "glab *": allow
   task:
     "*": deny
     "repo-scout": allow

@@ -17,6 +17,32 @@ tools:
 permission:
   task:
     "*": "deny"
+  bash:
+    "*": "deny"
+    "git status*": "allow"
+    "git diff*": "allow"
+    "git log*": "allow"
+    "git show*": "allow"
+    "git rev-parse*": "allow"
+    "git merge-base*": "allow"
+    "rtk git status*": "allow"
+    "rtk git diff*": "allow"
+    "rtk git log*": "allow"
+    "rtk git show*": "allow"
+    "rtk git rev-parse*": "allow"
+    "rtk git merge-base*": "allow"
+    "uv run pytest*": "allow"
+    "uv run ruff*": "allow"
+    "uv run mypy*": "allow"
+    "uv run bandit*": "allow"
+    "npm test*": "allow"
+    "npm run*": "allow"
+    "pnpm test*": "allow"
+    "pnpm run*": "allow"
+    "make*": "allow"
+  skill:
+    "*": "deny"
+    "verification-gate": "allow"
 ---
 
 # Dev2 Verifier

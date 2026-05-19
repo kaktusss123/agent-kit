@@ -20,6 +20,27 @@ tools:
 permission:
   task:
     "*": "deny"
+  bash:
+    "*": "deny"
+    "git status*": "allow"
+    "git diff*": "allow"
+    "git log*": "allow"
+    "git show*": "allow"
+    "rtk git status*": "allow"
+    "rtk git diff*": "allow"
+    "rtk git log*": "allow"
+    "rtk git show*": "allow"
+    "uv run pytest*": "allow"
+    "uv run ruff*": "allow"
+    "uv run mypy*": "allow"
+    "npm test*": "allow"
+    "npm run*": "allow"
+    "pnpm test*": "allow"
+    "pnpm run*": "allow"
+    "make*": "allow"
+  skill:
+    "*": "deny"
+    "testing-python": "allow"
 ---
 
 # Dev2 Implementer
