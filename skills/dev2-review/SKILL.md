@@ -76,7 +76,9 @@ Tier: <R0-R4>
 Scope commit: <hash>
 Verdict: PASS | PASS_WITH_NOTES | FAIL | BLOCKED
 Findings:
-- severity: file:line evidence, impact, recommendation
+| id | severity | location | finding | evidence | remediation |
+|---|---|---|---|---|---|
+| R1 | Critical/High/Medium/Low/Info | file:line | issue | quote or command result | required action |
 Plan deviations:
 - none | item
 Residual risks:
