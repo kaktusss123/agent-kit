@@ -34,34 +34,33 @@ Ensure complete, unambiguous context passing when orchestrator agents delegate w
 
 ## Ownership Boundary
 
-### Orchestrator Owns
+### Delegating Orchestrator Owns
 
-- Specification discovery workflow
-- Task workspace management
-- Clarification loops with the user
-- Subagent delegation and orchestration
-- Synthesis of final artifacts
-- Kanban visibility for the task
+- The active workflow it is coordinating.
+- Task workspace, stage, and state tracking for that workflow.
+- Clarification loops with the user.
+- Subagent selection, handoff quality, and result integration.
+- Final synthesis, verdict, or user-facing report for the workflow.
+- Kanban visibility when the workflow uses kanban.
 
-### Orchestrator Does Not Own
+### Delegating Orchestrator Does Not Own
 
-- Implementation delivery workflow
-- Product-code editing outside spec artifacts
-- Verification of implementation
-- Code review of implementation changes
-- Commit orchestration
+- The delegated specialist's domain reasoning.
+- Evidence collection inside the delegated scope.
+- The delegated specialist's required output details.
+- Work outside the active workflow's explicit authority.
 
 ### Subagent Owns
 
-- Its specialized analysis domain
-- Its output artifact (within spec workspace)
-- Evidence and findings within its scope
+- Its specialized domain.
+- Its assigned output artifact or structured return.
+- Evidence and findings within its delegated scope.
 
 ### Subagent Does Not Own
 
-- Final requirements or decisions
-- User interrogation (except feature-triager in support role)
-- Final specification synthesis
+- Final workflow decisions unless explicitly assigned.
+- User interrogation unless the handoff assigns clarification support.
+- Work outside the delegated scope.
 
 ## Context Passing Rules
 
@@ -70,7 +69,7 @@ Ensure complete, unambiguous context passing when orchestrator agents delegate w
 | Context Element | Description | Required |
 |-----------------|-------------|----------|
 | Task objective | What the overall task aims to achieve | Always |
-| Task workspace path | `docs/specs/<task-id>/` | Always |
+| Task workspace or artifact path | Where outputs or state should be written, if applicable | When applicable |
 | Current artifact state | What's already known and decided | Always |
 | Relevant repository evidence | From repo-scout or prior analysis | When available |
 | Unresolved questions | Open items the subagent may help resolve | When applicable |
@@ -82,7 +81,7 @@ Ensure complete, unambiguous context passing when orchestrator agents delegate w
 
 ```
 Task: [Overall task objective]
-Workspace: docs/specs/<task-id>/
+Workspace/artifacts: [Path or n/a]
 Current state: [What's known, decided, assumed]
 Your scope: [What you need to analyze]
 Evidence available: [Relevant repo findings, decisions]
@@ -108,16 +107,16 @@ Return: [What to return to me]
 
 ### After Subagent Returns
 
-- Integrate findings into appropriate spec sections
-- Transfer evidence gaps into questions-log.md
-- Transfer confirmed constraints into decision-log.md
-- Note any contradictions or conflicts between subagent findings
+- Integrate findings into the active workflow artifact, review aggregation, or user-facing report.
+- Transfer evidence gaps into the workflow's question or blocker record.
+- Transfer confirmed constraints into the workflow's decision record.
+- Note any contradictions or conflicts between subagent findings.
 
 ### Handoff Verification
 
 | Check | Description |
 |-------|-------------|
-| Output exists | Subagent artifact written to workspace |
+| Output exists | Subagent artifact or structured return is available |
 | Format matches | Output follows expected structure |
 | Scope respected | Subagent stayed within assigned scope |
 | Evidence clear | Subagent distinguished evidence from inference |
@@ -139,15 +138,14 @@ Return: [What to return to me]
 
 ### How to Integrate Subagent Findings
 
-| Subagent Output | Maps To (in spec.md) |
-|-----------------|----------------------|
-| repo-scout.md | Current state, relevant modules, constraints |
-| edge-cases.md | Edge Cases, Validation Rules, Error Handling |
-| contract-impact.md | API Contract, Event/Message Contract, Migration/Rollout |
-| non-functional-requirements.md | Performance, Security, Observability sections |
-| design-brief.md | Architecture, Options Considered sections |
-| execution-plan.md | Future implementation planning (separate file) |
-| feature-triager findings | Problem Statement, Goals, Actors, Acceptance Criteria |
+| Subagent Output | Maps To |
+|-----------------|---------|
+| repo-scout result | Current state, relevant modules, constraints |
+| edge-case result | Edge cases, validation rules, error handling |
+| contract-impact result | API, schema, event, config, migration, or rollout risks |
+| non-functional result | Performance, security, observability, reliability notes |
+| design-planner result | Architecture, options considered, execution plan |
+| feature-triager result | Problem statement, goals, actors, acceptance criteria |
 
 ### Contradiction Resolution
 
