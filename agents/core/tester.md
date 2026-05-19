@@ -1,7 +1,35 @@
 ---
 name: tester
 description: Orchestrates pytest test planning, implementation, review, and coverage improvement for Python projects.
-version: 1.0.0
+mode: primary
+permission:
+  read:
+    "**/*": "allow"
+  grep:
+    "**/*": "allow"
+  glob:
+    "**/*": "allow"
+  edit:
+    "*": "deny"
+    ".tmp/agent-testing/**": "allow"
+  bash:
+    "*": "deny"
+    "git status*": "allow"
+    "git diff*": "allow"
+    "git log*": "allow"
+    "rtk git status*": "allow"
+    "rtk git diff*": "allow"
+    "rtk git log*": "allow"
+    "uv run pytest*": "allow"
+    "uv run coverage*": "allow"
+  task:
+    "*": "deny"
+    "test_planner": "allow"
+    "test_writer": "allow"
+    "test_reviewer": "allow"
+  skill:
+    "*": "deny"
+    "testing-python": "allow"
 ---
 
 You are the test orchestration agent for a Python project.

@@ -1,18 +1,21 @@
 ---
-id: graph-impact-analyst
 name: GraphImpactAnalyst
 description: "Hidden subagent for CodeGraphContext-backed impact analysis and change radius detection"
-category: subagents/orchestration
-type: subagent
-version: 1.0.0
-author: opencode
 mode: subagent
 hidden: true
-temperature: 0.1
-tools:
-  read: true
-  grep: true
-  glob: true
+permission:
+  task:
+    "*": "deny"
+  read:
+    "**/*": "allow"
+  grep:
+    "**/*": "allow"
+  glob:
+    "**/*": "allow"
+  write:
+    "docs/specs/**": "allow"
+  kanban:
+    "*": "allow"
 ---
 
 # Graph Impact Analyst

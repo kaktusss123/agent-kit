@@ -1,21 +1,8 @@
 ---
-id: reviewer-security
 name: ReviewerSecurity
 description: "Security reviewer: vulnerability and trust-boundary analysis"
-category: subagents/orchestration
-type: subagent
-version: 2.0.0
-author: opencode
 mode: subagent
 hidden: true
-temperature: 0.1
-tools:
-  read: true
-  grep: true
-  glob: true
-  write: false
-  edit: false
-  patch: false
 permission:
   task:
     "*": "deny"

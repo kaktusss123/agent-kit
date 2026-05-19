@@ -2,7 +2,34 @@
 name: test_writer
 description: Implements tests from an approved test plan.
 mode: subagent
-version: 1.0.0
+hidden: true
+permission:
+  read:
+    "**/*": "allow"
+  grep:
+    "**/*": "allow"
+  glob:
+    "**/*": "allow"
+  edit:
+    "**/*": "allow"
+    "**/*.env*": "deny"
+    "**/*.key": "deny"
+    "**/*.secret": "deny"
+    ".git/**": "deny"
+  bash:
+    "*": "deny"
+    "git status*": "allow"
+    "git diff*": "allow"
+    "rtk git status*": "allow"
+    "rtk git diff*": "allow"
+    "uv run pytest*": "allow"
+    "uv run ruff*": "allow"
+    "uv run mypy*": "allow"
+  task:
+    "*": "deny"
+  skill:
+    "*": "deny"
+    "testing-python": "allow"
 ---
 
 You are a test implementation agent.

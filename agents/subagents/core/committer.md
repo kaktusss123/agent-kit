@@ -2,7 +2,6 @@
 name: committer
 description: "Creates one safe git commit with a conventional message and pre-commit hooks"
 mode: subagent
-model: opencode-go/deepseek-v4-flash
 permission:
   task: deny
   bash:
@@ -31,8 +30,6 @@ permission:
   skill:
     "*": "deny"
     "git-commit": "allow"
-metadata:
-  version: 1.0.0
 ---
 
 # Git Committer

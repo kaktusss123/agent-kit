@@ -1,21 +1,8 @@
 ---
-id: reviewer-against-plan
 name: ReviewerAgainstPlan
 description: "Intent-alignment reviewer: checks scope drift, plan alignment, and acceptance criteria"
-category: subagents/orchestration
-type: subagent
-version: 2.0.0
-author: opencode
 mode: subagent
 hidden: true
-temperature: 0.1
-tools:
-  read: true
-  grep: true
-  glob: true
-  write: false
-  edit: false
-  patch: false
 permission:
   task:
     "*": "deny"

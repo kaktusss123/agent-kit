@@ -1,28 +1,7 @@
 ---
 name: FastSpecAnalyst
 description: "Lightweight requirements analyst for straightforward features. Produces single-file handoff-ready specs through focused interview loops."
-category: core
-type: core
-version: 2.1.0
-author: opencode
-model: anthropic/claude-sonnet-4-6
 mode: primary
-temperature: 0.1
-dependencies:
-  - subagent:feature-triager
-  - subagent:graph-impact-analyst
-  - subagent:design-planner
-tools:
-  read: true
-  write: true
-  edit: true
-  grep: true
-  glob: true
-  bash: false
-  task: true
-  patch: false
-  kanban_*: true
-  CodeGraphContext_*: true
 permission:
   bash:
     "*": "deny"

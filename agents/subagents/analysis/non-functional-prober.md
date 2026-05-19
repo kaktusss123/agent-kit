@@ -1,4 +1,5 @@
 ---
+name: non-functional-prober
 description: "Probes non-functional requirements: performance, reliability, security, observability, operability, and user-facing quality constraints"
 mode: subagent
 permission:
@@ -12,8 +13,6 @@ permission:
     "**/*": "allow"
   write:
     "docs/specs/**": "allow"
-metadata:
-  version: 1.1.0
 ---
 
 # Role

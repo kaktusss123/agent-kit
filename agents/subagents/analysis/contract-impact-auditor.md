@@ -1,4 +1,5 @@
 ---
+name: contract-impact-auditor
 description: "Audits the impact of features on internal and external contracts: APIs, events, schemas, queues, persistence surfaces, integration boundaries, and compatibility"
 mode: subagent
 permission:
@@ -12,8 +13,6 @@ permission:
     "**/*": "allow"
   write:
     "docs/specs/**": "allow"
-metadata:
-  version: 1.1.0
 ---
 
 # Role

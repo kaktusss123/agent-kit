@@ -1,19 +1,8 @@
 ---
-id: verification-engineer
 name: VerificationEngineer
 description: "Verification agent: plan checks and post-commit verification"
-category: subagents/orchestration
-type: subagent
-version: 2.0.0
-author: opencode
 mode: subagent
 hidden: true
-temperature: 0.1
-tools:
-  read: true
-  grep: true
-  glob: true
-  bash: true
 permission:
   task:
     "*": "deny"

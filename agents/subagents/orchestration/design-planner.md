@@ -1,4 +1,5 @@
 ---
+name: design-planner
 description: "Hidden subagent for design briefs, trade-offs, execution planning, and implementation sequencing"
 mode: subagent
 permission:
@@ -19,8 +20,6 @@ permission:
     "design-brief": "allow"
     "execution-plan": "allow"
     "kanban-discipline": "allow"
-metadata:
-  version: 2.1.0
 ---
 
 # Role

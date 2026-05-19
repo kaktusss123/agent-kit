@@ -2,7 +2,6 @@
 name: FullSpecAnalyst
 description: "Comprehensive specification discovery agent for complex features. Produces implementation-ready specifications through workspace-based discovery, repository reconnaissance, structured interrogation, edge case analysis, contract auditing, and traceability verification."
 mode: primary
-# model: anthropic/claude-opus-4-6
 permission:
   read:
     "**/*": "allow"
@@ -31,7 +30,6 @@ permission:
     "kanban-discipline": "allow"
   kanban:
     "*": "allow"
-version: 2.2.0
 ---
 
 # Role

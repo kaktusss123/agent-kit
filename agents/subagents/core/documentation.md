@@ -1,22 +1,8 @@
 ---
-id: documentation
 name: DocWriter
 description: "Documentation authoring agent"
-category: subagents/core
-type: subagent
-version: 1.0.0
-author: opencode
 mode: subagent
-temperature: 0.2
-tools:
-  read: true
-  grep: true
-  glob: true
-  edit: true
-  write: true
-  bash: false
-  task: true
-permissions:
+permission:
   bash:
     "*": "deny"
   edit:
@@ -27,11 +13,6 @@ permissions:
     "**/*.secret": "deny"
   task:
     "*": "deny"
-
-# Tags
-tags:
-  - documentation
-  - docs
 ---
 
 # Documentation Agent

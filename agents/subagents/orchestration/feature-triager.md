@@ -1,4 +1,5 @@
 ---
+name: feature-triager
 description: "Hidden subagent for task framing, scope definition, requirement clarification, and kanban-first triage"
 mode: subagent
 permission:
@@ -18,8 +19,6 @@ permission:
     "*": "deny"
     "feature-interrogation": "allow"
     "kanban-discipline": "allow"
-metadata:
-  version: 2.1.0
 ---
 
 # Role

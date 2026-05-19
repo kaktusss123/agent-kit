@@ -2,7 +2,21 @@
 name: test_planner
 description: Builds behavior-oriented test plans from a single testing capsule.
 mode: subagent
-version: 1.0.0
+hidden: true
+permission:
+  read:
+    "**/*": "allow"
+  grep:
+    "**/*": "allow"
+  glob:
+    "**/*": "allow"
+  edit: "deny"
+  bash: "deny"
+  task:
+    "*": "deny"
+  skill:
+    "*": "deny"
+    "testing-python": "allow"
 ---
 
 You are a test planning agent.

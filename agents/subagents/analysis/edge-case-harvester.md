@@ -1,4 +1,5 @@
 ---
+name: edge-case-harvester
 description: "Systematically enumerates edge cases, negative scenarios, conflict states, and degradation modes for comprehensive specification coverage"
 mode: subagent
 permission:
@@ -12,8 +13,6 @@ permission:
     "**/*": "allow"
   write:
     "docs/specs/**": "allow"
-metadata:
-  version: 1.1.0
 ---
 
 # Role

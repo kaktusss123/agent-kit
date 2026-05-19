@@ -1,22 +1,8 @@
 ---
-id: implementer
 name: Implementer
 description: "Implementation agent: bounded code changes and stage-boundary test writing"
-category: subagents/orchestration
-type: subagent
-version: 2.0.0
-author: opencode
 mode: subagent
 hidden: true
-temperature: 0
-tools:
-  read: true
-  write: true
-  edit: true
-  grep: true
-  glob: true
-  bash: true
-  patch: true
 permission:
   task:
     "*": "deny"

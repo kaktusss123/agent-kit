@@ -42,7 +42,6 @@ permission:
     "full-spec-analyst": allow
   skill:
     "*": allow
-version: 2.0.0
 ---
 
 # Role

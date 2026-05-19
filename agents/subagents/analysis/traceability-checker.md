@@ -1,4 +1,5 @@
 ---
+name: traceability-checker
 description: "Verifies completeness and traceability of specifications by linking goals, scenarios, requirements, edge cases, tests, and acceptance criteria"
 mode: subagent
 permission:
@@ -12,8 +13,6 @@ permission:
     "**/*": "allow"
   write:
     "docs/specs/**": "allow"
-metadata:
-  version: 1.1.0
 ---
 
 # Role

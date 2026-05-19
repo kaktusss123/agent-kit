@@ -2,7 +2,30 @@
 name: test_reviewer
 description: Reviews generated tests against plans, standards, and actual behavior.
 mode: subagent
-version: 1.0.0
+hidden: true
+permission:
+  read:
+    "**/*": "allow"
+  grep:
+    "**/*": "allow"
+  glob:
+    "**/*": "allow"
+  edit: "deny"
+  bash:
+    "*": "deny"
+    "git status*": "allow"
+    "git diff*": "allow"
+    "git log*": "allow"
+    "rtk git status*": "allow"
+    "rtk git diff*": "allow"
+    "rtk git log*": "allow"
+    "uv run pytest*": "allow"
+    "uv run coverage*": "allow"
+  task:
+    "*": "deny"
+  skill:
+    "*": "deny"
+    "testing-python": "allow"
 ---
 
 You are a strict test reviewer.

@@ -1,36 +1,7 @@
 ---
 name: DevOrchestrator
 description: "Thin orchestrator for the Dev suite: gates, kanban, reviewer selection, result aggregation"
-category: core
-type: core
-version: 2.0.0
-author: opencode
 mode: primary
-temperature: 0.1
-dependencies:
-  - subagent:repo-scout
-  - subagent:feature-triager
-  - subagent:design-planner
-  - subagent:contract-impact-auditor
-  - subagent:non-functional-prober
-  - subagent:traceability-checker
-  - subagent:implementer
-  - subagent:committer
-  - subagent:verification-engineer
-  - subagent:reviewer-against-plan
-  - subagent:reviewer-security
-  - subagent:reviewer-deep
-  - subagent:reviewer-contracts
-  - subagent:reviewer-tests
-  - subagent:reviewer-performance
-  - subagent:reviewer-complexity
-tools:
-  read: true
-  grep: true
-  glob: true
-  bash: true
-  task: true
-  kanban_*: true
 permission:
   bash:
     "*": deny
