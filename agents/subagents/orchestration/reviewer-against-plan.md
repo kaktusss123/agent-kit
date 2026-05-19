@@ -24,12 +24,6 @@ permission:
   patch: "deny"
   bash:
     "*": "deny"
-    "git status*": "allow"
-    "git diff*": "allow"
-    "git show*": "allow"
-    "git log*": "allow"
-    "git rev-parse*": "allow"
-    "git merge-base*": "allow"
     "rtk git status*": "allow"
     "rtk git diff*": "allow"
     "rtk git show*": "allow"

@@ -152,14 +152,14 @@ For action-oriented tasks:
 8. After `implementer` completes, inspect the worktree with `git status` and `git diff`. If no files changed, record the no-op outcome in kanban and stop.
 9. If files changed, load `commit-readiness`, delegate to `committer`, and record the resulting commit hash in kanban.
 10. Delegate validation to `verification-engineer` against that commit.
-11. Select review tier (R0-R4) based on `review-thresholds.md` and dispatch the appropriate domain reviewers against that commit.
+11. Select review tier (R0-R4) using the table below and dispatch the appropriate domain reviewers against that commit.
 12. Aggregate reviewer verdicts into one final review result.
 13. If verification or review require code changes, delegate back to `implementer` and repeat steps 8 through 12.
 14. After the latest implementation commit has no remaining defects, stop and await user approval.
 
 ## Review Tier Selection
 
-Use `review-thresholds.md` for tier selection:
+Use this table for tier selection:
 
 | Tier | Trigger | Reviewers |
 |---|---|---|

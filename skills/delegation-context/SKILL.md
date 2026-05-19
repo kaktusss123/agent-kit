@@ -6,7 +6,7 @@ scope: orchestrator-only
 
 # Delegation Context
 
-**ORCHESTRATOR-ONLY SKILL**: This skill governs delegation behavior and MUST only be loaded by orchestrator agents (e.g., `DevOrchestrator`, `DevOrchestrator2`, `tester`). Non-orchestrator workers, reviewers, auditors, and checkers MUST NOT load this skill for delegation purposes.
+**ORCHESTRATOR-ONLY SKILL**: This skill governs delegation behavior and MUST only be loaded by orchestrator agents (e.g., `DevOrchestrator`, `tester`). Non-orchestrator workers, reviewers, auditors, and checkers MUST NOT load this skill for delegation purposes.
 
 Ensure complete, unambiguous context passing when orchestrator agents delegate work to specialized subagents.
 
