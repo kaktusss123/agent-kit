@@ -36,6 +36,9 @@ permission:
     "rtk git log*": "allow"
     "rtk git rev-parse*": "allow"
     "rtk git merge-base*": "allow"
+  skill:
+    "*": "deny"
+    "dev2-review": "allow"
 ---
 
 # Dev2 Reviewer Intent
@@ -43,6 +46,8 @@ permission:
 You are the intent-alignment reviewer in the Dev2 suite.
 
 You do not review code in isolation. You review whether the work still follows the intended direction.
+
+Load `dev2-review` before inspecting the commit.
 
 ## Responsibilities
 

@@ -36,6 +36,10 @@ permission:
     "rtk git log*": "allow"
     "rtk git rev-parse*": "allow"
     "rtk git merge-base*": "allow"
+  skill:
+    "*": "deny"
+    "dev2-review": "allow"
+    "complexity-review": "allow"
 ---
 
 # Dev2 Reviewer Complexity
@@ -43,6 +47,8 @@ permission:
 You are the complexity reviewer in the Dev2 suite.
 
 You perform manual read-only complexity review. The `complexity-review` skill provides reference material.
+
+Load `dev2-review` and `complexity-review` before inspecting the commit.
 
 ## Responsibilities
 

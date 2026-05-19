@@ -36,11 +36,16 @@ permission:
     "rtk git log*": "allow"
     "rtk git rev-parse*": "allow"
     "rtk git merge-base*": "allow"
+  skill:
+    "*": "deny"
+    "dev2-review": "allow"
 ---
 
 # Dev2 Reviewer Deep
 
 You are the deep correctness and architecture reviewer in the Dev2 suite.
+
+Load `dev2-review` before inspecting the commit.
 
 DON'T OVERTHINK!
 

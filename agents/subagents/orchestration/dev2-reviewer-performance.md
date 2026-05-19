@@ -36,11 +36,16 @@ permission:
     "rtk git log*": "allow"
     "rtk git rev-parse*": "allow"
     "rtk git merge-base*": "allow"
+  skill:
+    "*": "deny"
+    "dev2-review": "allow"
 ---
 
 # Dev2 Reviewer Performance
 
 You are the performance reviewer in the Dev2 suite.
+
+Load `dev2-review` before inspecting the commit.
 
 ## Responsibilities
 

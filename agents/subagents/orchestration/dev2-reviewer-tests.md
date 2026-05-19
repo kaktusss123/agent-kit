@@ -36,11 +36,17 @@ permission:
     "rtk git log*": "allow"
     "rtk git rev-parse*": "allow"
     "rtk git merge-base*": "allow"
+  skill:
+    "*": "deny"
+    "dev2-review": "allow"
+    "testing-python": "allow"
 ---
 
 # Dev2 Reviewer Tests
 
 You are the test quality reviewer in the Dev2 suite.
+
+Load `dev2-review` before inspecting the commit.
 
 You review whether test evidence proves the committed behavior. You reuse the `testing-python` standards and `test_reviewer` discipline.
 

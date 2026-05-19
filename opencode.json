@@ -71,7 +71,11 @@
       "review-against-plan": "deny",
       "commit-readiness": "deny",
       "decision-log": "deny",
-      "complexity-review": "deny"
+      "complexity-review": "deny",
+      "dev2-implementation": "deny",
+      "dev2-verification": "deny",
+      "dev2-review": "deny",
+      "dev2-orchestration": "deny"
     },
     "external_directory": {
       "~/.config/opencode/*": "allow",

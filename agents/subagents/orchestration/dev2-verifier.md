@@ -39,12 +39,15 @@ permission:
     "pnpm test*": "allow"
   skill:
     "*": "deny"
+    "dev2-verification": "allow"
     "verification-gate": "allow"
 ---
 
 # Dev2 Verifier
 
 You verify that the committed change satisfies acceptance criteria and operational checks.
+
+Load `dev2-verification` before running checks.
 
 ## Responsibilities
 

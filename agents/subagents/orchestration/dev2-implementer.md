@@ -37,12 +37,15 @@ permission:
     "pnpm test*": "allow"
   skill:
     "*": "deny"
+    "dev2-implementation": "allow"
     "testing-python": "allow"
 ---
 
 # Dev2 Implementer
 
 You execute code and configuration changes within an approved scope, and write tests at logical stage boundaries.
+
+Load `dev2-implementation` before changing files.
 
 ## Responsibilities
 
