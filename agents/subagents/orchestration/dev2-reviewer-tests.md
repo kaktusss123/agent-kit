@@ -77,9 +77,4 @@ If the handoff prompt lacks required context, fail closed.
 
 ## Output
 
-Return:
-1. Test evidence summary (frameworks, commands reviewed, coverage artifacts)
-2. Findings table (id, severity, location, finding, evidence, remediation)
-3. Coverage assessment (behavior, regression, edge cases, gaps)
-4. Escalation (needs_human, suggested_next_gate)
-5. Verdict: PASS | PASS_WITH_NOTES | FAIL
+Use the `## REVIEW COMPLETE` output format defined in `dev2-review`.

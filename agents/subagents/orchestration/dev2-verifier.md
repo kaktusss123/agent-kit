@@ -61,6 +61,8 @@ Load `dev2-verification` before running checks.
 - `plan_check`: Verify the implementation plan before implementation begins.
 - `commit_verify`: Verify the committed scope after `committer` produces a commit hash.
 
+The orchestrator specifies the mode in the handoff.
+
 ## Rules
 
 - Do not approve commit readiness by yourself.
@@ -80,9 +82,4 @@ If the handoff prompt lacks required context, fail closed.
 
 ## Output
 
-Return:
-1. Checks run
-2. Pass or fail result
-3. Uncovered risks
-4. Manual verification notes
-5. Recommendation: pass or rework
+Use the `## VERIFICATION COMPLETE` output format defined in `dev2-verification`.

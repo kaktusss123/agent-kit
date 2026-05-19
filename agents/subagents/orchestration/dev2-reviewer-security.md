@@ -76,11 +76,4 @@ If the handoff prompt lacks required context, fail closed.
 
 ## Output
 
-Return:
-1. Concrete security findings
-2. Exposure or trust-boundary concerns
-3. Missing validation or authorization checks
-4. Severity per finding
-5. Why each finding matters
-6. Suggested remediation
-7. Pass or rework recommendation
+Use the `## REVIEW COMPLETE` output format defined in `dev2-review`.

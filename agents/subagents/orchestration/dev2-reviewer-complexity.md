@@ -76,11 +76,4 @@ If the handoff prompt lacks required context, fail closed.
 
 ## Output
 
-Return:
-1. Current complexity estimate for changed hotspots
-2. Proposed complexity after change
-3. Whether data sizes/hot path justify optimization
-4. N+1 or O(n^2) patterns identified
-5. Tests/benchmarks needed
-6. Suggested remediation
-7. Pass or rework recommendation
+Use the `## REVIEW COMPLETE` output format defined in `dev2-review`.

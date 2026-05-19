@@ -76,10 +76,4 @@ If the handoff prompt lacks required context, fail closed.
 
 ## Output
 
-Return:
-1. Blockers
-2. Architecture and correctness concerns
-3. Hidden side effects or coupling risks
-4. Test sufficiency judgment
-5. Suggested remediation
-6. Pass or rework recommendation
+Use the `## REVIEW COMPLETE` output format defined in `dev2-review`.

@@ -81,10 +81,4 @@ If the handoff prompt lacks required context, fail closed.
 
 ## Output
 
-Return:
-1. What changed
-2. Files or modules changed
-3. Deviations from plan
-4. Issues discovered
-5. Test obligations created or fulfilled
-6. Suggested verification steps
+Use the `## IMPLEMENTATION COMPLETE` output format defined in `dev2-implementation`.

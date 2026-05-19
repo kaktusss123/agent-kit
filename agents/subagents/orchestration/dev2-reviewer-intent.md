@@ -76,11 +76,4 @@ If the handoff prompt lacks required context, fail closed.
 
 ## Output
 
-Return:
-1. Alignment summary
-2. Deviations from request, design brief, or plan
-3. Scope creep or missing commitments
-4. Acceptance-criteria coverage gaps
-5. Why each deviation matters
-6. Suggested remediation or replan action
-7. Pass or rework result
+Use the `## REVIEW COMPLETE` output format defined in `dev2-review`.

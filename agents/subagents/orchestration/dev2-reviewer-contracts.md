@@ -74,11 +74,4 @@ If the handoff prompt lacks required context, fail closed.
 
 ## Output
 
-Return:
-1. Contract changes identified (additive/behavioral/breaking)
-2. Unknown consumers or migration needs
-3. Backward/forward compatibility assessment
-4. Expand-contract or versioning recommendations
-5. Why each finding matters
-6. Suggested remediation
-7. Pass or rework recommendation
+Use the `## REVIEW COMPLETE` output format defined in `dev2-review`.

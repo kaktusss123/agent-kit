@@ -42,15 +42,9 @@ Ignore unrelated untracked files unless the prompt includes them.
 
 ### 2. Apply Domain Lens
 
-Use the domain assigned by the orchestrator:
+Apply the domain lens specified by your agent identity. Use `dev2-review` for shared mechanics only: scope control, evidence, severity, and verdict shape.
 
-- **intent**: request alignment, acceptance coverage, scope drift.
-- **security**: trust boundaries, secrets, command permissions, injection, privilege expansion.
-- **deep**: architecture, hidden coupling, state flow, long-range maintainability.
-- **contracts**: APIs, schemas, CLI/config shape, event/data compatibility.
-- **tests**: regression evidence, test quality, brittle assertions, missing coverage.
-- **performance**: hot paths, resource growth, synchronous work, payload size.
-- **complexity**: algorithmic class, nested scans, N+1 patterns, data-size assumptions.
+Reviewers load `dev2-review` plus any existing domain-specific skill named in their agent file.
 
 ### 3. Grade Findings
 

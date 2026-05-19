@@ -74,11 +74,4 @@ If the handoff prompt lacks required context, fail closed.
 
 ## Output
 
-Return:
-1. Latency and throughput implications
-2. Resource usage and memory growth risks
-3. Caching invalidation or batching correctness concerns
-4. Concurrency/backpressure risks
-5. Observability for performance regressions
-6. Suggested remediation
-7. Pass or rework recommendation
+Use the `## REVIEW COMPLETE` output format defined in `dev2-review`.
