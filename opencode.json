@@ -48,7 +48,16 @@
       "reviewer-grok": "deny",
       "reviewer-against-plan": "deny",
       "reviewer-deep": "deny",
-      "reviewer-security": "deny"
+      "reviewer-security": "deny",
+      "dev2-implementer": "deny",
+      "dev2-verifier": "deny",
+      "dev2-reviewer-intent": "deny",
+      "dev2-reviewer-security": "deny",
+      "dev2-reviewer-deep": "deny",
+      "dev2-reviewer-contracts": "deny",
+      "dev2-reviewer-tests": "deny",
+      "dev2-reviewer-performance": "deny",
+      "dev2-reviewer-complexity": "deny"
     },
     "skill": {
       "*": "allow",
@@ -61,7 +70,8 @@
       "verification-gate": "deny",
       "review-against-plan": "deny",
       "commit-readiness": "deny",
-      "decision-log": "deny"
+      "decision-log": "deny",
+      "complexity-review": "deny"
     },
     "external_directory": {
       "~/.config/opencode/*": "allow",
@@ -130,19 +140,6 @@
           }
         }
       }
-    },
-    "anthropic": {
-      "models": {
-        "claude-opus-4-6": {
-          "limit": {
-            "context": 200000,
-            "output": 128000
-          }
-        }
-      },
-      "options": {
-        "baseURL": "https://api.awstore.cloud/v1/"
-      }
     }
   },
   "agent": {
@@ -151,7 +148,7 @@
     },
     "repo-scout": {
       "hidden": true,
-      "model": "xai/grok-4-1-fast",
+      "model": "opencode-go/deepseek-v4-flash",
       "tools": {
         "kanban_*": false,
         "CodeGraphContext_*": true
@@ -215,7 +212,7 @@
     },
     "implementer": {
       "hidden": true,
-      "model": "opencode-go/kimi-k2.6",
+      "model": "opencode-go/qwen3.6-plus",
       "tools": {
         "kanban_*": true,
         "CodeGraphContext_*": true
@@ -293,6 +290,86 @@
     },
     "test_writer": {
       "model": "opencode-go/deepseek-v4-flash"
+    },
+    "dev-orchestrator2": {
+      "hidden": true,
+      "model": "github-copilot/claude-sonnet-4.6",
+      "tools": {
+        "kanban_*": true,
+        "CodeGraphContext_*": false
+      }
+    },
+    "dev2-implementer": {
+      "hidden": true,
+      "model": "opencode-go/qwen3.6-plus",
+      "tools": {
+        "kanban_*": true,
+        "CodeGraphContext_*": true
+      }
+    },
+    "dev2-verifier": {
+      "hidden": true,
+      "model": "opencode-go/deepseek-v4-pro",
+      "tools": {
+        "kanban_*": true,
+        "CodeGraphContext_*": false
+      }
+    },
+    "dev2-reviewer-intent": {
+      "hidden": true,
+      "model": "opencode-go/deepseek-v4-pro",
+      "tools": {
+        "kanban_*": false,
+        "CodeGraphContext_*": false
+      }
+    },
+    "dev2-reviewer-security": {
+      "hidden": true,
+      "model": "github-copilot/gpt-5.4",
+      "tools": {
+        "kanban_*": false,
+        "CodeGraphContext_*": true
+      }
+    },
+    "dev2-reviewer-deep": {
+      "hidden": true,
+      "model": "opencode-go/qwen3.6-plus",
+      "tools": {
+        "kanban_*": false,
+        "CodeGraphContext_*": true
+      }
+    },
+    "dev2-reviewer-contracts": {
+      "hidden": true,
+      "model": "github-copilot/claude-sonnet-4.6",
+      "tools": {
+        "kanban_*": false,
+        "CodeGraphContext_*": false
+      }
+    },
+    "dev2-reviewer-tests": {
+      "hidden": true,
+      "model": "opencode-go/kimi-k2.6",
+      "tools": {
+        "kanban_*": false,
+        "CodeGraphContext_*": false
+      }
+    },
+    "dev2-reviewer-performance": {
+      "hidden": true,
+      "model": "opencode-go/kimi-k2.6",
+      "tools": {
+        "kanban_*": false,
+        "CodeGraphContext_*": false
+      }
+    },
+    "dev2-reviewer-complexity": {
+      "hidden": true,
+      "model": "opencode-go/minimax-m2.7",
+      "tools": {
+        "kanban_*": false,
+        "CodeGraphContext_*": false
+      }
     }
   }
 }

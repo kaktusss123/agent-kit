@@ -2,7 +2,7 @@
 name: committer
 description: "Creates one safe git commit with a conventional message and pre-commit hooks"
 mode: subagent
-model: xai/grok-4-1-fast
+model: opencode-go/deepseek-v4-flash
 permission:
   task: deny
   bash:

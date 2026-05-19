@@ -1,9 +1,12 @@
 ---
 name: delegation-context
 description: "Governs how orchestrator agents delegate to specialized subagents: context passing rules, handoff expectations, ownership boundaries, and result integration."
+scope: orchestrator-only
 ---
 
 # Delegation Context
+
+**ORCHESTRATOR-ONLY SKILL**: This skill governs delegation behavior and MUST only be loaded by orchestrator agents (e.g., `DevOrchestrator`, `DevOrchestrator2`, `tester`). Non-orchestrator workers, reviewers, auditors, and checkers MUST NOT load this skill for delegation purposes.
 
 Ensure complete, unambiguous context passing when orchestrator agents delegate work to specialized subagents.
 
@@ -11,11 +14,13 @@ Ensure complete, unambiguous context passing when orchestrator agents delegate w
 
 | Trigger | Description |
 |---------|-------------|
-| Orchestrator delegates to subagent | Any agent calling a subagent for specialized analysis |
+| Orchestrator delegates to subagent | Any orchestrator agent calling a subagent for specialized analysis |
 | Subagent handoff expected | Subagent output needs integration into parent artifact |
 | Multiple subagents in sequence | Dependencies between subagent results |
 | Ownership boundary crossing | Work moves between owned and unowned domains |
 | Result integration from subagent | Subagent output needs to be merged into spec |
+
+**Note**: Only orchestrator agents may trigger delegation. Non-orchestrator agents (workers, reviewers, auditors, checkers) have `permission.task: deny` and must return `needs_more_context` or `blocked` instead of delegating.
 
 ## Quick Reference
 
