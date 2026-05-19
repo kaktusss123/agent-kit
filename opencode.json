@@ -38,10 +38,11 @@
       "rtk git push*": "ask"
     },
     "task": {
-      "*": "allow",
+      "*": "deny",
       "feature-triager": "deny",
       "graph-impact-analyst": "deny",
       "design-planner": "deny",
+      "committer": "deny",
       "implementer": "deny",
       "verification-engineer": "deny",
       "reviewer-against-plan": "deny",
@@ -149,6 +150,9 @@
       "tools": {
         "kanban_*": false,
         "CodeGraphContext_*": true
+      },
+      "permission": {
+        "task": "deny"
       }
     },
     "feature-triager": {
@@ -157,6 +161,9 @@
       "tools": {
         "kanban_*": true,
         "CodeGraphContext_*": false
+      },
+      "permission": {
+        "task": "deny"
       }
     },
     "graph-impact-analyst": {
@@ -164,6 +171,9 @@
       "model": "opencode-go/minimax-m2.7",
       "tools": {
         "CodeGraphContext_*": true
+      },
+      "permission": {
+        "task": "deny"
       }
     },
     "design-planner": {
@@ -172,6 +182,9 @@
       "tools": {
         "kanban_*": true,
         "CodeGraphContext_*": false
+      },
+      "permission": {
+        "task": "deny"
       }
     },
     "edge-case-harvester": {
@@ -180,6 +193,9 @@
       "tools": {
         "kanban_*": false,
         "CodeGraphContext_*": false
+      },
+      "permission": {
+        "task": "deny"
       }
     },
     "contract-impact-auditor": {
@@ -188,6 +204,9 @@
       "tools": {
         "kanban_*": false,
         "CodeGraphContext_*": false
+      },
+      "permission": {
+        "task": "deny"
       }
     },
     "non-functional-prober": {
@@ -196,6 +215,9 @@
       "tools": {
         "kanban_*": false,
         "CodeGraphContext_*": false
+      },
+      "permission": {
+        "task": "deny"
       }
     },
     "traceability-checker": {
@@ -204,6 +226,9 @@
       "tools": {
         "kanban_*": false,
         "CodeGraphContext_*": false
+      },
+      "permission": {
+        "task": "deny"
       }
     },
     "implementer": {
@@ -212,6 +237,9 @@
       "tools": {
         "kanban_*": true,
         "CodeGraphContext_*": true
+      },
+      "permission": {
+        "task": "deny"
       }
     },
     "verification-engineer": {
@@ -220,6 +248,9 @@
       "tools": {
         "kanban_*": true,
         "CodeGraphContext_*": false
+      },
+      "permission": {
+        "task": "deny"
       }
     },
     "reviewer-against-plan": {
@@ -228,6 +259,9 @@
       "tools": {
         "kanban_*": false,
         "CodeGraphContext_*": false
+      },
+      "permission": {
+        "task": "deny"
       }
     },
     "reviewer-security": {
@@ -236,6 +270,9 @@
       "tools": {
         "kanban_*": false,
         "CodeGraphContext_*": true
+      },
+      "permission": {
+        "task": "deny"
       }
     },
     "reviewer-deep": {
@@ -244,6 +281,9 @@
       "tools": {
         "kanban_*": false,
         "CodeGraphContext_*": true
+      },
+      "permission": {
+        "task": "deny"
       }
     },
     "reviewer-contracts": {
@@ -252,6 +292,9 @@
       "tools": {
         "kanban_*": false,
         "CodeGraphContext_*": false
+      },
+      "permission": {
+        "task": "deny"
       }
     },
     "reviewer-tests": {
@@ -260,6 +303,9 @@
       "tools": {
         "kanban_*": false,
         "CodeGraphContext_*": false
+      },
+      "permission": {
+        "task": "deny"
       }
     },
     "reviewer-performance": {
@@ -268,6 +314,9 @@
       "tools": {
         "kanban_*": false,
         "CodeGraphContext_*": false
+      },
+      "permission": {
+        "task": "deny"
       }
     },
     "reviewer-complexity": {
@@ -276,16 +325,39 @@
       "tools": {
         "kanban_*": false,
         "CodeGraphContext_*": false
+      },
+      "permission": {
+        "task": "deny"
+      }
+    },
+    "committer": {
+      "hidden": true,
+      "model": "opencode-go/deepseek-v4-flash",
+      "tools": {
+        "kanban_*": false,
+        "CodeGraphContext_*": false
+      },
+      "permission": {
+        "task": "deny"
       }
     },
     "test_planner": {
-      "model": "opencode-go/deepseek-v4-pro"
+      "model": "opencode-go/deepseek-v4-pro",
+      "permission": {
+        "task": "deny"
+      }
     },
     "test_reviewer": {
-      "model": "opencode-go/kimi-k2.6"
+      "model": "opencode-go/kimi-k2.6",
+      "permission": {
+        "task": "deny"
+      }
     },
     "test_writer": {
-      "model": "opencode-go/deepseek-v4-flash"
+      "model": "opencode-go/deepseek-v4-flash",
+      "permission": {
+        "task": "deny"
+      }
     },
     "dev-orchestrator": {
       "hidden": true,
@@ -293,6 +365,27 @@
       "tools": {
         "kanban_*": true,
         "CodeGraphContext_*": false
+      },
+      "permission": {
+        "task": {
+          "*": "deny",
+          "repo-scout": "allow",
+          "feature-triager": "allow",
+          "design-planner": "allow",
+          "contract-impact-auditor": "allow",
+          "non-functional-prober": "allow",
+          "traceability-checker": "allow",
+          "implementer": "allow",
+          "committer": "allow",
+          "verification-engineer": "allow",
+          "reviewer-against-plan": "allow",
+          "reviewer-security": "allow",
+          "reviewer-deep": "allow",
+          "reviewer-contracts": "allow",
+          "reviewer-tests": "allow",
+          "reviewer-performance": "allow",
+          "reviewer-complexity": "allow"
+        }
       }
     }
   }
