@@ -2,7 +2,7 @@
 
 ## REVIEW COMPLETE
 
-reviewer: dev2-reviewer-complexity
+reviewer: reviewer-complexity
 domain: complexity
 review_tier: R<N>
 scope_commit: <hash>
@@ -39,7 +39,7 @@ verdict: PASS | PASS_WITH_NOTES | FAIL
 
 ## REVIEW BLOCKED
 
-reviewer: dev2-reviewer-complexity
+reviewer: reviewer-complexity
 reason: <missing context/evidence>
 missing_inputs:
   - <field>

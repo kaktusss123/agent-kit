@@ -1,11 +1,11 @@
 ---
-name: dev2-review
-description: "Shared read-only review protocol for Dev2 domain reviewers."
+name: review
+description: "Shared read-only review protocol for domain reviewers."
 ---
 
-# Dev2 Review
+# Review
 
-Use this skill when a Dev2 reviewer examines a committed change.
+Use this skill when a reviewer examines a committed change.
 
 ## Reviewer Contract
 
@@ -42,9 +42,9 @@ Ignore unrelated untracked files unless the prompt includes them.
 
 ### 2. Apply Domain Lens
 
-Apply the domain lens specified by your agent identity. Use `dev2-review` for shared mechanics only: scope control, evidence, severity, and verdict shape.
+Apply the domain lens specified by your agent identity. Use `review` for shared mechanics only: scope control, evidence, severity, and verdict shape.
 
-Reviewers load `dev2-review` plus any existing domain-specific skill named in their agent file.
+Reviewers load `review` plus any existing domain-specific skill named in their agent file.
 
 ### 3. Grade Findings
 

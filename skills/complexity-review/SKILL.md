@@ -5,11 +5,11 @@ description: "Reference playbook and report template for manual algorithmic comp
 
 # Complexity Review
 
-This skill provides reference material for manual algorithmic complexity review in the Dev2 suite.
+This skill provides reference material for manual algorithmic complexity review in the Dev suite.
 
 ## Scope
 
-`dev2-reviewer-complexity` performs manual read-only complexity analysis using the references in this skill.
+`reviewer-complexity` performs manual read-only complexity analysis using the references in this skill.
 
 ## Triggers
 

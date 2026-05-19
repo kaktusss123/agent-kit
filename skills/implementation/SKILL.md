@@ -1,11 +1,11 @@
 ---
-name: dev2-implementation
-description: "Procedural playbook for bounded Dev2 implementation work."
+name: implementation
+description: "Procedural playbook for bounded implementation work."
 ---
 
-# Dev2 Implementation
+# Implementation
 
-Use this skill when `dev2-implementer` receives an approved implementation handoff.
+Use this skill when `implementer` receives an approved implementation handoff.
 
 ## Operating Contract
 

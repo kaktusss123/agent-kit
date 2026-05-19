@@ -1,11 +1,11 @@
 ---
-name: dev2-orchestration
-description: "Procedural playbook for DevOrchestrator2 workflow control."
+name: orchestration
+description: "Procedural playbook for DevOrchestrator workflow control."
 ---
 
-# Dev2 Orchestration
+# Orchestration
 
-Use this skill when DevOrchestrator2 coordinates an engineering task.
+Use this skill when DevOrchestrator coordinates an engineering task.
 
 ## Stage Model
 
@@ -58,26 +58,26 @@ Stop conditions:
 3. Run reconnaissance or impact analysis when the task touches unknown code, contracts, security, or multiple modules.
 4. Run design planning for medium or high risk.
 5. Ask the user only for blocking product or architecture decisions.
-6. Send explicit implementation handoff to `dev2-implementer` using the handoff template above.
+6. Send explicit implementation handoff to `implementer` using the handoff template above.
 7. Inspect `git status` and `git diff` after implementation.
 8. If files changed, commit before verification or review.
 9. Verify against the commit hash with `Mode: commit_verify` in the handoff.
 10. Select review tier and reviewers from observed diff and triggers.
 11. Send review handoffs using the handoff template above.
 12. Aggregate findings by severity and domain.
-13. Send required fixes back through `dev2-implementer` using the handoff template above.
+13. Send required fixes back through `implementer` using the handoff template above.
 14. Stop after three fix iterations unless the user authorizes continuation.
 
 ## Skill Topology
 
 | Agent | Required Skill(s) |
 |---|---|
-| `dev-orchestrator2` | `dev2-orchestration` |
-| `dev2-implementer` | `dev2-implementation`, `testing-python` for Python tests |
-| `dev2-verifier` | `dev2-verification`, `verification-gate` |
-| `dev2-reviewer-*` | `dev2-review` |
-| `dev2-reviewer-tests` | `dev2-review`, `testing-python` |
-| `dev2-reviewer-complexity` | `dev2-review`, `complexity-review` |
+| `dev-orchestrator` | `orchestration` |
+| `implementer` | `implementation`, `testing-python` for Python tests |
+| `verification-engineer` | `verification`, `verification-gate` |
+| `reviewer-*` | `review` |
+| `reviewer-tests` | `review`, `testing-python` |
+| `reviewer-complexity` | `review`, `complexity-review` |
 
 ## Review Tier Checklist
 

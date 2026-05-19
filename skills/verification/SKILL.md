@@ -1,11 +1,11 @@
 ---
-name: dev2-verification
-description: "Procedural playbook for Dev2 plan checks and commit verification."
+name: verification
+description: "Procedural playbook for plan checks and commit verification."
 ---
 
-# Dev2 Verification
+# Verification
 
-Use this skill when `dev2-verifier` validates a plan or a committed change.
+Use this skill when `verification-engineer` validates a plan or a committed change.
 
 ## Modes
 
