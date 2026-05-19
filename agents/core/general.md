@@ -5,13 +5,6 @@ mode: primary
 permission:
   read:
     "**/*": allow
-  write:
-    "**/*": allow
-    "**/*.env*": deny
-    "**/*.key": deny
-    "**/*.secret": deny
-    "node_modules/**": deny
-    ".git/**": deny
   edit:
     "**/*": allow
     "**/*.env*": deny

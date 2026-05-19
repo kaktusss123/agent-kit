@@ -5,8 +5,6 @@ mode: primary
 permission:
   read:
     "**/*": "allow"
-  write:
-    "docs/specs/**": "allow"
   edit:
     "docs/specs/**": "allow"
   grep:
@@ -28,8 +26,7 @@ permission:
     "*": "deny"
     "task-workspace": "allow"
     "kanban-discipline": "allow"
-  kanban:
-    "*": "allow"
+  kanban_*: "allow"
 ---
 
 # Role

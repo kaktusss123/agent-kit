@@ -5,9 +5,6 @@ mode: primary
 permission:
   bash:
     "*": "deny"
-  write:
-    "**/*": "deny"
-    "docs/specs/**": "allow"
   edit:
     "**/*": "deny"
     "docs/specs/**": "allow"

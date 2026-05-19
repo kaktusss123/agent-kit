@@ -12,10 +12,6 @@ permission:
     "**/*": "allow"
   glob:
     "**/*": "allow"
-  write:
-    "docs/specs/**": "allow"
-  kanban:
-    "*": "allow"
 ---
 
 # Graph Impact Analyst

@@ -7,8 +7,6 @@ permission:
   task:
     "*": "deny"
   edit: "deny"
-  write: "deny"
-  patch: "deny"
   bash:
     "*": "deny"
     "rtk git status*": "allow"

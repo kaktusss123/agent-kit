@@ -10,7 +10,7 @@ permission:
   glob:
     "**/*": "allow"
   edit:
-    "*": "deny"
+    "**/*": "deny"
     ".tmp/agent-testing/**": "allow"
   bash:
     "*": "deny"

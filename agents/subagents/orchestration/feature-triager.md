@@ -11,10 +11,9 @@ permission:
     "**/*": "allow"
   glob:
     "**/*": "allow"
-  write:
+  edit:
     "docs/specs/**": "allow"
-  kanban:
-    "*": "allow"
+  kanban_*: "allow"
   skill:
     "*": "deny"
     "feature-interrogation": "allow"

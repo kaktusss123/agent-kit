@@ -11,7 +11,7 @@ permission:
     "**/*": "allow"
   glob:
     "**/*": "allow"
-  write:
+  edit:
     "docs/specs/**": "allow"
 ---
 
