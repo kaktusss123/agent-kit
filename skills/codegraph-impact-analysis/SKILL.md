@@ -1,7 +1,7 @@
 ---
 name: codegraph-impact-analysis
 description: >
-  Require agents to use CodeGraphContext for dependency, caller, callee, and
+  Require agents to use repository inspection (read/glob/grep) for dependency, caller, callee, and
   impact radius analysis before claiming a change is local.
 ---
 
@@ -19,18 +19,18 @@ Use this skill before non-trivial implementation and during review of multi-file
 
 | Input | Output | Duration |
 |-------|--------|----------|
-| Target change + repository graph | Direct and indirect impact report | Short to medium |
+| Target change + repository files | Direct and indirect impact report | Short to medium |
 
 ## Process
 
-### Phase 1: Query The Graph
+### Phase 1: Inspect Repository Evidence
 
-Start from graph evidence, not intuition.
+Start from file-level evidence, not intuition.
 
-1. **Inspect relationships** - Query callers, callees, imports, reverse dependencies, and nearby tests.
-2. **Detect graph limits** - If the repo has weak or zero graph coverage, record the limitation explicitly.
+1. **Inspect relationships** - Use read/glob/grep to find callers, callees, imports, reverse dependencies, and nearby tests.
+2. **Detect coverage limits** - If certain areas lack test or documentation coverage, record the limitation explicitly.
 
-**Verification:** The report cites graph evidence or clearly states why graph evidence is missing.
+**Verification:** The report cites file-level evidence or clearly states where evidence is missing.
 
 ### Phase 2: Produce The Impact Report
 
@@ -45,17 +45,17 @@ Translate findings into implementation and review guidance.
 
 | Avoid | Why | Instead |
 |-------|-----|---------|
-| Calling a change local without evidence | Misses transitive impact | Use graph evidence first |
-| Hiding graph coverage gaps | Creates false confidence | State limitations and fall back explicitly |
+| Calling a change local without evidence | Misses transitive impact | Use repository inspection first |
+| Hiding coverage gaps | Creates false confidence | State limitations and note what could not be verified |
 
 ## Verification
 
 After execution:
 
-- [ ] Callers, callees, or dependencies were checked.
-- [ ] Graph limitations are stated when present.
+- [ ] Callers, callees, or dependencies were checked via read/glob/grep.
+- [ ] Evidence gaps are stated when present.
 - [ ] Tests and contracts at risk are listed.
 
 ## References
 
-- [`references/domain-knowledge.md`](references/domain-knowledge.md) - Query priorities, evidence rules, and fallback behavior.
+- [`references/domain-knowledge.md`](references/domain-knowledge.md) - Query priorities and evidence rules.

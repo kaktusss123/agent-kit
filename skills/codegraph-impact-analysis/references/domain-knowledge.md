@@ -9,8 +9,8 @@
 
 ## Evidence Rule
 
-- Never call a change local unless graph or file evidence supports it.
-- If graph coverage is absent or weak, say so explicitly before falling back.
+- Never call a change local unless file-level evidence (read/glob/grep) supports it.
+- If certain areas cannot be verified through available files, say so explicitly before proceeding.
 
 ## Output Shape
 

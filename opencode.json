@@ -170,7 +170,7 @@
       "hidden": true,
       "model": "opencode-go/minimax-m2.7",
       "tools": {
-        "CodeGraphContext_*": true
+        "CodeGraphContext_*": false
       },
       "permission": {
         "task": "deny"
