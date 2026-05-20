@@ -118,7 +118,7 @@ Structure findings so the spec agent can easily:
 
 ## Tool Guidance
 
-If semantic code graph, symbol navigation, or repository graph tools exist, prefer them over naive filename scanning. Use search, symbol references, and call relationships whenever available.
+Do not use semantic code graph, symbol navigation, or repository graph tools. Use grep, glob, and read for all repository inspection.
 
 ## Hard Rules
 
