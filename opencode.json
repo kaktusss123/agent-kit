@@ -149,7 +149,7 @@
       "model": "opencode-go/deepseek-v4-flash",
       "tools": {
         "kanban_*": false,
-        "CodeGraphContext_*": true
+        "CodeGraphContext_*": false
       },
       "permission": {
         "task": "deny"
@@ -170,7 +170,7 @@
       "hidden": true,
       "model": "opencode-go/minimax-m2.7",
       "tools": {
-        "CodeGraphContext_*": true
+        "CodeGraphContext_*": false
       },
       "permission": {
         "task": "deny"
@@ -236,7 +236,7 @@
       "model": "opencode-go/qwen3.6-plus",
       "tools": {
         "kanban_*": true,
-        "CodeGraphContext_*": true
+        "CodeGraphContext_*": false
       },
       "permission": {
         "task": "deny"
@@ -269,7 +269,7 @@
       "model": "github-copilot/gpt-5.4",
       "tools": {
         "kanban_*": false,
-        "CodeGraphContext_*": true
+        "CodeGraphContext_*": false
       },
       "permission": {
         "task": "deny"
@@ -280,7 +280,7 @@
       "model": "opencode-go/qwen3.6-plus",
       "tools": {
         "kanban_*": false,
-        "CodeGraphContext_*": true
+        "CodeGraphContext_*": false
       },
       "permission": {
         "task": "deny"
