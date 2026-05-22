@@ -8,10 +8,16 @@ permission:
     "**/*": "allow"
   edit:
     "**/*": "deny"
+    "AGENTS.md": "allow"
     "**/AGENTS.md": "allow"
+    ".opencode": "allow"
+    ".opencode/": "allow"
+    ".opencode/**": "allow"
+    ".opencode/agents-freshness.json": "allow"
     "**/.opencode/": "allow"
     "**/.opencode/**": "allow"
     "**/.opencode/agents-freshness.json": "allow"
+    "docs/feedback/feedback_*.md": "allow"
     "**/docs/feedback/feedback_*.md": "allow"
   bash:
     "*": "deny"
@@ -26,7 +32,6 @@ permission:
     "date *": "allow"
     "mktemp *": "allow"
     "mkdir -p *": "allow"
-    "touch *": "allow"
   skill:
     "project-init": "allow"
     "project-rules-check": "allow"
