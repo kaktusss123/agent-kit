@@ -21,6 +21,9 @@ permission:
     "**/*": allow
   bash:
     "*": allow
+    "*AGENTS.md*": deny
+    "*agents-freshness.json*": deny
+    "*docs/feedback/feedback_*": deny
     "rm -rf *": ask
     "rm -rf /*": deny
     "sudo *": ask

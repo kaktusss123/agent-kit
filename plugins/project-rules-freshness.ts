@@ -106,7 +106,7 @@ export const ProjectRulesFreshnessPlugin: Plugin = async (input): Promise<Hooks>
         const since = lastVerifiedDate.toISOString();
         const result = await execFileAsync(
           "git",
-          ["log", `--since=${since}`, "--name-only", "--pretty=format:", "--"],
+          ["log", `--since=${since}`, "--name-only", "--pretty=format:", "--", "."],
           {
             cwd: projectRoot,
             encoding: "utf-8",
