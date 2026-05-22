@@ -26,6 +26,7 @@ permission:
     "date *": "allow"
     "mktemp *": "allow"
     "mkdir -p *": "allow"
+    "touch *": "allow"
   skill:
     "project-init": "allow"
     "project-rules-check": "allow"
