@@ -10,6 +10,7 @@ permission:
     "**/*": "deny"
     "**/AGENTS.md": "allow"
     "**/.opencode/": "allow"
+    "**/.opencode/**": "allow"
     "**/.opencode/agents-freshness.json": "allow"
     "**/docs/feedback/feedback_*.md": "allow"
   bash:
@@ -24,6 +25,7 @@ permission:
     "git diff*": "allow"
     "date *": "allow"
     "mktemp *": "allow"
+    "mkdir -p *": "allow"
   skill:
     "project-init": "allow"
     "project-rules-check": "allow"

@@ -59,11 +59,12 @@ Use this skill when onboarding a new project or updating an existing project's A
 
 ### Phase 4: Write and Report
 
-**Write boundary:** Steps 1 and 2 apply ONLY in `create` and `update` modes. In `check` or `dry-run` mode, skip all writes (no AGENTS.md, no freshness metadata, no temp files). Report only.
+**Write boundary:** Steps 1 through 3 apply ONLY in `create` and `update` modes. In `check` or `dry-run` mode, skip all writes (no AGENTS.md, no freshness metadata, no temp files). Report only.
 
 1. **Atomic write** (create/update only) — Write to a temp file in the target directory, then rename to AGENTS.md.
-2. **Update freshness metadata** (create/update only) — Write `.opencode/agents-freshness.json` with ISO timestamp and verification summary.
-3. **Report** — Return the structured summary with target root, mode, detected stack, command counts, written files, and warnings.
+2. **Ensure directory exists** (create/update only) — If `.opencode/` does not exist in the target root, run `mkdir -p <target_root>/.opencode` before writing the freshness file.
+3. **Update freshness metadata** (create/update only) — Write `.opencode/agents-freshness.json` with ISO timestamp and verification summary.
+4. **Report** — Return the structured summary with target root, mode, detected stack, command counts, written files, and warnings.
 
 **Verification:** Freshness metadata is written only after successful AGENTS.md write. In check/dry-run modes, no files are modified and no metadata is updated.
 
