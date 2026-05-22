@@ -9,6 +9,7 @@ permission:
   edit:
     "**/*": "deny"
     "**/AGENTS.md": "allow"
+    "**/.opencode/": "allow"
     "**/.opencode/agents-freshness.json": "allow"
     "**/docs/feedback/feedback_*.md": "allow"
   bash:
