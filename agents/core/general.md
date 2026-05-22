@@ -12,6 +12,9 @@ permission:
     "**/*.secret": deny
     "node_modules/**": deny
     ".git/**": deny
+    "**/AGENTS.md": deny
+    "**/.opencode/agents-freshness.json": deny
+    "**/docs/feedback/feedback_*.md": deny
   grep:
     "**/*": allow
   glob:
@@ -35,6 +38,8 @@ permission:
     "full-spec-analyst": allow
   skill:
     "*": allow
+    "project-init": deny
+    "project-rules-check": deny
 ---
 
 # Role

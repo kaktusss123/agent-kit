@@ -1,4 +1,8 @@
 import type { Plugin, Hooks } from "@opencode-ai/plugin";
+import { execFile } from "child_process";
+import { readFile, access } from "fs/promises";
+import { join } from "path";
+import { promisify } from "util";
 
 // Project-rules freshness plugin.
 // Reads local AGENTS.md and .opencode/agents-freshness.json on session.created
@@ -12,6 +16,11 @@ const KILL_SWITCH = "OPENCODE_PROJECT_RULES_FRESHNESS";
 const COOLDOWN_MS = 4 * 60 * 60 * 1000; // 4 hours
 const cooldown = new Map<string, number>();
 
+const GIT_TIMEOUT_MS = 5000;
+const GIT_MAX_BUFFER = 1024 * 1024; // 1 MB
+
+const execFileAsync = promisify(execFile);
+
 function isCoolingDown(directory: string): boolean {
   const last = cooldown.get(directory);
   if (!last) return false;
@@ -20,6 +29,15 @@ function isCoolingDown(directory: string): boolean {
 
 function markNotified(directory: string): void {
   cooldown.set(directory, Date.now());
+}
+
+async function pathExists(p: string): Promise<boolean> {
+  try {
+    await access(p);
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 export const ProjectRulesFreshnessPlugin: Plugin = async (input): Promise<Hooks> => {
@@ -42,11 +60,8 @@ export const ProjectRulesFreshnessPlugin: Plugin = async (input): Promise<Hooks>
 
   const showToast = (title: string, message: string, variant: "info" | "warning" = "info") => {
     client?.tui?.showToast({
-      directory: projectRoot,
-      title,
-      message,
-      variant,
-      duration: 6000,
+      body: { title, message, variant, duration: 6000 },
+      query: { directory: projectRoot },
     }).catch(() => {});
   };
 
@@ -55,18 +70,15 @@ export const ProjectRulesFreshnessPlugin: Plugin = async (input): Promise<Hooks>
       if (event.type !== "session.created") return;
 
       try {
-        const fs = await import("fs");
-        const path = await import("path");
+        const agentsPath = join(projectRoot, "AGENTS.md");
+        const freshnessPath = join(projectRoot, ".opencode", "agents-freshness.json");
 
-        const agentsPath = path.join(projectRoot, "AGENTS.md");
-        const freshnessPath = path.join(projectRoot, ".opencode", "agents-freshness.json");
-
-        if (!fs.existsSync(agentsPath)) {
+        if (!await pathExists(agentsPath)) {
           log("info", "AGENTS.md not found in project root; skipping freshness check");
           return;
         }
 
-        if (!fs.existsSync(freshnessPath)) {
+        if (!await pathExists(freshnessPath)) {
           if (!isCoolingDown(projectRoot)) {
             log("info", "agents-freshness.json not found; project may need /init");
             showToast("Project onboarding", "Run /init to create AGENTS.md", "warning");
@@ -75,7 +87,7 @@ export const ProjectRulesFreshnessPlugin: Plugin = async (input): Promise<Hooks>
           return;
         }
 
-        const freshnessRaw = fs.readFileSync(freshnessPath, "utf-8");
+        const freshnessRaw = await readFile(freshnessPath, "utf-8");
         const freshness = JSON.parse(freshnessRaw) as { lastVerified?: string };
         const lastVerified = freshness.lastVerified;
 
@@ -90,15 +102,22 @@ export const ProjectRulesFreshnessPlugin: Plugin = async (input): Promise<Hooks>
           return;
         }
 
-        // Check git history for changes since lastVerified
-        const { execSync } = await import("child_process");
+        // Check git history for changes since lastVerified using async execFile
         const since = lastVerifiedDate.toISOString();
-        const result = execSync(
-          `git log --since="${since}" --name-only --pretty=format: -- .`,
-          { cwd: projectRoot, encoding: "utf-8", stdio: ["pipe", "pipe", "pipe"] }
-        ).trim();
+        const result = await execFileAsync(
+          "git",
+          ["log", `--since=${since}`, "--name-only", "--pretty=format:", "--"],
+          {
+            cwd: projectRoot,
+            encoding: "utf-8",
+            timeout: GIT_TIMEOUT_MS,
+            maxBuffer: GIT_MAX_BUFFER,
+          }
+        );
 
-        if (result.length > 0) {
+        const output = (result.stdout as string).trim();
+
+        if (output.length > 0) {
           if (!isCoolingDown(projectRoot)) {
             log("warn", "Project files changed since last AGENTS.md verification");
             showToast("Rules may be stale", "Run /init --check to verify AGENTS.md", "warning");

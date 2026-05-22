@@ -12,8 +12,6 @@ Use this skill when onboarding a new project or updating an existing project's A
 | If the user says... | Then... |
 |---|---|
 | `/init` | Run the project-init workflow via project-init-runner |
-| `project-init: {goal}` | Run the project-init workflow directly |
-| `onboard this project` | Run the project-init workflow |
 
 ## Quick Reference
 
@@ -35,7 +33,7 @@ Use this skill when onboarding a new project or updating an existing project's A
 ### Phase 1: Resolve Target and Validate
 
 1. **Resolve target root** — Determine the target project root directory from the current working directory or explicit argument.
-2. **Validate write scope** — Confirm the target is not the global opencode config root (`~/.config/opencode`) unless mode is explicitly `global-refactor`.
+2. **Validate write scope** — Confirm the target is not the global opencode config root (`~/.config/opencode`). If the user explicitly requests mutation of the global config, decline and explain that `/init` operates on project roots only.
 3. **Check existing AGENTS.md** — Read the existing file if present; detect symlinks and warn before writing to symlink targets.
 
 **Verification:** Target root is resolved and write scope is validated before any mutation.
@@ -92,7 +90,7 @@ Before considering the skill stable, verify:
 
 After execution:
 
-- [ ] Target root is resolved and is not global config (unless global-refactor mode)
+- [ ] Target root is resolved and is not the global opencode config root
 - [ ] Generated content contains required sections with managed markers
 - [ ] Secret-scan heuristic passes with no secret values in output
 - [ ] Existing human content is preserved in update mode

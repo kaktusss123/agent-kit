@@ -4,7 +4,7 @@ Project-scoped feedback memory for agent rules and onboarding accuracy.
 
 ## Purpose
 
-When a project's AGENTS.md contains incorrect commands, stale references, or missing boundaries, agents record feedback entries here. The `project-init-runner` reads these entries during `/init --update` to improve accuracy.
+When a project's AGENTS.md contains incorrect commands, stale references, or missing boundaries, agents record feedback entries here. The `project-init-runner` reads these entries during `/init --mode update` to improve accuracy.
 
 ## Feedback Entry Format
 
@@ -32,6 +32,7 @@ name: <Human-readable title>
 description: <One-line summary of the issue>
 type: feedback
 originSessionId: <optional session ID that generated this entry>
+status: <open|resolved|archived>  # optional; defaults to open
 ---
 
 ## Why
@@ -41,6 +42,10 @@ originSessionId: <optional session ID that generated this entry>
 ## How to apply
 
 <What AGENTS.md should say instead. Concrete text or section change.>
+
+## Resolution
+
+<!-- Filled when status is resolved. Date, session, and brief note on what was applied. -->
 ```
 
 ## Project-Scoped Default
@@ -53,6 +58,6 @@ originSessionId: <optional session ID that generated this entry>
 ## Lifecycle
 
 1. **Create**: Agent or user discovers an inaccuracy and writes a new `feedback_<slug>.md`.
-2. **Review**: Next `/init --update` run reads open entries and applies fixes.
-3. **Resolve**: Applied entries are marked `resolved` with a resolution note.
+2. **Review**: Next `/init --mode update` run reads open entries and applies fixes.
+3. **Resolve**: Applied entries are marked `status: resolved` with a resolution note in the `## Resolution` section.
 4. **Archive**: Resolved entries older than 30 days may be moved to `docs/feedback/archive/`.
