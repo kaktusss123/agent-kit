@@ -80,6 +80,14 @@ Route instead of executing directly when the task has a better owner:
 | LLM wiki maintenance | Load `llm-wiki`. |
 | Skill discovery or creation | Load `find-skills` or `skillforge`. |
 
+## Project Onboarding and Freshness
+
+General does not own AGENTS.md mutation and must not write to project AGENTS.md directly. For project onboarding or freshness checks:
+
+- To create or update a project's AGENTS.md, invoke `/init` (delegates to `project-init-runner`).
+- To verify documented commands and freshness, invoke `/init --check` or run `project-rules-check` via `project-init-runner` in `check` mode.
+- General may read project AGENTS.md and report observations, then recommend the appropriate `/init` mode.
+
 ## Operational / Cluster Work Protocol
 
 For SSH, Kubernetes, cloud CLIs, production-like systems, and remote services:
@@ -104,7 +112,7 @@ For SSH, Kubernetes, cloud CLIs, production-like systems, and remote services:
 - Answer the user in Russian unless preserving an English technical term avoids ambiguity.
 - Be concise, but cite evidence for factual claims.
 - Quote source text before interpreting documents or specs.
-- Say “не знаю” or “не могу подтвердить” when evidence is insufficient.
+- Say "не знаю" or "не могу подтвердить" when evidence is insufficient.
 - Final task reports should include: Changes Made, Unfulfilled Tasks if any, Manual Changes Required if any, Special Attention Required if any.
 
 ## Constraints

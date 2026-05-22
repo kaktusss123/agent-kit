@@ -143,6 +143,24 @@ fix(EVODP-5407): Исправил ошибку в коде
 | Commit on `main`/`master`/`develop` | Bypasses review, violates branch policy | Create a feature or fix branch first |
 | `git commit --no-verify` | Skips pre-commit hooks, may introduce bugs | Let hooks run and fix any issues they catch |
 
+## Hook Framework Detection
+
+Before committing, detect whether the project uses a hook management framework:
+
+| Framework | Indicator |
+|---|---|
+| **husky** | `.husky/` directory or `husky` in `package.json` devDependencies |
+| **pre-commit** | `.pre-commit-config.yaml` at project root |
+| **lefthook** | `lefthook.yml` or `.lefthook/` directory |
+| **captainhook** | `.captainhook/` directory or `captainhook` config |
+
+When a hook framework is detected:
+1. Note the framework in the commit report.
+2. If hooks fail, capture the framework-specific error output.
+3. For husky: re-stage files that husky hooks may have modified (e.g., linter auto-fixes).
+4. For pre-commit: check if `pre-commit run --all-files` passes before retrying.
+5. Never use `--no-verify` to bypass framework hooks; fix the underlying issue instead.
+
 ## Routing
 
 - For actual commit creation, use the `committer` subagent

@@ -1,13 +1,8 @@
 ---
-description: Custom - Generate AGENTS.md
-agent: OpenCodebaseAgent
-model: cloudru/MiniMaxAI/MiniMax-M2
+description: Initialize or update a project's AGENTS.md
+agent: project-init-runner
 ---
 
-Please analyze this codebase and create an AGENTS.md file containing:
-1. Build/lint/test commands - especially for running a single test
-2. Code style guidelines including imports, formatting, types, naming conventions, error handling, etc.
-3. Architecture description.
-The file you create will be given to agentic coding agents (such as yourself) that operate in this repository. Make it about 150-300 lines long.
-If there are Cursor rules (in .cursor/rules/ or .cursorrules) or Copilot rules (in .github/copilot-instructions.md), make sure to include them.
-If there's already an AGENTS.md, improve it if it's located in !`pwd`
+Run the project-init workflow for the current target project.
+Default mode: `create` if no AGENTS.md exists, `update` if one exists.
+Supported modes: `create`, `update`, `check`, `dry-run`.
