@@ -1,8 +1,9 @@
 import type { Plugin, Hooks } from "@opencode-ai/plugin";
 import { execFile } from "child_process";
 import { readFile, access } from "fs/promises";
-import { join } from "path";
+import { join, resolve } from "path";
 import { promisify } from "util";
+import { homedir } from "os";
 
 // Project-rules freshness plugin.
 // Reads local AGENTS.md and .opencode/agents-freshness.json on session.created
@@ -10,6 +11,7 @@ import { promisify } from "util";
 // Kill-switch: OPENCODE_PROJECT_RULES_FRESHNESS=0 disables the plugin.
 
 const KILL_SWITCH = "OPENCODE_PROJECT_RULES_FRESHNESS";
+const GLOBAL_CONFIG_ROOT = resolve(homedir(), ".config", "opencode");
 
 // In-memory cooldown: directory -> timestamp of last notification.
 // Prevents repeated toasts across sessions without file writes.
@@ -50,6 +52,12 @@ export const ProjectRulesFreshnessPlugin: Plugin = async (input): Promise<Hooks>
   const { client, directory, worktree } = input;
   // Prefer worktree for project-root resolution when available
   const projectRoot = worktree || directory;
+
+  // Skip freshness checks in the global opencode config root;
+  // its AGENTS.md is global, not project-specific.
+  if (resolve(projectRoot) === GLOBAL_CONFIG_ROOT) {
+    return {};
+  }
 
   const log = (level: "debug" | "info" | "warn" | "error", message: string) => {
     client?.app?.log({
