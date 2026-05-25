@@ -79,6 +79,9 @@ If any artifact conflicts with another:
 
 # Output
 
+Resolve the workspace path using the `task-workspace` skill **before** delegating to any subagent.
+Pass the resolved `docs/specs/<task-id>/` path explicitly in every subagent prompt so subagents write to the correct location.
+
 Write results to `docs/specs/<task-id>/`.
 
 Always return:

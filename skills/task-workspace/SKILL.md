@@ -43,9 +43,15 @@ Minimum files:
 # Task ID Rules
 
 Prefer, in order:
-1. issue/ticket key if provided,
-2. explicit task identifier from the user,
-3. stable slug derived from the task title.
+1. issue/ticket key **with slug** if provided (e.g. `EVODP-9741-web-sql-agent`),
+2. explicit task identifier from the user **with slug**,
+3. stable slug derived from the task title (e.g. `web-sql-agent`).
+
+Task IDs **must always include a human-readable slug** appended after the ticket key (separated by `-`).
+The slug is a short kebab-case summary of the task title (2–5 words max).
+
+Example: ticket `EVODP-9741` + title "Web SQL Agent" → task-id `EVODP-9741-web-sql-agent`.
+For personal/non-ticket tasks: use kanban item ID **with slug**, e.g. `183-task-workspace-fix`.
 
 Task IDs should be concise, human-readable, and stable.
 
@@ -151,21 +157,38 @@ Initialize a workspace:
 
 After initializing a workspace, confirm all of the following:
 
-- [ ] Workspace directory exists at `docs/specs/<task-id>/`
+- [ ] Existing workspace detection was performed before creating a new directory
+- [ ] Workspace directory exists at `docs/specs/<task-id>/` where task-id includes a slug
 - [ ] All 6 minimum files present: `spec.md`, `decision-log.md`, `questions-log.md`, `repo-scout.md`, `assumptions.md`, `traceability.md`
 - [ ] `questions-log.md` has the original request recorded with resolution status `open`
 - [ ] `decision-log.md` has at least a skeletal section (Decision ID, Status, Decision, Rationale, Alternatives considered, Consequences)
 - [ ] `assumptions.md` has at least a skeletal section (Assumption ID, Statement, Reason, Impact if false, Status)
 - [ ] `traceability.md` has at least a skeletal section (placeholder content acceptable at init)
+- [ ] Resolved workspace path was recorded and passed to all subagents
+
+# Existing Workspace Detection
+
+**Always search for an existing workspace before creating a new one.**
+
+Detection procedure:
+1. Extract the ticket key from the task (e.g. `EVODP-9741`).
+2. Run `ls docs/specs/` and look for any directory that starts with that ticket key.
+3. If a match is found (e.g. `EVODP-9741-web-sql-agent`), use that directory as-is — do NOT create a new one.
+4. If no ticket key exists, search by slug keywords using glob or ls.
+5. Only create a new directory when no existing match is found.
+
+Record the resolved workspace path early and pass it explicitly to every subagent.
 
 # Initialization Procedure
 
 For a new task:
-1. determine `<task-id>`;
-2. ensure `docs/specs/<task-id>/` exists;
-3. initialize the minimum artifact files if missing;
-4. record the original request in `questions-log.md`;
-5. initialize empty or skeletal sections in the other files as needed.
+1. determine `<task-id>` with slug (see Task ID Rules);
+2. **run existing workspace detection** (see above);
+3. if an existing directory was found, use it — skip to step 5;
+4. create `docs/specs/<task-id>/`;
+5. initialize the minimum artifact files if missing;
+6. record the original request in `questions-log.md`;
+7. initialize empty or skeletal sections in the other files as needed.
 
 # Suggested Initial File Skeletons
 
