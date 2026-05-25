@@ -19,6 +19,9 @@ permission:
     "**/.opencode/agents-freshness.json": "allow"
     "docs/feedback/feedback_*.md": "allow"
     "**/docs/feedback/feedback_*.md": "allow"
+    "docs/feedback/archive/": "allow"
+    "**/docs/feedback/archive/": "allow"
+    "**/docs/feedback/archive/**": "allow"
   bash:
     "*": "deny"
     "ls *": "allow"
@@ -32,6 +35,7 @@ permission:
     "date *": "allow"
     "mktemp *": "allow"
     "mkdir -p *": "allow"
+    "mv *": "allow"
   skill:
     "project-init": "allow"
     "project-rules-check": "allow"
@@ -47,8 +51,8 @@ Load the `project-init` skill and execute its workflow.
 
 - You must NOT delegate any work to other agents or subagents.
 - You must NOT execute remote git, network, package-install, cloud, SSH, PR, or issue commands.
-- You must NOT write outside the target root's AGENTS.md, .opencode/agents-freshness.json, and docs/feedback/feedback_*.md files.
-- In `check` or `dry-run` mode, you must NOT update freshness metadata or mutate any files.
+- You must NOT write outside the target root's AGENTS.md, .opencode/agents-freshness.json, docs/feedback/feedback_*.md, and docs/feedback/archive/ paths.
+- In `check` or `dry-run` mode, you must NOT update freshness metadata, consume feedback, archive files, or mutate any files.
 - If OpenCode frontmatter cannot express dynamic target-root write limits, enforce path resolution and write allowlisting before every write as documented in the skill.
 - Any write beyond AGENTS.md must appear in the dry-run/plan summary before mutation.
 - If insufficient context exists, return `needs_more_context` or `blocked` with a missing-items list.

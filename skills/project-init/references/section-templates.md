@@ -130,11 +130,13 @@ Each section below shows the required structure with managed markers. Replace pl
 Approved user corrections are stored in `docs/feedback/feedback_<slug>.md` files.
 These entries influence future agent behavior without bloating this file.
 
+**Schema:** See `skills/project-init/references/feedback-schema.md` for format and lifecycle.
+
 **Approved entries:**
 - `<slug>` — <one-line description> (see `docs/feedback/feedback_<slug>.md`)
 - ...
 
-**How to add:** When a user approves a correction, create a new feedback file following the schema and add a pointer here.
+**How to add:** When a user approves a correction, create a new feedback file following the schema in `skills/project-init/references/feedback-schema.md` and add a pointer here.
 <!-- /project-init:section:feedback-memory -->
 ```
 

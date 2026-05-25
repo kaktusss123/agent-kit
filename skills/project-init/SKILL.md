@@ -54,19 +54,21 @@ Use this skill when onboarding a new project or updating an existing project's A
 3. **Preserve human content** — In `update` mode, keep all content outside managed markers unchanged.
 4. **Add boundaries** — Include project-specific Always/Ask/Never boundaries.
 5. **Add feedback memory pointer** — Include a section linking to `docs/feedback/feedback_*.md` entries.
+6. **Consume feedback** (update mode only) — Read all `docs/feedback/feedback_*.md` files, incorporate their corrections into AGENTS.md sections, then immediately archive each consumed file to `docs/feedback/archive/feedback_<slug>.md`. Record `slug` + `archived_at` in `feedback_processed[]` within `.opencode/agents-freshness.json`. Do not consume or archive in `check` or `dry-run` mode.
 
-**Verification:** Generated content passes the secret-scan heuristic in `references/secret-scan-heuristic.md` before write.
+**Verification:** Generated content passes the secret-scan heuristic in `references/secret-scan-heuristic.md` before write. Consumed feedback files are moved to archive, not left in place.
 
 ### Phase 4: Write and Report
 
-**Write boundary:** Steps 1 through 3 apply ONLY in `create` and `update` modes. In `check` or `dry-run` mode, skip all writes (no AGENTS.md, no freshness metadata, no temp files). Report only.
+**Write boundary:** Steps 1 through 3 apply ONLY in `create` and `update` modes. In `check` or `dry-run` mode, skip all writes (no AGENTS.md, no freshness metadata, no temp files, no feedback archive). Report only.
 
 1. **Atomic write** (create/update only) — Write to a temp file in the target directory, then rename to AGENTS.md.
-2. **Ensure directory exists** (create/update only) — If `.opencode/` does not exist in the target root, run `mkdir -p <target_root>/.opencode` before writing the freshness file.
-3. **Write freshness metadata** (create/update only) — Use the write tool on `.opencode/agents-freshness.json` with ISO timestamp and verification summary. If write is denied, return `blocked` with the denied permission pattern; do not use shell redirection or heredocs.
-4. **Report** — Return the structured summary with target root, mode, detected stack, command counts, written files, and warnings.
+2. **Ensure directory exists** (create/update only) — If `.opencode/` does not exist in the target root, run `mkdir -p <target_root>/.opencode` before writing the freshness file. If `docs/feedback/archive/` does not exist, run `mkdir -p <target_root>/docs/feedback/archive` before archiving feedback files.
+3. **Write freshness metadata** (create/update only) — Use the write tool on `.opencode/agents-freshness.json` with ISO timestamp, verification summary, and `feedback_processed[]` entries for any consumed feedback. If write is denied, return `blocked` with the denied permission pattern; do not use shell redirection or heredocs.
+4. **Archive consumed feedback** (update mode only) — Move each consumed `docs/feedback/feedback_*.md` to `docs/feedback/archive/feedback_<slug>.md`. Do not archive in check/dry-run mode.
+5. **Report** — Return the structured summary with target root, mode, detected stack, command counts, written files, archived feedback slugs, and warnings.
 
-**Verification:** Freshness metadata is written only after successful AGENTS.md write. In check/dry-run modes, no files are modified and no metadata is updated.
+**Verification:** Freshness metadata is written only after successful AGENTS.md write. In check/dry-run modes, no files are modified, no metadata is updated, and no feedback files are consumed or archived.
 
 ## Validation Scenarios
 
@@ -102,4 +104,5 @@ After execution:
 ## References
 
 - [`references/section-templates.md`](references/section-templates.md) — Required section templates and managed marker format
+- [`references/feedback-schema.md`](references/feedback-schema.md) — Feedback file format, lifecycle, and freshness registry contract
 - [`references/secret-scan-heuristic.md`](references/secret-scan-heuristic.md) — Secret detection patterns and entropy checks
