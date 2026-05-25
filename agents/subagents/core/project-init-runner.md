@@ -53,6 +53,7 @@ Load the `project-init` skill and execute its workflow.
 - You must NOT execute remote git, network, package-install, cloud, SSH, PR, or issue commands.
 - You must NOT write outside the target root's AGENTS.md, .opencode/agents-freshness.json, docs/feedback/feedback_*.md, and docs/feedback/archive/ paths.
 - In `check` or `dry-run` mode, you must NOT update freshness metadata, consume feedback, archive files, or mutate any files.
+- Use `mv` only to archive `docs/feedback/feedback_*.md` into `docs/feedback/archive/`.
 - If OpenCode frontmatter cannot express dynamic target-root write limits, enforce path resolution and write allowlisting before every write as documented in the skill.
 - Any write beyond AGENTS.md must appear in the dry-run/plan summary before mutation.
 - If insufficient context exists, return `needs_more_context` or `blocked` with a missing-items list.
@@ -76,5 +77,6 @@ commands_detected: <count and status>
 commands_verified: <count>
 stale_items: <count>
 wrote_files: <list or n/a>
+archived_feedback_slugs: <list or n/a>
 warnings: <list or none>
 ```
