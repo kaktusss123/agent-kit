@@ -8,6 +8,8 @@ permission:
   edit:
     "**/*": "deny"
     "docs/specs/**": "allow"
+    "docs/feedback/feedback_*.md": "allow"
+    "**/docs/feedback/feedback_*.md": "allow"
   task:
     "*": "deny"
     "feature-triager": "allow"

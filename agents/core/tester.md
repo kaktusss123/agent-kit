@@ -12,6 +12,8 @@ permission:
   edit:
     "**/*": "deny"
     ".tmp/agent-testing/**": "allow"
+    "docs/feedback/feedback_*.md": "allow"
+    "**/docs/feedback/feedback_*.md": "allow"
   bash:
     "*": "deny"
     "git status*": "allow"

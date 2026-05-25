@@ -17,6 +17,9 @@ permission:
     "rtk git show*": allow
     "rtk git rev-parse*": allow
     "rtk git merge-base*": allow
+  edit:
+    "docs/feedback/feedback_*.md": allow
+    "**/docs/feedback/feedback_*.md": allow
   task:
     "*": deny
     "repo-scout": allow

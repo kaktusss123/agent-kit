@@ -7,6 +7,8 @@ permission:
     "**/*": "allow"
   edit:
     "docs/specs/**": "allow"
+    "docs/feedback/feedback_*.md": "allow"
+    "**/docs/feedback/feedback_*.md": "allow"
   grep:
     "**/*": "allow"
   glob:

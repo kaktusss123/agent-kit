@@ -14,7 +14,8 @@ permission:
     ".git/**": deny
     "**/AGENTS.md": deny
     "**/.opencode/agents-freshness.json": deny
-    "**/docs/feedback/feedback_*.md": deny
+    "docs/feedback/feedback_*.md": allow
+    "**/docs/feedback/feedback_*.md": allow
   grep:
     "**/*": allow
   glob:
@@ -23,7 +24,6 @@ permission:
     "*": allow
     "*AGENTS.md*": deny
     "*agents-freshness.json*": deny
-    "*docs/feedback/feedback_*": deny
     "rm -rf *": ask
     "rm -rf /*": deny
     "sudo *": ask
