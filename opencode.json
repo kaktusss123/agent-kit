@@ -9,7 +9,7 @@
         "CONFLUENCE_URL": "https://wiki.cloud.ru",
         "CONFLUENCE_PERSONAL_TOKEN": "ODE1MjIzMzI3OTg2Ok0BSb/2qwvWTfrHOXAFVlclOlPN",
         "JIRA_URL": "https://jira.cloud.ru",
-        "JIRA_PERSONAL_TOKEN": "ODUzODQ0MzI3MDE4OjT5R81cNrBhrAyoslgJotFaxyyg",
+        "JIRA_PERSONAL_TOKEN": "MDI1NjUzMjQ2NzY5On8hdyfbnE2Z1eynrYQfG9LCsNhB",
         "CONFLUENCE_SPACES_FILTER": "OCP",
         "JIRA_PROJECTS_FILTER": "EVODP"
       },
@@ -144,6 +144,9 @@
     "explore": {
       "disable": true
     },
+    "project-init-runner": {
+      "model": "opencode-go/deepseek-v4-pro"
+    },
     "repo-scout": {
       "hidden": true,
       "model": "opencode-go/deepseek-v4-flash",
@@ -189,7 +192,7 @@
     },
     "edge-case-harvester": {
       "hidden": true,
-      "model": "opencode-go/kimi-k2.6",
+      "model": "opencode-go/qwen3.6-plus",
       "tools": {
         "kanban_*": false,
         "CodeGraphContext_*": false

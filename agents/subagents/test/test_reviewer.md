@@ -10,7 +10,6 @@ permission:
     "**/*": "allow"
   glob:
     "**/*": "allow"
-  edit: "deny"
   bash:
     "*": "deny"
     "git status*": "allow"
