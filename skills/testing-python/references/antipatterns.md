@@ -506,7 +506,7 @@ def test_unreachable_branch():
     ...
 ```
 
-Never reference `.tmp/agent-testing`, `plan-*.yaml`, capsules, writer reports, or reviewer reports from committed tests.
+Never reference `docs/agent-testing`, `plan-*.yaml`, capsules, writer reports, or reviewer reports from committed tests.
 
 ---
 
@@ -789,7 +789,7 @@ Stale comments and docstrings teach future tests to copy the old pattern.
 | 11 | No deepcopy in in-memory repos | Medium | Review in-memory repo implementations |
 | 12 | Manual try/except | Low | grep `except ValueError:` in test files |
 | 13 | Coverage-only type wrapper tests | Low | Review tests with only `isinstance(result, uuid.UUID)` or equivalent wrapper assertions |
-| 14 | Skip references agent artifacts | High | grep `.tmp/agent-testing\|plan-.*yaml\|writer-report\|review-report` in tests |
+| 14 | Skip references agent artifacts | High | grep `docs/agent-testing\|plan-.*yaml\|writer-report\|review-report` in tests |
 | 15 | Inline imports in test logic | Medium | grep indented `from ... import` or `import ...` inside `test_*` functions |
 | 16 | Low-entropy test data | Medium | review hard-coded `test-*`, fixed IPs, versions, namespaces |
 | 17 | Boilerplate module docstrings | Low | first line starts with `"""Tests for` |

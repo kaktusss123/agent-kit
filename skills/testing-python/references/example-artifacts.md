@@ -26,10 +26,10 @@ test_command:
     passed: 12
     failed: 0
 coverage_command:
-  command: "uv run pytest tests/project/services/test_user_service.py -q --cov=project/services --cov-report=json:.tmp/agent-testing/2026-05-06-targeted-user-service/coverage.json"
+  command: "uv run pytest tests/project/services/test_user_service.py -q --cov=project/services --cov-report=json:docs/agent-testing/2026-05-06-targeted-user-service/coverage.json"
   status: "passed"
   exit_code: 0
-  report_path: ".tmp/agent-testing/2026-05-06-targeted-user-service/coverage.json"
+  report_path: "docs/agent-testing/2026-05-06-targeted-user-service/coverage.json"
 diff:
   base_branch: "develop"
   status: "not_applicable"
@@ -134,8 +134,8 @@ testing_standards:
   - "testing-python: invariant rules"
   - "testing-python: cheap writer safety"
 expected_outputs:
-  plan_file: ".tmp/agent-testing/2026-05-06-targeted-user-service/plans/plan-user-service-validation.yaml"
-  writer_report_file: ".tmp/agent-testing/2026-05-06-targeted-user-service/writer-reports/plan-user-service-validation.yaml"
+  plan_file: "docs/agent-testing/2026-05-06-targeted-user-service/plans/plan-user-service-validation.yaml"
+  writer_report_file: "docs/agent-testing/2026-05-06-targeted-user-service/writer-reports/plan-user-service-validation.yaml"
 ```
 
 ---
@@ -281,9 +281,9 @@ remaining_problems: []
 run_id: "2026-05-06-targeted-user-service"
 verdict: "PASS"
 writer_reports_expected:
-  - ".tmp/agent-testing/2026-05-06-targeted-user-service/writer-reports/plan-user-service-validation.yaml"
+  - "docs/agent-testing/2026-05-06-targeted-user-service/writer-reports/plan-user-service-validation.yaml"
 writer_reports_found:
-  - ".tmp/agent-testing/2026-05-06-targeted-user-service/writer-reports/plan-user-service-validation.yaml"
+  - "docs/agent-testing/2026-05-06-targeted-user-service/writer-reports/plan-user-service-validation.yaml"
 standards_check_summary:
   invariant_rules_checked:
     - "R2"

@@ -152,7 +152,7 @@ Use `FAIL` for any of these:
 - a user-defined repository-wide invariant was verified only on changed files or capsule scope.
 - refactor or migration work proceeded on a red relevant baseline without a repair-first plan.
 - reusable factory or fixture definitions added directly to `test_*.py` without an explicit approved exception.
-- skip reasons that reference `.tmp/agent-testing`, plan files, capsule files, writer reports, or reviewer reports.
+- skip reasons that reference `docs/agent-testing`, plan files, capsule files, writer reports, or reviewer reports.
 - skipped tests that exist only because the writer could not implement the branch.
 - ungated testcontainer setup that runs during default `uv run pytest`.
 - dual-backend parity was required but the verification ran only `-m real_db` or another DB-specific selection without rerunning the backend-agnostic integration selection.

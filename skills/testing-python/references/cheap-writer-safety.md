@@ -50,5 +50,5 @@ Use project-appropriate content search to audit changed tests for:
 - `class Test` introductions without plan approval;
 - direct `config.` assignment without restoration;
 - inline imports in `test_*` functions;
-- skip reasons mentioning `.tmp/agent-testing`, `plan-`, `capsule`, `writer-report`, or `review-report`;
+- skip reasons mentioning `docs/agent-testing`, `plan-`, `capsule`, `writer-report`, or `review-report`;
 - hard-coded `test-*`, static IPs, versions, and namespaces where generated data is more appropriate.

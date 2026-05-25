@@ -11,7 +11,7 @@ permission:
     "**/*": "allow"
   edit:
     "**/*": "deny"
-    ".tmp/agent-testing/**": "allow"
+    "docs/agent-testing/**": "allow"
     "docs/feedback/feedback_*.md": "allow"
     "**/docs/feedback/feedback_*.md": "allow"
   bash:
@@ -73,13 +73,13 @@ Choose one mode from the user request:
 
 ### Artifact and identity rules
 
-- Store all working artifacts only under `.tmp/agent-testing/<run-id>/`.
+- Store all working artifacts only under `docs/agent-testing/<run-id>/`.
 - Create a new `<run-id>` for every run.
-- Do not use `.tmp/agent-testing/current/`.
+- Do not use `docs/agent-testing/current/`.
 - Only this orchestrator assigns `run_id`, `capsule_id`, `plan_id`, and output paths.
 - Subagents must not invent top-level artifact IDs.
 - Treat a missing expected artifact as a failed run, not as a warning.
-- Record any aborted run or failed delegation in `.tmp/agent-testing/<run-id>/orchestration-errors.yaml` before stopping.
+- Record any aborted run or failed delegation in `docs/agent-testing/<run-id>/orchestration-errors.yaml` before stopping.
 
 ### Execution rules
 
@@ -154,10 +154,10 @@ Deprioritize:
 ## Workflow
 
 1. Create a new run directory:
-   `.tmp/agent-testing/<run-id>/`
+   `docs/agent-testing/<run-id>/`
 
 2. Write the user goal to:
-   `.tmp/agent-testing/<run-id>/goal.md`
+   `docs/agent-testing/<run-id>/goal.md`
 
 3. Read `skills/testing-python/references/testing-artifact-templates.md` and `skills/testing-python/references/example-artifacts.md`.
 
@@ -174,7 +174,7 @@ Deprioritize:
    - use `coverage run` only when the repository documents a compatible coverage config or you explicitly pass a compatible `--rcfile`;
     - prefer a machine-readable JSON report when possible;
     - write normalized coverage data to:
-      `.tmp/agent-testing/<run-id>/coverage-summary.yaml`
+      `docs/agent-testing/<run-id>/coverage-summary.yaml`
 
 6. Determine scope:
     - for `diff-oriented`, start from `git diff develop...HEAD`;
@@ -183,13 +183,13 @@ Deprioritize:
     - when the user goal includes a global invariant, add a whole-target-tree invariant check independent from capsule boundaries.
 
 7. Create planning capsules in:
-   `.tmp/agent-testing/<run-id>/capsules/`
+   `docs/agent-testing/<run-id>/capsules/`
 
 8. Invoke planners in parallel when useful.
    Each planner gets exactly one capsule.
 
 9. Collect plans from:
-   `.tmp/agent-testing/<run-id>/plans/`
+   `docs/agent-testing/<run-id>/plans/`
 
 10. Perform a top-level sanity check of plans:
       - reject plans with unsupported assumptions;
@@ -199,18 +199,18 @@ Deprioritize:
       - detect duplicated reusable helpers or conflicting conftest/autouse fixture changes.
       - detect backend parity plans that would introduce eager backend fixture resolution, per-module container startup for a shared run, or cleanup steps with likely FK-order conflicts.
       - write the result to:
-        `.tmp/agent-testing/<run-id>/sanity-report.yaml`
+        `docs/agent-testing/<run-id>/sanity-report.yaml`
 
 11. Run writers sequentially, one approved plan at a time.
     After each writer returns, verify that the exact writer report path exists and contains the expected `run_id`, `capsule_id`, and `plan_id`. Stop on any mismatch.
 
 12. Collect writer reports from:
-    `.tmp/agent-testing/<run-id>/writer-reports/`
+    `docs/agent-testing/<run-id>/writer-reports/`
     The number of writer reports must equal the number of approved plans.
 
 13. Invoke one reviewer after all writer work is complete.
     The review report path is:
-    `.tmp/agent-testing/<run-id>/review-report.md`
+    `docs/agent-testing/<run-id>/review-report.md`
     If the reviewer verdict is `FAIL`, do not write a success final report. Either run a bounded repair pass or write a blocked final report.
 
 14. Run final verification:
@@ -223,7 +223,7 @@ Deprioritize:
     - omit `--real-db` unless explicitly requested; record a follow-up if DB-specific behavior still needs real DB verification.
 
 15. Write:
-    `.tmp/agent-testing/<run-id>/final-report.md`
+    `docs/agent-testing/<run-id>/final-report.md`
     The final report must cite baseline, coverage, sanity, writer, reviewer, and verification artifacts.
 
 Before the final report, compute and record the exact diff/review base from Git, plus the final changed-file list. If the computed base differs from any earlier assumption, rerun scope-sensitive checks with the computed base.

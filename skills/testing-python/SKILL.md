@@ -139,7 +139,7 @@ Do not add standalone tests whose only assertion is that a trivial type wrapper,
 
 ### R12. Keep committed tests independent from agent artifacts
 
-Committed test code must not reference temporary agent artifacts such as `.tmp/agent-testing`, `plan-*.yaml`, capsule files, writer reports, or reviewer reports. Skip reasons must be self-contained and may reference only stable sources such as product tickets, permanent documentation, or explicit product limitations.
+Committed test code must not reference temporary agent artifacts such as `docs/agent-testing`, `plan-*.yaml`, capsule files, writer reports, or reviewer reports. Skip reasons must be self-contained and may reference only stable sources such as product tickets, permanent documentation, or explicit product limitations.
 
 ### R13. Keep imports at module level
 
@@ -427,7 +427,7 @@ Each checklist item maps back to one or more invariant rules where applicable.
 - [ ] Confirm reusable Pydantic/domain factories use Polyfactory or document why the setup is one-off local data (R10)
 - [ ] Confirm new tests exercise behavior or public contracts, not only trivial runtime type wrappers (R11)
 - [ ] Search changed tests for inline imports and move them to module level unless explicitly justified (R13)
-- [ ] Search skip reasons for `.tmp/agent-testing`, `plan-`, `capsule`, `writer-report`, and `review-report`
+- [ ] Search skip reasons for `docs/agent-testing`, `plan-`, `capsule`, `writer-report`, and `review-report`
 - [ ] Search changed tests for hard-coded `test-*`, fixed IPs, versions, and namespaces; replace arbitrary values with Faker/Polyfactory (R14)
 - [ ] Confirm repeated input/output variants use `pytest.mark.parametrize`
 

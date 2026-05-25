@@ -67,7 +67,7 @@ If any required input is missing, stop and report what is missing.
 - If the plan cannot be implemented correctly, stop and write the reason in the writer report.
 - If the plan omits fixture or factory placement details, apply the placement rules from `testing-python` within the allowed modification areas.
 - Do not commit skips that exist only because implementation failed; report them as blocked work instead.
-- Do not mention temporary run artifacts from `.tmp/agent-testing` in committed tests.
+- Do not mention temporary run artifacts from `docs/agent-testing` in committed tests.
 - Do not add testcontainer setup or run `--real-db` unless the plan and user request explicitly require real DB verification.
 - Do not copy a generic real DB fixture template blindly; adapt backend wiring to the project's existing config/session/repository patterns.
 - For backend-agnostic parity scenarios, keep one shared test body and switch backends through fixtures instead of duplicating the scenario into separate in-memory and real DB tests.
