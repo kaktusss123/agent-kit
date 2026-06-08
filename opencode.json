@@ -99,32 +99,32 @@
       "name": "CloudRu Foundation Models",
       "options": {
         "baseURL": "https://foundation-models.api.cloud.ru/v1",
-        "apiKey": "YTU1NGUzNTctMGYzMi00YTFmLWFjMzAtMTVmNjU3NDc1OWNm.3a738dc3d713425ad1f2174df8e642c6"
+        "apiKey": "ZDg3NmQxNDgtMWViNC00ZGYwLTgzMzgtYWQ5YTcxZWIzNTVh.41f81c3d8939f42d12fd2a46c3aa4379"
       },
       "models": {
-        "zai-org/GLM-4.7": {
-          "name": "GLM-4.7",
+        "zai-org/GLM-5.1": {
+          "name": "GLM-5.1",
           "limit": {
-            "context": 200000,
+            "context": 196000,
             "output": 20000
           }
         },
-        "zai-org/GLM-4.7-Flash": {
-          "name": "GLM-4.7-Flash",
+        "moonshotai/Kimi-K2.6": {
+          "name": "Kimi-k2.6",
           "limit": {
-            "context": 200000,
+            "context": 256000,
             "output": 20000
           }
         },
-        "MiniMaxAI/MiniMax-M2": {
+        "MiniMaxAI/MiniMax-M2.5": {
           "name": "MiniMax-M2",
           "limit": {
-            "context": 200000,
+            "context": 192000,
             "output": 20000
           }
         },
-        "Qwen/Qwen3-Coder-480B-A35B-Instruct": {
-          "name": "Qwen3-Coder",
+        "Qwen/Qwen3.5-397B-A17B": {
+          "name": "Qwen3.5-397B",
           "limit": {
             "context": 256000,
             "output": 20000
@@ -133,19 +133,34 @@
         "Qwen/Qwen3-Coder-Next": {
           "name": "Qwen3-Next",
           "limit": {
-            "context": 262000,
+            "context": 256000,
+            "output": 20000
+          }
+        },
+        "Qwen/Qwen3.6-35B-A3B": {
+          "name": "Qwen3.6-35B",
+          "limit": {
+            "context": 2656000,
+            "output": 20000
+          }
+        },
+        "deepseek-ai/DeepSeek-V4-Pro": {
+          "name": "DeepSeek-V4-Pro",
+          "limit": {
+            "context": 1000000,
             "output": 20000
           }
         }
       }
     }
   },
+  // office
   "agent": {
     "explore": {
       "disable": true
     },
     "project-init-runner": {
-      "model": "opencode-go/deepseek-v4-pro"
+      "model": "cloudru/deepseek-ai/DeepSeek-V4-Pro"
     },
     "repo-scout": {
       "hidden": true,
@@ -160,7 +175,7 @@
     },
     "feature-triager": {
       "hidden": true,
-      "model": "github-copilot/claude-sonnet-4.6",
+      "model": "cloudru/moonshotai/Kimi-K2.6",
       "tools": {
         "kanban_*": true,
         "CodeGraphContext_*": false
@@ -181,7 +196,7 @@
     },
     "design-planner": {
       "hidden": true,
-      "model": "github-copilot/claude-sonnet-4.6",
+      "model": "cloudru/moonshotai/Kimi-K2.6",
       "tools": {
         "kanban_*": true,
         "CodeGraphContext_*": false
@@ -203,7 +218,7 @@
     },
     "contract-impact-auditor": {
       "hidden": true,
-      "model": "github-copilot/claude-sonnet-4.6",
+      "model": "cloudru/zai-org/GLM-5.1",
       "tools": {
         "kanban_*": false,
         "CodeGraphContext_*": false
@@ -214,7 +229,7 @@
     },
     "non-functional-prober": {
       "hidden": true,
-      "model": "opencode-go/kimi-k2.6",
+      "model": "opencode-go/qwen3.6-plus",
       "tools": {
         "kanban_*": false,
         "CodeGraphContext_*": false
@@ -225,7 +240,7 @@
     },
     "traceability-checker": {
       "hidden": true,
-      "model": "github-copilot/claude-sonnet-4.6",
+      "model": "cloudru/moonshotai/Kimi-K2.6",
       "tools": {
         "kanban_*": false,
         "CodeGraphContext_*": false
@@ -269,7 +284,7 @@
     },
     "reviewer-security": {
       "hidden": true,
-      "model": "github-copilot/gpt-5.4",
+      "model": "cloudru/zai-org/GLM-5.1",
       "tools": {
         "kanban_*": false,
         "CodeGraphContext_*": false
@@ -291,7 +306,7 @@
     },
     "reviewer-contracts": {
       "hidden": true,
-      "model": "github-copilot/claude-sonnet-4.6",
+      "model": "cloudru/zai-org/GLM-5.1",
       "tools": {
         "kanban_*": false,
         "CodeGraphContext_*": false
@@ -313,7 +328,7 @@
     },
     "reviewer-performance": {
       "hidden": true,
-      "model": "opencode-go/kimi-k2.6",
+      "model": "cloudru/moonshotai/Kimi-K2.6",
       "tools": {
         "kanban_*": false,
         "CodeGraphContext_*": false
@@ -364,7 +379,7 @@
     },
     "dev-orchestrator": {
       "hidden": true,
-      "model": "github-copilot/claude-sonnet-4.6",
+      "model": "cloudru/zai-org/GLM-5.1",
       "tools": {
         "kanban_*": true,
         "CodeGraphContext_*": false
@@ -392,4 +407,257 @@
       }
     }
   }
+  // home
+  // "agent": {
+  //   "explore": {
+  //     "disable": true
+  //   },
+  //   "project-init-runner": {
+  //     "model": "opencode-go/deepseek-v4-pro"
+  //   },
+  //   "repo-scout": {
+  //     "hidden": true,
+  //     "model": "opencode-go/deepseek-v4-flash",
+  //     "tools": {
+  //       "kanban_*": false,
+  //       "CodeGraphContext_*": false
+  //     },
+  //     "permission": {
+  //       "task": "deny"
+  //     }
+  //   },
+  //   "feature-triager": {
+  //     "hidden": true,
+  //     "model": "github-copilot/claude-sonnet-4.6",
+  //     "tools": {
+  //       "kanban_*": true,
+  //       "CodeGraphContext_*": false
+  //     },
+  //     "permission": {
+  //       "task": "deny"
+  //     }
+  //   },
+  //   "graph-impact-analyst": {
+  //     "hidden": true,
+  //     "model": "opencode-go/minimax-m2.7",
+  //     "tools": {
+  //       "CodeGraphContext_*": false
+  //     },
+  //     "permission": {
+  //       "task": "deny"
+  //     }
+  //   },
+  //   "design-planner": {
+  //     "hidden": true,
+  //     "model": "github-copilot/claude-sonnet-4.6",
+  //     "tools": {
+  //       "kanban_*": true,
+  //       "CodeGraphContext_*": false
+  //     },
+  //     "permission": {
+  //       "task": "deny"
+  //     }
+  //   },
+  //   "edge-case-harvester": {
+  //     "hidden": true,
+  //     "model": "opencode-go/qwen3.6-plus",
+  //     "tools": {
+  //       "kanban_*": false,
+  //       "CodeGraphContext_*": false
+  //     },
+  //     "permission": {
+  //       "task": "deny"
+  //     }
+  //   },
+  //   "contract-impact-auditor": {
+  //     "hidden": true,
+  //     "model": "github-copilot/claude-sonnet-4.6",
+  //     "tools": {
+  //       "kanban_*": false,
+  //       "CodeGraphContext_*": false
+  //     },
+  //     "permission": {
+  //       "task": "deny"
+  //     }
+  //   },
+  //   "non-functional-prober": {
+  //     "hidden": true,
+  //     "model": "opencode-go/qwen3.6-plus",
+  //     "tools": {
+  //       "kanban_*": false,
+  //       "CodeGraphContext_*": false
+  //     },
+  //     "permission": {
+  //       "task": "deny"
+  //     }
+  //   },
+  //   "traceability-checker": {
+  //     "hidden": true,
+  //     "model": "github-copilot/claude-sonnet-4.6",
+  //     "tools": {
+  //       "kanban_*": false,
+  //       "CodeGraphContext_*": false
+  //     },
+  //     "permission": {
+  //       "task": "deny"
+  //     }
+  //   },
+  //   "implementer": {
+  //     "hidden": true,
+  //     "model": "opencode-go/qwen3.6-plus",
+  //     "tools": {
+  //       "kanban_*": true,
+  //       "CodeGraphContext_*": false
+  //     },
+  //     "permission": {
+  //       "task": "deny"
+  //     }
+  //   },
+  //   "verification-engineer": {
+  //     "hidden": true,
+  //     "model": "opencode-go/deepseek-v4-pro",
+  //     "tools": {
+  //       "kanban_*": true,
+  //       "CodeGraphContext_*": false
+  //     },
+  //     "permission": {
+  //       "task": "deny"
+  //     }
+  //   },
+  //   "reviewer-against-plan": {
+  //     "hidden": true,
+  //     "model": "opencode-go/deepseek-v4-pro",
+  //     "tools": {
+  //       "kanban_*": false,
+  //       "CodeGraphContext_*": false
+  //     },
+  //     "permission": {
+  //       "task": "deny"
+  //     }
+  //   },
+  //   "reviewer-security": {
+  //     "hidden": true,
+  //     "model": "github-copilot/gpt-5.4",
+  //     "tools": {
+  //       "kanban_*": false,
+  //       "CodeGraphContext_*": false
+  //     },
+  //     "permission": {
+  //       "task": "deny"
+  //     }
+  //   },
+  //   "reviewer-deep": {
+  //     "hidden": true,
+  //     "model": "opencode-go/qwen3.6-plus",
+  //     "tools": {
+  //       "kanban_*": false,
+  //       "CodeGraphContext_*": false
+  //     },
+  //     "permission": {
+  //       "task": "deny"
+  //     }
+  //   },
+  //   "reviewer-contracts": {
+  //     "hidden": true,
+  //     "model": "github-copilot/claude-sonnet-4.6",
+  //     "tools": {
+  //       "kanban_*": false,
+  //       "CodeGraphContext_*": false
+  //     },
+  //     "permission": {
+  //       "task": "deny"
+  //     }
+  //   },
+  //   "reviewer-tests": {
+  //     "hidden": true,
+  //     "model": "opencode-go/kimi-k2.6",
+  //     "tools": {
+  //       "kanban_*": false,
+  //       "CodeGraphContext_*": false
+  //     },
+  //     "permission": {
+  //       "task": "deny"
+  //     }
+  //   },
+  //   "reviewer-performance": {
+  //     "hidden": true,
+  //     "model": "opencode-go/kimi-k2.6",
+  //     "tools": {
+  //       "kanban_*": false,
+  //       "CodeGraphContext_*": false
+  //     },
+  //     "permission": {
+  //       "task": "deny"
+  //     }
+  //   },
+  //   "reviewer-complexity": {
+  //     "hidden": true,
+  //     "model": "opencode-go/minimax-m2.7",
+  //     "tools": {
+  //       "kanban_*": false,
+  //       "CodeGraphContext_*": false
+  //     },
+  //     "permission": {
+  //       "task": "deny"
+  //     }
+  //   },
+  //   "committer": {
+  //     "hidden": true,
+  //     "model": "opencode-go/deepseek-v4-flash",
+  //     "tools": {
+  //       "kanban_*": false,
+  //       "CodeGraphContext_*": false
+  //     },
+  //     "permission": {
+  //       "task": "deny"
+  //     }
+  //   },
+  //   "test_planner": {
+  //     "model": "opencode-go/deepseek-v4-pro",
+  //     "permission": {
+  //       "task": "deny"
+  //     }
+  //   },
+  //   "test_reviewer": {
+  //     "model": "opencode-go/kimi-k2.6",
+  //     "permission": {
+  //       "task": "deny"
+  //     }
+  //   },
+  //   "test_writer": {
+  //     "model": "opencode-go/deepseek-v4-flash",
+  //     "permission": {
+  //       "task": "deny"
+  //     }
+  //   },
+  //   "dev-orchestrator": {
+  //     "hidden": true,
+  //     "model": "github-copilot/claude-sonnet-4.6",
+  //     "tools": {
+  //       "kanban_*": true,
+  //       "CodeGraphContext_*": false
+  //     },
+  //     "permission": {
+  //       "task": {
+  //         "*": "deny",
+  //         "repo-scout": "allow",
+  //         "feature-triager": "allow",
+  //         "design-planner": "allow",
+  //         "contract-impact-auditor": "allow",
+  //         "non-functional-prober": "allow",
+  //         "traceability-checker": "allow",
+  //         "implementer": "allow",
+  //         "committer": "allow",
+  //         "verification-engineer": "allow",
+  //         "reviewer-against-plan": "allow",
+  //         "reviewer-security": "allow",
+  //         "reviewer-deep": "allow",
+  //         "reviewer-contracts": "allow",
+  //         "reviewer-tests": "allow",
+  //         "reviewer-performance": "allow",
+  //         "reviewer-complexity": "allow"
+  //       }
+  //     }
+  //   }
+  // }
 }

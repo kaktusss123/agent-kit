@@ -26,8 +26,11 @@ permission:
     "traceability-checker": "allow"
   skill:
     "*": "deny"
+    "spec-discovery": "allow"
+    "spec-synthesis": "allow"
     "task-workspace": "allow"
     "kanban-discipline": "allow"
+    "delegation-context": "allow"
   kanban_*: "allow"
 ---
 
