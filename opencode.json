@@ -77,23 +77,6 @@
     }
   },
   "provider": {
-    "fireworks": {
-      "npm": "@ai-sdk/openai-compatible",
-      "name": "Fireworks AI",
-      "options": {
-        "baseURL": "https://api.fireworks.ai/inference/v1",
-        "apiKey": "fw_9oqpDctgSMzyZxLMLbCJbw"
-      },
-      "models": {
-        "accounts/fireworks/routers/kimi-k2p5-turbo": {
-          "name": "Kimi K2.5 Turbo (Fireworks)",
-          "limit": {
-            "context": 262000,
-            "output": 131072
-          }
-        }
-      }
-    },
     "cloudru": {
       "npm": "@ai-sdk/openai-compatible",
       "name": "CloudRu Foundation Models",
@@ -117,7 +100,7 @@
           }
         },
         "MiniMaxAI/MiniMax-M2.5": {
-          "name": "MiniMax-M2",
+          "name": "MiniMax-M2.5",
           "limit": {
             "context": 192000,
             "output": 20000

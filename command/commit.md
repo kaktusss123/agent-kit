@@ -2,7 +2,7 @@
 description: Create one safe git commit with a conventional message and pre-commit hooks
 agent: committer
 subtask: true
-model: xai/grok-4-1-fast
+model: cloudru/deepseek-ai/DeepSeek-V4-Pro
 ---
 
 # Commit Command
