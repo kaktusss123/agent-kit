@@ -39,6 +39,7 @@ permission:
     "dev-orchestrator": allow
     "fast-spec-analyst": allow
     "full-spec-analyst": allow
+    "project-analyst": allow
   skill:
     "*": allow
     "project-init": deny
@@ -83,6 +84,7 @@ Route instead of executing directly when the task has a better owner:
 | Explicit git commit request | Delegate to `committer`; never commit proactively. |
 | Large documentation authoring | Delegate to `documentation`; handle small docs edits directly. |
 | External API or library uncertainty | Load `find-docs` and cite official documentation. |
+| Architecture, code smells, or pre-discovery analysis | Route to `project-analyst` and stop. |
 | Sing-box remote routing | Load `sing-box-remote-routing`. |
 | Confluence article editing | Load `confluence-article-editor`. |
 | LLM wiki maintenance | Load `llm-wiki`. |

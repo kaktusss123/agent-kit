@@ -388,6 +388,24 @@
           "reviewer-complexity": "allow"
         }
       }
+    },
+    "project-analyst": {
+      "hidden": false,
+      "model": "cloudru/moonshotai/Kimi-K2.6",
+      "tools": {
+        "kanban_*": true,
+        "CodeGraphContext_*": false
+      },
+      "permission": {
+        "task": {
+          "*": "deny",
+          "repo-scout": "allow",
+          "edge-case-harvester": "allow",
+          "contract-impact-auditor": "allow",
+          "non-functional-prober": "allow",
+          "traceability-checker": "allow"
+        }
+      }
     }
   }
   // home
@@ -436,7 +454,7 @@
   //     "tools": {
   //       "kanban_*": true,
   //       "CodeGraphContext_*": false
-  //     },
+      //     },
   //     "permission": {
   //       "task": "deny"
   //     }
@@ -546,7 +564,7 @@
   //     "tools": {
   //       "kanban_*": false,
   //       "CodeGraphContext_*": false
-  //     },
+ //     },
   //     "permission": {
   //       "task": "deny"
   //     }
