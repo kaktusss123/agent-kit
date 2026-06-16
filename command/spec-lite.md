@@ -1,6 +1,6 @@
 ---
 description: Lightweight specification for straightforward features — quick clarification and handoff-ready spec
-agent: fast-spec-analyst
+agent: FastSpecAnalyst
 ---
 
 <!-- markdownlint-disable MD041 -->

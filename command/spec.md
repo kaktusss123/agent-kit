@@ -1,6 +1,6 @@
 ---
 description: Comprehensive specification discovery for complex features — interview, analyze, and produce an implementation-ready spec
-agent: full-spec-analyst
+agent: FullSpecAnalyst
 ---
 
 <!-- markdownlint-disable MD041 -->
