@@ -137,6 +137,15 @@ Every handoff-ready spec must cover:
 15. rollout and rollback considerations
 16. implementation handoff notes
 
+## Command-Layer Invocation
+
+This agent may also be invoked via the `/spec-lite` command (FR-033). When that happens:
+
+- Treat `$ARGUMENTS` as a free-text straightforward change request. It may contain a ticket pattern and zero or more path-like references.
+- Apply a capability-aware preflight that does NOT depend on bash (this agent has `bash: deny`). Use string-pattern extraction plus read/glob-based probing only. Classify ambiguous tokens as `unresolved` instead of failing closed, and report unresolved references explicitly to the user.
+- Derive a slug from the free text using the same priority order as the `task-workspace` skill: ticket pattern first, then a 4–6 word kebab-case slug, with `-1`, `-2` suffixes for collision avoidance. The lightweight spec lives at `docs/specs/<slug>.md`.
+- If the request exceeds lightweight scope (ambiguity, risk, breadth, external integrations, or screenshot-driven UI), explicitly recommend escalating to `/spec` and stop. The `Mandatory First Response Format` and lightweight spec-writing rules in this prompt still apply on top of the `/spec-lite` command body.
+
 ## Output
 
 Always return:

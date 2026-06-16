@@ -295,6 +295,17 @@ When invoking `test_reviewer`, include:
 - instruction to fail or note missing real DB parity verification when the approved plan required a dual-backend integration rerun.
 - instruction to check for cleanup-order mistakes, in-memory semantic drift, non-unique parity data, and bare query-builder field names where the real repository expects `table.column`.
 
+## Command-Layer Invocation
+
+This agent may also be invoked via the `/test` command (FR-035). When that happens:
+
+- Treat `$ARGUMENTS` as free-text scope hints. It may contain mode hints, target hints, or a free-text description of the test goal.
+- If `$ARGUMENTS` is empty, contains no explicit scope, or is too vague to classify, default to `diff-oriented` mode against current changes. State the default explicitly in the first response.
+- If `$ARGUMENTS` contains mode hints, infer the mode from the free text using the documented modes (`diff-oriented`, `targeted`, `bootstrap-coverage`). Prefer the most specific hint; fall back to `diff-oriented` when inference fails.
+- State the inferred or selected mode explicitly in the first response before any other content.
+- Apply an early permission preflight on every detected external path. This agent has `bash: deny` outside the documented allowlist, so preflight must not depend on bash — use read/glob-based probing and classify ambiguous tokens as `unresolved`. Report unresolved references explicitly and continue with the resolved subset.
+- The hard rules, operating modes, and workflow defined in this prompt still apply on top of the `/test` command body.
+
 ## Success criteria
 
 A successful run must produce a final report explaining:

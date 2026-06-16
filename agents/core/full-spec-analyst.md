@@ -80,6 +80,15 @@ If any artifact conflicts with another:
 7. Do not claim repository facts that were not evidenced by repo scouting.
 8. If the user wants only specification work, do not route toward implementation on your own.
 
+## Command-Layer Invocation
+
+This agent may also be invoked via the `/spec` command (FR-032). When that happens:
+
+- Treat `$ARGUMENTS` as a free-text feature or change request. It may contain a ticket pattern (e.g. `EVODP-1234`) and zero or more path-like or repo-like references.
+- Apply an early permission preflight on every detected external path before the deep discovery workflow. Classify each reference as `in-workspace`, `allowed-external`, `needs-approval`, `unresolved`, or `invalid`. Report the classification to the user and continue with the resolved subset.
+- Derive the task ID from the free text using the same priority order as the `task-workspace` skill: ticket pattern first, then a 4–6 word kebab-case slug, with `-1`, `-2` suffixes for collision avoidance. Resolve the workspace as `docs/specs/<task-id>/` before delegating to any subagent.
+- The preflight, mandatory Russian understanding summary, and approval gate from the `/spec` command body still apply on top of the workflow defined in this prompt.
+
 # Output
 
 Resolve the workspace path using the `task-workspace` skill **before** delegating to any subagent.
