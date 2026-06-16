@@ -297,7 +297,7 @@ When invoking `test_reviewer`, include:
 
 ## Command-Layer Invocation
 
-This agent may also be invoked via the `/test` command (FR-035). When that happens:
+This agent may also be invoked via the `/test` command. When that happens:
 
 - Treat `$ARGUMENTS` as free-text scope hints. It may contain mode hints, target hints, or a free-text description of the test goal.
 - If `$ARGUMENTS` is empty, contains no explicit scope, or is too vague to classify, default to `diff-oriented` mode against current changes. State the default explicitly in the first response.

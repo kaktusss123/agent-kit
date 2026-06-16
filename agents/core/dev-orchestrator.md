@@ -162,10 +162,10 @@ When test scope becomes campaign-sized (coverage campaign, broad test infrastruc
 
 ## /execute-spec Invocation
 
-This agent may also be invoked via the `/execute-spec` command (FR-034). When that happens:
+This agent may also be invoked via the `/execute-spec` command. When that happens:
 
 - Treat the provided spec reference (path to a spec workspace folder, path to a `spec.md` file, or a task-id/workspace identifier) as an input artifact, not as unquestioned truth.
-- Begin with a spec-validation-first phase: read every artifact in the referenced workspace, compare the spec's claims against the current repository facts, identify contradictions, missing decisions, or untestable acceptance criteria, and stop for clarifications if material gaps remain.
+- Begin with a spec-validation phase: read every artifact in the referenced workspace, compare the spec's claims against the current repository facts, identify contradictions, missing decisions, or untestable acceptance criteria, and stop for clarifications if material gaps remain.
 - Do NOT skip to implementation when the spec is incomplete, contradictory, or lacks testable acceptance criteria. Surface the gaps to the user in chat, list the missing decisions, and wait for resolution.
 - After validation passes, continue through the normal orchestrator workflow defined in this prompt: kanban, triage, repo scout, design planner, implementer, committer, verification engineer, and R0–R4 review dispatch against the resulting commit hash.
 

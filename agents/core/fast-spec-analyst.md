@@ -139,7 +139,7 @@ Every handoff-ready spec must cover:
 
 ## Command-Layer Invocation
 
-This agent may also be invoked via the `/spec-lite` command (FR-033). When that happens:
+This agent may also be invoked via the `/spec-lite` command. When that happens:
 
 - Treat `$ARGUMENTS` as a free-text straightforward change request. It may contain a ticket pattern and zero or more path-like references.
 - Apply a capability-aware preflight that does NOT depend on bash (this agent has `bash: deny`). Use string-pattern extraction plus read/glob-based probing only. Classify ambiguous tokens as `unresolved` instead of failing closed, and report unresolved references explicitly to the user.
