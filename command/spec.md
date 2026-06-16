@@ -13,7 +13,7 @@ Goal: systematically remove ambiguity through structured analysis before impleme
 
 Inspect repository context, referenced docs, and any paths the user provided. Probe each referenced path early using read/glob/grep tools; if a path sits outside the workspace, surface it to the user for approval before continuing.
 
-If the request is empty or too vague to act on, return a short usage hint and stop.
+If the request is empty or too vague to act on, return a short usage hint and stop — do not guess from recency or chat state.
 
 Ask blocking questions in focused rounds, propose defaults when useful, and write the final handoff-ready spec only after the questioning loop is complete. Before producing the spec, summarize your understanding of the task in Russian and wait for explicit user approval. Do not write a placeholder design doc with unresolved questions.
 

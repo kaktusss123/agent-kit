@@ -11,7 +11,7 @@ $ARGUMENTS
 
 Goal: remove ambiguity quickly and produce a small handoff-ready spec without the full discovery overhead.
 
-Inspect the repository or any referenced docs only as much as needed. Probe referenced paths early using read/glob tools only — do not assume shell access. If a referenced path cannot be resolved, surface it explicitly and continue with what is available.
+Inspect the repository or any referenced docs only as much as needed. Probe referenced paths early using read/glob tools only — do not assume shell access. If a referenced path cannot be resolved, surface it explicitly and continue with what is available. If a referenced external path is detected and needs approval, surface that to the user and wait for explicit approval before continuing.
 
 If the request is empty or too vague to act on, return a short usage hint and stop.
 
