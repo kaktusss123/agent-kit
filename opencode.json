@@ -51,7 +51,8 @@
       "reviewer-contracts": "deny",
       "reviewer-tests": "deny",
       "reviewer-performance": "deny",
-      "reviewer-complexity": "deny"
+      "reviewer-complexity": "deny",
+      "project-analyst": "allow"
     },
     "skill": {
       "*": "allow",
@@ -454,7 +455,7 @@
   //     "tools": {
   //       "kanban_*": true,
   //       "CodeGraphContext_*": false
-      //     },
+  //     },
   //     "permission": {
   //       "task": "deny"
   //     }
@@ -564,7 +565,7 @@
   //     "tools": {
   //       "kanban_*": false,
   //       "CodeGraphContext_*": false
- //     },
+  //     },
   //     "permission": {
   //       "task": "deny"
   //     }
