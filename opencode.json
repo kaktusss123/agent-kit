@@ -13,7 +13,7 @@
         "CONFLUENCE_SPACES_FILTER": "OCP",
         "JIRA_PROJECTS_FILTER": "EVODP"
       },
-      "enabled": false
+      "enabled": true
     },
     "kanban": {
       "type": "local",
@@ -100,8 +100,8 @@
             "output": 20000
           }
         },
-        "MiniMaxAI/MiniMax-M2.5": {
-          "name": "MiniMax-M2.5",
+        "MiniMaxAI/MiniMax-M3": {
+          "name": "MiniMax-M3",
           "limit": {
             "context": 192000,
             "output": 20000
@@ -202,7 +202,7 @@
     },
     "contract-impact-auditor": {
       "hidden": true,
-      "model": "cloudru/zai-org/GLM-5.1",
+      "model": "cloudru/moonshotai/Kimi-K2.6",
       "tools": {
         "kanban_*": false,
         "CodeGraphContext_*": false
@@ -213,7 +213,7 @@
     },
     "non-functional-prober": {
       "hidden": true,
-      "model": "opencode-go/qwen3.6-plus",
+      "model": "opencode-go/qwen3.7-plus",
       "tools": {
         "kanban_*": false,
         "CodeGraphContext_*": false
@@ -235,7 +235,7 @@
     },
     "implementer": {
       "hidden": true,
-      "model": "opencode-go/qwen3.6-plus",
+      "model": "opencode-go/kimi-k2.7-code",
       "tools": {
         "kanban_*": true,
         "CodeGraphContext_*": false
@@ -268,7 +268,7 @@
     },
     "reviewer-security": {
       "hidden": true,
-      "model": "cloudru/zai-org/GLM-5.1",
+      "model": "cloudru/moonshotai/Kimi-K2.6",
       "tools": {
         "kanban_*": false,
         "CodeGraphContext_*": false
@@ -279,7 +279,7 @@
     },
     "reviewer-deep": {
       "hidden": true,
-      "model": "opencode-go/qwen3.6-plus",
+      "model": "opencode-go/qwen3.7-plus",
       "tools": {
         "kanban_*": false,
         "CodeGraphContext_*": false
@@ -290,7 +290,7 @@
     },
     "reviewer-contracts": {
       "hidden": true,
-      "model": "cloudru/zai-org/GLM-5.1",
+      "model": "cloudru/moonshotai/Kimi-K2.6",
       "tools": {
         "kanban_*": false,
         "CodeGraphContext_*": false
@@ -301,7 +301,7 @@
     },
     "reviewer-tests": {
       "hidden": true,
-      "model": "opencode-go/kimi-k2.6",
+      "model": "cloudru/moonshotai/Kimi-K2.6",
       "tools": {
         "kanban_*": false,
         "CodeGraphContext_*": false
@@ -323,7 +323,7 @@
     },
     "reviewer-complexity": {
       "hidden": true,
-      "model": "opencode-go/minimax-m2.7",
+      "model": "opencode-go/qwen3.7-max",
       "tools": {
         "kanban_*": false,
         "CodeGraphContext_*": false
@@ -350,7 +350,7 @@
       }
     },
     "test_reviewer": {
-      "model": "opencode-go/kimi-k2.6",
+      "model": "cloudru/moonshotai/Kimi-K2.6",
       "permission": {
         "task": "deny"
       }
