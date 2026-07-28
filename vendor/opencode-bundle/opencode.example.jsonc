@@ -1,0 +1,217 @@
+{
+  "$schema": "https://opencode.ai/config.json",
+  "default_agent": "dev-orchestrator",
+  "permission": {
+    "bash": {
+      "*": "allow",
+      "git push*": "ask",
+      "rtk git push*": "ask"
+    },
+    "task": {
+      "*": "deny",
+      "project-analyst": "allow"
+    }
+  },
+  "provider": {
+    "cloudru": {
+      "npm": "@ai-sdk/openai-compatible",
+      "name": "Cloud.ru Foundation Models",
+      "options": {
+        "baseURL": "https://foundation-models.api.cloud.ru/v1",
+        "apiKey": "{env:CLOUDRU_API_KEY}"
+      },
+      "models": {
+        "zai-org/GLM-5.1": {
+          "name": "GLM-5.1",
+          "limit": {
+            "context": 196000,
+            "output": 20000
+          }
+        },
+        "moonshotai/Kimi-K2.6": {
+          "name": "Kimi-k2.6",
+          "limit": {
+            "context": 256000,
+            "output": 20000
+          }
+        },
+        "MiniMaxAI/MiniMax-M2.5": {
+          "name": "MiniMax-M2",
+          "limit": {
+            "context": 192000,
+            "output": 20000
+          }
+        },
+        "Qwen/Qwen3.5-397B-A17B": {
+          "name": "Qwen3.5-397B",
+          "limit": {
+            "context": 256000,
+            "output": 20000
+          }
+        },
+        "Qwen/Qwen3-Coder-Next": {
+          "name": "Qwen3-Next",
+          "limit": {
+            "context": 256000,
+            "output": 20000
+          }
+        },
+        "Qwen/Qwen3.6-35B-A3B": {
+          "name": "Qwen3.6-35B",
+          "limit": {
+            "context": 2656000,
+            "output": 20000
+          }
+        },
+        "deepseek-ai/DeepSeek-V4-Pro": {
+          "name": "DeepSeek-V4-Pro",
+          "limit": {
+            "context": 1000000,
+            "output": 20000
+          }
+        }
+      }
+    }
+  },
+  "agent": {
+    // Orchestrators
+    "dev-orchestrator": {
+      "model": "cloudru/zai-org/GLM-5.1",
+      "permission": {
+        "task": "allow"
+      }
+    },
+    "FullSpecAnalyst": {
+      "model": "cloudru/zai-org/GLM-5.1",
+      "permission": {
+        "task": "allow",
+      },
+    },
+    "FastSpecAnalyst": {
+      "model": "cloudru/zai-org/GLM-5.1",
+      "permission": {
+        "task": "allow",
+      },
+    },
+    "tester": {
+      "model": "cloudru/zai-org/GLM-5.1",
+      "permission": {
+        "task": "allow"
+      }
+    },
+    "project-analyst": {
+      "hidden": false,
+      "model": "cloudru/moonshotai/Kimi-K2.6",
+      "tools": {
+        "kanban_*": true,
+        "CodeGraphContext_*": false
+      },
+      "permission": {
+        "task": {
+          "*": "deny",
+          "repo-scout": "allow",
+          "edge-case-harvester": "allow",
+          "contract-impact-auditor": "allow",
+          "non-functional-prober": "allow",
+          "traceability-checker": "allow"
+        }
+      }
+    },
+    // Workers
+    "test-planner": {
+      "model": "cloudru/moonshotai/Kimi-K2.6"
+    },
+    "test-writer": {
+      "model": "cloudru/deepseek-ai/DeepSeek-V4-Pro"
+    },
+    "test-reviewer": {
+      "model": "cloudru/moonshotai/Kimi-K2.6"
+    },
+    "committer": {
+      "model": "cloudru/deepseek-ai/DeepSeek-V4-Pro"
+    },
+    "implementer": {
+      "model": "cloudru/deepseek-ai/DeepSeek-V4-Pro"
+    },
+    "feature-triager": {
+      "model": "cloudru/moonshotai/Kimi-K2.6"
+    },
+    "design-planner": {
+      "model": "cloudru/moonshotai/Kimi-K2.6"
+    },
+    "repo-scout": {
+      "model": "cloudru/deepseek-ai/DeepSeek-V4-Pro"
+    },
+    "verification-engineer": {
+      "model": "cloudru/deepseek-ai/DeepSeek-V4-Pro"
+    },
+    "graph-impact-analyst": {
+      "model": "cloudru/MiniMaxAI/MiniMax-M2.5"
+    },
+    "reviewer-against-plan": {
+      "model": "cloudru/deepseek-ai/DeepSeek-V4-Pro"
+    },
+    "reviewer-security": {
+      "model": "cloudru/zai-org/GLM-5.1"
+    },
+    "reviewer-deep": {
+      "model": "cloudru/zai-org/GLM-5.1"
+    },
+    "reviewer-contracts": {
+      "model": "cloudru/zai-org/GLM-5.1"
+    },
+    "reviewer-tests": {
+      "model": "cloudru/moonshotai/Kimi-K2.6"
+    },
+    "reviewer-performance": {
+      "model": "cloudru/moonshotai/Kimi-K2.6"
+    },
+    "reviewer-complexity": {
+      "model": "cloudru/moonshotai/Kimi-K2.6"
+    },
+    "contract-impact-auditor": {
+      "model": "cloudru/moonshotai/Kimi-K2.6"
+    },
+    "non-functional-prober": {
+      "model": "cloudru/moonshotai/Kimi-K2.6"
+    },
+    "traceability-checker": {
+      "model": "cloudru/moonshotai/Kimi-K2.6"
+    },
+    "edge-case-harvester": {
+      "model": "cloudru/moonshotai/Kimi-K2.6"
+    },
+    "project-init-runner": {
+      "model": "cloudru/deepseek-ai/DeepSeek-V4-Pro"
+    },
+    // Ban default agents
+    "explore": {
+      "disable": true
+    },
+    "build": {
+      "disable": true
+    },
+    "plan": {
+      "disable": true
+    }
+  }
+  //
+  // Optional: kanban MCP for kanban-discipline skill and kanban-first agents.
+  // Uncomment the block below and install kanban-mcp:
+  //
+  //   curl -fsSL https://raw.githubusercontent.com/multidimensionalcats/kanban-mcp/main/install.sh | bash
+  //
+  // ,
+  // "mcp": {
+  //   "kanban": {
+  //     "type": "local",
+  //     "command": ["kanban-mcp"],
+  //     "environment": {
+  //       "KANBAN_DB_HOST": "localhost",
+  //       "KANBAN_DB_USER": "kanban",
+  //       "KANBAN_DB_PASSWORD": "changeme",
+  //       "KANBAN_DB_NAME": "kanban"
+  //     }
+  //   }
+  // }
+}
