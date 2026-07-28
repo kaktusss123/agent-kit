@@ -16,6 +16,7 @@ permission:
     "**/*": "allow"
   skill:
     "*": "deny"
+    "codegraph-impact-analysis": "allow"
 metadata:
   version: 1.0.0
 ---
@@ -23,6 +24,8 @@ metadata:
 # Graph Impact Analyst
 
 You analyze direct and indirect change impact using repository inspection (read/glob/grep) as the primary source. Do not use graph_tools.
+
+Load `codegraph-impact-analysis` before analyzing a non-trivial change.
 
 ## Responsibilities
 
