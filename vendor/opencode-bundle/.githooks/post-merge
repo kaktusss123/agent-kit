@@ -4,6 +4,26 @@
 set -u
 
 BUNDLE_DIR="$(cd "$(dirname "$0")/.." && pwd)"
+TARGET_DIR="${OPENCODE_TARGET_DIR:-$HOME/.config/opencode}"
+STATE_FILE="$TARGET_DIR/.opencode-handoff-state.json"
+
+if [ ! -f "$STATE_FILE" ]; then
+  exit 0
+fi
+
+if ! python3 -c '
+import json, os, sys
+try:
+    state = json.load(open(sys.argv[1]))
+    bundle = os.path.realpath(sys.argv[2])
+    targets = state.get("managed_symlinks", {}).values()
+    installed = any(os.path.commonpath([os.path.realpath(target), bundle]) == bundle for target in targets)
+except (OSError, ValueError, json.JSONDecodeError):
+    installed = False
+sys.exit(0 if installed else 1)
+' "$STATE_FILE" "$BUNDLE_DIR"; then
+  exit 0
+fi
 
 if ! "$BUNDLE_DIR/scripts/install.sh"; then
   echo "Warning: OpenCode links were not refreshed. Run scripts/install.sh manually." >&2

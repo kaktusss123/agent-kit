@@ -39,7 +39,7 @@ Enable versioned hooks once on each machine:
 ./scripts/enable-hooks.sh
 ```
 
-After that, `post-merge` refreshes runtime links after every successful `git pull`.
+After that, `post-merge` refreshes runtime links after every successful `git pull` for an already installed bundle.
 On an office machine it uses the framework checkout; on a personal laptop it uses the vendored snapshot.
 
 Before a personal-repository commit on an office machine, `pre-commit` rejects a stale vendored snapshot.

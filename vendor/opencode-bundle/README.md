@@ -37,7 +37,7 @@ curl -fsSL https://opencode.ai/install | bash
 ./scripts/enable-hooks.sh
 ```
 
-Далее `post-merge` после успешного `git pull` запускает `scripts/install.sh`.
+Далее `post-merge` после успешного `git pull` запускает `scripts/install.sh` только для уже установленного bundle.
 Ошибка обновления ссылок выводится как предупреждение и не отменяет успешный pull.
 
 ## Что в этом репозитории
