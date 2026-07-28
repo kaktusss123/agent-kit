@@ -45,11 +45,12 @@ curl -fsSL https://opencode.ai/install | bash
 Готовые конфиги агентов, команд и скиллов для установки через симлинки в `~/.config/opencode/`:
 
 - **Агенты** — runtime-определения агентов (primary — пользовательские оркестраторы, subagents — специализированные воркеры).
-- **Команды** — слэш-команды (`/commit`, `/spec`, `/spec-lite`, `/execute-spec`, `/test`).
+- **Команды** — слэш-команды (`/commit`, `/init`, `/feedback`, `/spec`, `/spec-lite`, `/execute-spec`, `/test`, `/analyze`).
 - **Project docs templates** — локальные артефакты проекта, такие как `docs/feedback/README.md`, которые копируются в целевые репозитории.
 - **Скиллы** — инструкции для специализированных workflows.
 - **opencode.example.jsonc** — базовый конфиг (Cloud.ru FM + назначения моделей агентам).
 - **scripts/** — установщик (`install.sh`) и валидатор конфига (`validate-config.sh`).
+- **plugins/** — TypeScript-плагины, загружаемые через OpenCode plugin API (rtk token-saver, freshness plugin).
 
 ## Структура
 
@@ -57,15 +58,33 @@ curl -fsSL https://opencode.ai/install | bash
 OpenCode/
 ├── agents/
 │   ├── primary/            # Пользовательские оркестраторы
-│   └── subagents/        # Специализированные воркеры (делегируются primary)
-├── commands/             # Слэш-команды
-├── scripts/              # Установщик и валидатор конфига
-├── skills/               # Скиллы с инструкциями и references/
+│   └── subagents/          # Специализированные воркеры (делегируются primary)
+├── commands/               # Слэш-команды
+├── docs/                   # Project-side templates (например, feedback README)
+├── plugins/                # OpenCode-плагины (rtk, freshness)
+├── scripts/                # Установщик и валидатор конфига
+├── skills/                 # Скиллы с инструкциями и references/
 ├── opencode.example.jsonc  # Базовый конфиг (Cloud.ru)
 └── README.md
 ```
 
 Primary-агенты взаимодействуют с пользователем напрямую и делегируют подзадачи subagent-ам. Subagent-ы не вызываются пользователем напрямую — они выполняют конкретные задачи по запросу primary-агентов.
+
+## Зависимость от rtk
+
+Бандл опционально использует [rtk](https://github.com/rtk-ai/rtk) — CLI-обёртку, переписывающую стандартные команды (git, ls, grep, ...) в эквиваленты с пониженным расходом токенов. Поведение:
+
+- Плагин `plugins/rtk.ts` подключается автоматически при наличии `rtk` в `PATH`; если бинарь не найден, плагин тихо отключается и все агенты продолжают работать на стандартных командах.
+- В permission-паттернах всех агентов команды `git *` продублированы: `git *` (нативный) и `rtk git *` (оптимизированный). Без rtk коллеги спокойно работают на plain git, просто без экономии токенов.
+- Review-агенты с узкими bash-allowlist'ами (`git status/diff/show/log/rev-parse/merge-base`) получают оба варианта автоматически, чтобы доменное ревью не упиралось в отсутствие rtk.
+
+Если экономия токенов важна — поставьте rtk до первого запуска OpenCode:
+
+```bash
+brew install rtk   # или иной способ из официального README rtk
+```
+
+Без rtk всё функционирует штатно.
 
 ## Агенты
 
@@ -88,7 +107,7 @@ Primary-агенты взаимодействуют с пользователе�
 | `contract-impact-auditor` | Аудит влияния фичи на API, события, схемы, очереди, persistence, контракты |
 | `design-planner` | Планирование дизайна, trade-off анализ, execution sequencing |
 | `edge-case-harvester` | Систематический перебор edge-кейсов, негативных сценариев, конфликтных состояний |
-| `feature-triager` | Фрейминг задач, уточнение скоупа и требований, kanban-first тиражирование |
+| `feature-triager` | Фрейминг задач, уточнение скоупа и требований, kanban-first триаж |
 | `graph-impact-analyst` | Анализ влияния изменений через read/glob/grep: зависимости, радиус, контракты |
 | `implementer` | Ограниченные изменения кода и написание тестов на границах этапов |
 | `non-functional-prober` | Анализ нефункциональных требований: производительность, надёжность, безопасность, observability |
@@ -134,7 +153,8 @@ Primary-агенты взаимодействуют с пользователе�
 | `edge-case-harvest` | Систематический перебор edge-кейсов, негативных сценариев, деградационных режимов |
 | `execution-plan` | Планирование реализации с шагами, зависимостями и рисками |
 | `feature-interrogation` | Структурированное уточнение требований, скрытых ожиданий и acceptance criteria |
-| `git-commit` | Workflow для генерации conventional commit messages |
+| `find-docs` | Получение авторитетной актуальной документации по внешним технологиям (библиотеки, API, CLI, cloud); опционально использует Context7 |
+| `git-commit` | Workflow для генерации conventional commit messages (включая ticketless-режим для нетикетных работ) |
 | `implementation` | Процедурный плейбук для ограниченной реализации изменений |
 | `kanban-discipline` | Дисциплина работы с kanban: обновление статусов, связей, решений |
 | `non-functional-probe` | Анализ нефункциональных требований: производительность, надёжность, безопасность |
@@ -212,16 +232,16 @@ Primary-агенты взаимодействуют с пользователе�
 {
   "agent": {
     "tester": {
-      "model": "cloudru/zai-org/GLM-4.7"
+      "model": "cloudru/zai-org/GLM-5.1"
     },
     "test-planner": {
-      "model": "cloudru/MiniMaxAI/MiniMax-M2"
+      "model": "cloudru/moonshotai/Kimi-K2.6"
     },
     "test-writer": {
-      "model": "cloudru/Qwen/Qwen3-Coder-480B-A35B-Instruct"
+      "model": "cloudru/deepseek-ai/DeepSeek-V4-Pro"
     },
     "test-reviewer": {
-      "model": "cloudru/zai-org/GLM-4.7"
+      "model": "cloudru/moonshotai/Kimi-K2.6"
     }
   }
 }
@@ -257,10 +277,19 @@ Primary-агенты взаимодействуют с пользователе�
 
 Для `dev-orchestrator` нужны все связанные артефакты:
 
+Агенты:
+
 - `agents/primary/dev-orchestrator.md`
+- `agents/subagents/repo-scout.md` (reconnaissance)
+- `agents/subagents/feature-triager.md` (triage)
+- `agents/subagents/design-planner.md` (design + execution)
+- `agents/subagents/contract-impact-auditor.md` (contract analysis)
+- `agents/subagents/non-functional-prober.md` (NFR)
+- `agents/subagents/traceability-checker.md` (completeness)
+- `agents/subagents/graph-impact-analyst.md` (impact radius)
 - `agents/subagents/implementer.md`
+- `agents/subagents/committer.md`
 - `agents/subagents/verification-engineer.md`
-- `agents/subagents/graph-impact-analyst.md`
 - `agents/subagents/reviewer-against-plan.md`
 - `agents/subagents/reviewer-security.md`
 - `agents/subagents/reviewer-deep.md`
@@ -268,17 +297,32 @@ Primary-агенты взаимодействуют с пользователе�
 - `agents/subagents/reviewer-tests.md`
 - `agents/subagents/reviewer-performance.md`
 - `agents/subagents/reviewer-complexity.md`
+
+Скиллы:
+
 - `skills/orchestration/`
 - `skills/workflow-gates/`
-- `skills/verification-gate/`
-- `skills/commit-readiness/`
-- `skills/review-against-plan/`
+- `skills/kanban-discipline/`
 - `skills/decision-log/`
+- `skills/commit-readiness/`
 - `skills/codegraph-impact-analysis/`
+- `skills/design-brief/`
+- `skills/execution-plan/`
+- `skills/replan-on-surprise/`
 - `skills/implementation/`
 - `skills/verification/`
+- `skills/verification-gate/`
 - `skills/review/`
+- `skills/review-against-plan/`
 - `skills/complexity-review/`
+- `skills/contract-impact-audit/` (для reviewer-contracts)
+- `skills/non-functional-probe/` (для reviewer-performance)
+- `skills/repo-reconnaissance/` (для repo-scout)
+- `skills/feature-interrogation/` (для feature-triager)
+- `skills/edge-case-harvest/`
+- `skills/traceability-check/`
+- `skills/git-commit/`
+- `skills/delegation-context/`
 
 Не копируйте только один файл `dev-orchestrator.md` без сабагентов и скиллов: он опирается на них напрямую и делегирует им работу на каждом этапе.
 
@@ -426,6 +470,13 @@ cp OpenCode/docs/feedback/README.md <project-root>/docs/feedback/README.md
 ## Git commit workflow
 
 Воркфлоу для автоматизированного коммита реализован через скилл `git-commit` и сабагент `committer`. Подробнее: [`skills/git-commit/SKILL.md`](skills/git-commit/SKILL.md).
+
+По умолчанию `/commit` требует EVODP-тикет в имени ветки и формирует сообщение формата `<type>(EVODP-1234): <description>`. Для нетикетной работы (разработка самого фреймворка, chore-ветки, разовые правки) включите ticketless-режим одним из способов:
+
+- Передайте `/commit --no-ticket <описание>`
+- Или упомяните в `$ARGUMENTS` слова `ticketless`, `no ticket`, или `без тикета` — флаг будет распознан автоматически
+
+В ticketless-режиме сообщение выходит без scope: `<type>: <description>`. Все остальные policy (branch safety, pre-commit hooks, English-only, 20-word limit, secret scanning) сохраняются.
 
 ## Тюнинг параметров моделей Foundation Models
 

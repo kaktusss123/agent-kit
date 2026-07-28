@@ -24,7 +24,7 @@
         "zai-org/GLM-5.1": {
           "name": "GLM-5.1",
           "limit": {
-            "context": 196000,
+            "context": 202000,
             "output": 20000
           }
         },
@@ -35,10 +35,10 @@
             "output": 20000
           }
         },
-        "MiniMaxAI/MiniMax-M2.5": {
-          "name": "MiniMax-M2",
+        "MiniMaxAI/MiniMax-M3": {
+          "name": "MiniMax-M3",
           "limit": {
-            "context": 192000,
+            "context": 524000,
             "output": 20000
           }
         },
@@ -66,7 +66,7 @@
         "deepseek-ai/DeepSeek-V4-Pro": {
           "name": "DeepSeek-V4-Pro",
           "limit": {
-            "context": 1000000,
+            "context": 1048000,
             "output": 20000
           }
         }
@@ -75,35 +75,27 @@
   },
   "agent": {
     // Orchestrators
+    // Permission and skill allowlists for each orchestrator live in
+    // the agent markdown frontmatter and are merged into this section
+    // at load time. Do not duplicate task: "allow" here — frontmatter
+    // is the single source of truth.
     "dev-orchestrator": {
-      "model": "cloudru/zai-org/GLM-5.1",
-      "permission": {
-        "task": "allow"
-      }
+      "model": "cloudru/zai-org/GLM-5.1"
     },
     "FullSpecAnalyst": {
-      "model": "cloudru/zai-org/GLM-5.1",
-      "permission": {
-        "task": "allow",
-      },
+      "model": "cloudru/zai-org/GLM-5.1"
     },
     "FastSpecAnalyst": {
-      "model": "cloudru/zai-org/GLM-5.1",
-      "permission": {
-        "task": "allow",
-      },
+      "model": "cloudru/zai-org/GLM-5.1"
     },
     "tester": {
-      "model": "cloudru/zai-org/GLM-5.1",
-      "permission": {
-        "task": "allow"
-      }
+      "model": "cloudru/zai-org/GLM-5.1"
     },
     "project-analyst": {
       "hidden": false,
       "model": "cloudru/moonshotai/Kimi-K2.6",
       "tools": {
-        "kanban_*": true,
+        "kanban_*": false,
         "CodeGraphContext_*": false
       },
       "permission": {
@@ -146,7 +138,7 @@
       "model": "cloudru/deepseek-ai/DeepSeek-V4-Pro"
     },
     "graph-impact-analyst": {
-      "model": "cloudru/MiniMaxAI/MiniMax-M2.5"
+      "model": "cloudru/MiniMaxAI/MiniMax-M3"
     },
     "reviewer-against-plan": {
       "model": "cloudru/deepseek-ai/DeepSeek-V4-Pro"

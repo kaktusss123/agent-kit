@@ -1,7 +1,8 @@
 ---
 name: testing-python
 description: "Pytest testing standards for Python services: unit, integration, architecture, and gRPC/protobuf tests. Use when asked to write, review, audit, or improve pytest tests, coverage, or test quality. Covers fixtures, mocks, parametrization, in-memory repositories, real DB testing, and common antipatterns."
-version: 1.3.1
+metadata:
+  version: "1.3.1"
 ---
 
 # Testing Python

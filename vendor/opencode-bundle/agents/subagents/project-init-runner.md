@@ -2,25 +2,27 @@
 name: project-init-runner
 description: "Least-privilege owner for /init mutation path; creates or updates target project AGENTS.md with narrow write and no-delegation boundaries"
 mode: subagent
+hidden: true
 permission:
   task: deny
   read:
     "**/*": "allow"
+    "**/*.env": "deny"
+    "**/*.env.*": "deny"
+    "**/*.env.example": "allow"
+    "**/*.key": "deny"
+    "**/*.secret": "deny"
   edit:
     "**/*": "deny"
     "AGENTS.md": "allow"
     "**/AGENTS.md": "allow"
-    ".opencode": "allow"
-    ".opencode/": "allow"
     ".opencode/**": "allow"
-    ".opencode/agents-freshness.json": "allow"
-    "**/.opencode/": "allow"
     "**/.opencode/**": "allow"
+    ".opencode/agents-freshness.json": "allow"
     "**/.opencode/agents-freshness.json": "allow"
     "docs/feedback/feedback_*.md": "allow"
     "**/docs/feedback/feedback_*.md": "allow"
-    "docs/feedback/archive/": "allow"
-    "**/docs/feedback/archive/": "allow"
+    "docs/feedback/archive/**": "allow"
     "**/docs/feedback/archive/**": "allow"
   bash:
     "*": "deny"
@@ -35,8 +37,9 @@ permission:
     "date *": "allow"
     "mktemp *": "allow"
     "mkdir -p *": "allow"
-    "mv *": "allow"
+    "mv docs/feedback/*": "allow"
   skill:
+    "*": "deny"
     "project-init": "allow"
     "project-rules-check": "allow"
 metadata:

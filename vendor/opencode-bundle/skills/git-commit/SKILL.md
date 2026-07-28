@@ -35,12 +35,14 @@ Primary agents should offload commit execution quickly instead of spending their
 - ALWAYS run pre-commit hooks (never use `--no-verify`)
 - NEVER use `git add .` or other blanket staging commands
 - NEVER stage files that likely contain secrets (`.env`, `.env.*`, `*.pem`, `*.key`, `credentials.json`)
-- ALWAYS require a valid `EVODP-<number>` ticket in the branch name
+- ALWAYS require a valid `EVODP-<number>` ticket in the branch name, unless ticketless mode is explicitly requested by the user (see Ticketless Mode below)
 - Retry once if hooks modify files
 
 ## Message Format
 
-**Format**: `<type>(EVODP-1234): <description>`
+**Format with ticket**: `<type>(EVODP-1234): <description>`
+
+**Format ticketless**: `<type>: <description>` (no scope)
 
 ### Type Selection
 
@@ -53,7 +55,24 @@ Primary agents should offload commit execution quickly instead of spending their
 ### Ticket Extraction
 
 - Extract `EVODP-<number>` from branch name when present
-- If missing, stop and return status `missing_ticket`
+- If missing and ticketless mode is **not** requested, stop and return status `missing_ticket`
+- If missing and ticketless mode **is** requested, proceed with ticketless format
+
+### Ticketless Mode
+
+Ticketless mode is for work that intentionally has no tracked ticket: framework development, exploratory refactors, chore-only branches, or any change the user explicitly does not want linked to EVODP.
+
+The user enables ticketless mode by either:
+
+- Passing `--no-ticket` anywhere in `$ARGUMENTS` to `/commit`, OR
+- Including the words `ticketless`, `no ticket`, or `без тикета` (case-insensitive) in `$ARGUMENTS`
+
+When ticketless mode is active:
+
+- Strip the trigger phrase (`--no-ticket`, `ticketless`, etc.) from the description before building the message
+- Use format `<type>: <description>` with no scope
+- Include `ticketless: confirmed` in the report
+- Still enforce all other policy: branch safety, pre-commit hooks, English-only, 20-word limit, secret scanning
 
 ### Description Rules
 
@@ -82,10 +101,12 @@ Primary agents should offload commit execution quickly instead of spending their
 
 4. **Build commit message**:
    - Extract type from branch prefix
-   - Extract ticket number from branch name
-   - If ticket number is missing, stop and return status `missing_ticket`
+   - Detect ticketless mode in `$ARGUMENTS` (see Ticketless Mode above)
+   - Extract ticket number from branch name when present
+   - If ticket number is missing and ticketless mode is not requested, stop and return status `missing_ticket`
    - Use provided description from arguments OR derive from `git diff --cached --stat`
-   - Assemble: `<type>(EVODP-1234): <description>`
+   - If ticketless mode is active, strip the trigger phrase from the description
+   - Assemble: `<type>(EVODP-1234): <description>` (or `<type>: <description>` in ticketless mode)
 
 5. **Create commit**:
    - Run `git commit -m "<message>"` (do NOT use `--no-verify`)
@@ -101,6 +122,7 @@ Primary agents should offload commit execution quickly instead of spending their
    branch: <branch>
    message: <commit message or n/a>
    commit: <short hash or n/a>
+   ticketless: <confirmed|n/a>
    staged_files: <N>
    notes: <one line, optional>
    ```
@@ -122,7 +144,7 @@ Fixed the issue with casbin policies not working correctly in trino authenticati
 (Too long, past tense)
 
 feat: add new feature
-(Missing ticket number, too vague)
+(Missing ticket on a non-ticketless commit; too vague)
 
 chore(EVODP-XXXX): update docs
 (Placeholder ticket is forbidden)
@@ -131,13 +153,20 @@ fix(EVODP-5407): Исправил ошибку в коде
 (Russian language)
 ```
 
+### Ticketless examples
+
+```text
+chore: update framework docs and bundle lists
+feat: add ticketless mode to git-commit skill
+```
+
 ## Anti-Patterns
 
 | Avoid | Why | Instead |
 |---|---|---|
 | Past-tense message like `Fixed the issue…` | Violates imperative mood rule | `fix(EVODP-5407): resolve casbin policy validation error` |
-| Missing ticket in message | No traceability to ticket | `feat(EVODP-9999): add user authentication endpoint` |
-| Placeholder ticket `EVODP-XXXX` | Breaks traceability, looks incomplete | Use actual ticket number or omit ticket scope |
+| Missing ticket on a non-ticketless commit | No traceability to ticket | `feat(EVODP-9999): add user authentication endpoint` |
+| Using `EVODP-XXXX` placeholder | Breaks traceability, looks incomplete | Use the actual ticket number, or switch to ticketless mode with `--no-ticket` |
 | Non-English message | Violates English-only rule | Write description in English |
 | `git add .` | Stages unexpected files, may include secrets | Use `git add -- <path>` with explicit paths |
 | Commit on `main`/`master`/`develop` | Bypasses review, violates branch policy | Create a feature or fix branch first |
@@ -172,8 +201,8 @@ When a hook framework is detected:
 After creating a commit, confirm all of the following:
 
 - [ ] Branch is not `main`, `master`, or `develop` (safe branch)
-- [ ] Branch name contains a valid `EVODP-XXXX` ticket
-- [ ] Commit message follows `<type>(EVODP-XXXX): <description>` format
+- [ ] If commit is not ticketless: branch name contains a valid `EVODP-XXXX` ticket
+- [ ] Commit message format matches the active mode: `<type>(EVODP-XXXX): <description>` with ticket, or `<type>: <description>` ticketless
 - [ ] Pre-commit hooks passed (no `--no-verify` used)
 - [ ] No secret files (`.env`, `*.pem`, `*.key`, `credentials.json`) were staged
 - [ ] Only expected files are included in the commit

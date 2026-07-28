@@ -2,17 +2,22 @@
 name: feature-triager
 description: "Hidden subagent for task framing, scope definition, requirement clarification, and kanban-first triage"
 mode: subagent
+hidden: true
 permission:
   read:
     "**/*": "allow"
+    "**/*.env": "deny"
+    "**/*.env.*": "deny"
+    "**/*.env.example": "allow"
+    "**/*.key": "deny"
+    "**/*.secret": "deny"
   grep:
     "**/*": "allow"
   glob:
     "**/*": "allow"
-  write:
+  edit:
+    "**/*": "deny"
     "docs/specs/**": "allow"
-  kanban:
-    "*": "allow"
   skill:
     "*": "deny"
     "feature-interrogation": "allow"

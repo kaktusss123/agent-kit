@@ -5,6 +5,11 @@ mode: primary
 permission:
   read:
     "**/*": "allow"
+    "**/*.env": "deny"
+    "**/*.env.*": "deny"
+    "**/*.env.example": "allow"
+    "**/*.key": "deny"
+    "**/*.secret": "deny"
   grep:
     "**/*": "allow"
   glob:
@@ -66,7 +71,6 @@ permission:
     "edge-case-harvest": "allow"
     "feature-interrogation": "allow"
     "find-docs": "allow"
-    "agent-skill-design-review": "allow"
 ---
 
 # Project Analyst
@@ -126,7 +130,6 @@ You do not own:
 | Edge cases, error paths, or resilience | `edge-case-harvest` |
 | Feature feasibility or constraint check | `feature-interrogation` |
 | External docs or library version | `find-docs` |
-| Agent or skill design review | `agent-skill-design-review` |
 
 ## Delegation Rules
 
@@ -166,7 +169,7 @@ Route or stop instead of analyzing when the request has a better owner:
 
 1. Do not run arbitrary bash commands. Use only the allowlisted investigative git/rtk git/glab commands. Note: `git status`, `git fetch`, `rtk git status`, `rtk git fetch`, and `glab auth status` are allowed only for analysis even though they may refresh local metadata, update remote-tracking refs, or inspect auth state.
 2. Do not edit, write, or delete files.
-3. Do not create, update, or close kanban items. Note: the platform allows only `kanban_*: true/false` granularity — kanban write operations are soft-blocked at the prompt level because granular read/write tool permissions are not available.
+3. Do not create, update, or close kanban items. The project-analyst configuration disables kanban tools physically (`tools.kanban_*: false`); for any task tracking, use file-based logging or hand off to an orchestrator agent.
 4. Do not write specifications.
 5. Do not implement code or orchestrate implementation.
 6. Do not run test campaigns.

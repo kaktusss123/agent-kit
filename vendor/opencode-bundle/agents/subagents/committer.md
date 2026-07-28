@@ -2,7 +2,7 @@
 name: committer
 description: "Creates one safe git commit with a conventional message and pre-commit hooks"
 mode: subagent
-model: cloudru/MiniMaxAI/MiniMax-M2
+hidden: true
 permission:
   task: deny
   bash:

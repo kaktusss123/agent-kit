@@ -7,7 +7,7 @@ permission:
   task:
     "*": "deny"
   edit:
-    "*": "deny"
+    "**/*": "deny"
   bash:
     "*": "deny"
     "git status*": "allow"

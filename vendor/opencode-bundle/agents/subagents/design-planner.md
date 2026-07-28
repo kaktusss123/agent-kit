@@ -2,17 +2,22 @@
 name: design-planner
 description: "Hidden subagent for design briefs, trade-offs, execution planning, and implementation sequencing"
 mode: subagent
+hidden: true
 permission:
   read:
     "**/*": "allow"
+    "**/*.env": "deny"
+    "**/*.env.*": "deny"
+    "**/*.env.example": "allow"
+    "**/*.key": "deny"
+    "**/*.secret": "deny"
   grep:
     "**/*": "allow"
   glob:
     "**/*": "allow"
-  write:
+  edit:
+    "**/*": "deny"
     "docs/specs/**": "allow"
-  kanban:
-    "*": "allow"
   skill:
     "*": "deny"
     "design-brief": "allow"

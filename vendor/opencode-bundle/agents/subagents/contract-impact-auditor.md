@@ -2,14 +2,21 @@
 name: contract-impact-auditor
 description: "Audits the impact of features on internal and external contracts: APIs, events, schemas, queues, persistence surfaces, integration boundaries, and compatibility"
 mode: subagent
+hidden: true
 permission:
   read:
     "**/*": "allow"
+    "**/*.env": "deny"
+    "**/*.env.*": "deny"
+    "**/*.env.example": "allow"
+    "**/*.key": "deny"
+    "**/*.secret": "deny"
   grep:
     "**/*": "allow"
   glob:
     "**/*": "allow"
-  write:
+  edit:
+    "**/*": "deny"
     "docs/specs/**": "allow"
 metadata:
   version: 1.0.0

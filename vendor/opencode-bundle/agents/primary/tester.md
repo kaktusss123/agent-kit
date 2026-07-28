@@ -5,6 +5,11 @@ mode: primary
 permission:
   read:
     "**/*": "allow"
+    "**/*.env": "deny"
+    "**/*.env.*": "deny"
+    "**/*.env.example": "allow"
+    "**/*.key": "deny"
+    "**/*.secret": "deny"
   grep:
     "**/*": "allow"
   glob:
@@ -19,11 +24,17 @@ permission:
     "git status*": "allow"
     "git diff*": "allow"
     "git log*": "allow"
+    "git rev-parse*": "allow"
+    "git merge-base*": "allow"
     "rtk git status*": "allow"
     "rtk git diff*": "allow"
     "rtk git log*": "allow"
+    "rtk git rev-parse*": "allow"
+    "rtk git merge-base*": "allow"
     "uv run pytest*": "allow"
+    "rtk uv run pytest*": "allow"
     "uv run coverage*": "allow"
+    "rtk uv run coverage*": "allow"
   task:
     "*": "deny"
     "test-planner": "allow"
@@ -32,6 +43,7 @@ permission:
   skill:
     "*": "deny"
     "testing-python": "allow"
+    "delegation-context": "allow"
 ---
 
 # Role

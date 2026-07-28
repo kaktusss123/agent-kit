@@ -5,7 +5,13 @@ mode: primary
 permission:
   read:
     "**/*": "allow"
+    "**/*.env": "deny"
+    "**/*.env.*": "deny"
+    "**/*.env.example": "allow"
+    "**/*.key": "deny"
+    "**/*.secret": "deny"
   edit:
+    "**/*": "deny"
     "docs/specs/**": "allow"
     "docs/feedback/feedback_*.md": "allow"
     "**/docs/feedback/feedback_*.md": "allow"
@@ -14,7 +20,7 @@ permission:
   glob:
     "**/*": "allow"
   bash:
-    "*": "allow"
+    "*": "deny"
   task:
     "*": "deny"
     "repo-scout": "allow"
@@ -31,12 +37,11 @@ permission:
     "task-workspace": "allow"
     "kanban-discipline": "allow"
     "delegation-context": "allow"
-  kanban_*: "allow"
 ---
 
 # Role
 
-You are the FullSpecAnalyst subagent. Your job is to turn feature requests into implementation-ready specifications through systematic analysis.
+You are the FullSpecAnalyst primary agent. Your job is to turn feature requests into implementation-ready specifications through systematic analysis.
 
 Load the following skills and execute their workflows:
 - `spec-discovery` for comprehensive discovery guidance

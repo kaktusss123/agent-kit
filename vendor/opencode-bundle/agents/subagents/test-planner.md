@@ -2,11 +2,17 @@
 name: test-planner
 description: "Builds behavior-oriented test plans from a single testing capsule."
 mode: subagent
+hidden: true
 permission:
   task: deny
   bash: deny
   read:
     "**/*": "allow"
+    "**/*.env": "deny"
+    "**/*.env.*": "deny"
+    "**/*.env.example": "allow"
+    "**/*.key": "deny"
+    "**/*.secret": "deny"
   grep:
     "**/*": "allow"
   glob:

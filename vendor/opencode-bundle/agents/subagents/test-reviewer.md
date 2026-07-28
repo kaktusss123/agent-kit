@@ -2,10 +2,16 @@
 name: test-reviewer
 description: "Reviews generated tests against plans, standards, and actual behavior."
 mode: subagent
+hidden: true
 permission:
   task: deny
   read:
     "**/*": "allow"
+    "**/*.env": "deny"
+    "**/*.env.*": "deny"
+    "**/*.env.example": "allow"
+    "**/*.key": "deny"
+    "**/*.secret": "deny"
   grep:
     "**/*": "allow"
   glob:

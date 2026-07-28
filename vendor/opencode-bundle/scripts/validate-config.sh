@@ -285,17 +285,22 @@ validate_config() {
     ((errors++)) || true
   fi
 
-  # FR: default_agent must be "dev-orchestrator"
+  # FR: default_agent must be a known primary orchestrator.
+  # The framework supports two defaults: dev-orchestrator (kanban-first
+  # multi-stage workflow) and General (direct-action generalist).
+  # Anything else is flagged as a recommendation, not an error.
   local default_agent
   default_agent="$(json_get "$config_file" '.default_agent')"
   if [ "$default_agent" = "dev-orchestrator" ]; then
     echo "  [OK] default_agent is 'dev-orchestrator'"
+  elif [ "$default_agent" = "General" ]; then
+    echo "  [OK] default_agent is 'General'"
   elif [ "$default_agent" = "__null__" ]; then
-    echo "  [ERROR] default_agent is missing (should be 'dev-orchestrator')"
+    echo "  [ERROR] default_agent is missing (should be 'dev-orchestrator' or 'General')"
     ((errors++)) || true
   else
-    echo "  [ERROR] default_agent is '$default_agent', expected 'dev-orchestrator'"
-    ((errors++)) || true
+    echo "  [WARNING] default_agent is '$default_agent' (expected 'dev-orchestrator' or 'General')"
+    ((warnings++)) || true
   fi
 
   # FR: explore must be disabled via agent.explore.disable
