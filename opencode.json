@@ -1,5 +1,6 @@
 {
   "$schema": "https://opencode.ai/config.json",
+  "default_agent": "dev-orchestrator",
   "plugin": ["@slkiser/opencode-quota", "@warp-dot-dev/opencode-warp"],
   "mcp": {
     "atlassian": {
@@ -141,6 +142,12 @@
   // office
   "agent": {
     "explore": {
+      "disable": true
+    },
+    "build": {
+      "disable": true
+    },
+    "plan": {
       "disable": true
     },
     "project-init-runner": {

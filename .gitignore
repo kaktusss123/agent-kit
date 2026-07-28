@@ -1,0 +1,29 @@
+node_modules
+package.json
+bun.lock
+.gitignore
+antigravity-accounts.json
+antigravity-accounts.json.*.tmp
+antigravity-signature-cache.json
+antigravity-logs/
+docs/specs/*
+tmp/
+
+# BEGIN managed OpenCode framework links
+.opencode-handoff-state.json
+/agents/primary/
+/agents/subagents/*.md
+!/agents/subagents/documentation.md
+/commands/
+/plugins/*.ts
+/skills/*
+!/skills/agent-skill-design-review/
+!/skills/confluence-article-editor/
+!/skills/edge-case-harvester/
+!/skills/find-docs/
+!/skills/go-review/
+!/skills/llm-wiki/
+!/skills/sing-box-remote-routing/
+!/skills/skillforge/
+!/skills/spec-writer/
+# END managed OpenCode framework links
