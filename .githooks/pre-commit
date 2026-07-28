@@ -1,0 +1,33 @@
+#!/usr/bin/env bash
+# Rejects office commits when the vendored framework snapshot is stale.
+
+set -euo pipefail
+
+PERSONAL_DIR="$(cd "$(dirname "$0")/.." && pwd)"
+FRAMEWORK_DIR="${OPENCODE_FRAMEWORK_DIR:-$HOME/projects/core/docs/OpenCode}"
+REVISION_FILE="$PERSONAL_DIR/vendor/opencode-bundle/.bundle-revision"
+
+if [ ! -d "$FRAMEWORK_DIR" ]; then
+  exit 0
+fi
+
+if [ ! -f "$REVISION_FILE" ]; then
+  echo "Error: vendored framework snapshot is missing." >&2
+  echo "Run scripts/sync-framework-bundle.sh before committing." >&2
+  exit 1
+fi
+
+framework_revision="$(git -C "$FRAMEWORK_DIR" rev-parse HEAD)"
+snapshot_revision=""
+while IFS='=' read -r key value; do
+  if [ "$key" = "commit" ]; then
+    snapshot_revision="$value"
+    break
+  fi
+done < "$REVISION_FILE"
+
+if [ "$framework_revision" != "$snapshot_revision" ]; then
+  echo "Error: vendored framework snapshot is stale." >&2
+  echo "Run scripts/sync-framework-bundle.sh before committing." >&2
+  exit 1
+fi

@@ -1,0 +1,19 @@
+#!/usr/bin/env bash
+# Refreshes the active runtime after a successful pull.
+
+set -u
+
+PERSONAL_DIR="$(cd "$(dirname "$0")/.." && pwd)"
+FRAMEWORK_DIR="${OPENCODE_FRAMEWORK_DIR:-$HOME/projects/core/docs/OpenCode}"
+
+if [ -x "$FRAMEWORK_DIR/scripts/install.sh" ]; then
+  INSTALL_CMD=("$FRAMEWORK_DIR/scripts/install.sh")
+else
+  INSTALL_CMD=("$PERSONAL_DIR/scripts/install-vendored-bundle.sh")
+fi
+
+if ! "${INSTALL_CMD[@]}"; then
+  echo "Warning: OpenCode links were not refreshed. Run the installer manually." >&2
+fi
+
+exit 0

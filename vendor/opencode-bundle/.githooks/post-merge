@@ -1,0 +1,12 @@
+#!/usr/bin/env bash
+# Refreshes managed runtime links after a successful pull.
+
+set -u
+
+BUNDLE_DIR="$(cd "$(dirname "$0")/.." && pwd)"
+
+if ! "$BUNDLE_DIR/scripts/install.sh"; then
+  echo "Warning: OpenCode links were not refreshed. Run scripts/install.sh manually." >&2
+fi
+
+exit 0
