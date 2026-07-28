@@ -7,9 +7,9 @@
       "command": ["uvx", "mcp-atlassian", "--transport", "stdio", "-vv"],
       "environment": {
         "CONFLUENCE_URL": "https://wiki.cloud.ru",
-        "CONFLUENCE_PERSONAL_TOKEN": "ODE1MjIzMzI3OTg2Ok0BSb/2qwvWTfrHOXAFVlclOlPN",
+        "CONFLUENCE_PERSONAL_TOKEN": "{env:CONFLUENCE_PERSONAL_TOKEN}",
         "JIRA_URL": "https://jira.cloud.ru",
-        "JIRA_PERSONAL_TOKEN": "MDI1NjUzMjQ2NzY5On8hdyfbnE2Z1eynrYQfG9LCsNhB",
+        "JIRA_PERSONAL_TOKEN": "{env:JIRA_PERSONAL_TOKEN}",
         "CONFLUENCE_SPACES_FILTER": "OCP",
         "JIRA_PROJECTS_FILTER": "EVODP"
       },
@@ -21,7 +21,7 @@
       "environment": {
         "KANBAN_DB_HOST": "localhost",
         "KANBAN_DB_USER": "kanban",
-        "KANBAN_DB_PASSWORD": "changeme",
+        "KANBAN_DB_PASSWORD": "{env:KANBAN_DB_PASSWORD}",
         "KANBAN_DB_NAME": "kanban"
       }
     },
@@ -83,27 +83,27 @@
       "name": "CloudRu Foundation Models",
       "options": {
         "baseURL": "https://foundation-models.api.cloud.ru/v1",
-        "apiKey": "ZDg3NmQxNDgtMWViNC00ZGYwLTgzMzgtYWQ5YTcxZWIzNTVh.41f81c3d8939f42d12fd2a46c3aa4379"
+        "apiKey": "{env:CLOUDRU_API_KEY}"
       },
       "models": {
         "zai-org/GLM-5.1": {
           "name": "GLM-5.1",
           "limit": {
-            "context": 196000,
+            "context": 202000,
             "output": 20000
           }
         },
         "moonshotai/Kimi-K2.6": {
           "name": "Kimi-k2.6",
           "limit": {
-            "context": 256000,
+            "context": 262000,
             "output": 20000
           }
         },
         "MiniMaxAI/MiniMax-M3": {
           "name": "MiniMax-M3",
           "limit": {
-            "context": 192000,
+            "context": 524000,
             "output": 20000
           }
         },
@@ -131,7 +131,7 @@
         "deepseek-ai/DeepSeek-V4-Pro": {
           "name": "DeepSeek-V4-Pro",
           "limit": {
-            "context": 1000000,
+            "context": 1048000,
             "output": 20000
           }
         }
@@ -144,7 +144,7 @@
       "disable": true
     },
     "project-init-runner": {
-      "model": "cloudru/deepseek-ai/DeepSeek-V4-Pro"
+      "model": "opencode-go/deepseek-v4-flash"
     },
     "repo-scout": {
       "hidden": true,
@@ -343,19 +343,19 @@
         "task": "deny"
       }
     },
-    "test_planner": {
+    "test-planner": {
       "model": "opencode-go/deepseek-v4-pro",
       "permission": {
         "task": "deny"
       }
     },
-    "test_reviewer": {
+    "test-reviewer": {
       "model": "cloudru/moonshotai/Kimi-K2.6",
       "permission": {
         "task": "deny"
       }
     },
-    "test_writer": {
+    "test-writer": {
       "model": "opencode-go/deepseek-v4-flash",
       "permission": {
         "task": "deny"
@@ -614,19 +614,19 @@
   //       "task": "deny"
   //     }
   //   },
-  //   "test_planner": {
+  //   "test-planner": {
   //     "model": "opencode-go/deepseek-v4-pro",
   //     "permission": {
   //       "task": "deny"
   //     }
   //   },
-  //   "test_reviewer": {
+  //   "test-reviewer": {
   //     "model": "opencode-go/kimi-k2.6",
   //     "permission": {
   //       "task": "deny"
   //     }
   //   },
-  //   "test_writer": {
+  //   "test-writer": {
   //     "model": "opencode-go/deepseek-v4-flash",
   //     "permission": {
   //       "task": "deny"
