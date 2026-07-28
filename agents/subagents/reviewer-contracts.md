@@ -1,5 +1,5 @@
 ---
-name: ReviewerContracts
+name: reviewer-contracts
 description: "Contracts reviewer: API/schema/event/config compatibility analysis"
 mode: subagent
 hidden: true

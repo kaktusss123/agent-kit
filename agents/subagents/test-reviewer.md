@@ -1,5 +1,5 @@
 ---
-name: test_reviewer
+name: test-reviewer
 description: Reviews generated tests against plans, standards, and actual behavior.
 mode: subagent
 hidden: true

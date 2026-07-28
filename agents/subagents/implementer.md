@@ -1,5 +1,5 @@
 ---
-name: Implementer
+name: implementer
 description: "Implementation agent: bounded code changes and stage-boundary test writing"
 mode: subagent
 hidden: true

@@ -1,5 +1,5 @@
 ---
-name: test_planner
+name: test-planner
 description: Builds behavior-oriented test plans from a single testing capsule.
 mode: subagent
 hidden: true

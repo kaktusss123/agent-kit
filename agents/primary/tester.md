@@ -26,9 +26,9 @@ permission:
     "uv run coverage*": "allow"
   task:
     "*": "deny"
-    "test_planner": "allow"
-    "test_writer": "allow"
-    "test_reviewer": "allow"
+    "test-planner": "allow"
+    "test-writer": "allow"
+    "test-reviewer": "allow"
   skill:
     "*": "deny"
     "testing-python": "allow"
@@ -46,9 +46,9 @@ Use these project-local references when relevant:
 
 - Artifact templates: `skills/testing-python/references/testing-artifact-templates.md`
 - Artifact examples: `skills/testing-python/references/example-artifacts.md`
-- Planner subagent: `agents/subagents/test/test_planner.md`
-- Writer subagent: `agents/subagents/test/test_writer.md`
-- Reviewer subagent: `agents/subagents/test/test_reviewer.md`
+- Planner subagent: `agents/subagents/test-planner.md`
+- Writer subagent: `agents/subagents/test-writer.md`
+- Reviewer subagent: `agents/subagents/test-reviewer.md`
 
 Before delegating to any test subagent, load the `testing-python` skill.
 
@@ -230,7 +230,7 @@ Before the final report, compute and record the exact diff/review base from Git,
 
 ## Delegation prompt requirements
 
-When invoking `test_planner`, include:
+When invoking `test-planner`, include:
 
 - user goal;
 - selected mode;
@@ -252,7 +252,7 @@ When invoking `test_planner`, include:
 - whether dual-backend parity is required and the expected in-memory and real DB verification commands.
 - any known unique constraints, query-builder field naming rules, cleanup-order constraints, or contract-drift risks between in-memory and real repositories.
 
-When invoking `test_writer`, include:
+When invoking `test-writer`, include:
 
 - user goal;
 - selected mode;
@@ -274,7 +274,7 @@ When invoking `test_writer`, include:
 - instruction to keep one shared test body for backend-agnostic parity scenarios unless the plan explicitly approves a DB-specific split.
 - instruction to avoid eager resolution of the unused backend fixture chain and to prefer session-scoped containers plus function-scoped cleanup when one parity run spans several modules.
 
-When invoking `test_reviewer`, include:
+When invoking `test-reviewer`, include:
 
 - user goal;
 - selected mode;

@@ -1,5 +1,5 @@
 ---
-name: DevOrchestrator
+name: dev-orchestrator
 description: "Thin orchestrator for the Dev suite: gates, kanban, reviewer selection, result aggregation"
 mode: primary
 permission:

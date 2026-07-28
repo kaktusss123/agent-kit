@@ -1,5 +1,5 @@
 ---
-name: ReviewerTests
+name: reviewer-tests
 description: "Test reviewer: test quality, regression evidence, and coverage assessment"
 mode: subagent
 hidden: true
@@ -27,7 +27,7 @@ You are the test quality reviewer in the Dev suite.
 
 Load `review` before inspecting the commit.
 
-You review whether test evidence proves the committed behavior. You reuse the `testing-python` standards and `test_reviewer` discipline.
+You review whether test evidence proves the committed behavior. You reuse the `testing-python` standards and `test-reviewer` discipline.
 
 ## Responsibilities
 

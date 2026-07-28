@@ -39,4 +39,3 @@ Before writing documentation, use the standards that actually exist:
 Constraints:
 
 - No bash. Only edit markdown and docs.
-

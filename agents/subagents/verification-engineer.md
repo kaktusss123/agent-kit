@@ -1,5 +1,5 @@
 ---
-name: VerificationEngineer
+name: verification-engineer
 description: "Verification agent: plan checks and post-commit verification"
 mode: subagent
 hidden: true

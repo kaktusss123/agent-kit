@@ -1,5 +1,5 @@
 ---
-name: test_writer
+name: test-writer
 description: Implements tests from an approved test plan.
 mode: subagent
 hidden: true

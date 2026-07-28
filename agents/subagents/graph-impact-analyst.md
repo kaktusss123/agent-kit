@@ -1,5 +1,5 @@
 ---
-name: GraphImpactAnalyst
+name: graph-impact-analyst
 description: "Hidden subagent for repository-native impact analysis and change radius detection"
 mode: subagent
 hidden: true

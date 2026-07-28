@@ -1,6 +1,6 @@
 ---
 description: Execute an approved specification through the dev-orchestrator engineering workflow
-agent: DevOrchestrator
+agent: dev-orchestrator
 ---
 
 <!-- markdownlint-disable MD041 -->
