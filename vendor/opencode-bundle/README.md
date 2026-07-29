@@ -233,7 +233,7 @@ brew install rtk   # или иной способ из официального 
       "model": "cloudru/moonshotai/Kimi-K2.6"
     },
     "test-planner": {
-      "model": "cloudru/moonshotai/Kimi-K2.6"
+      "model": "cloudru/deepseek-ai/DeepSeek-V4-Pro"
     },
     "test-writer": {
       "model": "cloudru/deepseek-ai/DeepSeek-V4-Pro"

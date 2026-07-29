@@ -1,0 +1,7 @@
+#!/usr/bin/env bash
+# Refreshes managed runtime links after any fetch (covers fast-forward
+# pulls and bare `git fetch` invocations where post-merge may not
+# fire). Both post-fetch and post-merge delegate to the same shared
+# script; one of them will run on any update.
+
+exec "$(dirname "$0")/_opencode-refresh.sh"
