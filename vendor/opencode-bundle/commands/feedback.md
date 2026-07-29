@@ -29,7 +29,7 @@ This command runs in the **same agent and session context** where the work happe
 
 3. **Write the feedback file** (when current agent has edit permission):
    - Target path: `docs/feedback/feedback_<slug>.md`
-   - Use the schema below (the template is the single source of truth — `docs/feedback/README.md` in the target project, if present, is for human reference only):
+   - Use the schema below (this inline template is the source of truth; canonical reference at `skills/project-init/references/feedback-schema.md`):
       ```markdown
       ---
       name: <Human-readable title>

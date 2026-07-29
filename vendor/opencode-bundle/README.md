@@ -46,7 +46,6 @@ curl -fsSL https://opencode.ai/install | bash
 
 - **Агенты** — runtime-определения агентов (primary — пользовательские оркестраторы, subagents — специализированные воркеры).
 - **Команды** — слэш-команды (`/commit`, `/init`, `/feedback`, `/spec`, `/spec-lite`, `/execute-spec`, `/test`, `/analyze`).
-- **Project docs templates** — локальные артефакты проекта, такие как `docs/feedback/README.md`, которые копируются в целевые репозитории.
 - **Скиллы** — инструкции для специализированных workflows.
 - **opencode.example.jsonc** — базовый конфиг (Cloud.ru FM + назначения моделей агентам).
 - **scripts/** — установщик (`install.sh`) и валидатор конфига (`validate-config.sh`).
@@ -60,7 +59,6 @@ OpenCode/
 │   ├── primary/            # Пользовательские оркестраторы
 │   └── subagents/          # Специализированные воркеры (делегируются primary)
 ├── commands/               # Слэш-команды
-├── docs/                   # Project-side templates (например, feedback README)
 ├── plugins/                # OpenCode-плагины (rtk, freshness)
 ├── scripts/                # Установщик и валидатор конфига
 ├── skills/                 # Скиллы с инструкциями и references/
@@ -383,16 +381,9 @@ brew install rtk   # или иной способ из официального 
 ### Что входит в `/feedback` bundle
 
 - `commands/feedback.md`
-- `docs/feedback/README.md`
+- Схема и lifecycle — в skill reference `skills/project-init/references/feedback-schema.md` (ставится через `install.sh`); inline-шаблон продублирован в `commands/feedback.md`.
 
-Схема feedback memory относится к **проекту**, а не к `~/.config/opencode/`. После копирования OpenCode bundle положите schema-файл в целевой проект:
-
-```bash
-mkdir -p <project-root>/docs/feedback
-cp OpenCode/docs/feedback/README.md <project-root>/docs/feedback/README.md
-```
-
-Если хотите, чтобы `/feedback` писал файлы напрямую в опубликованных primary-агентах, используйте обновлённые версии `agents/primary/dev-orchestrator.md`, `agents/primary/full-spec-analyst.md` и `agents/primary/tester.md` из этого репозитория: в них уже есть узкие разрешения на `docs/feedback/feedback_*.md`.
+Схема feedback memory относится к **проекту**, а не к `~/.config/opencode/`. Если хотите, чтобы `/feedback` писал файлы напрямую в опубликованных primary-агентах, используйте обновлённые версии `agents/primary/dev-orchestrator.md`, `agents/primary/full-spec-analyst.md` и `agents/primary/tester.md` из этого репозитория: в них уже есть узкие разрешения на `docs/feedback/feedback_*.md`.
 
 ## Conventions
 

@@ -34,7 +34,7 @@
 
 **Раздел про rtk в README.** Позволяет серьезно экономить токены. Крайне рекомендую. Плагин опционален, все будет работать и без него.
 
-**Документация для feedback-схемы.** Файл `OpenCode/docs/feedback/README.md` теперь существует и копируется в целевые проекты — `/feedback` и `/init` имеют на что ссылаться.
+**Документация для feedback-схемы.** Canonical reference живёт в `skills/project-init/references/feedback-schema.md` (ставится через `install.sh`); inline-шаблон в `commands/feedback.md` — для случая, когда агенту лень лезть в reference.
 
 ### Что пофикшено
 
