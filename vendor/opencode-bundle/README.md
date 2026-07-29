@@ -37,7 +37,7 @@ curl -fsSL https://opencode.ai/install | bash
 ./scripts/enable-hooks.sh
 ```
 
-Далее `post-merge` и `post-fetch` после успешного `git pull` запускают `scripts/install.sh` только для уже установленного bundle. Два хука — защита от случая, когда конкретная версия git не вызывает `post-merge` на fast-forward pull; `post-fetch` гарантированно срабатывает. Перед запуском скрипт выводит `OpenCode hook: refreshing managed symlinks in ...`, так что видно, что автообновление прошло. Ошибка обновления ссылок выводится как предупреждение и не отменяет успешный pull.
+Далее `post-merge` и `post-fetch` после успешного `git pull` запускают `scripts/install.sh` только для уже установленного bundle. Ошибка обновления ссылок выводится как предупреждение и не отменяет успешный pull.
 
 ## Что в этом репозитории
 
@@ -507,3 +507,4 @@ curl -fsSL https://raw.githubusercontent.com/multidimensionalcats/kanban-mcp/mai
 
 Документация kanban-mcp: <https://github.com/multidimensionalcats/kanban-mcp/>  
 Подробнее о MCP в OpenCode: <https://opencode.ai/docs/mcp-servers/>
+

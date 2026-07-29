@@ -10,6 +10,12 @@ set -u
 BUNDLE_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 TARGET_DIR="${OPENCODE_TARGET_DIR:-$HOME/.config/opencode}"
 STATE_FILE="$TARGET_DIR/.opencode-handoff-state.json"
+LOG_FILE="$TARGET_DIR/.refresh.log"
+STAMP_FILE="$TARGET_DIR/.last-refresh"
+
+log() {
+  printf '[%s] %s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$*" | tee -a "$LOG_FILE"
+}
 
 # No state file → bundle was never installed here. Skip silently so
 # fresh clones and unrelated repos don't get noisy output.
@@ -36,8 +42,19 @@ sys.exit(0 if installed else 1)
   exit 0
 fi
 
+branch="$(git -C "$BUNDLE_DIR" symbolic-ref --short HEAD 2>/dev/null || git -C "$BUNDLE_DIR" rev-parse --short HEAD)"
+revision="$(git -C "$BUNDLE_DIR" rev-parse --short HEAD)"
+log "refresh triggered by ${0##*/} on branch $branch @ $revision (target: $TARGET_DIR)"
+
+# Sentinel for quick 'did it just run?' check, useful when the calling
+# wrapper (e.g. rtk) suppresses hook stdout.
+printf 'last_refresh=%s\nbranch=%s\nrevision=%s\ntrigger=%s\n' \
+  "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$branch" "$revision" "${0##*/}" \
+  > "$STAMP_FILE"
+
 echo "OpenCode hook: refreshing managed symlinks in $TARGET_DIR"
-if ! "$BUNDLE_DIR/scripts/install.sh"; then
+if ! "$BUNDLE_DIR/scripts/install.sh" 2>&1 | tee -a "$LOG_FILE"; then
+  log "ERROR: install.sh failed; run scripts/install.sh manually"
   echo "Warning: OpenCode links were not refreshed. Run scripts/install.sh manually." >&2
 fi
 

@@ -29,7 +29,7 @@
 
 **`default_agent: "General"`.** Агент общего назначения теперь стоит по умолчанию. Подскажет, если для задачи нужно использовать более узкоспециализированного агента, или выполнит все сам.
 
-**`post-merge` git hook.** После `git pull` в репо с фреймворком автоматически пересоздаются managed-симлинки в `~/.config/opencode/`. Чтобы включить у себя — `./scripts/enable-hooks.sh`. Дополнительно `post-fetch` страхует fast-forward pull'ы, на которых `post-merge` не всегда срабатывает; перед запуском выводится баннер `OpenCode hook: refreshing managed symlinks in ...`.
+**`post-merge` git hook.** После `git pull` в репо с фреймворком автоматически пересоздаются managed-симлинки в `~/.config/opencode/`. Чтобы включить у себя — `./scripts/enable-hooks.sh`. Дополнительно `post-fetch` страхует fast-forward pull'ы, на которых `post-merge` не всегда срабатывает. Перед запуском выводится баннер `OpenCode hook: refreshing managed symlinks in ...`; кроме того, обновляются `~/.config/opencode/.last-refresh` (ветка/ревизия/время) и `~/.config/opencode/.refresh.log` (полный лог) — последние два нужны, если обёртка типа `rtk` глотает stdout хуков.
 
 **Раздел про rtk в README.** Позволяет серьезно экономить токены. Крайне рекомендую. Плагин опционален, все будет работать и без него.
 
