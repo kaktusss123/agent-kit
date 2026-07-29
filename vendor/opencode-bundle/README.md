@@ -37,7 +37,15 @@ curl -fsSL https://opencode.ai/install | bash
 ./scripts/enable-hooks.sh
 ```
 
-Далее `post-merge` и `post-fetch` после успешного `git pull` запускают `scripts/install.sh` только для уже установленного bundle. Ошибка обновления ссылок выводится как предупреждение и не отменяет успешный pull.
+Далее `post-merge` и `post-fetch` после успешного `git pull` запускают `scripts/install.sh` только для уже установленного bundle. Два хука — защита от случая, когда конкретная версия git не вызывает `post-merge` на fast-forward pull; `post-fetch` гарантированно срабатывает. Перед запуском скрипт выводит `OpenCode hook: refreshing managed symlinks in ...`, так что видно, что автообновление прошло. Ошибка обновления ссылок выводится как предупреждение и не отменяет успешный pull.
+
+Если вывод теряется (например, при использовании обёртки `rtk`, которая глотает stdout хуков), проверьте sentinel-файлы:
+
+```bash
+ls -la ~/.config/opencode/.last-refresh       # когда последний раз сработал
+cat ~/.config/opencode/.last-refresh         # ветка, ревизия, триггер
+cat ~/.config/opencode/.refresh.log          # полный лог
+```
 
 ## Что в этом репозитории
 
