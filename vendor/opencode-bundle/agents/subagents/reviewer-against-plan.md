@@ -24,8 +24,6 @@ permission:
   skill:
     "*": "deny"
     "review": "allow"
-metadata:
-  version: 1.0.0
 ---
 
 # Reviewer Against Plan

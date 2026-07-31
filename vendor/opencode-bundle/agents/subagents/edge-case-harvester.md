@@ -17,8 +17,6 @@ permission:
   edit:
     "**/*": "deny"
     "docs/specs/**": "allow"
-metadata:
-  version: 1.0.0
 ---
 
 # Role

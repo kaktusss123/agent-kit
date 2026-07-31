@@ -26,8 +26,6 @@ permission:
   skill:
     "*": "deny"
     "git-commit": "allow"
-metadata:
-  version: 1.0.0
 ---
 
 # Git Committer

@@ -54,8 +54,6 @@ permission:
     "git-commit": "allow"
     "delegation-context": "allow"
     "orchestration": "allow"
-metadata:
-  version: 1.0.0
 ---
 
 # DevOrchestrator

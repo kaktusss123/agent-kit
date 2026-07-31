@@ -42,8 +42,6 @@ permission:
     "*": "deny"
     "project-init": "allow"
     "project-rules-check": "allow"
-metadata:
-  version: 1.0.0
 ---
 
 # Role

@@ -25,8 +25,6 @@ permission:
     "*": "deny"
     "review": "allow"
     "complexity-review": "allow"
-metadata:
-  version: 1.0.0
 ---
 
 # Reviewer Complexity

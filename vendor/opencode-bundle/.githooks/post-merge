@@ -1,7 +1,0 @@
-#!/usr/bin/env bash
-# Refreshes managed runtime links after a successful merge (covers
-# `git pull` and explicit merges). The shared refresh logic also
-# lives in post-fetch as a safety net for fast-forward pulls where
-# post-merge may not fire on every git version.
-
-exec "$(dirname "$0")/_opencode-refresh.sh"

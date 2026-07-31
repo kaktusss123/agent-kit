@@ -32,8 +32,6 @@ permission:
     "*": "deny"
     "verification": "allow"
     "verification-gate": "allow"
-metadata:
-  version: 1.0.0
 ---
 
 # Verification Engineer

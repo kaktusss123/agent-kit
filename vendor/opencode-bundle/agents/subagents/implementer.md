@@ -25,8 +25,6 @@ permission:
     "*": "deny"
     "implementation": "allow"
     "testing-python": "allow"
-metadata:
-  version: 1.0.0
 ---
 
 # Implementer

@@ -22,8 +22,6 @@ permission:
   skill:
     "*": "deny"
     "codegraph-impact-analysis": "allow"
-metadata:
-  version: 1.0.0
 ---
 
 # Graph Impact Analyst

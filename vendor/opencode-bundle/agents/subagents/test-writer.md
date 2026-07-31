@@ -34,8 +34,6 @@ permission:
   skill:
     "*": "deny"
     "testing-python": "allow"
-metadata:
-  version: 1.0.0
 ---
 
 # Role

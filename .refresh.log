@@ -1,0 +1,528 @@
+[2026-07-29T09:42:55Z] refresh triggered by _opencode-refresh.sh on branch feat/oc-commands @ 77adc4b (target: /Users/vekomarnitskiy/.config/opencode)
+=== OpenCode Handoff Installer ===
+Bundle: /Users/vekomarnitskiy/projects/core/docs/OpenCode
+Target: /Users/vekomarnitskiy/.config/opencode
+
+Phase 1: Unlinking previously managed symlinks...
+[2026-07-29T09:42:55Z] ERROR: install.sh failed; run scripts/install.sh manually
+[2026-07-29T09:50:13Z] refresh triggered by _opencode-refresh.sh on branch feat/oc-commands @ d1c4680 (target: /Users/vekomarnitskiy/.config/opencode)
+=== OpenCode Handoff Installer ===
+Bundle: /Users/vekomarnitskiy/projects/core/docs/OpenCode
+Target: /Users/vekomarnitskiy/.config/opencode
+
+Phase 1: Unlinking previously managed symlinks...
+  Unlinked: /Users/vekomarnitskiy/.config/opencode/skills/commit-readiness
+  Unlinked: /Users/vekomarnitskiy/.config/opencode/skills/complexity-review
+  Unlinked: /Users/vekomarnitskiy/.config/opencode/skills/contract-impact-audit
+  Unlinked: /Users/vekomarnitskiy/.config/opencode/skills/decision-log
+  Unlinked: /Users/vekomarnitskiy/.config/opencode/skills/delegation-context
+  Unlinked: /Users/vekomarnitskiy/.config/opencode/skills/design-brief
+  Unlinked: /Users/vekomarnitskiy/.config/opencode/skills/edge-case-harvest
+  Unlinked: /Users/vekomarnitskiy/.config/opencode/skills/execution-plan
+  Unlinked: /Users/vekomarnitskiy/.config/opencode/skills/feature-interrogation
+  Unlinked: /Users/vekomarnitskiy/.config/opencode/skills/find-docs
+  Unlinked: /Users/vekomarnitskiy/.config/opencode/skills/git-commit
+  Unlinked: /Users/vekomarnitskiy/.config/opencode/skills/implementation
+  Unlinked: /Users/vekomarnitskiy/.config/opencode/skills/kanban-discipline
+  Unlinked: /Users/vekomarnitskiy/.config/opencode/skills/non-functional-probe
+  Unlinked: /Users/vekomarnitskiy/.config/opencode/skills/orchestration
+  Unlinked: /Users/vekomarnitskiy/.config/opencode/skills/project-init
+  Unlinked: /Users/vekomarnitskiy/.config/opencode/skills/project-rules-check
+  Unlinked: /Users/vekomarnitskiy/.config/opencode/skills/replan-on-surprise
+  Unlinked: /Users/vekomarnitskiy/.config/opencode/skills/repo-reconnaissance
+  Unlinked: /Users/vekomarnitskiy/.config/opencode/skills/review
+  Unlinked: /Users/vekomarnitskiy/.config/opencode/skills/review-against-plan
+  Unlinked: /Users/vekomarnitskiy/.config/opencode/skills/spec-discovery
+  Unlinked: /Users/vekomarnitskiy/.config/opencode/skills/spec-synthesis
+  Unlinked: /Users/vekomarnitskiy/.config/opencode/skills/task-workspace
+  Unlinked: /Users/vekomarnitskiy/.config/opencode/skills/testing-python
+  Unlinked: /Users/vekomarnitskiy/.config/opencode/skills/traceability-check
+  Unlinked: /Users/vekomarnitskiy/.config/opencode/skills/verification
+  Unlinked: /Users/vekomarnitskiy/.config/opencode/skills/verification-gate
+  Unlinked: /Users/vekomarnitskiy/.config/opencode/skills/workflow-gates
+  Unlinked: /Users/vekomarnitskiy/.config/opencode/plugins/project-rules-freshness.ts
+  Unlinked: /Users/vekomarnitskiy/.config/opencode/plugins/rtk.ts
+  Unlinked: /Users/vekomarnitskiy/.config/opencode/agents/primary/dev-orchestrator.md
+  Unlinked: /Users/vekomarnitskiy/.config/opencode/agents/primary/fast-spec-analyst.md
+  Unlinked: /Users/vekomarnitskiy/.config/opencode/agents/primary/full-spec-analyst.md
+  Unlinked: /Users/vekomarnitskiy/.config/opencode/agents/primary/general.md
+  Unlinked: /Users/vekomarnitskiy/.config/opencode/agents/primary/project-analyst.md
+  Unlinked: /Users/vekomarnitskiy/.config/opencode/agents/primary/tester.md
+  Unlinked: /Users/vekomarnitskiy/.config/opencode/agents/subagents/committer.md
+  Unlinked: /Users/vekomarnitskiy/.config/opencode/agents/subagents/contract-impact-auditor.md
+  Unlinked: /Users/vekomarnitskiy/.config/opencode/agents/subagents/design-planner.md
+  Unlinked: /Users/vekomarnitskiy/.config/opencode/agents/subagents/edge-case-harvester.md
+  Unlinked: /Users/vekomarnitskiy/.config/opencode/agents/subagents/feature-triager.md
+  Unlinked: /Users/vekomarnitskiy/.config/opencode/agents/subagents/graph-impact-analyst.md
+  Unlinked: /Users/vekomarnitskiy/.config/opencode/agents/subagents/implementer.md
+  Unlinked: /Users/vekomarnitskiy/.config/opencode/agents/subagents/non-functional-prober.md
+  Unlinked: /Users/vekomarnitskiy/.config/opencode/agents/subagents/project-init-runner.md
+  Unlinked: /Users/vekomarnitskiy/.config/opencode/agents/subagents/repo-scout.md
+  Unlinked: /Users/vekomarnitskiy/.config/opencode/agents/subagents/reviewer-against-plan.md
+  Unlinked: /Users/vekomarnitskiy/.config/opencode/agents/subagents/reviewer-complexity.md
+  Unlinked: /Users/vekomarnitskiy/.config/opencode/agents/subagents/reviewer-contracts.md
+  Unlinked: /Users/vekomarnitskiy/.config/opencode/agents/subagents/reviewer-deep.md
+  Unlinked: /Users/vekomarnitskiy/.config/opencode/agents/subagents/reviewer-performance.md
+  Unlinked: /Users/vekomarnitskiy/.config/opencode/agents/subagents/reviewer-security.md
+  Unlinked: /Users/vekomarnitskiy/.config/opencode/agents/subagents/reviewer-tests.md
+  Unlinked: /Users/vekomarnitskiy/.config/opencode/agents/subagents/test-planner.md
+  Unlinked: /Users/vekomarnitskiy/.config/opencode/agents/subagents/test-reviewer.md
+  Unlinked: /Users/vekomarnitskiy/.config/opencode/agents/subagents/test-writer.md
+  Unlinked: /Users/vekomarnitskiy/.config/opencode/agents/subagents/traceability-checker.md
+  Unlinked: /Users/vekomarnitskiy/.config/opencode/agents/subagents/verification-engineer.md
+  Unlinked: /Users/vekomarnitskiy/.config/opencode/commands/analyze.md
+  Unlinked: /Users/vekomarnitskiy/.config/opencode/commands/commit.md
+  Unlinked: /Users/vekomarnitskiy/.config/opencode/commands/execute-spec.md
+  Unlinked: /Users/vekomarnitskiy/.config/opencode/commands/feedback.md
+  Unlinked: /Users/vekomarnitskiy/.config/opencode/commands/init.md
+  Unlinked: /Users/vekomarnitskiy/.config/opencode/commands/spec-lite.md
+  Unlinked: /Users/vekomarnitskiy/.config/opencode/commands/spec.md
+  Unlinked: /Users/vekomarnitskiy/.config/opencode/commands/test.md
+
+Phase 2: Linking current bundle items...
+  Linked: /Users/vekomarnitskiy/.config/opencode/skills/codegraph-impact-analysis -> /Users/vekomarnitskiy/projects/core/docs/OpenCode/skills/codegraph-impact-analysis
+  Linked: /Users/vekomarnitskiy/.config/opencode/skills/commit-readiness -> /Users/vekomarnitskiy/projects/core/docs/OpenCode/skills/commit-readiness
+  Linked: /Users/vekomarnitskiy/.config/opencode/skills/complexity-review -> /Users/vekomarnitskiy/projects/core/docs/OpenCode/skills/complexity-review
+  Linked: /Users/vekomarnitskiy/.config/opencode/skills/contract-impact-audit -> /Users/vekomarnitskiy/projects/core/docs/OpenCode/skills/contract-impact-audit
+  Linked: /Users/vekomarnitskiy/.config/opencode/skills/decision-log -> /Users/vekomarnitskiy/projects/core/docs/OpenCode/skills/decision-log
+  Linked: /Users/vekomarnitskiy/.config/opencode/skills/delegation-context -> /Users/vekomarnitskiy/projects/core/docs/OpenCode/skills/delegation-context
+  Linked: /Users/vekomarnitskiy/.config/opencode/skills/design-brief -> /Users/vekomarnitskiy/projects/core/docs/OpenCode/skills/design-brief
+  Linked: /Users/vekomarnitskiy/.config/opencode/skills/edge-case-harvest -> /Users/vekomarnitskiy/projects/core/docs/OpenCode/skills/edge-case-harvest
+  Linked: /Users/vekomarnitskiy/.config/opencode/skills/execution-plan -> /Users/vekomarnitskiy/projects/core/docs/OpenCode/skills/execution-plan
+  Linked: /Users/vekomarnitskiy/.config/opencode/skills/feature-interrogation -> /Users/vekomarnitskiy/projects/core/docs/OpenCode/skills/feature-interrogation
+  Linked: /Users/vekomarnitskiy/.config/opencode/skills/find-docs -> /Users/vekomarnitskiy/projects/core/docs/OpenCode/skills/find-docs
+  Linked: /Users/vekomarnitskiy/.config/opencode/skills/git-commit -> /Users/vekomarnitskiy/projects/core/docs/OpenCode/skills/git-commit
+  Linked: /Users/vekomarnitskiy/.config/opencode/skills/implementation -> /Users/vekomarnitskiy/projects/core/docs/OpenCode/skills/implementation
+  Linked: /Users/vekomarnitskiy/.config/opencode/skills/kanban-discipline -> /Users/vekomarnitskiy/projects/core/docs/OpenCode/skills/kanban-discipline
+  Linked: /Users/vekomarnitskiy/.config/opencode/skills/non-functional-probe -> /Users/vekomarnitskiy/projects/core/docs/OpenCode/skills/non-functional-probe
+  Linked: /Users/vekomarnitskiy/.config/opencode/skills/orchestration -> /Users/vekomarnitskiy/projects/core/docs/OpenCode/skills/orchestration
+  Linked: /Users/vekomarnitskiy/.config/opencode/skills/project-init -> /Users/vekomarnitskiy/projects/core/docs/OpenCode/skills/project-init
+  Linked: /Users/vekomarnitskiy/.config/opencode/skills/project-rules-check -> /Users/vekomarnitskiy/projects/core/docs/OpenCode/skills/project-rules-check
+  Linked: /Users/vekomarnitskiy/.config/opencode/skills/replan-on-surprise -> /Users/vekomarnitskiy/projects/core/docs/OpenCode/skills/replan-on-surprise
+  Linked: /Users/vekomarnitskiy/.config/opencode/skills/repo-reconnaissance -> /Users/vekomarnitskiy/projects/core/docs/OpenCode/skills/repo-reconnaissance
+  Linked: /Users/vekomarnitskiy/.config/opencode/skills/review -> /Users/vekomarnitskiy/projects/core/docs/OpenCode/skills/review
+  Linked: /Users/vekomarnitskiy/.config/opencode/skills/review-against-plan -> /Users/vekomarnitskiy/projects/core/docs/OpenCode/skills/review-against-plan
+  Linked: /Users/vekomarnitskiy/.config/opencode/skills/spec-discovery -> /Users/vekomarnitskiy/projects/core/docs/OpenCode/skills/spec-discovery
+  Linked: /Users/vekomarnitskiy/.config/opencode/skills/spec-synthesis -> /Users/vekomarnitskiy/projects/core/docs/OpenCode/skills/spec-synthesis
+  Linked: /Users/vekomarnitskiy/.config/opencode/skills/task-workspace -> /Users/vekomarnitskiy/projects/core/docs/OpenCode/skills/task-workspace
+  Linked: /Users/vekomarnitskiy/.config/opencode/skills/testing-python -> /Users/vekomarnitskiy/projects/core/docs/OpenCode/skills/testing-python
+  Linked: /Users/vekomarnitskiy/.config/opencode/skills/traceability-check -> /Users/vekomarnitskiy/projects/core/docs/OpenCode/skills/traceability-check
+  Linked: /Users/vekomarnitskiy/.config/opencode/skills/verification -> /Users/vekomarnitskiy/projects/core/docs/OpenCode/skills/verification
+  Linked: /Users/vekomarnitskiy/.config/opencode/skills/verification-gate -> /Users/vekomarnitskiy/projects/core/docs/OpenCode/skills/verification-gate
+  Linked: /Users/vekomarnitskiy/.config/opencode/skills/workflow-gates -> /Users/vekomarnitskiy/projects/core/docs/OpenCode/skills/workflow-gates
+  Linked: /Users/vekomarnitskiy/.config/opencode/plugins/project-rules-freshness.ts -> /Users/vekomarnitskiy/projects/core/docs/OpenCode/plugins/project-rules-freshness.ts
+  Linked: /Users/vekomarnitskiy/.config/opencode/plugins/rtk.ts -> /Users/vekomarnitskiy/projects/core/docs/OpenCode/plugins/rtk.ts
+  Linked: /Users/vekomarnitskiy/.config/opencode/agents/primary/dev-orchestrator.md -> /Users/vekomarnitskiy/projects/core/docs/OpenCode/agents/primary/dev-orchestrator.md
+  Linked: /Users/vekomarnitskiy/.config/opencode/agents/primary/fast-spec-analyst.md -> /Users/vekomarnitskiy/projects/core/docs/OpenCode/agents/primary/fast-spec-analyst.md
+  Linked: /Users/vekomarnitskiy/.config/opencode/agents/primary/full-spec-analyst.md -> /Users/vekomarnitskiy/projects/core/docs/OpenCode/agents/primary/full-spec-analyst.md
+  Linked: /Users/vekomarnitskiy/.config/opencode/agents/primary/general.md -> /Users/vekomarnitskiy/projects/core/docs/OpenCode/agents/primary/general.md
+  Linked: /Users/vekomarnitskiy/.config/opencode/agents/primary/project-analyst.md -> /Users/vekomarnitskiy/projects/core/docs/OpenCode/agents/primary/project-analyst.md
+  Linked: /Users/vekomarnitskiy/.config/opencode/agents/primary/tester.md -> /Users/vekomarnitskiy/projects/core/docs/OpenCode/agents/primary/tester.md
+  Linked: /Users/vekomarnitskiy/.config/opencode/agents/subagents/committer.md -> /Users/vekomarnitskiy/projects/core/docs/OpenCode/agents/subagents/committer.md
+  Linked: /Users/vekomarnitskiy/.config/opencode/agents/subagents/contract-impact-auditor.md -> /Users/vekomarnitskiy/projects/core/docs/OpenCode/agents/subagents/contract-impact-auditor.md
+  Linked: /Users/vekomarnitskiy/.config/opencode/agents/subagents/design-planner.md -> /Users/vekomarnitskiy/projects/core/docs/OpenCode/agents/subagents/design-planner.md
+  Linked: /Users/vekomarnitskiy/.config/opencode/agents/subagents/edge-case-harvester.md -> /Users/vekomarnitskiy/projects/core/docs/OpenCode/agents/subagents/edge-case-harvester.md
+  Linked: /Users/vekomarnitskiy/.config/opencode/agents/subagents/feature-triager.md -> /Users/vekomarnitskiy/projects/core/docs/OpenCode/agents/subagents/feature-triager.md
+  Linked: /Users/vekomarnitskiy/.config/opencode/agents/subagents/graph-impact-analyst.md -> /Users/vekomarnitskiy/projects/core/docs/OpenCode/agents/subagents/graph-impact-analyst.md
+  Linked: /Users/vekomarnitskiy/.config/opencode/agents/subagents/implementer.md -> /Users/vekomarnitskiy/projects/core/docs/OpenCode/agents/subagents/implementer.md
+  Linked: /Users/vekomarnitskiy/.config/opencode/agents/subagents/non-functional-prober.md -> /Users/vekomarnitskiy/projects/core/docs/OpenCode/agents/subagents/non-functional-prober.md
+  Linked: /Users/vekomarnitskiy/.config/opencode/agents/subagents/project-init-runner.md -> /Users/vekomarnitskiy/projects/core/docs/OpenCode/agents/subagents/project-init-runner.md
+  Linked: /Users/vekomarnitskiy/.config/opencode/agents/subagents/repo-scout.md -> /Users/vekomarnitskiy/projects/core/docs/OpenCode/agents/subagents/repo-scout.md
+  Linked: /Users/vekomarnitskiy/.config/opencode/agents/subagents/reviewer-against-plan.md -> /Users/vekomarnitskiy/projects/core/docs/OpenCode/agents/subagents/reviewer-against-plan.md
+  Linked: /Users/vekomarnitskiy/.config/opencode/agents/subagents/reviewer-complexity.md -> /Users/vekomarnitskiy/projects/core/docs/OpenCode/agents/subagents/reviewer-complexity.md
+  Linked: /Users/vekomarnitskiy/.config/opencode/agents/subagents/reviewer-contracts.md -> /Users/vekomarnitskiy/projects/core/docs/OpenCode/agents/subagents/reviewer-contracts.md
+  Linked: /Users/vekomarnitskiy/.config/opencode/agents/subagents/reviewer-deep.md -> /Users/vekomarnitskiy/projects/core/docs/OpenCode/agents/subagents/reviewer-deep.md
+  Linked: /Users/vekomarnitskiy/.config/opencode/agents/subagents/reviewer-performance.md -> /Users/vekomarnitskiy/projects/core/docs/OpenCode/agents/subagents/reviewer-performance.md
+  Linked: /Users/vekomarnitskiy/.config/opencode/agents/subagents/reviewer-security.md -> /Users/vekomarnitskiy/projects/core/docs/OpenCode/agents/subagents/reviewer-security.md
+  Linked: /Users/vekomarnitskiy/.config/opencode/agents/subagents/reviewer-tests.md -> /Users/vekomarnitskiy/projects/core/docs/OpenCode/agents/subagents/reviewer-tests.md
+  Linked: /Users/vekomarnitskiy/.config/opencode/agents/subagents/test-planner.md -> /Users/vekomarnitskiy/projects/core/docs/OpenCode/agents/subagents/test-planner.md
+  Linked: /Users/vekomarnitskiy/.config/opencode/agents/subagents/test-reviewer.md -> /Users/vekomarnitskiy/projects/core/docs/OpenCode/agents/subagents/test-reviewer.md
+  Linked: /Users/vekomarnitskiy/.config/opencode/agents/subagents/test-writer.md -> /Users/vekomarnitskiy/projects/core/docs/OpenCode/agents/subagents/test-writer.md
+  Linked: /Users/vekomarnitskiy/.config/opencode/agents/subagents/traceability-checker.md -> /Users/vekomarnitskiy/projects/core/docs/OpenCode/agents/subagents/traceability-checker.md
+  Linked: /Users/vekomarnitskiy/.config/opencode/agents/subagents/verification-engineer.md -> /Users/vekomarnitskiy/projects/core/docs/OpenCode/agents/subagents/verification-engineer.md
+  Linked: /Users/vekomarnitskiy/.config/opencode/commands/analyze.md -> /Users/vekomarnitskiy/projects/core/docs/OpenCode/commands/analyze.md
+  Linked: /Users/vekomarnitskiy/.config/opencode/commands/commit.md -> /Users/vekomarnitskiy/projects/core/docs/OpenCode/commands/commit.md
+  Linked: /Users/vekomarnitskiy/.config/opencode/commands/execute-spec.md -> /Users/vekomarnitskiy/projects/core/docs/OpenCode/commands/execute-spec.md
+  Linked: /Users/vekomarnitskiy/.config/opencode/commands/feedback.md -> /Users/vekomarnitskiy/projects/core/docs/OpenCode/commands/feedback.md
+  Linked: /Users/vekomarnitskiy/.config/opencode/commands/init.md -> /Users/vekomarnitskiy/projects/core/docs/OpenCode/commands/init.md
+  Linked: /Users/vekomarnitskiy/.config/opencode/commands/spec-lite.md -> /Users/vekomarnitskiy/projects/core/docs/OpenCode/commands/spec-lite.md
+  Linked: /Users/vekomarnitskiy/.config/opencode/commands/spec.md -> /Users/vekomarnitskiy/projects/core/docs/OpenCode/commands/spec.md
+  Linked: /Users/vekomarnitskiy/.config/opencode/commands/test.md -> /Users/vekomarnitskiy/projects/core/docs/OpenCode/commands/test.md
+
+
+Phase 3: Validating or creating config...
+=== OpenCode Handoff Config Validator ===
+
+Validating existing config: /Users/vekomarnitskiy/.config/opencode/opencode.json
+
+Errors:
+  [OK] provider.cloudru is present
+  [OK] provider.cloudru.options.baseURL is correct
+  [OK] provider.cloudru.options.apiKey uses {env:CLOUDRU_API_KEY}
+  [OK] CLOUDRU_API_KEY is set in the current environment
+  [OK] default_agent is 'General'
+  [OK] agent.explore.disable is true
+  [OK] agent.build.disable is true
+  [OK] agent.plan.disable is true
+
+Warnings:
+  [OK] agent model assignments are present
+
+Recommendations:
+  [INFO] kanban MCP is configured
+
+Summary: 0 error(s), 0 warning(s), 0 recommendation(s)
+
+Config validation passed.
+
+Installation complete.
+Managed symlinks recorded in: /Users/vekomarnitskiy/.config/opencode/.opencode-handoff-state.json
+To update, pull changes in the bundle and re-run this script.
+[2026-07-29T09:59:01Z] refresh triggered by _opencode-refresh.sh on branch feat/oc-commands @ d1c4680 (target: /Users/vekomarnitskiy/.config/opencode)
+=== OpenCode Handoff Installer ===
+Bundle: /Users/vekomarnitskiy/projects/core/docs/OpenCode
+Target: /Users/vekomarnitskiy/.config/opencode
+
+Phase 1: Unlinking previously managed symlinks...
+  Unlinked: /Users/vekomarnitskiy/.config/opencode/skills/codegraph-impact-analysis
+  Unlinked: /Users/vekomarnitskiy/.config/opencode/skills/commit-readiness
+  Unlinked: /Users/vekomarnitskiy/.config/opencode/skills/complexity-review
+  Unlinked: /Users/vekomarnitskiy/.config/opencode/skills/contract-impact-audit
+  Unlinked: /Users/vekomarnitskiy/.config/opencode/skills/decision-log
+  Unlinked: /Users/vekomarnitskiy/.config/opencode/skills/delegation-context
+  Unlinked: /Users/vekomarnitskiy/.config/opencode/skills/design-brief
+  Unlinked: /Users/vekomarnitskiy/.config/opencode/skills/edge-case-harvest
+  Unlinked: /Users/vekomarnitskiy/.config/opencode/skills/execution-plan
+  Unlinked: /Users/vekomarnitskiy/.config/opencode/skills/feature-interrogation
+  Unlinked: /Users/vekomarnitskiy/.config/opencode/skills/find-docs
+  Unlinked: /Users/vekomarnitskiy/.config/opencode/skills/git-commit
+  Unlinked: /Users/vekomarnitskiy/.config/opencode/skills/implementation
+  Unlinked: /Users/vekomarnitskiy/.config/opencode/skills/kanban-discipline
+  Unlinked: /Users/vekomarnitskiy/.config/opencode/skills/non-functional-probe
+  Unlinked: /Users/vekomarnitskiy/.config/opencode/skills/orchestration
+  Unlinked: /Users/vekomarnitskiy/.config/opencode/skills/project-init
+  Unlinked: /Users/vekomarnitskiy/.config/opencode/skills/project-rules-check
+  Unlinked: /Users/vekomarnitskiy/.config/opencode/skills/replan-on-surprise
+  Unlinked: /Users/vekomarnitskiy/.config/opencode/skills/repo-reconnaissance
+  Unlinked: /Users/vekomarnitskiy/.config/opencode/skills/review
+  Unlinked: /Users/vekomarnitskiy/.config/opencode/skills/review-against-plan
+  Unlinked: /Users/vekomarnitskiy/.config/opencode/skills/spec-discovery
+  Unlinked: /Users/vekomarnitskiy/.config/opencode/skills/spec-synthesis
+  Unlinked: /Users/vekomarnitskiy/.config/opencode/skills/task-workspace
+  Unlinked: /Users/vekomarnitskiy/.config/opencode/skills/testing-python
+  Unlinked: /Users/vekomarnitskiy/.config/opencode/skills/traceability-check
+  Unlinked: /Users/vekomarnitskiy/.config/opencode/skills/verification
+  Unlinked: /Users/vekomarnitskiy/.config/opencode/skills/verification-gate
+  Unlinked: /Users/vekomarnitskiy/.config/opencode/skills/workflow-gates
+  Unlinked: /Users/vekomarnitskiy/.config/opencode/plugins/project-rules-freshness.ts
+  Unlinked: /Users/vekomarnitskiy/.config/opencode/plugins/rtk.ts
+  Unlinked: /Users/vekomarnitskiy/.config/opencode/agents/primary/dev-orchestrator.md
+  Unlinked: /Users/vekomarnitskiy/.config/opencode/agents/primary/fast-spec-analyst.md
+  Unlinked: /Users/vekomarnitskiy/.config/opencode/agents/primary/full-spec-analyst.md
+  Unlinked: /Users/vekomarnitskiy/.config/opencode/agents/primary/general.md
+  Unlinked: /Users/vekomarnitskiy/.config/opencode/agents/primary/project-analyst.md
+  Unlinked: /Users/vekomarnitskiy/.config/opencode/agents/primary/tester.md
+  Unlinked: /Users/vekomarnitskiy/.config/opencode/agents/subagents/committer.md
+  Unlinked: /Users/vekomarnitskiy/.config/opencode/agents/subagents/contract-impact-auditor.md
+  Unlinked: /Users/vekomarnitskiy/.config/opencode/agents/subagents/design-planner.md
+  Unlinked: /Users/vekomarnitskiy/.config/opencode/agents/subagents/edge-case-harvester.md
+  Unlinked: /Users/vekomarnitskiy/.config/opencode/agents/subagents/feature-triager.md
+  Unlinked: /Users/vekomarnitskiy/.config/opencode/agents/subagents/graph-impact-analyst.md
+  Unlinked: /Users/vekomarnitskiy/.config/opencode/agents/subagents/implementer.md
+  Unlinked: /Users/vekomarnitskiy/.config/opencode/agents/subagents/non-functional-prober.md
+  Unlinked: /Users/vekomarnitskiy/.config/opencode/agents/subagents/project-init-runner.md
+  Unlinked: /Users/vekomarnitskiy/.config/opencode/agents/subagents/repo-scout.md
+  Unlinked: /Users/vekomarnitskiy/.config/opencode/agents/subagents/reviewer-against-plan.md
+  Unlinked: /Users/vekomarnitskiy/.config/opencode/agents/subagents/reviewer-complexity.md
+  Unlinked: /Users/vekomarnitskiy/.config/opencode/agents/subagents/reviewer-contracts.md
+  Unlinked: /Users/vekomarnitskiy/.config/opencode/agents/subagents/reviewer-deep.md
+  Unlinked: /Users/vekomarnitskiy/.config/opencode/agents/subagents/reviewer-performance.md
+  Unlinked: /Users/vekomarnitskiy/.config/opencode/agents/subagents/reviewer-security.md
+  Unlinked: /Users/vekomarnitskiy/.config/opencode/agents/subagents/reviewer-tests.md
+  Unlinked: /Users/vekomarnitskiy/.config/opencode/agents/subagents/test-planner.md
+  Unlinked: /Users/vekomarnitskiy/.config/opencode/agents/subagents/test-reviewer.md
+  Unlinked: /Users/vekomarnitskiy/.config/opencode/agents/subagents/test-writer.md
+  Unlinked: /Users/vekomarnitskiy/.config/opencode/agents/subagents/traceability-checker.md
+  Unlinked: /Users/vekomarnitskiy/.config/opencode/agents/subagents/verification-engineer.md
+  Unlinked: /Users/vekomarnitskiy/.config/opencode/commands/analyze.md
+  Unlinked: /Users/vekomarnitskiy/.config/opencode/commands/commit.md
+  Unlinked: /Users/vekomarnitskiy/.config/opencode/commands/execute-spec.md
+  Unlinked: /Users/vekomarnitskiy/.config/opencode/commands/feedback.md
+  Unlinked: /Users/vekomarnitskiy/.config/opencode/commands/init.md
+  Unlinked: /Users/vekomarnitskiy/.config/opencode/commands/spec-lite.md
+  Unlinked: /Users/vekomarnitskiy/.config/opencode/commands/spec.md
+  Unlinked: /Users/vekomarnitskiy/.config/opencode/commands/test.md
+
+Phase 2: Linking current bundle items...
+  Linked: /Users/vekomarnitskiy/.config/opencode/skills/codegraph-impact-analysis -> /Users/vekomarnitskiy/projects/core/docs/OpenCode/skills/codegraph-impact-analysis
+  Linked: /Users/vekomarnitskiy/.config/opencode/skills/commit-readiness -> /Users/vekomarnitskiy/projects/core/docs/OpenCode/skills/commit-readiness
+  Linked: /Users/vekomarnitskiy/.config/opencode/skills/complexity-review -> /Users/vekomarnitskiy/projects/core/docs/OpenCode/skills/complexity-review
+  Linked: /Users/vekomarnitskiy/.config/opencode/skills/contract-impact-audit -> /Users/vekomarnitskiy/projects/core/docs/OpenCode/skills/contract-impact-audit
+  Linked: /Users/vekomarnitskiy/.config/opencode/skills/decision-log -> /Users/vekomarnitskiy/projects/core/docs/OpenCode/skills/decision-log
+  Linked: /Users/vekomarnitskiy/.config/opencode/skills/delegation-context -> /Users/vekomarnitskiy/projects/core/docs/OpenCode/skills/delegation-context
+  Linked: /Users/vekomarnitskiy/.config/opencode/skills/design-brief -> /Users/vekomarnitskiy/projects/core/docs/OpenCode/skills/design-brief
+  Linked: /Users/vekomarnitskiy/.config/opencode/skills/edge-case-harvest -> /Users/vekomarnitskiy/projects/core/docs/OpenCode/skills/edge-case-harvest
+  Linked: /Users/vekomarnitskiy/.config/opencode/skills/execution-plan -> /Users/vekomarnitskiy/projects/core/docs/OpenCode/skills/execution-plan
+  Linked: /Users/vekomarnitskiy/.config/opencode/skills/feature-interrogation -> /Users/vekomarnitskiy/projects/core/docs/OpenCode/skills/feature-interrogation
+  Linked: /Users/vekomarnitskiy/.config/opencode/skills/find-docs -> /Users/vekomarnitskiy/projects/core/docs/OpenCode/skills/find-docs
+  Linked: /Users/vekomarnitskiy/.config/opencode/skills/git-commit -> /Users/vekomarnitskiy/projects/core/docs/OpenCode/skills/git-commit
+  Linked: /Users/vekomarnitskiy/.config/opencode/skills/implementation -> /Users/vekomarnitskiy/projects/core/docs/OpenCode/skills/implementation
+  Linked: /Users/vekomarnitskiy/.config/opencode/skills/kanban-discipline -> /Users/vekomarnitskiy/projects/core/docs/OpenCode/skills/kanban-discipline
+  Linked: /Users/vekomarnitskiy/.config/opencode/skills/non-functional-probe -> /Users/vekomarnitskiy/projects/core/docs/OpenCode/skills/non-functional-probe
+  Linked: /Users/vekomarnitskiy/.config/opencode/skills/orchestration -> /Users/vekomarnitskiy/projects/core/docs/OpenCode/skills/orchestration
+  Linked: /Users/vekomarnitskiy/.config/opencode/skills/project-init -> /Users/vekomarnitskiy/projects/core/docs/OpenCode/skills/project-init
+  Linked: /Users/vekomarnitskiy/.config/opencode/skills/project-rules-check -> /Users/vekomarnitskiy/projects/core/docs/OpenCode/skills/project-rules-check
+  Linked: /Users/vekomarnitskiy/.config/opencode/skills/replan-on-surprise -> /Users/vekomarnitskiy/projects/core/docs/OpenCode/skills/replan-on-surprise
+  Linked: /Users/vekomarnitskiy/.config/opencode/skills/repo-reconnaissance -> /Users/vekomarnitskiy/projects/core/docs/OpenCode/skills/repo-reconnaissance
+  Linked: /Users/vekomarnitskiy/.config/opencode/skills/review -> /Users/vekomarnitskiy/projects/core/docs/OpenCode/skills/review
+  Linked: /Users/vekomarnitskiy/.config/opencode/skills/review-against-plan -> /Users/vekomarnitskiy/projects/core/docs/OpenCode/skills/review-against-plan
+  Linked: /Users/vekomarnitskiy/.config/opencode/skills/spec-discovery -> /Users/vekomarnitskiy/projects/core/docs/OpenCode/skills/spec-discovery
+  Linked: /Users/vekomarnitskiy/.config/opencode/skills/spec-synthesis -> /Users/vekomarnitskiy/projects/core/docs/OpenCode/skills/spec-synthesis
+  Linked: /Users/vekomarnitskiy/.config/opencode/skills/task-workspace -> /Users/vekomarnitskiy/projects/core/docs/OpenCode/skills/task-workspace
+  Linked: /Users/vekomarnitskiy/.config/opencode/skills/testing-python -> /Users/vekomarnitskiy/projects/core/docs/OpenCode/skills/testing-python
+  Linked: /Users/vekomarnitskiy/.config/opencode/skills/traceability-check -> /Users/vekomarnitskiy/projects/core/docs/OpenCode/skills/traceability-check
+  Linked: /Users/vekomarnitskiy/.config/opencode/skills/verification -> /Users/vekomarnitskiy/projects/core/docs/OpenCode/skills/verification
+  Linked: /Users/vekomarnitskiy/.config/opencode/skills/verification-gate -> /Users/vekomarnitskiy/projects/core/docs/OpenCode/skills/verification-gate
+  Linked: /Users/vekomarnitskiy/.config/opencode/skills/workflow-gates -> /Users/vekomarnitskiy/projects/core/docs/OpenCode/skills/workflow-gates
+  Linked: /Users/vekomarnitskiy/.config/opencode/plugins/project-rules-freshness.ts -> /Users/vekomarnitskiy/projects/core/docs/OpenCode/plugins/project-rules-freshness.ts
+  Linked: /Users/vekomarnitskiy/.config/opencode/plugins/rtk.ts -> /Users/vekomarnitskiy/projects/core/docs/OpenCode/plugins/rtk.ts
+  Linked: /Users/vekomarnitskiy/.config/opencode/agents/primary/dev-orchestrator.md -> /Users/vekomarnitskiy/projects/core/docs/OpenCode/agents/primary/dev-orchestrator.md
+  Linked: /Users/vekomarnitskiy/.config/opencode/agents/primary/fast-spec-analyst.md -> /Users/vekomarnitskiy/projects/core/docs/OpenCode/agents/primary/fast-spec-analyst.md
+  Linked: /Users/vekomarnitskiy/.config/opencode/agents/primary/full-spec-analyst.md -> /Users/vekomarnitskiy/projects/core/docs/OpenCode/agents/primary/full-spec-analyst.md
+  Linked: /Users/vekomarnitskiy/.config/opencode/agents/primary/general.md -> /Users/vekomarnitskiy/projects/core/docs/OpenCode/agents/primary/general.md
+  Linked: /Users/vekomarnitskiy/.config/opencode/agents/primary/project-analyst.md -> /Users/vekomarnitskiy/projects/core/docs/OpenCode/agents/primary/project-analyst.md
+  Linked: /Users/vekomarnitskiy/.config/opencode/agents/primary/tester.md -> /Users/vekomarnitskiy/projects/core/docs/OpenCode/agents/primary/tester.md
+  Linked: /Users/vekomarnitskiy/.config/opencode/agents/subagents/committer.md -> /Users/vekomarnitskiy/projects/core/docs/OpenCode/agents/subagents/committer.md
+  Linked: /Users/vekomarnitskiy/.config/opencode/agents/subagents/contract-impact-auditor.md -> /Users/vekomarnitskiy/projects/core/docs/OpenCode/agents/subagents/contract-impact-auditor.md
+  Linked: /Users/vekomarnitskiy/.config/opencode/agents/subagents/design-planner.md -> /Users/vekomarnitskiy/projects/core/docs/OpenCode/agents/subagents/design-planner.md
+  Linked: /Users/vekomarnitskiy/.config/opencode/agents/subagents/edge-case-harvester.md -> /Users/vekomarnitskiy/projects/core/docs/OpenCode/agents/subagents/edge-case-harvester.md
+  Linked: /Users/vekomarnitskiy/.config/opencode/agents/subagents/feature-triager.md -> /Users/vekomarnitskiy/projects/core/docs/OpenCode/agents/subagents/feature-triager.md
+  Linked: /Users/vekomarnitskiy/.config/opencode/agents/subagents/graph-impact-analyst.md -> /Users/vekomarnitskiy/projects/core/docs/OpenCode/agents/subagents/graph-impact-analyst.md
+  Linked: /Users/vekomarnitskiy/.config/opencode/agents/subagents/implementer.md -> /Users/vekomarnitskiy/projects/core/docs/OpenCode/agents/subagents/implementer.md
+  Linked: /Users/vekomarnitskiy/.config/opencode/agents/subagents/non-functional-prober.md -> /Users/vekomarnitskiy/projects/core/docs/OpenCode/agents/subagents/non-functional-prober.md
+  Linked: /Users/vekomarnitskiy/.config/opencode/agents/subagents/project-init-runner.md -> /Users/vekomarnitskiy/projects/core/docs/OpenCode/agents/subagents/project-init-runner.md
+  Linked: /Users/vekomarnitskiy/.config/opencode/agents/subagents/repo-scout.md -> /Users/vekomarnitskiy/projects/core/docs/OpenCode/agents/subagents/repo-scout.md
+  Linked: /Users/vekomarnitskiy/.config/opencode/agents/subagents/reviewer-against-plan.md -> /Users/vekomarnitskiy/projects/core/docs/OpenCode/agents/subagents/reviewer-against-plan.md
+  Linked: /Users/vekomarnitskiy/.config/opencode/agents/subagents/reviewer-complexity.md -> /Users/vekomarnitskiy/projects/core/docs/OpenCode/agents/subagents/reviewer-complexity.md
+  Linked: /Users/vekomarnitskiy/.config/opencode/agents/subagents/reviewer-contracts.md -> /Users/vekomarnitskiy/projects/core/docs/OpenCode/agents/subagents/reviewer-contracts.md
+  Linked: /Users/vekomarnitskiy/.config/opencode/agents/subagents/reviewer-deep.md -> /Users/vekomarnitskiy/projects/core/docs/OpenCode/agents/subagents/reviewer-deep.md
+  Linked: /Users/vekomarnitskiy/.config/opencode/agents/subagents/reviewer-performance.md -> /Users/vekomarnitskiy/projects/core/docs/OpenCode/agents/subagents/reviewer-performance.md
+  Linked: /Users/vekomarnitskiy/.config/opencode/agents/subagents/reviewer-security.md -> /Users/vekomarnitskiy/projects/core/docs/OpenCode/agents/subagents/reviewer-security.md
+  Linked: /Users/vekomarnitskiy/.config/opencode/agents/subagents/reviewer-tests.md -> /Users/vekomarnitskiy/projects/core/docs/OpenCode/agents/subagents/reviewer-tests.md
+  Linked: /Users/vekomarnitskiy/.config/opencode/agents/subagents/test-planner.md -> /Users/vekomarnitskiy/projects/core/docs/OpenCode/agents/subagents/test-planner.md
+  Linked: /Users/vekomarnitskiy/.config/opencode/agents/subagents/test-reviewer.md -> /Users/vekomarnitskiy/projects/core/docs/OpenCode/agents/subagents/test-reviewer.md
+  Linked: /Users/vekomarnitskiy/.config/opencode/agents/subagents/test-writer.md -> /Users/vekomarnitskiy/projects/core/docs/OpenCode/agents/subagents/test-writer.md
+  Linked: /Users/vekomarnitskiy/.config/opencode/agents/subagents/traceability-checker.md -> /Users/vekomarnitskiy/projects/core/docs/OpenCode/agents/subagents/traceability-checker.md
+  Linked: /Users/vekomarnitskiy/.config/opencode/agents/subagents/verification-engineer.md -> /Users/vekomarnitskiy/projects/core/docs/OpenCode/agents/subagents/verification-engineer.md
+  Linked: /Users/vekomarnitskiy/.config/opencode/commands/analyze.md -> /Users/vekomarnitskiy/projects/core/docs/OpenCode/commands/analyze.md
+  Linked: /Users/vekomarnitskiy/.config/opencode/commands/commit.md -> /Users/vekomarnitskiy/projects/core/docs/OpenCode/commands/commit.md
+  Linked: /Users/vekomarnitskiy/.config/opencode/commands/execute-spec.md -> /Users/vekomarnitskiy/projects/core/docs/OpenCode/commands/execute-spec.md
+  Linked: /Users/vekomarnitskiy/.config/opencode/commands/feedback.md -> /Users/vekomarnitskiy/projects/core/docs/OpenCode/commands/feedback.md
+  Linked: /Users/vekomarnitskiy/.config/opencode/commands/init.md -> /Users/vekomarnitskiy/projects/core/docs/OpenCode/commands/init.md
+  Linked: /Users/vekomarnitskiy/.config/opencode/commands/spec-lite.md -> /Users/vekomarnitskiy/projects/core/docs/OpenCode/commands/spec-lite.md
+  Linked: /Users/vekomarnitskiy/.config/opencode/commands/spec.md -> /Users/vekomarnitskiy/projects/core/docs/OpenCode/commands/spec.md
+  Linked: /Users/vekomarnitskiy/.config/opencode/commands/test.md -> /Users/vekomarnitskiy/projects/core/docs/OpenCode/commands/test.md
+
+
+Phase 3: Validating or creating config...
+=== OpenCode Handoff Config Validator ===
+
+Validating existing config: /Users/vekomarnitskiy/.config/opencode/opencode.json
+
+Errors:
+  [OK] provider.cloudru is present
+  [OK] provider.cloudru.options.baseURL is correct
+  [OK] provider.cloudru.options.apiKey uses {env:CLOUDRU_API_KEY}
+  [OK] CLOUDRU_API_KEY is set in the current environment
+  [OK] default_agent is 'General'
+  [OK] agent.explore.disable is true
+  [OK] agent.build.disable is true
+  [OK] agent.plan.disable is true
+
+Warnings:
+  [OK] agent model assignments are present
+
+Recommendations:
+  [INFO] kanban MCP is configured
+
+Summary: 0 error(s), 0 warning(s), 0 recommendation(s)
+
+Config validation passed.
+
+Installation complete.
+Managed symlinks recorded in: /Users/vekomarnitskiy/.config/opencode/.opencode-handoff-state.json
+To update, pull changes in the bundle and re-run this script.
+[2026-07-29T10:09:01Z] refresh triggered by _opencode-refresh.sh on branch feat/oc-commands @ 189aa7f (target: /Users/vekomarnitskiy/.config/opencode)
+=== OpenCode Handoff Installer ===
+Bundle: /Users/vekomarnitskiy/projects/core/docs/OpenCode
+Target: /Users/vekomarnitskiy/.config/opencode
+
+Phase 1: Unlinking previously managed symlinks...
+  Unlinked: /Users/vekomarnitskiy/.config/opencode/skills/codegraph-impact-analysis
+  Unlinked: /Users/vekomarnitskiy/.config/opencode/skills/commit-readiness
+  Unlinked: /Users/vekomarnitskiy/.config/opencode/skills/complexity-review
+  Unlinked: /Users/vekomarnitskiy/.config/opencode/skills/contract-impact-audit
+  Unlinked: /Users/vekomarnitskiy/.config/opencode/skills/decision-log
+  Unlinked: /Users/vekomarnitskiy/.config/opencode/skills/delegation-context
+  Unlinked: /Users/vekomarnitskiy/.config/opencode/skills/design-brief
+  Unlinked: /Users/vekomarnitskiy/.config/opencode/skills/edge-case-harvest
+  Unlinked: /Users/vekomarnitskiy/.config/opencode/skills/execution-plan
+  Unlinked: /Users/vekomarnitskiy/.config/opencode/skills/feature-interrogation
+  Unlinked: /Users/vekomarnitskiy/.config/opencode/skills/find-docs
+  Unlinked: /Users/vekomarnitskiy/.config/opencode/skills/git-commit
+  Unlinked: /Users/vekomarnitskiy/.config/opencode/skills/implementation
+  Unlinked: /Users/vekomarnitskiy/.config/opencode/skills/kanban-discipline
+  Unlinked: /Users/vekomarnitskiy/.config/opencode/skills/non-functional-probe
+  Unlinked: /Users/vekomarnitskiy/.config/opencode/skills/orchestration
+  Unlinked: /Users/vekomarnitskiy/.config/opencode/skills/project-init
+  Unlinked: /Users/vekomarnitskiy/.config/opencode/skills/project-rules-check
+  Unlinked: /Users/vekomarnitskiy/.config/opencode/skills/replan-on-surprise
+  Unlinked: /Users/vekomarnitskiy/.config/opencode/skills/repo-reconnaissance
+  Unlinked: /Users/vekomarnitskiy/.config/opencode/skills/review
+  Unlinked: /Users/vekomarnitskiy/.config/opencode/skills/review-against-plan
+  Unlinked: /Users/vekomarnitskiy/.config/opencode/skills/spec-discovery
+  Unlinked: /Users/vekomarnitskiy/.config/opencode/skills/spec-synthesis
+  Unlinked: /Users/vekomarnitskiy/.config/opencode/skills/task-workspace
+  Unlinked: /Users/vekomarnitskiy/.config/opencode/skills/testing-python
+  Unlinked: /Users/vekomarnitskiy/.config/opencode/skills/traceability-check
+  Unlinked: /Users/vekomarnitskiy/.config/opencode/skills/verification
+  Unlinked: /Users/vekomarnitskiy/.config/opencode/skills/verification-gate
+  Unlinked: /Users/vekomarnitskiy/.config/opencode/skills/workflow-gates
+  Unlinked: /Users/vekomarnitskiy/.config/opencode/plugins/project-rules-freshness.ts
+  Unlinked: /Users/vekomarnitskiy/.config/opencode/plugins/rtk.ts
+  Unlinked: /Users/vekomarnitskiy/.config/opencode/agents/primary/dev-orchestrator.md
+  Unlinked: /Users/vekomarnitskiy/.config/opencode/agents/primary/fast-spec-analyst.md
+  Unlinked: /Users/vekomarnitskiy/.config/opencode/agents/primary/full-spec-analyst.md
+  Unlinked: /Users/vekomarnitskiy/.config/opencode/agents/primary/general.md
+  Unlinked: /Users/vekomarnitskiy/.config/opencode/agents/primary/project-analyst.md
+  Unlinked: /Users/vekomarnitskiy/.config/opencode/agents/primary/tester.md
+  Unlinked: /Users/vekomarnitskiy/.config/opencode/agents/subagents/committer.md
+  Unlinked: /Users/vekomarnitskiy/.config/opencode/agents/subagents/contract-impact-auditor.md
+  Unlinked: /Users/vekomarnitskiy/.config/opencode/agents/subagents/design-planner.md
+  Unlinked: /Users/vekomarnitskiy/.config/opencode/agents/subagents/edge-case-harvester.md
+  Unlinked: /Users/vekomarnitskiy/.config/opencode/agents/subagents/feature-triager.md
+  Unlinked: /Users/vekomarnitskiy/.config/opencode/agents/subagents/graph-impact-analyst.md
+  Unlinked: /Users/vekomarnitskiy/.config/opencode/agents/subagents/implementer.md
+  Unlinked: /Users/vekomarnitskiy/.config/opencode/agents/subagents/non-functional-prober.md
+  Unlinked: /Users/vekomarnitskiy/.config/opencode/agents/subagents/project-init-runner.md
+  Unlinked: /Users/vekomarnitskiy/.config/opencode/agents/subagents/repo-scout.md
+  Unlinked: /Users/vekomarnitskiy/.config/opencode/agents/subagents/reviewer-against-plan.md
+  Unlinked: /Users/vekomarnitskiy/.config/opencode/agents/subagents/reviewer-complexity.md
+  Unlinked: /Users/vekomarnitskiy/.config/opencode/agents/subagents/reviewer-contracts.md
+  Unlinked: /Users/vekomarnitskiy/.config/opencode/agents/subagents/reviewer-deep.md
+  Unlinked: /Users/vekomarnitskiy/.config/opencode/agents/subagents/reviewer-performance.md
+  Unlinked: /Users/vekomarnitskiy/.config/opencode/agents/subagents/reviewer-security.md
+  Unlinked: /Users/vekomarnitskiy/.config/opencode/agents/subagents/reviewer-tests.md
+  Unlinked: /Users/vekomarnitskiy/.config/opencode/agents/subagents/test-planner.md
+  Unlinked: /Users/vekomarnitskiy/.config/opencode/agents/subagents/test-reviewer.md
+  Unlinked: /Users/vekomarnitskiy/.config/opencode/agents/subagents/test-writer.md
+  Unlinked: /Users/vekomarnitskiy/.config/opencode/agents/subagents/traceability-checker.md
+  Unlinked: /Users/vekomarnitskiy/.config/opencode/agents/subagents/verification-engineer.md
+  Unlinked: /Users/vekomarnitskiy/.config/opencode/commands/analyze.md
+  Unlinked: /Users/vekomarnitskiy/.config/opencode/commands/commit.md
+  Unlinked: /Users/vekomarnitskiy/.config/opencode/commands/execute-spec.md
+  Unlinked: /Users/vekomarnitskiy/.config/opencode/commands/feedback.md
+  Unlinked: /Users/vekomarnitskiy/.config/opencode/commands/init.md
+  Unlinked: /Users/vekomarnitskiy/.config/opencode/commands/spec-lite.md
+  Unlinked: /Users/vekomarnitskiy/.config/opencode/commands/spec.md
+  Unlinked: /Users/vekomarnitskiy/.config/opencode/commands/test.md
+
+Phase 2: Linking current bundle items...
+  Linked: /Users/vekomarnitskiy/.config/opencode/skills/codegraph-impact-analysis -> /Users/vekomarnitskiy/projects/core/docs/OpenCode/skills/codegraph-impact-analysis
+  Linked: /Users/vekomarnitskiy/.config/opencode/skills/commit-readiness -> /Users/vekomarnitskiy/projects/core/docs/OpenCode/skills/commit-readiness
+  Linked: /Users/vekomarnitskiy/.config/opencode/skills/complexity-review -> /Users/vekomarnitskiy/projects/core/docs/OpenCode/skills/complexity-review
+  Linked: /Users/vekomarnitskiy/.config/opencode/skills/contract-impact-audit -> /Users/vekomarnitskiy/projects/core/docs/OpenCode/skills/contract-impact-audit
+  Linked: /Users/vekomarnitskiy/.config/opencode/skills/decision-log -> /Users/vekomarnitskiy/projects/core/docs/OpenCode/skills/decision-log
+  Linked: /Users/vekomarnitskiy/.config/opencode/skills/delegation-context -> /Users/vekomarnitskiy/projects/core/docs/OpenCode/skills/delegation-context
+  Linked: /Users/vekomarnitskiy/.config/opencode/skills/design-brief -> /Users/vekomarnitskiy/projects/core/docs/OpenCode/skills/design-brief
+  Linked: /Users/vekomarnitskiy/.config/opencode/skills/edge-case-harvest -> /Users/vekomarnitskiy/projects/core/docs/OpenCode/skills/edge-case-harvest
+  Linked: /Users/vekomarnitskiy/.config/opencode/skills/execution-plan -> /Users/vekomarnitskiy/projects/core/docs/OpenCode/skills/execution-plan
+  Linked: /Users/vekomarnitskiy/.config/opencode/skills/feature-interrogation -> /Users/vekomarnitskiy/projects/core/docs/OpenCode/skills/feature-interrogation
+  Linked: /Users/vekomarnitskiy/.config/opencode/skills/find-docs -> /Users/vekomarnitskiy/projects/core/docs/OpenCode/skills/find-docs
+  Linked: /Users/vekomarnitskiy/.config/opencode/skills/git-commit -> /Users/vekomarnitskiy/projects/core/docs/OpenCode/skills/git-commit
+  Linked: /Users/vekomarnitskiy/.config/opencode/skills/implementation -> /Users/vekomarnitskiy/projects/core/docs/OpenCode/skills/implementation
+  Linked: /Users/vekomarnitskiy/.config/opencode/skills/kanban-discipline -> /Users/vekomarnitskiy/projects/core/docs/OpenCode/skills/kanban-discipline
+  Linked: /Users/vekomarnitskiy/.config/opencode/skills/non-functional-probe -> /Users/vekomarnitskiy/projects/core/docs/OpenCode/skills/non-functional-probe
+  Linked: /Users/vekomarnitskiy/.config/opencode/skills/orchestration -> /Users/vekomarnitskiy/projects/core/docs/OpenCode/skills/orchestration
+  Linked: /Users/vekomarnitskiy/.config/opencode/skills/project-init -> /Users/vekomarnitskiy/projects/core/docs/OpenCode/skills/project-init
+  Linked: /Users/vekomarnitskiy/.config/opencode/skills/project-rules-check -> /Users/vekomarnitskiy/projects/core/docs/OpenCode/skills/project-rules-check
+  Linked: /Users/vekomarnitskiy/.config/opencode/skills/replan-on-surprise -> /Users/vekomarnitskiy/projects/core/docs/OpenCode/skills/replan-on-surprise
+  Linked: /Users/vekomarnitskiy/.config/opencode/skills/repo-reconnaissance -> /Users/vekomarnitskiy/projects/core/docs/OpenCode/skills/repo-reconnaissance
+  Linked: /Users/vekomarnitskiy/.config/opencode/skills/review -> /Users/vekomarnitskiy/projects/core/docs/OpenCode/skills/review
+  Linked: /Users/vekomarnitskiy/.config/opencode/skills/review-against-plan -> /Users/vekomarnitskiy/projects/core/docs/OpenCode/skills/review-against-plan
+  Linked: /Users/vekomarnitskiy/.config/opencode/skills/spec-discovery -> /Users/vekomarnitskiy/projects/core/docs/OpenCode/skills/spec-discovery
+  Linked: /Users/vekomarnitskiy/.config/opencode/skills/spec-synthesis -> /Users/vekomarnitskiy/projects/core/docs/OpenCode/skills/spec-synthesis
+  Linked: /Users/vekomarnitskiy/.config/opencode/skills/task-workspace -> /Users/vekomarnitskiy/projects/core/docs/OpenCode/skills/task-workspace
+  Linked: /Users/vekomarnitskiy/.config/opencode/skills/testing-python -> /Users/vekomarnitskiy/projects/core/docs/OpenCode/skills/testing-python
+  Linked: /Users/vekomarnitskiy/.config/opencode/skills/traceability-check -> /Users/vekomarnitskiy/projects/core/docs/OpenCode/skills/traceability-check
+  Linked: /Users/vekomarnitskiy/.config/opencode/skills/verification -> /Users/vekomarnitskiy/projects/core/docs/OpenCode/skills/verification
+  Linked: /Users/vekomarnitskiy/.config/opencode/skills/verification-gate -> /Users/vekomarnitskiy/projects/core/docs/OpenCode/skills/verification-gate
+  Linked: /Users/vekomarnitskiy/.config/opencode/skills/workflow-gates -> /Users/vekomarnitskiy/projects/core/docs/OpenCode/skills/workflow-gates
+  Linked: /Users/vekomarnitskiy/.config/opencode/plugins/project-rules-freshness.ts -> /Users/vekomarnitskiy/projects/core/docs/OpenCode/plugins/project-rules-freshness.ts
+  Linked: /Users/vekomarnitskiy/.config/opencode/plugins/rtk.ts -> /Users/vekomarnitskiy/projects/core/docs/OpenCode/plugins/rtk.ts
+  Linked: /Users/vekomarnitskiy/.config/opencode/agents/primary/dev-orchestrator.md -> /Users/vekomarnitskiy/projects/core/docs/OpenCode/agents/primary/dev-orchestrator.md
+  Linked: /Users/vekomarnitskiy/.config/opencode/agents/primary/fast-spec-analyst.md -> /Users/vekomarnitskiy/projects/core/docs/OpenCode/agents/primary/fast-spec-analyst.md
+  Linked: /Users/vekomarnitskiy/.config/opencode/agents/primary/full-spec-analyst.md -> /Users/vekomarnitskiy/projects/core/docs/OpenCode/agents/primary/full-spec-analyst.md
+  Linked: /Users/vekomarnitskiy/.config/opencode/agents/primary/general.md -> /Users/vekomarnitskiy/projects/core/docs/OpenCode/agents/primary/general.md
+  Linked: /Users/vekomarnitskiy/.config/opencode/agents/primary/project-analyst.md -> /Users/vekomarnitskiy/projects/core/docs/OpenCode/agents/primary/project-analyst.md
+  Linked: /Users/vekomarnitskiy/.config/opencode/agents/primary/tester.md -> /Users/vekomarnitskiy/projects/core/docs/OpenCode/agents/primary/tester.md
+  Linked: /Users/vekomarnitskiy/.config/opencode/agents/subagents/committer.md -> /Users/vekomarnitskiy/projects/core/docs/OpenCode/agents/subagents/committer.md
+  Linked: /Users/vekomarnitskiy/.config/opencode/agents/subagents/contract-impact-auditor.md -> /Users/vekomarnitskiy/projects/core/docs/OpenCode/agents/subagents/contract-impact-auditor.md
+  Linked: /Users/vekomarnitskiy/.config/opencode/agents/subagents/design-planner.md -> /Users/vekomarnitskiy/projects/core/docs/OpenCode/agents/subagents/design-planner.md
+  Linked: /Users/vekomarnitskiy/.config/opencode/agents/subagents/edge-case-harvester.md -> /Users/vekomarnitskiy/projects/core/docs/OpenCode/agents/subagents/edge-case-harvester.md
+  Linked: /Users/vekomarnitskiy/.config/opencode/agents/subagents/feature-triager.md -> /Users/vekomarnitskiy/projects/core/docs/OpenCode/agents/subagents/feature-triager.md
+  Linked: /Users/vekomarnitskiy/.config/opencode/agents/subagents/graph-impact-analyst.md -> /Users/vekomarnitskiy/projects/core/docs/OpenCode/agents/subagents/graph-impact-analyst.md
+  Linked: /Users/vekomarnitskiy/.config/opencode/agents/subagents/implementer.md -> /Users/vekomarnitskiy/projects/core/docs/OpenCode/agents/subagents/implementer.md
+  Linked: /Users/vekomarnitskiy/.config/opencode/agents/subagents/non-functional-prober.md -> /Users/vekomarnitskiy/projects/core/docs/OpenCode/agents/subagents/non-functional-prober.md
+  Linked: /Users/vekomarnitskiy/.config/opencode/agents/subagents/project-init-runner.md -> /Users/vekomarnitskiy/projects/core/docs/OpenCode/agents/subagents/project-init-runner.md
+  Linked: /Users/vekomarnitskiy/.config/opencode/agents/subagents/repo-scout.md -> /Users/vekomarnitskiy/projects/core/docs/OpenCode/agents/subagents/repo-scout.md
+  Linked: /Users/vekomarnitskiy/.config/opencode/agents/subagents/reviewer-against-plan.md -> /Users/vekomarnitskiy/projects/core/docs/OpenCode/agents/subagents/reviewer-against-plan.md
+  Linked: /Users/vekomarnitskiy/.config/opencode/agents/subagents/reviewer-complexity.md -> /Users/vekomarnitskiy/projects/core/docs/OpenCode/agents/subagents/reviewer-complexity.md
+  Linked: /Users/vekomarnitskiy/.config/opencode/agents/subagents/reviewer-contracts.md -> /Users/vekomarnitskiy/projects/core/docs/OpenCode/agents/subagents/reviewer-contracts.md
+  Linked: /Users/vekomarnitskiy/.config/opencode/agents/subagents/reviewer-deep.md -> /Users/vekomarnitskiy/projects/core/docs/OpenCode/agents/subagents/reviewer-deep.md
+  Linked: /Users/vekomarnitskiy/.config/opencode/agents/subagents/reviewer-performance.md -> /Users/vekomarnitskiy/projects/core/docs/OpenCode/agents/subagents/reviewer-performance.md
+  Linked: /Users/vekomarnitskiy/.config/opencode/agents/subagents/reviewer-security.md -> /Users/vekomarnitskiy/projects/core/docs/OpenCode/agents/subagents/reviewer-security.md
+  Linked: /Users/vekomarnitskiy/.config/opencode/agents/subagents/reviewer-tests.md -> /Users/vekomarnitskiy/projects/core/docs/OpenCode/agents/subagents/reviewer-tests.md
+  Linked: /Users/vekomarnitskiy/.config/opencode/agents/subagents/test-planner.md -> /Users/vekomarnitskiy/projects/core/docs/OpenCode/agents/subagents/test-planner.md
+  Linked: /Users/vekomarnitskiy/.config/opencode/agents/subagents/test-reviewer.md -> /Users/vekomarnitskiy/projects/core/docs/OpenCode/agents/subagents/test-reviewer.md
+  Linked: /Users/vekomarnitskiy/.config/opencode/agents/subagents/test-writer.md -> /Users/vekomarnitskiy/projects/core/docs/OpenCode/agents/subagents/test-writer.md
+  Linked: /Users/vekomarnitskiy/.config/opencode/agents/subagents/traceability-checker.md -> /Users/vekomarnitskiy/projects/core/docs/OpenCode/agents/subagents/traceability-checker.md
+  Linked: /Users/vekomarnitskiy/.config/opencode/agents/subagents/verification-engineer.md -> /Users/vekomarnitskiy/projects/core/docs/OpenCode/agents/subagents/verification-engineer.md
+  Linked: /Users/vekomarnitskiy/.config/opencode/commands/analyze.md -> /Users/vekomarnitskiy/projects/core/docs/OpenCode/commands/analyze.md
+  Linked: /Users/vekomarnitskiy/.config/opencode/commands/commit.md -> /Users/vekomarnitskiy/projects/core/docs/OpenCode/commands/commit.md
+  Linked: /Users/vekomarnitskiy/.config/opencode/commands/execute-spec.md -> /Users/vekomarnitskiy/projects/core/docs/OpenCode/commands/execute-spec.md
+  Linked: /Users/vekomarnitskiy/.config/opencode/commands/feedback.md -> /Users/vekomarnitskiy/projects/core/docs/OpenCode/commands/feedback.md
+  Linked: /Users/vekomarnitskiy/.config/opencode/commands/init.md -> /Users/vekomarnitskiy/projects/core/docs/OpenCode/commands/init.md
+  Linked: /Users/vekomarnitskiy/.config/opencode/commands/spec-lite.md -> /Users/vekomarnitskiy/projects/core/docs/OpenCode/commands/spec-lite.md
+  Linked: /Users/vekomarnitskiy/.config/opencode/commands/spec.md -> /Users/vekomarnitskiy/projects/core/docs/OpenCode/commands/spec.md
+  Linked: /Users/vekomarnitskiy/.config/opencode/commands/test.md -> /Users/vekomarnitskiy/projects/core/docs/OpenCode/commands/test.md
+
+
+Phase 3: Validating or creating config...
+=== OpenCode Handoff Config Validator ===
+
+Validating existing config: /Users/vekomarnitskiy/.config/opencode/opencode.json
+
+Errors:
+  [OK] provider.cloudru is present
+  [OK] provider.cloudru.options.baseURL is correct
+  [OK] provider.cloudru.options.apiKey uses {env:CLOUDRU_API_KEY}
+  [OK] CLOUDRU_API_KEY is set in the current environment
+  [OK] default_agent is 'General'
+  [OK] agent.explore.disable is true
+  [OK] agent.build.disable is true
+  [OK] agent.plan.disable is true
+
+Warnings:
+  [OK] agent model assignments are present
+
+Recommendations:
+  [INFO] kanban MCP is configured
+
+Summary: 0 error(s), 0 warning(s), 0 recommendation(s)
+
+Config validation passed.
+
+Installation complete.
+Managed symlinks recorded in: /Users/vekomarnitskiy/.config/opencode/.opencode-handoff-state.json
+To update, pull changes in the bundle and re-run this script.

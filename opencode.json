@@ -142,8 +142,7 @@
       "hidden": true,
       "model": "opencode-go/deepseek-v4-flash",
       "tools": {
-        "kanban_*": false,
-        "CodeGraphContext_*": false
+        "kanban_*": false
       },
       "permission": {
         "task": "deny"
@@ -151,10 +150,9 @@
     },
     "feature-triager": {
       "hidden": true,
-      "model": "cloudru/moonshotai/Kimi-K2.6",
+      "model": "opencode-go/kimi-k2.6",
       "tools": {
-        "kanban_*": true,
-        "CodeGraphContext_*": false
+        "kanban_*": true
       },
       "permission": {
         "task": "deny"
@@ -172,10 +170,9 @@
     },
     "design-planner": {
       "hidden": true,
-      "model": "cloudru/moonshotai/Kimi-K2.6",
+      "model": "opencode-go/qwen3.7-plus",
       "tools": {
-        "kanban_*": true,
-        "CodeGraphContext_*": false
+        "kanban_*": true
       },
       "permission": {
         "task": "deny"
@@ -183,10 +180,9 @@
     },
     "edge-case-harvester": {
       "hidden": true,
-      "model": "opencode-go/qwen3.6-plus",
+      "model": "opencode-go/qwen3.7-plus",
       "tools": {
-        "kanban_*": false,
-        "CodeGraphContext_*": false
+        "kanban_*": false
       },
       "permission": {
         "task": "deny"
@@ -194,10 +190,9 @@
     },
     "contract-impact-auditor": {
       "hidden": true,
-      "model": "cloudru/moonshotai/Kimi-K2.6",
+      "model": "opencode-go/qwen3.7-plus",
       "tools": {
-        "kanban_*": false,
-        "CodeGraphContext_*": false
+        "kanban_*": false
       },
       "permission": {
         "task": "deny"
@@ -207,8 +202,7 @@
       "hidden": true,
       "model": "opencode-go/qwen3.7-plus",
       "tools": {
-        "kanban_*": false,
-        "CodeGraphContext_*": false
+        "kanban_*": false
       },
       "permission": {
         "task": "deny"
@@ -216,10 +210,9 @@
     },
     "traceability-checker": {
       "hidden": true,
-      "model": "cloudru/moonshotai/Kimi-K2.6",
+      "model": "opencode-go/minimax-m3",
       "tools": {
-        "kanban_*": false,
-        "CodeGraphContext_*": false
+        "kanban_*": false
       },
       "permission": {
         "task": "deny"
@@ -229,8 +222,7 @@
       "hidden": true,
       "model": "opencode-go/kimi-k2.7-code",
       "tools": {
-        "kanban_*": true,
-        "CodeGraphContext_*": false
+        "kanban_*": true
       },
       "permission": {
         "task": "deny"
@@ -240,8 +232,7 @@
       "hidden": true,
       "model": "opencode-go/deepseek-v4-pro",
       "tools": {
-        "kanban_*": true,
-        "CodeGraphContext_*": false
+        "kanban_*": true
       },
       "permission": {
         "task": "deny"
@@ -251,8 +242,7 @@
       "hidden": true,
       "model": "opencode-go/deepseek-v4-pro",
       "tools": {
-        "kanban_*": false,
-        "CodeGraphContext_*": false
+        "kanban_*": false
       },
       "permission": {
         "task": "deny"
@@ -260,10 +250,9 @@
     },
     "reviewer-security": {
       "hidden": true,
-      "model": "cloudru/moonshotai/Kimi-K2.6",
+      "model": "opencode-go/kimi-k3",
       "tools": {
-        "kanban_*": false,
-        "CodeGraphContext_*": false
+        "kanban_*": false
       },
       "permission": {
         "task": "deny"
@@ -273,8 +262,7 @@
       "hidden": true,
       "model": "opencode-go/qwen3.7-plus",
       "tools": {
-        "kanban_*": false,
-        "CodeGraphContext_*": false
+        "kanban_*": false
       },
       "permission": {
         "task": "deny"
@@ -282,10 +270,9 @@
     },
     "reviewer-contracts": {
       "hidden": true,
-      "model": "cloudru/moonshotai/Kimi-K2.6",
+      "model": "opencode-go/deepseek-v4-pro",
       "tools": {
-        "kanban_*": false,
-        "CodeGraphContext_*": false
+        "kanban_*": false
       },
       "permission": {
         "task": "deny"
@@ -293,10 +280,9 @@
     },
     "reviewer-tests": {
       "hidden": true,
-      "model": "cloudru/moonshotai/Kimi-K2.6",
+      "model": "opencode-go/deepseek-v4-pro",
       "tools": {
-        "kanban_*": false,
-        "CodeGraphContext_*": false
+        "kanban_*": false
       },
       "permission": {
         "task": "deny"
@@ -304,10 +290,9 @@
     },
     "reviewer-performance": {
       "hidden": true,
-      "model": "cloudru/moonshotai/Kimi-K2.6",
+      "model": "openai/gpt-5.6-terra",
       "tools": {
-        "kanban_*": false,
-        "CodeGraphContext_*": false
+        "kanban_*": false
       },
       "permission": {
         "task": "deny"
@@ -315,10 +300,9 @@
     },
     "reviewer-complexity": {
       "hidden": true,
-      "model": "opencode-go/qwen3.7-max",
+      "model": "openai/gpt-5.6-terra",
       "tools": {
-        "kanban_*": false,
-        "CodeGraphContext_*": false
+        "kanban_*": false
       },
       "permission": {
         "task": "deny"
@@ -328,8 +312,7 @@
       "hidden": true,
       "model": "opencode-go/deepseek-v4-flash",
       "tools": {
-        "kanban_*": false,
-        "CodeGraphContext_*": false
+        "kanban_*": false
       },
       "permission": {
         "task": "deny"
@@ -342,7 +325,7 @@
       }
     },
     "test-reviewer": {
-      "model": "cloudru/moonshotai/Kimi-K2.6",
+      "model": "openai/gpt-5.6-terra",
       "permission": {
         "task": "deny"
       }
@@ -361,10 +344,9 @@
     },
     "project-analyst": {
       "hidden": false,
-      "model": "cloudru/moonshotai/Kimi-K2.6",
+      "model": "openai/gpt-5.6-terra",
       "tools": {
-        "kanban_*": false,
-        "CodeGraphContext_*": false
+        "kanban_*": false
       }
     }
   }

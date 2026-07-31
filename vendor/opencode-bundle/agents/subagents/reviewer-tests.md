@@ -27,8 +27,6 @@ permission:
     "*": "deny"
     "review": "allow"
     "testing-python": "allow"
-metadata:
-  version: 1.0.0
 ---
 
 # Reviewer Tests
