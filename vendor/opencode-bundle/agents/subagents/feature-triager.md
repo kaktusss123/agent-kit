@@ -22,8 +22,6 @@ permission:
     "*": "deny"
     "feature-interrogation": "allow"
     "kanban-discipline": "allow"
-metadata:
-  version: 2.0.0
 ---
 
 # Role

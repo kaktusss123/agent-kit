@@ -23,8 +23,6 @@ permission:
     "design-brief": "allow"
     "execution-plan": "allow"
     "kanban-discipline": "allow"
-metadata:
-  version: 2.0.0
 ---
 
 # Role

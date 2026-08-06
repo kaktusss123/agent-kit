@@ -135,12 +135,15 @@
     "plan": {
       "disable": true
     },
+
     "project-init-runner": {
-      "model": "opencode-go/deepseek-v4-flash"
+      "model": "opencode-go/deepseek-v4-flash", // альт.: openai/gpt-5.6-luna при сложной генерации AGENTS.md
+      "reasoningEffort": "max"
     },
+
     "repo-scout": {
       "hidden": true,
-      "model": "opencode-go/deepseek-v4-flash",
+      "model": "opencode-go/deepseek-v4-flash", // альт.: opencode-go/deepseek-v4-pro для особенно большого/запутанного репозитория
       "tools": {
         "kanban_*": false
       },
@@ -148,9 +151,10 @@
         "task": "deny"
       }
     },
+
     "feature-triager": {
       "hidden": true,
-      "model": "opencode-go/kimi-k2.6",
+      "model": "openai/gpt-5.6-luna", // альт.: opencode-go/minimax-m3; эскалация: openai/gpt-5.6-terra
       "tools": {
         "kanban_*": true
       },
@@ -158,19 +162,19 @@
         "task": "deny"
       }
     },
+
     "graph-impact-analyst": {
       "hidden": true,
-      "model": "opencode-go/minimax-m2.7",
-      "tools": {
-        "CodeGraphContext_*": false
-      },
+      "model": "opencode-go/deepseek-v4-flash", // еще вариант: deepseek-v4-pro; альт.: opencode-go/glm-5.2
+      "reasoningEffort": "max",
       "permission": {
         "task": "deny"
       }
     },
+
     "design-planner": {
       "hidden": true,
-      "model": "opencode-go/qwen3.7-plus",
+      "model": "openai/gpt-5.6-luna", // альт.: openai/gpt-5.6-terra; канарейка: opencode-go/qwen3.8-max
       "tools": {
         "kanban_*": true
       },
@@ -178,9 +182,11 @@
         "task": "deny"
       }
     },
+
     "edge-case-harvester": {
       "hidden": true,
-      "model": "opencode-go/qwen3.7-plus",
+      // "model": "opencode-go/deepseek-v4-flash", // альт.: opencode-go/minimax-m3 при склонности Flash додумывать поведение
+      "model": "cloudru/MiniMaxAI/MiniMax-M3",
       "tools": {
         "kanban_*": false
       },
@@ -188,9 +194,10 @@
         "task": "deny"
       }
     },
+
     "contract-impact-auditor": {
       "hidden": true,
-      "model": "opencode-go/qwen3.7-plus",
+      "model": "openai/gpt-5.6-luna", // альт.: opencode-go/deepseek-v4-pro; эскалация: openai/gpt-5.6-terra
       "tools": {
         "kanban_*": false
       },
@@ -198,9 +205,10 @@
         "task": "deny"
       }
     },
+
     "non-functional-prober": {
       "hidden": true,
-      "model": "opencode-go/qwen3.7-plus",
+      "model": "opencode-go/minimax-m3", // альт.: opencode-go/deepseek-v4-pro; эскалация: openai/gpt-5.6-terra
       "tools": {
         "kanban_*": false
       },
@@ -208,9 +216,10 @@
         "task": "deny"
       }
     },
+
     "traceability-checker": {
       "hidden": true,
-      "model": "opencode-go/minimax-m3",
+      "model": "openai/gpt-5.6-terra", // эконом-вариант: opencode-go/minimax-m3; альт.: opencode-go/kimi-k3
       "tools": {
         "kanban_*": false
       },
@@ -218,9 +227,10 @@
         "task": "deny"
       }
     },
+
     "implementer": {
       "hidden": true,
-      "model": "opencode-go/kimi-k2.7-code",
+      "model": "opencode-go/deepseek-v4-flash", // канарейка: xai/grok-4.5; дешёвые bounded-задачи: deepseek-v4-flash; эскалация: gpt-5.6-terra
       "tools": {
         "kanban_*": true
       },
@@ -228,9 +238,10 @@
         "task": "deny"
       }
     },
+
     "verification-engineer": {
       "hidden": true,
-      "model": "opencode-go/deepseek-v4-pro",
+      "model": "opencode-go/deepseek-v4-flash", // еще вариант: deepseek-v4-pro; альт.: openai/gpt-5.6-luna
       "tools": {
         "kanban_*": true
       },
@@ -238,9 +249,10 @@
         "task": "deny"
       }
     },
+
     "reviewer-against-plan": {
       "hidden": true,
-      "model": "opencode-go/deepseek-v4-pro",
+      "model": "openai/gpt-5.6-terra", // альт.: opencode-go/kimi-k3; эконом-вариант: opencode-go/deepseek-v4-pro
       "tools": {
         "kanban_*": false
       },
@@ -248,9 +260,11 @@
         "task": "deny"
       }
     },
+
     "reviewer-security": {
       "hidden": true,
-      "model": "opencode-go/kimi-k3",
+      "model": "openai/gpt-5.6-terra", // эскалация: openai/gpt-5.6-sol или opencode-go/kimi-k3
+      "reasoningEffort": "high",
       "tools": {
         "kanban_*": false
       },
@@ -258,9 +272,11 @@
         "task": "deny"
       }
     },
+
     "reviewer-deep": {
       "hidden": true,
-      "model": "opencode-go/qwen3.7-plus",
+      "model": "openai/gpt-5.6-terra", // альт.: opencode-go/kimi-k3; канарейка: opencode-go/qwen3.8-max; эскалация: gpt-5.6-sol
+      "reasoningEffort": "high",
       "tools": {
         "kanban_*": false
       },
@@ -268,9 +284,10 @@
         "task": "deny"
       }
     },
+
     "reviewer-contracts": {
       "hidden": true,
-      "model": "opencode-go/deepseek-v4-pro",
+      "model": "opencode-go/deepseek-v4-pro", // дешёвый вариант: deepseek-v4-flash; эскалация: openai/gpt-5.6-terra
       "tools": {
         "kanban_*": false
       },
@@ -278,9 +295,10 @@
         "task": "deny"
       }
     },
+
     "reviewer-tests": {
       "hidden": true,
-      "model": "opencode-go/deepseek-v4-pro",
+      "model": "opencode-go/deepseek-v4-pro", // дешёвый вариант: deepseek-v4-flash; эскалация: openai/gpt-5.6-terra
       "tools": {
         "kanban_*": false
       },
@@ -288,9 +306,10 @@
         "task": "deny"
       }
     },
+
     "reviewer-performance": {
       "hidden": true,
-      "model": "openai/gpt-5.6-terra",
+      "model": "openai/gpt-5.6-terra", // дешёвый вариант: deepseek-v4-flash; эскалация для critical hot path: gpt-5.6-terra
       "tools": {
         "kanban_*": false
       },
@@ -298,9 +317,10 @@
         "task": "deny"
       }
     },
+
     "reviewer-complexity": {
       "hidden": true,
-      "model": "openai/gpt-5.6-terra",
+      "model": "openai/gpt-5.6-luna", // дешёвый вариант: deepseek-v4-flash; эскалация: openai/gpt-5.6-terra
       "tools": {
         "kanban_*": false
       },
@@ -308,9 +328,10 @@
         "task": "deny"
       }
     },
+
     "committer": {
       "hidden": true,
-      "model": "opencode-go/deepseek-v4-flash",
+      "model": "opencode-go/deepseek-v4-flash", // альт.: openai/gpt-5.6-luna, если Flash нарушает процедуру
       "tools": {
         "kanban_*": false
       },
@@ -318,33 +339,95 @@
         "task": "deny"
       }
     },
+
     "test-planner": {
-      "model": "opencode-go/deepseek-v4-pro",
+      "model": "opencode-go/deepseek-v4-pro", // дешёвый вариант: deepseek-v4-flash; альт.: openai/gpt-5.6-luna
       "permission": {
         "task": "deny"
       }
     },
+
     "test-reviewer": {
-      "model": "openai/gpt-5.6-terra",
+      "model": "openai/gpt-5.6-terra", // эконом-вариант: deepseek-v4-pro; эскалация: opencode-go/kimi-k3
       "permission": {
         "task": "deny"
       }
     },
+
     "test-writer": {
-      "model": "opencode-go/deepseek-v4-flash",
+      "model": "opencode-go/kimi-k2.7-code", // канарейка: xai/grok-4.5; дешёвые unit-тесты: deepseek-v4-flash
       "permission": {
         "task": "deny"
       }
     },
+
     "dev-orchestrator": {
-      "model": "opencode-go/kimi-k3",
+      "model": "openai/gpt-5.6-luna", // альт.: openai/gpt-5.6-luna; эскалация: opencode-go/kimi-k3
+      "reasoningEffort": "high",
       "tools": {
         "kanban_*": true
       }
     },
+
+    "FastSpecAnalyst": {
+      "model": "openai/gpt-5.6-luna", // альт.: opencode-go/minimax-m3; эскалация: openai/gpt-5.6-terra
+      "tools": {
+        "kanban_*": true
+      }
+    },
+
+    "FullSpecAnalyst": {
+      "model": "openai/gpt-5.6-terra", // альт.: opencode-go/kimi-k3; эконом-вариант: opencode-go/glm-5.2
+      "reasoningEffort": "high",
+      "tools": {
+        "kanban_*": true
+      }
+    },
+
+    "General": {
+      "model": "opencode-go/deepseek-v4-flash", // альт.: openai/gpt-5.6-luna; сложный код: kimi-k2.7-code или xai/grok-4.5
+      "reasoningEffort": "max",
+      "tools": {
+        "kanban_*": true
+      }
+    },
+
     "project-analyst": {
       "hidden": false,
-      "model": "openai/gpt-5.6-terra",
+      "model": "openai/gpt-5.6-terra", // эконом-вариант: opencode-go/glm-5.2; массовое чтение: deepseek-v4-flash
+      "reasoningEffort": "medium",
+      "tools": {
+        "kanban_*": false
+      }
+    },
+
+    "security-surface-mapper": {
+      "hidden": true,
+      "model": "opencode-go/deepseek-v4-flash", // альт.: opencode-go/deepseek-v4-pro для большого/запутанного репозитория
+      "tools": {
+        "kanban_*": false
+      },
+      "permission": {
+        "task": "deny"
+      }
+    },
+
+    "security-scanner": {
+      "hidden": true,
+      "model": "cloudru/MiniMaxAI/MiniMax-M3", // альт.: opencode-go/kimi-k3; эскалация critical-area: openai/gpt-5.6-terra
+      // "model": "openrouter/z-ai/glm-5.2", // альт.: opencode-go/kimi-k3; эскалация critical-area: openai/gpt-5.6-terra
+      "tools": {
+        "kanban_*": false
+      },
+      "permission": {
+        "task": "deny"
+      }
+    },
+
+    "security-scan-orchestrator": {
+      "model": "openrouter/z-ai/glm-5.2", // альт.: openai/gpt-5.6-luna; эскалация для очень больших репозиториев: opencode-go/kimi-k3
+      // "model": "openrouter/z-ai/glm-5.2", // альт.: openai/gpt-5.6-luna; эскалация для очень больших репозиториев: opencode-go/kimi-k3
+      "reasoningEffort": "high",
       "tools": {
         "kanban_*": false
       }
