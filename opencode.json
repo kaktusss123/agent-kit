@@ -43,6 +43,8 @@
     },
     "skill": {
       "*": "allow",
+      "python-codestyle": "allow",
+      "python-knowledge": "allow",
       "workflow-gates": "deny",
       "kanban-discipline": "deny",
       "codegraph-impact-analysis": "deny",
@@ -137,13 +139,12 @@
     },
 
     "project-init-runner": {
-      "model": "opencode-go/deepseek-v4-flash", // альт.: openai/gpt-5.6-luna при сложной генерации AGENTS.md
-      "reasoningEffort": "max"
+      "model": "{env:OC_MODEL_PROTOCOL}"
     },
 
     "repo-scout": {
       "hidden": true,
-      "model": "opencode-go/deepseek-v4-flash", // альт.: opencode-go/deepseek-v4-pro для особенно большого/запутанного репозитория
+      "model": "{env:OC_MODEL_RESEARCH}",
       "tools": {
         "kanban_*": false
       },
@@ -154,7 +155,7 @@
 
     "feature-triager": {
       "hidden": true,
-      "model": "openai/gpt-5.6-luna", // альт.: opencode-go/minimax-m3; эскалация: openai/gpt-5.6-terra
+      "model": "{env:OC_MODEL_ANALYSIS}",
       "tools": {
         "kanban_*": true
       },
@@ -165,8 +166,7 @@
 
     "graph-impact-analyst": {
       "hidden": true,
-      "model": "opencode-go/deepseek-v4-flash", // еще вариант: deepseek-v4-pro; альт.: opencode-go/glm-5.2
-      "reasoningEffort": "max",
+      "model": "{env:OC_MODEL_RESEARCH}",
       "permission": {
         "task": "deny"
       }
@@ -174,7 +174,7 @@
 
     "design-planner": {
       "hidden": true,
-      "model": "openai/gpt-5.6-luna", // альт.: openai/gpt-5.6-terra; канарейка: opencode-go/qwen3.8-max
+      "model": "{env:OC_MODEL_DESIGN}",
       "tools": {
         "kanban_*": true
       },
@@ -185,8 +185,7 @@
 
     "edge-case-harvester": {
       "hidden": true,
-      // "model": "opencode-go/deepseek-v4-flash", // альт.: opencode-go/minimax-m3 при склонности Flash додумывать поведение
-      "model": "cloudru/MiniMaxAI/MiniMax-M3",
+      "model": "{env:OC_MODEL_ANALYSIS}",
       "tools": {
         "kanban_*": false
       },
@@ -197,7 +196,7 @@
 
     "contract-impact-auditor": {
       "hidden": true,
-      "model": "openai/gpt-5.6-luna", // альт.: opencode-go/deepseek-v4-pro; эскалация: openai/gpt-5.6-terra
+      "model": "{env:OC_MODEL_ANALYSIS}",
       "tools": {
         "kanban_*": false
       },
@@ -208,7 +207,7 @@
 
     "non-functional-prober": {
       "hidden": true,
-      "model": "opencode-go/minimax-m3", // альт.: opencode-go/deepseek-v4-pro; эскалация: openai/gpt-5.6-terra
+      "model": "{env:OC_MODEL_ANALYSIS}",
       "tools": {
         "kanban_*": false
       },
@@ -219,7 +218,7 @@
 
     "traceability-checker": {
       "hidden": true,
-      "model": "openai/gpt-5.6-terra", // эконом-вариант: opencode-go/minimax-m3; альт.: opencode-go/kimi-k3
+      "model": "{env:OC_MODEL_REVIEW}",
       "tools": {
         "kanban_*": false
       },
@@ -230,7 +229,7 @@
 
     "implementer": {
       "hidden": true,
-      "model": "opencode-go/deepseek-v4-flash", // канарейка: xai/grok-4.5; дешёвые bounded-задачи: deepseek-v4-flash; эскалация: gpt-5.6-terra
+      "model": "{env:OC_MODEL_CODE}",
       "tools": {
         "kanban_*": true
       },
@@ -241,7 +240,7 @@
 
     "verification-engineer": {
       "hidden": true,
-      "model": "opencode-go/deepseek-v4-flash", // еще вариант: deepseek-v4-pro; альт.: openai/gpt-5.6-luna
+      "model": "{env:OC_MODEL_REVIEW}",
       "tools": {
         "kanban_*": true
       },
@@ -252,7 +251,7 @@
 
     "reviewer-against-plan": {
       "hidden": true,
-      "model": "openai/gpt-5.6-terra", // альт.: opencode-go/kimi-k3; эконом-вариант: opencode-go/deepseek-v4-pro
+      "model": "{env:OC_MODEL_REVIEW}",
       "tools": {
         "kanban_*": false
       },
@@ -263,8 +262,7 @@
 
     "reviewer-security": {
       "hidden": true,
-      "model": "openai/gpt-5.6-terra", // эскалация: openai/gpt-5.6-sol или opencode-go/kimi-k3
-      "reasoningEffort": "high",
+      "model": "{env:OC_MODEL_SECURITY}",
       "tools": {
         "kanban_*": false
       },
@@ -275,8 +273,7 @@
 
     "reviewer-deep": {
       "hidden": true,
-      "model": "openai/gpt-5.6-terra", // альт.: opencode-go/kimi-k3; канарейка: opencode-go/qwen3.8-max; эскалация: gpt-5.6-sol
-      "reasoningEffort": "high",
+      "model": "{env:OC_MODEL_REVIEW}",
       "tools": {
         "kanban_*": false
       },
@@ -287,7 +284,7 @@
 
     "reviewer-contracts": {
       "hidden": true,
-      "model": "opencode-go/deepseek-v4-pro", // дешёвый вариант: deepseek-v4-flash; эскалация: openai/gpt-5.6-terra
+      "model": "{env:OC_MODEL_REVIEW}",
       "tools": {
         "kanban_*": false
       },
@@ -298,7 +295,7 @@
 
     "reviewer-tests": {
       "hidden": true,
-      "model": "opencode-go/deepseek-v4-pro", // дешёвый вариант: deepseek-v4-flash; эскалация: openai/gpt-5.6-terra
+      "model": "{env:OC_MODEL_REVIEW}",
       "tools": {
         "kanban_*": false
       },
@@ -309,7 +306,7 @@
 
     "reviewer-performance": {
       "hidden": true,
-      "model": "openai/gpt-5.6-terra", // дешёвый вариант: deepseek-v4-flash; эскалация для critical hot path: gpt-5.6-terra
+      "model": "{env:OC_MODEL_REVIEW}",
       "tools": {
         "kanban_*": false
       },
@@ -320,7 +317,7 @@
 
     "reviewer-complexity": {
       "hidden": true,
-      "model": "openai/gpt-5.6-luna", // дешёвый вариант: deepseek-v4-flash; эскалация: openai/gpt-5.6-terra
+      "model": "{env:OC_MODEL_REVIEW}",
       "tools": {
         "kanban_*": false
       },
@@ -331,7 +328,7 @@
 
     "committer": {
       "hidden": true,
-      "model": "opencode-go/deepseek-v4-flash", // альт.: openai/gpt-5.6-luna, если Flash нарушает процедуру
+      "model": "{env:OC_MODEL_PROTOCOL}",
       "tools": {
         "kanban_*": false
       },
@@ -341,52 +338,49 @@
     },
 
     "test-planner": {
-      "model": "opencode-go/deepseek-v4-pro", // дешёвый вариант: deepseek-v4-flash; альт.: openai/gpt-5.6-luna
+      "model": "{env:OC_MODEL_TEST}",
       "permission": {
         "task": "deny"
       }
     },
 
     "test-reviewer": {
-      "model": "openai/gpt-5.6-terra", // эконом-вариант: deepseek-v4-pro; эскалация: opencode-go/kimi-k3
+      "model": "{env:OC_MODEL_TEST}",
       "permission": {
         "task": "deny"
       }
     },
 
     "test-writer": {
-      "model": "opencode-go/kimi-k2.7-code", // канарейка: xai/grok-4.5; дешёвые unit-тесты: deepseek-v4-flash
+      "model": "{env:OC_MODEL_TEST}",
       "permission": {
         "task": "deny"
       }
     },
 
     "dev-orchestrator": {
-      "model": "openai/gpt-5.6-luna", // альт.: openai/gpt-5.6-luna; эскалация: opencode-go/kimi-k3
-      "reasoningEffort": "high",
+      "model": "{env:OC_MODEL_CONTROL}",
       "tools": {
         "kanban_*": true
       }
     },
 
     "FastSpecAnalyst": {
-      "model": "openai/gpt-5.6-luna", // альт.: opencode-go/minimax-m3; эскалация: openai/gpt-5.6-terra
+      "model": "{env:OC_MODEL_ANALYSIS}",
       "tools": {
         "kanban_*": true
       }
     },
 
     "FullSpecAnalyst": {
-      "model": "openai/gpt-5.6-terra", // альт.: opencode-go/kimi-k3; эконом-вариант: opencode-go/glm-5.2
-      "reasoningEffort": "high",
+      "model": "{env:OC_MODEL_DESIGN}",
       "tools": {
         "kanban_*": true
       }
     },
 
     "General": {
-      "model": "opencode-go/deepseek-v4-flash", // альт.: openai/gpt-5.6-luna; сложный код: kimi-k2.7-code или xai/grok-4.5
-      "reasoningEffort": "max",
+      "model": "{env:OC_MODEL_CODE}",
       "tools": {
         "kanban_*": true
       }
@@ -394,8 +388,7 @@
 
     "project-analyst": {
       "hidden": false,
-      "model": "openai/gpt-5.6-terra", // эконом-вариант: opencode-go/glm-5.2; массовое чтение: deepseek-v4-flash
-      "reasoningEffort": "medium",
+      "model": "{env:OC_MODEL_RESEARCH}",
       "tools": {
         "kanban_*": false
       }
@@ -403,7 +396,7 @@
 
     "security-surface-mapper": {
       "hidden": true,
-      "model": "opencode-go/deepseek-v4-flash", // альт.: opencode-go/deepseek-v4-pro для большого/запутанного репозитория
+      "model": "{env:OC_MODEL_RESEARCH}",
       "tools": {
         "kanban_*": false
       },
@@ -414,8 +407,7 @@
 
     "security-scanner": {
       "hidden": true,
-      "model": "cloudru/MiniMaxAI/MiniMax-M3", // альт.: opencode-go/kimi-k3; эскалация critical-area: openai/gpt-5.6-terra
-      // "model": "openrouter/z-ai/glm-5.2", // альт.: opencode-go/kimi-k3; эскалация critical-area: openai/gpt-5.6-terra
+      "model": "{env:OC_MODEL_SECURITY}",
       "tools": {
         "kanban_*": false
       },
@@ -425,9 +417,7 @@
     },
 
     "security-scan-orchestrator": {
-      "model": "openrouter/z-ai/glm-5.2", // альт.: openai/gpt-5.6-luna; эскалация для очень больших репозиториев: opencode-go/kimi-k3
-      // "model": "openrouter/z-ai/glm-5.2", // альт.: openai/gpt-5.6-luna; эскалация для очень больших репозиториев: opencode-go/kimi-k3
-      "reasoningEffort": "high",
+      "model": "{env:OC_MODEL_CONTROL}",
       "tools": {
         "kanban_*": false
       }
