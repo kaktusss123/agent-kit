@@ -5,7 +5,7 @@ personal Mac (dev machine) and a work Mac (dogfooding machine), driven by
 [chezmoi](https://www.chezmoi.io/).
 
 ```
-private Git repository  (github.com:kaktusss123/dotfiles)
+private Git repository  (github.com:kaktusss123/omp-cmux-dotfiles)
         └── chezmoi
               ├── personal Mac   (machineType = "personal")
               └── work Mac       (machineType = "work")
@@ -99,7 +99,7 @@ make those references personal-machine-specific (via `machineType`).
 
 ```bash
 brew install chezmoi
-git clone git@github.com:kaktusss123/dotfiles.git ~/projects/dotfiles
+git clone git@github.com:kaktusss123/omp-cmux-dotfiles.git ~/projects/dotfiles
 mkdir -p ~/.config/chezmoi
 cat > ~/.config/chezmoi/chezmoi.toml <<'EOF'
 sourceDir = "~/projects/dotfiles"
