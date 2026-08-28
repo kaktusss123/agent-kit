@@ -39,6 +39,14 @@ Only files that exist on the machine are managed. `models.yml` does not
 exist yet on either machine; when it is added it should be adopted with
 `chezmoi add`.
 
+cmux note: `cmux.json` is cmux's file-managed settings location. It is
+currently cmux's generated template (every setting commented out), so no
+personalization is portable yet — the real settings
+(e.g. `appLanguage: ru`) live in the machine-local
+`~/Library/Preferences/com.cmuxterm.app.plist`, which is never synced
+(it mixes user settings with auth identifiers and UI state). To make a
+setting portable, uncomment it in `cmux.json` and `dots-push`.
+
 ## Intentionally unmanaged (runtime / machine state)
 
 - `~/.omp/agent/sessions/`, `memories/`, `terminal-sessions/`, `cache/`
@@ -113,6 +121,11 @@ chezmoi apply
 
 Then set machine-local API keys (shell env or OMP credential store) and
 authenticate the Mac to GitHub (SSH key) if not already done.
+
+Note: `chezmoi apply` also enforces the recorded directory modes, so
+`~/.config` becomes 0700 and `~/.config/cmux/cmux.json` 0600, matching the
+personal Mac — same-user and safe, but a visible change if your work Mac
+`~/.config` was 0755.
 
 ## Normal workflow
 
