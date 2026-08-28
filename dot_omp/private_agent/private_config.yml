@@ -16,9 +16,9 @@ theme:
   dark: onyx
   light: light
 setupVersion: 2
-hideThinkingBlock: true
+hideThinkingBlock: false
 statusLine:
-  preset: default
+  preset: compact
   separator: powerline-thin
   contextLine: embedded
   sessionAccent: true
@@ -31,14 +31,12 @@ tui:
   codexResetFireworks: true
   tight: false
   imeSafeCursor: false
-  titleState: true
 terminal:
   showProgress: false
 display:
   shimmer: classic
   showTokenUsage: true
   cacheMissMarker: true
-  smoothStreaming: true
 task:
   showResolvedModelBadge: true
 defaultThinkingLevel: auto
@@ -55,7 +53,7 @@ power:
 memory:
   backend: local
 autolearn:
-  enabled: true
+  enabled: false
   autoContinue: true
 astGrep:
   enabled: true
@@ -105,26 +103,8 @@ disabledExtensions:
   - slash-command:spec
   - slash-command:test
   - context-file:user:CLAUDE.md
-  - skill:rtl-v4-clause-pollution-fix
-  - skill:rtl-v4-fix-clause-pollution
-  - skill:rtl-v4-repair-polluted-proposals
-  - skill:rtl-v4-state-verification
-  - skill:commit
-  - skill:caveman
-  - skill:planning
-  - skill:understand
-  - skill:understand-chat
-  - skill:understand-dashboard
-  - skill:understand-diff
-  - skill:understand-domain
-  - skill:understand-explain
-  - skill:understand-knowledge
-  - skill:understand-onboard
-  - skill:find-skills
 disabledProviders:
   - opencode
   - agents-md
   - claude
-  - cursor
-  - agents
 colorBlindMode: true
