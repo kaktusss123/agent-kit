@@ -19,35 +19,22 @@ type Manifest = {
 
 function validId(s: string): boolean { return /^[A-Za-z0-9][A-Za-z0-9_-]+$/.test(s) && s.length >= 2; }
 
-// Autocomplete: enum completions for `task_init` (type) and `task_add_repo` (role).
-// Known limitations in omp v18.0.8 (verified against the live bundle):
-// 1. The command-registry builder hardcodes `input: { hint: "arguments" }`
-//    for every extension command and reads only `name`/`description`, so no
-//    gray placeholder is possible from here (built-ins use
-//    `inlineHint`/`acpInputHint`).
-// 2. The `/advisor`-style dropdown is `subcommands` on built-in definitions;
+// Autocomplete: deliberately NOT implemented for extension commands.
+// `getArgumentCompletions` in omp v18.x is unusable for multi-token commands:
+// 1. It fires on every alphanumeric keystroke in an argument position, so the
+//    dropdown opens while the user is still typing the current token.
+// 2. Accepting an item replaces the ENTIRE argument text (items are plain
+//    `{value,label}` — no per-token range control). Enter-to-submit while the
+//    dropdown is open therefore rewrites the input instead of sending it.
+//    Observed live (v18.0.9): `/task_add_repo <id> <path> reference`
+//    collapsed to `/task_add_repo reference` on Enter; the command never ran.
+// 3. The command-registry builder hardcodes `input: { hint: "arguments" }`
+//    and reads only `name`/`description`, so no gray placeholder is possible
+//    (built-ins use `inlineHint`/`acpInputHint`).
+// 4. The `/advisor`-style dropdown is `subcommands` on built-in definitions;
 //    extensions cannot provide it.
-// 3. `getArgumentCompletions` fires only on alphanumeric input in an argument
-//    position — the editor does not re-trigger it on the space after `<id>`,
-//    so the dropdown appears from the first typed letter, not immediately
-//    after the space.
-
-type ArgState = { count: number; last: string; trailing: boolean };
-function argState(argumentText: string): ArgState {
-  const trailing = argumentText.length > 0 && argumentText.endsWith(" ")
-    && argumentText.trim().length > 0;
-  const tokens = argumentText.trim().length === 0
-    ? []
-    : argumentText.trim().split(/\s+/);
-  const last = trailing ? "" : (tokens[tokens.length - 1] ?? "");
-  return { count: tokens.length, last, trailing };
-}
-
-function enumItems(opts: readonly string[], last: string): { value: string; label: string }[] {
-  const out = last ? opts.filter(o => o.startsWith(last)) : opts.slice();
-  return out.map(o => ({ value: o, label: o }));
-}
-
+// Until the editor API supports per-token completion ranges, role autocomplete
+// is net-harmful (the role token is optional and typed manually anyway).
 async function loadManifest(id: string): Promise<Manifest | null> {
   try { return await Bun.file(TASK_ROOT + "/" + id + "/manifest.json").json(); } catch { return null; }
 }
@@ -132,17 +119,6 @@ export default function (pi: ExtensionAPI) {
 
   pi.registerCommand("task_add_repo", {
     description: "/task_add_repo <id> <path> [target|reference]",
-    getArgumentCompletions: (arg) => {
-      const s = argState(arg);
-      // Command syntax advertises [target|reference]; `primary` is implicit at
-      // task_init time, so it isn't offered here even though the over-broad
-      // ROLES constant would accept it.
-      // Role position is index 2; active when the user has just typed a space
-      // after the path, or is currently typing the role token. Once the role
-      // is complete and followed by a space, return null (no further arguments).
-      const onRoleArg = (s.count === 2 && s.trailing) || (s.count === 3 && !s.trailing);
-      return onRoleArg ? enumItems(["target", "reference"], s.last) : null;
-    },
     async handler(args, ctx) {
       const t = args.trim().split(/\s+/); const id = t[0];
       const raw = t.slice(1, -1).join(" "); const last = t[t.length - 1];
@@ -182,7 +158,7 @@ export default function (pi: ExtensionAPI) {
   });
 
   pi.registerCommand("task_handoff", {
-    description: "/task_handoff <id> — create worktrees, print implementer launch command",
+    description: "/task_handoff <id> — create worktrees, start implementer in this session",
     async handler(args, ctx) {
       const id = args.trim().split(/\s+/)[0];
       if (!id || !validId(id)) { ctx.ui.notify("bad id", "error"); return; }
@@ -243,17 +219,62 @@ export default function (pi: ExtensionAPI) {
       m.phase = "ready";
       await saveManifest(id, m);
 
-      const cmd = ["omp --cwd " + td + "/" + m.primary];
-      for (const [n, r] of Object.entries(m.repos)) {
-        if (r.worktreePath && n !== m.primary) cmd.push("    --add-dir " + r.worktreePath);
-      }
-      cmd.push('    "/skill:implementer ' + snap + '"');
+      // Handoff = transition THIS session into the implementer:
+      //   1) move session cwd to the primary worktree (same as /move),
+      //   2) attach target worktrees,
+      //   3) inject the implementer prompt — skill:// loads the skill,
+      //      triggerTurn starts the turn. Same process, same session,
+      //      visible first-person. No new sessions, no new processes.
+      const prompt = "skill://implementer\n\nSpec: " + snap +
+        "\nPrimary worktree: " + (pw?.worktreePath ?? "?") +
+        "\nImplement per the implementer skill: read the spec, confirm, implement, verify.";
 
-      await ctx.waitForIdle();
-      pi.sendUserMessage(
-        "Handoff complete. Worktrees: **" + td + "**\n\n```\n" + cmd.join(" \\\n") + "\n```",
-        { deliverAs: "steer" },
-      );
+      let moved = false;
+      try {
+        const sm = ctx.sessionManager as unknown as {
+          moveTo(cwd: string): Promise<void>;
+          addWorkspaceDirectory(dir: string): Promise<unknown>;
+        };
+        if (pw?.worktreePath) {
+          await sm.moveTo(pw.worktreePath);   // session cwd → primary worktree
+          moved = true;
+        }
+        for (const [n, r] of Object.entries(m.repos)) {
+          if (r.role !== "reference" && r.worktreePath && n !== m.primary) {
+            try { await sm.addWorkspaceDirectory(r.worktreePath); } catch {}
+          }
+        }
+      } catch (e) {
+        ctx.ui.notify("handoff moveTo failed: " + String(e), "warning");
+      }
+
+      if (moved) {
+        await ctx.waitForIdle();
+        // triggerTurn is runtime-supported (same pattern as /task_init) but
+        // omitted from the SendUserMessageHandler d.ts — typed const keeps
+        // tsc clean (excess-property checks apply to fresh literals only).
+        const handoffOptions = {
+          deliverAs: "steer",
+          triggerTurn: true,
+        } as { deliverAs: "steer"; triggerTurn: boolean };
+        pi.sendUserMessage(prompt, handoffOptions);
+        ctx.ui.notify(
+          "implementer started in this session (worktree: " + (pw?.worktreePath ?? "?") + ")",
+          "info",
+        );
+      } else {
+        // Fallback: manual launch command (previous behavior).
+        const cmd = ["omp --cwd " + td + "/" + m.primary];
+        for (const [n, r] of Object.entries(m.repos)) {
+          if (r.worktreePath && n !== m.primary) cmd.push("    --add-dir " + r.worktreePath);
+        }
+        cmd.push('    "/skill:implementer ' + snap + '"');
+        await ctx.waitForIdle();
+        pi.sendUserMessage(
+          "Handoff complete. Worktrees: **" + td + "**\n\n```\n" + cmd.join(" \\\n") + "\n```",
+          { deliverAs: "steer" },
+        );
+      }
     },
   });
 }
