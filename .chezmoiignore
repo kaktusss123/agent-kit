@@ -1,0 +1,4 @@
+# Repo-level files, not dotfile targets.
+README.md
+.gitignore
+.chezmoiignore
