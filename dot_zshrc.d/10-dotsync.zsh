@@ -146,8 +146,8 @@ dots-push() {
     echo "dots-push: Git has an unresolved merge/rebase in $repo — resolve it first" >&2
     return 1
   fi
-  if [[ -z "$(git -C "$repo" status --porcelain | grep -v '^??')" ]]; then
-    echo "Nothing to push (no tracked changes in the repo)."
+  if [[ -z "$(chezmoi status 2>/dev/null)" && -z "$(git -C "$repo" status --porcelain | grep -v '^??')" ]]; then
+    echo "Nothing to push (no managed or repo changes)."
     return 0
   fi
   if git -C "$repo" remote | grep -q .; then
