@@ -10,15 +10,16 @@
 *.pfx
 
 # OMP runtime/generated state (defense-in-depth: the repo never tracks these paths)
-dot_omp/agent/*.db
-dot_omp/agent/*.db-shm
-dot_omp/agent/*.db-wal
-dot_omp/agent/*.lock
-dot_omp/agent/sessions/
-dot_omp/agent/memories/
-dot_omp/agent/terminal-sessions/
-dot_omp/agent/cache/
-dot_omp/agent/last-changelog-version
+# The agent dir is source-named private_agent because ~/.omp/agent is mode 0700.
+dot_omp/private_agent/*.db
+dot_omp/private_agent/*.db-shm
+dot_omp/private_agent/*.db-wal
+dot_omp/private_agent/*.lock
+dot_omp/private_agent/sessions/
+dot_omp/private_agent/memories/
+dot_omp/private_agent/terminal-sessions/
+dot_omp/private_agent/cache/
+dot_omp/private_agent/last-changelog-version
 dot_omp/logs/
 dot_omp/cache/
 dot_omp/plugins/
