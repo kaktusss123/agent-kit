@@ -1,0 +1,31 @@
+# macOS metadata
+.DS_Store
+
+# Secrets / credentials — never commit real values
+.env
+.env.*
+*.key
+*.pem
+*.p12
+*.pfx
+
+# OMP runtime/generated state (defense-in-depth: the repo never tracks these paths)
+dot_omp/agent/*.db
+dot_omp/agent/*.db-shm
+dot_omp/agent/*.db-wal
+dot_omp/agent/*.lock
+dot_omp/agent/sessions/
+dot_omp/agent/memories/
+dot_omp/agent/terminal-sessions/
+dot_omp/agent/cache/
+dot_omp/agent/last-changelog-version
+dot_omp/logs/
+dot_omp/cache/
+dot_omp/plugins/
+dot_omp/run/
+dot_omp/tasks/
+dot_omp/install-id
+dot_omp/gpu_cache.json
+
+# Logs
+*.log

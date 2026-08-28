@@ -1,0 +1,110 @@
+modelRoles:
+  default: opencode-go/deepseek-v4-flash:high
+  tiny: cloudru/openai/gpt-oss-120b:high
+  smol: opencode-go/mimo-v2.5:high
+  slow: cloudru/deepseek-ai/DeepSeek-V4-Pro:max
+  vision: opencode-go/deepseek-v4-flash-vision-exp:high
+  plan: openai-codex/gpt-5.6-luna:high
+  designer: opencode-go/muse-spark-1.2-contributor:high
+  commit: opencode-go/deepseek-v4-flash:high
+  task: cloudru/Qwen/Qwen3.5-397B-A17B:high
+  advisor: openai-codex/gpt-5.6-luna:auto
+symbolPreset: nerd
+composer:
+  shape: box
+theme:
+  dark: onyx
+  light: light
+setupVersion: 2
+hideThinkingBlock: false
+statusLine:
+  preset: compact
+  separator: powerline-thin
+  contextLine: embedded
+  sessionAccent: true
+  transparent: false
+  compactThinkingLevel: false
+  showHookStatus: true
+tui:
+  resizeScrollback: rebuild
+  textSizing: false
+  codexResetFireworks: true
+  tight: false
+  imeSafeCursor: false
+terminal:
+  showProgress: false
+display:
+  shimmer: classic
+  showTokenUsage: true
+  cacheMissMarker: true
+task:
+  showResolvedModelBadge: true
+defaultThinkingLevel: auto
+modelRoleStorage: global
+personality: pragmatic
+advisor:
+  enabled: true
+doubleEscapeAction: tree
+treeFilterMode: default
+error:
+  notify: "on"
+power:
+  sleepPrevention: idle
+memory:
+  backend: local
+autolearn:
+  enabled: true
+  autoContinue: true
+astGrep:
+  enabled: true
+disabledExtensions:
+  - skill:codegraph-impact-analysis
+  - skill:commit-readiness
+  - skill:complexity-review
+  - skill:contract-impact-audit
+  - skill:decision-log
+  - skill:delegation-context
+  - skill:design-brief
+  - skill:edge-case-harvest
+  - skill:execution-plan
+  - skill:feature-interrogation
+  - skill:find-docs
+  - skill:git-commit
+  - skill:go-review
+  - skill:implementation
+  - skill:kanban-discipline
+  - skill:llm-wiki
+  - skill:non-functional-probe
+  - skill:orchestration
+  - skill:project-init
+  - skill:project-rules-check
+  - skill:replan-on-surprise
+  - skill:repo-reconnaissance
+  - skill:review
+  - skill:review-against-plan
+  - skill:security-review
+  - skill:security-surface-mapping
+  - skill:sing-box-remote-routing
+  - skill:spec-discovery
+  - skill:spec-synthesis
+  - skill:task-workspace
+  - skill:testing-python
+  - skill:traceability-check
+  - skill:verification
+  - skill:verification-gate
+  - skill:workflow-gates
+  - slash-command:analyze
+  - slash-command:commit
+  - slash-command:execute-spec
+  - slash-command:feedback
+  - slash-command:init
+  - slash-command:security-review
+  - slash-command:spec-lite
+  - slash-command:spec
+  - slash-command:test
+  - context-file:user:CLAUDE.md
+disabledProviders:
+  - opencode
+  - agents-md
+  - claude
+colorBlindMode: true
