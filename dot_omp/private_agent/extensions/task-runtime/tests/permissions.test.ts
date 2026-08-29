@@ -159,8 +159,8 @@ describe("cracker write policy", () => {
     const ctx = { role: "cracker" as const, manifest: m };
     const target = paths.specPath("perm");
     const d = p.evaluateWrite(ctx, target);
-    expect(d.allowed).toBe(true);
-    expect(d.authorizedRoot).toBe(canon(paths.artifactsDir("perm")));
+    expect(d.allowed).toBe(false);
+    expect(d.authorizedRoot).toBeUndefined();
   });
 
   test("denies write to new file inside task artifacts's forbidden path (primary src)", async () => {

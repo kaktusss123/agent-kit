@@ -105,8 +105,9 @@ export function writableRoots(ctx: PolicyContext): {
   const repos: Record<string, string> = {};
 
   if (ctx.role === "cracker") {
-    const taskArtifacts = artifactsDir(ctx.manifest.id);
-    paths.push(taskArtifacts);
+    // Cracker has no generic writable filesystem roots.
+    // Persist state through: task_write_artifact, task_record_decision,
+    // task_set_verification, task_mark_ready.
     return { paths, repos };
   }
 
@@ -268,6 +269,16 @@ export function registerWritePolicy(pi: ExtensionAPI): void {
       if (event.toolName !== "edit" && event.toolName !== "write") return;
       const target = extractPath(event.input);
       if (!target) return;
+      // Pass through recognized OMP internal resource URIs
+      // (xd://, skill://, memory://, agent://, mcp://, omp://).
+      if (target) {
+        const t = target as string;
+        if (t.startsWith('xd://') || t.startsWith('skill://') ||
+            t.startsWith('memory://') || t.startsWith('agent://') ||
+            t.startsWith('mcp://') || t.startsWith('omp://')) {
+          return undefined;
+        }
+      }
       const manifest = await activeManifestForContext(ctx);
       if (!manifest) return;
       const sessionFile = ctx.sessionManager.getSessionFile();
@@ -282,6 +293,8 @@ export function registerWritePolicy(pi: ExtensionAPI): void {
       return { block: true, reason: `policy enforcement error: ${(e as Error).message}` };
     }
   });
+
+
 
   pi.on("tool_call", async (event, ctx) => {
     if (event.toolName !== "bash") return;
@@ -333,10 +346,10 @@ export function registerWritePolicy(pi: ExtensionAPI): void {
         if (reset.code !== 0) {
           throw new Error(`reset failed: ${reset.stderr}`);
         }
-        // Remove any new untracked files created by the agent during bash.
-        // Safe because the repo was clean before — these files belong to the
-        // agent call.
-        await exec("git", ["-C", path, "clean", "-fdx"]);
+        // P0-6: NEVER git clean -fdx. The repo was "clean" only by git status
+        // --porcelain, which excludes .gitignore-d files (e.g. .env).
+        // git clean -fdx would destroy those pre-existing ignored user files.
+        // Agent-created untracked files remain on disk as evidence.
       } catch (e) {
         rollbackErrors.push(`${path}: ${(e as Error).message}`);
       }
@@ -364,6 +377,52 @@ export function registerWritePolicy(pi: ExtensionAPI): void {
       isError: true,
     };
   });
+  pi.on("tool_call", async (event, ctx) => {
+    try {
+      if (!["read", "grep", "glob"].includes(event.toolName)) return;
+      const target = extractPath(event.input);
+      if (!target) return;
+      // Pass through recognized internal resource URIs
+      if (typeof target === "string" &&
+          (target.startsWith("xd://") || target.startsWith("skill://") ||
+           target.startsWith("memory://") || target.startsWith("agent://") ||
+           target.startsWith("mcp://") || target.startsWith("omp://"))) {
+        return undefined;
+      }
+      const manifest = await activeManifestForContext(ctx);
+      if (!manifest) return;
+      const sessionFile = ctx.sessionManager.getSessionFile();
+      const role = roleForSession(manifest, sessionFile);
+      if (!role) return;
+
+      const { canonical } = canonicalizeForWrite(target, ctx.cwd);
+
+      // Allowed: under any attached task worktree (both roles).
+      for (const [, repo] of Object.entries(manifest.repos)) {
+        if (!repo.worktreePath) continue;
+        const wt = canonicalize(repo.worktreePath) ?? repo.worktreePath;
+        if (pathContained(wt, canonical)) return undefined;
+      }
+
+      // Blocked: under any human source checkout.
+      for (const [, repo] of Object.entries(manifest.repos)) {
+        const src = canonicalize(repo.sourcePath);
+        if (!src) continue;
+        if (pathContained(src, canonical)) {
+          return {
+            block: true,
+            reason: `role=${role}: reading from human source checkout "${repo.name}" (${repo.sourcePath}) is not permitted. Use task worktrees instead.`,
+          };
+        }
+      }
+      // Unknown path — block.
+      return { block: true, reason: `role=${role}: target "${target}" is not under any readable task root.` };
+    } catch (e) {
+      return { block: true, reason: `read policy error: ${(e as Error).message}` };
+    }
+  });
+
+
 }
 
 async function activeManifestForContext(ctx: {

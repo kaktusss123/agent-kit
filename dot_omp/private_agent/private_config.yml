@@ -44,6 +44,7 @@ modelRoleStorage: global
 personality: pragmatic
 advisor:
   enabled: true
+  immuneTurns: 5
 doubleEscapeAction: tree
 treeFilterMode: default
 error:
@@ -71,7 +72,6 @@ disabledExtensions:
   - skill:find-docs
   - skill:git-commit
   - skill:go-review
-  - skill:implementation
   - skill:kanban-discipline
   - skill:llm-wiki
   - skill:non-functional-probe

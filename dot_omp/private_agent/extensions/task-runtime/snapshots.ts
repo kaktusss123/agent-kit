@@ -194,7 +194,6 @@ export interface HandoffDoc {
     string,
     {
       role: "primary" | "target" | "reference";
-      sourcePath: string;
       worktreePath?: string;
       baseSha?: string;
     }

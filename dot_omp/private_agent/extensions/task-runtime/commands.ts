@@ -10,7 +10,7 @@ const ROLES = ["target", "reference"] as const;
 export function registerTaskRuntimeCommands(pi: ExtensionAPI): void {
   const exec = async (cmd: string, args: string[], options?: { cwd?: string }) => {
     const r = await pi.exec(cmd, args, options);
-    return { code: r.code, stdout: r.stdout, stdout: r.stderr, stderr: r.stderr };
+    return { code: r.code, stdout: r.stdout, stderr: r.stderr };
   };
 
   pi.registerCommand("task_init", {
@@ -114,14 +114,70 @@ export function registerTaskRuntimeCommands(pi: ExtensionAPI): void {
   });
 
   pi.registerCommand("task_approve", {
-    description: "/task_approve <id> — readiness check, freeze contract",
+    description: "/task_approve <id> — approve contract, prepare worktrees, open implementer session",
     async handler(args, ctx) {
       const id = args.trim().split(/\s+/)[0];
       if (!id || !isValidTaskId(id)) { ctx.ui.notify("bad id", "error"); return; }
+      let manifest;
+      try { manifest = await loadManifest(id); }
+      catch (e) { ctx.ui.notify((e as Error).message, "error"); return; }
+      if (manifest.phase === "discovery") {
+        ctx.ui.notify("not ready — run task_mark_ready first", "error");
+        return;
+      }
+      if (manifest.phase === "approved" || manifest.phase === "implementing") {
+        ctx.ui.notify(`already ${manifest.phase}`, "info");
+        return;
+      }
+      if (manifest.phase !== "ready_for_approval") {
+        ctx.ui.notify(`cannot approve from phase "${manifest.phase}"`, "error");
+        return;
+      }
+      // P1: single-action approval + handoff.
+      let r;
+      try { r = await approveAndPrepareHandoff({ pi, taskId: id }); }
+      catch (e) { ctx.ui.notify(`approval: ${(e as Error).message}`, "error"); return; }
+      manifest = await loadManifest(id);
+      const primary = manifest.repos[manifest.primaryRepo];
+      if (!primary?.worktreePath) { ctx.ui.notify("no worktree", "error"); return; }
+      const hPath = snapshotHandoffPath(id, manifest.approval!.id);
       try {
-        const r = await approveAndPrepareHandoff({ pi, taskId: id });
-        ctx.ui.notify(`approved ${id} approval=${r.approvalId} — contract frozen.\nNow: /task_handoff ${id}`, "info");
-      } catch (e) { ctx.ui.notify(`approval refused: ${(e as Error).message}`, "error"); }
+        await prepareWorktrees({ taskId: id, exec });
+        await buildHandoff({ taskId: id, approvalId: manifest.approval!.id });
+      } catch (e) {
+        ctx.ui.notify(`prep: ${(e as Error).message} — retry /task_handoff ${id}`, "warning");
+        return;
+      }
+      await ctx.waitForIdle();
+      const parent = ctx.sessionManager.getSessionFile();
+      if (!parent) { ctx.ui.notify("no parent session", "error"); return; }
+      const ns = await ctx.newSession({
+        parentSession: parent,
+        setup: async (sm) => {
+          await sm.moveTo(primary.worktreePath!);
+          for (const repo of Object.values(manifest.repos)) {
+            if (repo.role !== "reference" && repo.worktreePath && repo.worktreePath !== primary.worktreePath) {
+              sm.addWorkspaceDirectory(repo.worktreePath);
+            }
+          }
+        },
+      });
+      if (ns.cancelled) { ctx.ui.notify("cancelled", "warning"); return; }
+      const newSf = ctx.sessionManager.getSessionFile();
+      if (!newSf || newSf === parent) {
+        ctx.ui.notify("session unavailable — retry /task_handoff " + id, "warning");
+        return;
+      }
+      try {
+        await startImplementationForHandoff({
+          taskId: id, approvalId: manifest.approval!.id,
+          implementerSessionFile: newSf, pi,
+        });
+      } catch (e) {
+        ctx.ui.notify(`bind: ${(e as Error).message}`, "error");
+        return;
+      }
+      pi.sendUserMessage(`skill://implementer\n\nTask handoff: ${hPath}`);
     },
   });
 

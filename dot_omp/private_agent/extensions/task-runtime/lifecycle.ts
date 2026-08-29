@@ -39,6 +39,7 @@ import {
   createWorktree,
   diffSummaryAgainst,
   isRepoClean,
+  isWorkingTreeClean,
   repoHeadSha,
 } from "./repos.ts";
 import {
@@ -287,7 +288,7 @@ export async function setVerification(input: SetVerificationInput): Promise<Task
   return manifest;
 }
 
-export async function validateReadiness(taskId: string): Promise<ReadinessResult> {
+export async function validateReadiness(taskId: string, exec?: import("./types.ts").ExecFn): Promise<ReadinessResult> {
   const issues: ReadinessIssue[] = [];
   let manifest: TaskManifestV2;
   try {
@@ -338,6 +339,23 @@ export async function validateReadiness(taskId: string): Promise<ReadinessResult
     }
   }
 
+  // P2: worktree cleanliness check (cracker must not mutate product code).
+  if (exec) {
+    for (const [name, repo] of Object.entries(manifest.repos)) {
+      if (!repo.worktreePath) continue;
+      try {
+        const clean = await isWorkingTreeClean(exec, repo.worktreePath);
+        if (!clean) {
+          const stat = await exec("git", ["-C", repo.worktreePath, "diff-index", "--name-only", "HEAD"]);
+          issues.push({
+            code: "worktree_modified",
+            message: `task worktree "${name}" (${repo.worktreePath}) has uncommitted changes: ${stat.stdout.trim() || "(tracked changes)"}`,
+          });
+        }
+      } catch { issues.push({ code: "worktree_check_failed", message: `git status failed in "${name}" (${repo.worktreePath})` }); }
+    }
+  }
+
   try {
     const contract = readVerificationContract(taskId);
     const v = validateContractAgainstRepos(contract, manifest);
@@ -356,10 +374,10 @@ export interface MarkReadyResult {
   readiness: ReadinessResult;
 }
 
-export async function markReady(taskId: string): Promise<MarkReadyResult> {
+export async function markReady(taskId: string, exec?: import("./types.ts").ExecFn): Promise<MarkReadyResult> {
   const manifest = await loadManifest(taskId);
   assertPhase(manifest, "discovery", "ready_for_approval");
-  const r = await validateReadiness(taskId);
+  const r = await validateReadiness(taskId, exec);
   if (!r.ok) return { manifest, readiness: r };
   applyTransition(manifest, "discovery_to_ready");
   manifest.updatedAt = new Date().toISOString();
@@ -381,7 +399,7 @@ export interface ApproveResult {
 export async function approveTask(input: ApproveInput): Promise<ApproveResult> {
   const manifest = await loadManifest(input.taskId);
   assertPhase(manifest, "ready_for_approval");
-  const r = await validateReadiness(input.taskId);
+  const r = await validateReadiness(input.taskId, input.exec);
   if (!r.ok) {
     throw new LifecycleError(
       `approval refused: ${r.issues.map(i => `[${i.code}] ${i.message}`).join("; ")}`,

@@ -273,7 +273,8 @@ export function registerTaskRuntimeTools(pi: ExtensionAPI): void {
       try {
         const auth = await requireRole(ctx, params.taskId, "cracker");
         if (!auth.ok) return err(auth.reason);
-        const r = await markReady(params.taskId);
+    const exec = execFnFromPi(pi);
+    const r = await markReady(params.taskId, exec);
         return ok({ taskId: params.taskId, ...r });
       } catch (e) {
         return err((e as Error).message);
