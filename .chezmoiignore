@@ -2,3 +2,5 @@
 README.md
 .gitignore
 .chezmoiignore
+**/node_modules
+**/*.bak.*

@@ -30,3 +30,6 @@ dot_omp/gpu_cache.json
 
 # Logs
 *.log
+
+node_modules/
+*.bak.*
