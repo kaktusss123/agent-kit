@@ -1,0 +1,14 @@
+{
+  "name": "omp-extension-task-runtime",
+  "version": "2.0.0",
+  "private": true,
+  "type": "module",
+  "omp": {
+    "extensions": [
+      "./index.ts"
+    ]
+  },
+  "devDependencies": {
+    "@types/bun": "latest"
+  }
+}

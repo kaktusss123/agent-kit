@@ -1,165 +1,78 @@
-# Cracker/Implementer Workflow Architecture — v2
+# Cracker/Implementer Workflow Architecture — V2
 
 ## Overview
 
-Two-role development lifecycle for multi-repo tasks:
-**cracker** (analyst) → spec in git → `/task_approve` (freeze hash) → **implementer** (clean session) → verified implementation
+Two-role development lifecycle with runtime-enforced write boundaries,
+immutable approval snapshots, and deterministic verification gates:
 
-## Skills
+ENGINEER → GROK (cracker) → APPROVAL (user) → IMPLEMENT (implementer) → VERIFIED DIFF
 
-**`cracker/SKILL.md`** — Analyst. Never modifies production code. Sole artifact: `docs/specs/<id>.md`. Code snippets/pseudo-code/API signatures allowed inside spec.
+## Task Runtime
 
-**`implementer/SKILL.md`** — Executor. Entry: reads spec, confirms design against real code. Escalation via BLOCKED format. Self-review. Report.
-
-Both user-level, at `~/.omp/agent/skills/`.
-
-## Task Runner Extension
-
-**Path:** `~/.omp/agent/extensions/task-runner.ts`
+**Source:** `dot_omp/private_agent/extensions/task-runtime/`
+**Runtime:** `~/.omp/agent/extensions/task-runtime/`
+**Loaded by:** OMP via `package.json#omp.extensions: ["./index.ts"]`
 
 ### State machine
 
-```
-analysis → approved → implementing → completed
-```
+    discovery → ready_for_approval → approved → implementing → completed
+         ↑            ↓                ↓            ↓
+         └── discovery ← blocked ← blocked ← task_block (spec conflict)
 
-Manifest field `phase`. Transitions enforced by commands.
+completed and failed are terminal (no outgoing transitions).
 
-### Manifest schema
+### Manifest (V2)
 
-```json
-{
-  "id": "EVODP-12345_trino_private_versions",
-  "type": "feat",
-  "phase": "analysis",
-  "primary": "trino-instance",
-  "repos": {
-    "trino-instance": {
-      "path": "/Users/.../trino-instance",
-      "role": "primary",
-      "worktreeCreated": false,
-      "branch": null,
-      "worktreePath": null
-    },
-    "trino-lib": {
-      "path": "/Users/.../trino-lib",
-      "role": "target",
-      "worktreeCreated": false,
-      "branch": null,
-      "worktreePath": null
-    },
-    "upstream-trino": {
-      "path": "/Users/.../upstream-trino",
-      "role": "reference",
-      "worktreeCreated": false,
-      "branch": null,
-      "worktreePath": null
-    }
-  },
-  "specPath": "docs/specs/EVODP-12345_trino_private_versions.md",
-  "approvedSpecHash": null,
-  "snapshotHash": null,
-  "createdAt": "ISO"
-}
-```
+    schemaVersion: 2
+    id: "EVODP-12345"
+    phase: "implementing"
+    primaryRepo: "trino-instance"
+    repos: { primary/target/reference with sourcePath, worktreePath, baseSha }
+    sessions: { cracker: {...}, implementer: {...} }  ← role is explicit
+    approval: { id, snapshotPath, specSha256 }
 
-### Commands
+Key invariants: sourcePath never equals worktreePath; primaryRepo is a key; session role explicit, not cwd-inferred.
 
-**`/task_init <id> [type]`**
-- Creates manifest with `phase: "analysis"`
-- Primary = current cwd, role `primary`
-- Sends agent `skill://cracker` + "describe the task"
+### Storage layout
 
-**`/task_add_repo <id> <path> [target|reference]`**
-- Only during `analysis` phase
-- Role: `target` (default) — gets worktree at handoff. `reference` — read-only, no worktree.
-- Validates: git repo exists. No duplicate names.
-- Name = path basename
+    ~/.omp/tasks/<id>/manifest.json, events.jsonl, artifacts/, snapshots/<approval>/, worktrees/<repo>/
 
-**`/task_approve <id>`**
-- Reads current spec from primary repo
-- Computes SHA256 → `approvedSpecHash`
-- Sets `phase: "approved"`
-- Approval bound to exact spec version — any later spec change blocks handoff
+## Commands
 
-**`/task_handoff <id>`**
-- Phase must be `approved`
-- Validates: spec SHA256 matches `approvedSpecHash` (no drift)
-- Checks repo cleanliness: only spec file allowed dirty; all other changes block
-- Creates git worktrees: `git worktree add -b <type>/<id> <task-dir>/<name> HEAD`
-  - Only for `primary` and `target` repos (not `reference`)
-  - Already-created worktrees (per-repo `worktreeCreated: true`) are skipped
-- Snapshots spec → `snapshot.spec.md` with SHA256 in `manifest.snapshotHash`
-- Copies approved spec into primary worktree: `<primary-worktree>/docs/specs/<id>.md`
-- Sets `phase: "implementing"`
-- Calls `ctx.newSession({ setup })`:
-  - `sm.moveTo(worktreePrimary)`
-  - `sm.addWorkspaceDirectory()` for each target worktree (not `reference` repos, not `taskDir`)
-  - `sm.appendMessage()` with `skill://implementer` + spec path + repo map
+    /task_init          create V2 task, bind cracker session
+    /task_add_repo      attach target/reference (adapter over task_attach_repo tool)
+    /task_status        structured status
+    /task_approve       readiness validation → freeze snapshot → prepare worktrees
+    /task_handoff       newSession → moveTo(worktree) → addWorkspaceDirectory(targets) → '/Users/komar/.omp/agent/skills/implementer'
+    /task_reopen        return approved/implementing/blocked → discovery
 
-### Per-repo idempotency
+## Model tools
 
-Each `RepoEntry` tracks `worktreeCreated: true|false`, `branch`, `worktreePath`. Preflight validates all repos before creating any worktree. If creation succeeds, per-repo state is saved to manifest. Resume: completed repos are skipped.
+    task_status          any bound   structured status
+    task_attach_repo     cracker    register repos
+    task_write_artifact  cracker    write spec/evidence
+    task_record_decision cracker    open/resolve decisions
+    task_set_verification cracker   define verification contract
+    task_mark_ready      cracker    run readiness validation
+    task_block           implementer signal spec conflict
+    task_submit          implementer verification + completion gate
 
-### File layout
+## Write policy
 
-```
-~/.omp/agent/skills/
-  cracker/SKILL.md
-  implementer/SKILL.md
+pi.on("tool_call") pre-guard: edit/write blocked outside role-writable roots.
+pi.on("tool_result") bash guard: fingerprints before/after, rollback on protected-repo mutation.
+Session-based manifest lookup (not cwd).
 
-~/.omp/agent/extensions/
-  task-runner.ts
+    cracker:   writable ~/.omp/tasks/<id>/artifacts/ only; all repos read-only.
+    implementer: writable primary/target worktrees only; source/ref/snapshot read-only.
 
-docs/specs/<id>.md                 ← primary spec (git-trackable, in primary repo)
+## Skills
 
-~/.omp/tasks/<id>/
-  manifest.json
-  snapshot.spec.md                   ← frozen copy, SHA256 in manifest
-  <repo-name>/                      ← git worktree, <type>/<id> branch
-```
+    '/Users/komar/.omp/agent/skills/cracker'     fact/decision separation, frontier questions, task_mark_ready
+    '/Users/komar/.omp/agent/skills/implementer' read handoff.json, implement, task_submit, task_block on conflict
 
-### Security
+Both invoked via skill:// URIs in the agent bootstrap message.
 
-- `validId`: `[A-Za-z0-9][A-Za-z0-9_-]+`, min 2 chars. Prevents path traversal.
-- `node:fs/promises` mkdir, `Bun.write`/`Bun.file` — no shell interpolation.
-- Per-repo `git rev-parse --show-toplevel` validates repo paths.
+## Verification
 
-## Deferred: BB2 Enforcement
-
-Separate extension. Not yet implemented.
-
-- `omp_commit` — `<type>(<ticket>): <desc>` enforced format
-- `omp_push` — feature branch only
-- Snapshot write-protection via `tool_call` interception
-- No bash filter (rejected due to poor model behavior)
-
-## Key Design Decisions
-
-| Decision | Rationale |
-|---|---|
-| Approval via SHA + `/task_approve`, not manual `Status: approved` | Prevents spec mutation between approval and handoff |
-| Phase machine in manifest | Idempotent commands, resumable handoff |
-| `target` / `reference` repo roles | Reference repos do not receive worktrees or branches |
-| Spec copy to primary worktree | Feature branch contains approved spec for git review |
-| TaskDir NOT in workspace | Orchestration state stays separate from agent workspace |
-| Handoff via `ctx.newSession()` + `moveTo()` | Clean session boundary, same OMP process |
-| `task` subagents are context-isolated | Known: task tool docs say subagents start blank. Our choice: full interactive implementer session, not child agent |
-| Spec in `docs/specs/` | git-trackable, reviewable via PR |
-| Task-oriented worktree root `~/.omp/tasks/<id>/` | Task as organizing principle, not repo |
-| Branch naming: `<type>/<id>` | e.g., `feat/EVODP-12345_trino_private_versions` |
-| Cracker code snippets allowed | API signatures/pseudo-code in spec clarify contracts |
-
-## Verification Status
-
-| Capability | Status |
-|---|---|
-| `cracker` skill loading | ✅ Verified |
-| `implementer` skill loading | ✅ Verified |
-| Extension load + `/task_init` | ✅ Verified (smoke test) |
-| `/task_add_repo` manifest mutation | ⚠️ Not runtime tested |
-| `/task_approve` SHA + phase | ❌ Not tested |
-| `/task_handoff` worktree creation | ❌ Not tested |
-| `newSession` + `moveTo` + `addWorkspaceDirectory` | ⚠️ API names from d.ts, not runtime tested |
-| `sendUserMessage` with `skill://cracker` | ⚠️ Not runtime tested (skill loading path may differ from TUI input) |
-| BB2 enforcement extension | ❌ Not started |
+    task_submit → snapshot valid? → protected repos unchanged? → non-empty diff? → run checks → completed
