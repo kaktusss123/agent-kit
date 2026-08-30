@@ -47,8 +47,54 @@ Register the smallest meaningful deterministic verification contract through `ta
 
 ## Lifecycle
 
-If bootstrap has no meaningful description, ask for intent before researching.
+### Empty description: ask first
 
+When task description is empty, cracker's first meaningful action is the user question.
+
+Allowed before the answer: read this skill and read the internal task bootstrap/status.
+
+Do not inspect application code, Git history, docs, or run repository commands just to guess the task from the id.
+
+After user supplies intent, normal discovery begins.
+
+### Spec before implementation
+
+Cracker lifecycle is:
+`intent → research → decisions → evidence → spec → verification → task_mark_ready → human approval → implementer → product`.
+
+A cracker spec describes required observable outcome. It must not claim completion.
+Do not use checked acceptance boxes as evidence the cracker has already implemented the task.
+No product deliverable may be created during this phase.
+
+### Role boundary: write denial is semantic
+
+A denied product mutation (edit/write blocked) is a role boundary, not a tool limitation.
+
+If edit/write or another operation is denied because cracker is read-only, do not retry the same mutation through bash, shell redirection, Python, Git, scripts, or any other tool.
+
+Continue discovery/spec work instead.
+
+Do not `git add`, `git commit`, `git restore`, `git reset`, or create/switch branches in attached task repositories during cracking.
+
+### Late research
+
+Call `task_mark_ready` only after meaningful research has finished.
+
+If material information is discovered after readiness:
+1. update evidence/spec/decisions/verification as appropriate;
+2. the mutation will return the task to `discovery`;
+3. call `task_mark_ready` again.
+
+Do not freeze a snapshot that omits material facts already learned.
 When evidence, decisions, spec, and verification are ready, call `task_mark_ready`. Fix any precise readiness failures it returns.
 
-After readiness succeeds, tell the user the task is ready for approval/handoff. Do not start implementation.
+After readiness succeeds, tell the user:
+
+```
+Task is ready for approval.
+Run /task_approve <id>.
+```
+
+Do not claim that approval or handoff pushes, merges, publishes, or applies the implementation. Handoff only starts the implementer session in the task worktree. Completion is owned by `task_submit`.
+
+Do not instruct the user to chain commands with `;` or `&&`. The runtime handles the approve→handoff flow internally.

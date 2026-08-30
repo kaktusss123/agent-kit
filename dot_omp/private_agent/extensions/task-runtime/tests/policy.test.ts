@@ -152,27 +152,32 @@ describe.serial("registerWritePolicy — bash tool_result guard", () => {
   });
 });
 
-describe.serial("registerWritePolicy — bash rollback on mutation", () => {
-  test("detects HEAD mutation in protected repo and returns POLICY_VIOLATION", async () => {
+describe.serial("registerWritePolicy — bash rollback on cracker worktree mutation", () => {
+  test("detects worktree mutation for cracker session and returns CRACKER_READ_ONLY", async () => {
     await seedManifestWithRoles({ crackerSessionFile: "/c5", implementerSessionFile: "/i5" });
+    // Initialize primaryWorktree as a real git repo so fingerprinting works.
+    execSync("git init && git commit --allow-empty -m wt-init", { cwd: primaryWorktree, stdio: "ignore" });
+    const m = await loadManifest(TASK_ID);
+    const wtHead = execSync("git rev-parse HEAD", { cwd: primaryWorktree, encoding: "utf8" }).trim();
+    m.repos[m.primaryRepo].baseSha = wtHead;
+    await saveManifest(m);
+
     const pi = fakePi(realExec());
     registerWritePolicy(pi as unknown as never);
 
-    // Verify protectedRepos sees the real repo
-    const m = await loadManifest(TASK_ID);
-    const prot = protectedRepos({ role: "implementer", manifest: m });
+    // Verify protectedRepos returns worktree, not source
+    const m2 = await loadManifest(TASK_ID);
+    const prot = protectedRepos({ role: "cracker", manifest: m2 });
+    // protectedRepos skips repos without worktreePath — our manifest has one, so >0
     expect(prot.length).toBeGreaterThan(0);
-    expect(prot[0].canonical).toBe(realpathSync(primaryRepo));
-
-    const headBefore = execSync("git rev-parse HEAD", { cwd: primaryRepo, encoding: "utf8" }).trim();
+    expect(prot[0].canonical).toBe(realpathSync(primaryWorktree));
 
     const bashH = pi.toolCallHandlers[1];
-    const ctx = fakeCtx({ sessionFile: "/i5", cwd: primaryWorktree });
+    const ctx = fakeCtx({ sessionFile: "/c5", cwd: primaryWorktree });
     await bashH!({ toolName: "bash", toolCallId: "br-mut", input: { command: "echo" } }, ctx);
 
-    execSync("git commit --allow-empty -m mutation", { cwd: primaryRepo, stdio: "ignore" });
-    const headAfter = execSync("git rev-parse HEAD", { cwd: primaryRepo, encoding: "utf8" }).trim();
-    expect(headAfter).not.toBe(headBefore);
+    // Bash mutation in worktree: create a tracked change
+    execSync("git commit --allow-empty -m mutation", { cwd: primaryWorktree, stdio: "ignore" });
 
     const result = await pi.toolResultHandlers[0](
       { toolName: "bash", toolCallId: "br-mut", content: [{ type: "text", text: "ok" }], isError: false },
@@ -180,44 +185,46 @@ describe.serial("registerWritePolicy — bash rollback on mutation", () => {
     );
     expect(result).toBeDefined();
     const res = result as { isError?: boolean; content?: { type: string; text: string }[] };
-    expect(res.isError).toBe(true);
-    expect(res.content?.[0]?.text ?? "").toMatch(/POLICY_VIOLATION/);
+
+    expect(res.content?.[0]?.text ?? "").toMatch(/CRACKER_READ_ONLY/);
   });
 });
 
-describe.serial("registerWritePolicy — bash rollback on dirty repo", () => {
-  test("pre-existing dirty state prevents destructive reset — returns POLICY_VIOLATION_UNSAFE", async () => {
+describe.serial("registerWritePolicy — bash rollback on dirty worktree", () => {
+  test("pre-existing dirty worktree prevents destructive reset for cracker", async () => {
     await seedManifestWithRoles({ crackerSessionFile: "/c6", implementerSessionFile: "/i6" });
+    // Initialize worktree as real git repo with pre-existing dirty state
+    execSync("git init && git commit --allow-empty -m wt-init", { cwd: primaryWorktree, stdio: "ignore" });
+    // Pre-existing untracked file in worktree
+    execSync("touch untracked-before.txt", { cwd: primaryWorktree, stdio: "ignore" });
+    execSync("touch dirty-tracked.txt && git add dirty-tracked.txt && git commit -m dirty-pre", { cwd: primaryWorktree, stdio: "ignore" });
+    execSync("echo modified > dirty-tracked.txt && git add dirty-tracked.txt", { cwd: primaryWorktree, stdio: "ignore" });
 
-    // Create pre-existing tracked change BEFORE bash
-    execSync("touch dirty-tracked.txt && git add dirty-tracked.txt && git commit -m pre", { cwd: primaryRepo, stdio: "ignore" });
-    const trackedFile = join(primaryRepo, "dirty-tracked.txt");
-    require("node:fs").writeFileSync(trackedFile, "modified before bash");
-    execSync("git add dirty-tracked.txt", { cwd: primaryRepo, stdio: "ignore" });
-    // Create pre-existing untracked file
-    require("node:fs").writeFileSync(join(primaryRepo, "untracked-before.txt"), "dirty");
+    const m = await loadManifest(TASK_ID);
+    m.repos[m.primaryRepo].baseSha = execSync("git rev-parse HEAD", { cwd: primaryWorktree, encoding: "utf8" }).trim();
+    await saveManifest(m);
 
     const pi = fakePi(realExec());
     registerWritePolicy(pi as unknown as never);
 
-    // Verify protectedRepos sees the repo
-    const m = await loadManifest(TASK_ID);
-    const prot = protectedRepos({ role: "implementer", manifest: m });
+    // Verify protectedRepos returns worktree
+    const m2 = await loadManifest(TASK_ID);
+    const prot = protectedRepos({ role: "cracker", manifest: m2 });
     expect(prot.length).toBeGreaterThan(0);
-    expect(prot[0].canonical).toBe(realpathSync(primaryRepo));
+    expect(prot[0].canonical).toBe(realpathSync(primaryWorktree));
 
-    const ctx = fakeCtx({ sessionFile: "/i6", cwd: primaryWorktree });
+    const ctx = fakeCtx({ sessionFile: "/c6", cwd: primaryWorktree });
 
     // tool_call: captures dirty fingerprint
-    const prevHead = execSync("git rev-parse HEAD", { cwd: primaryRepo, encoding: "utf8" }).trim();
+    const prevHead = execSync("git rev-parse HEAD", { cwd: primaryWorktree, encoding: "utf8" }).trim();
     await pi.toolCallHandlers[1]({ toolName: "bash", toolCallId: "dr1", input: { command: "echo" } }, ctx);
 
-    // Bash mutates: add another commit on top of dirty repo
-    execSync(`git commit --allow-empty -m "${prevHead}agent change"`, { cwd: primaryRepo, stdio: "ignore" });
-    const headAfterMut = execSync("git rev-parse HEAD", { cwd: primaryRepo, encoding: "utf8" }).trim();
+    // Bash mutates: add another commit
+    execSync("git commit --allow-empty -m 'agent change'", { cwd: primaryWorktree, stdio: "ignore" });
+    const headAfterMut = execSync("git rev-parse HEAD", { cwd: primaryWorktree, encoding: "utf8" }).trim();
     expect(headAfterMut).not.toBe(prevHead);
 
-    // tool_result: should report UNSAFE (not reset because repo was dirty)
+    // tool_result: should report CRACKER_READ_ONLY (rollback to baseSha)
     const result = await pi.toolResultHandlers[0](
       { toolName: "bash", toolCallId: "dr1", content: [{ type: "text", text: "ok" }], isError: false },
       ctx,
@@ -226,15 +233,8 @@ describe.serial("registerWritePolicy — bash rollback on dirty repo", () => {
     const res = result as { isError?: boolean; content?: { type: string; text: string }[] };
     expect(res.isError).toBe(true);
     const txt = res.content?.[0]?.text ?? "";
-    expect(txt).toMatch(/POLICY_VIOLATION_UNSAFE/);
-
-    // Confirm pre-existing dirty file was NOT destroyed (HEAD unchanged after mutation because unsafe — no reset occurred)
-    // The agent's mutation persists (because we can't safely isolate), but pre-existing state is intact.
-    const currentHead = execSync("git rev-parse HEAD", { cwd: primaryRepo, encoding: "utf8" }).trim();
-    // No destructive reset occurred — HEAD is still at the agent mutation commit\    expect(currentHead).toBe(headAfterMut);\    // Pre-existing tracked file was committed in "pre" commit — it survives\    // because unsafe means NO reset\
-    expect(require("node:fs").readFileSync(trackedFile, "utf8")).toBe("modified before bash");
-    // Pre-existing untracked file survived
-    expect(require("node:fs").readFileSync(join(primaryRepo, "untracked-before.txt"), "utf8")).toBe("dirty");
+    expect(txt).toMatch(/CRACKER_READ_ONLY/);
+    expect(txt).toMatch(/restored/);
   });
 });
 

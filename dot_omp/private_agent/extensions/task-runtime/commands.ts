@@ -73,8 +73,9 @@ export function registerTaskRuntimeCommands(pi: ExtensionAPI): void {
         `Task **${id}** (type: ${type}). Primary: **${primaryName}**.`,
         `Worktree: **${worktreePath}** (clean detached @ recorded HEAD).`,
         description ? `\nDescription: ${description}` : `\nDescription was left empty — ask the user in chat what they want, then analyze.`,
-        `\nUse \`task_attach_repo\` for additional repos. When ready, call \`task_mark_ready\`.`,
-        `Then tell user: /task_approve ${id} ; /task_handoff ${id}`,
+        `\nUse \`task_attach_repo\` for additional repos. Call \`task_mark_ready\` when work is complete.`,
+        `\nAfter readiness: tell the user "Task is ready for approval. Run"`,
+        `\n/task_approve ${id}`,
       ].filter(Boolean).join("\n");
       pi.sendUserMessage(boot, { deliverAs: "steer" });
     },

@@ -339,17 +339,24 @@ export async function validateReadiness(taskId: string, exec?: import("./types.t
     }
   }
 
-  // P2: worktree cleanliness check (cracker must not mutate product code).
+  // P0: worktree identity and cleanliness check (cracker must not mutate product code).
   if (exec) {
     for (const [name, repo] of Object.entries(manifest.repos)) {
-      if (!repo.worktreePath) continue;
+      if (!repo.worktreePath || !repo.baseSha) continue;
       try {
-        const clean = await isWorkingTreeClean(exec, repo.worktreePath);
-        if (!clean) {
-          const stat = await exec("git", ["-C", repo.worktreePath, "diff-index", "--name-only", "HEAD"]);
+        const actualHead = (await exec("git", ["-C", repo.worktreePath, "rev-parse", "HEAD"])).stdout.trim();
+        if (actualHead !== repo.baseSha) {
+          issues.push({
+            code: "worktree_head_drift",
+            message: `task worktree "${name}" HEAD (${actualHead.slice(0, 8)}...) != recorded baseSha (${repo.baseSha.slice(0, 8)}...)`,
+          });
+          continue; // already failed — skip cleanliness check for this repo
+        }
+        const dirty = await isRepoClean(exec, repo.worktreePath);
+        if (!dirty.clean) {
           issues.push({
             code: "worktree_modified",
-            message: `task worktree "${name}" (${repo.worktreePath}) has uncommitted changes: ${stat.stdout.trim() || "(tracked changes)"}`,
+            message: `task worktree "${name}" is dirty:\n${dirty.summary.slice(0, 400) || "(captured by porcelain)"}`,
           });
         }
       } catch { issues.push({ code: "worktree_check_failed", message: `git status failed in "${name}" (${repo.worktreePath})` }); }
@@ -358,9 +365,13 @@ export async function validateReadiness(taskId: string, exec?: import("./types.t
 
   try {
     const contract = readVerificationContract(taskId);
-    const v = validateContractAgainstRepos(contract, manifest);
-    if (!v.ok) {
-      issues.push({ code: "verification_invalid", message: v.reason });
+    if (contract.checks.length === 0 && !contract.manualReason) {
+      issues.push({ code: "verification_missing", message: "no verification contract — define one with task_set_verification before marking ready" });
+    } else {
+      const v = validateContractAgainstRepos(contract, manifest);
+      if (!v.ok) {
+        issues.push({ code: "verification_invalid", message: v.reason });
+      }
     }
   } catch (e) {
     issues.push({ code: "verification_malformed", message: (e as Error).message });

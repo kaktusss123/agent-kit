@@ -11,7 +11,7 @@
  */
 
 import { existsSync, realpathSync } from "node:fs";
-import { appendFile, mkdir } from "node:fs/promises";
+import { appendFile, mkdir, rm } from "node:fs/promises";
 import { basename, dirname, isAbsolute, resolve, sep } from "node:path";
 import { artifactsDir, worktreePath } from "./paths.ts";
 import type { ExtensionAPI } from "@oh-my-pi/pi-coding-agent";
@@ -161,6 +161,7 @@ export function evaluateWrite(
 
 export interface RepoFingerprint {
   head: string;
+  branch: string;
   trackedDelta: string;
   untracked: string;
 }
@@ -168,6 +169,7 @@ export interface RepoFingerprint {
 export function fingerprintFromGitOutput(
   head: string,
   statusPorcelain: string,
+  branch: string = "",
 ): RepoFingerprint {
   const records = statusPorcelain.split("\0");
   const tracked: string[] = [];
@@ -181,19 +183,26 @@ export function fingerprintFromGitOutput(
   }
   tracked.sort();
   untracked.sort();
-  return { head, trackedDelta: tracked.join("\n"), untracked: untracked.join("\n") };
+  return { head, branch, trackedDelta: tracked.join("\n"), untracked: untracked.join("\n") };
 }
 
 export function fingerprintsEqual(a: RepoFingerprint, b: RepoFingerprint): boolean {
-  return a.head === b.head && a.trackedDelta === b.trackedDelta && a.untracked === b.untracked;
+  return a.head === b.head && a.branch === b.branch && a.trackedDelta === b.trackedDelta && a.untracked === b.untracked;
 }
 
+/**
+ * Protected repos for bash-guard fingerprinting.
+ * Returns task worktree paths (where bash actually runs).
+ * Reference repos have no worktree; source paths are checked
+ * elsewhere (preflight guard, evaluateWrite).
+ */
 export function protectedRepos(
   ctx: PolicyContext,
 ): { name: string; canonical: string }[] {
   const out: { name: string; canonical: string }[] = [];
   for (const [name, repo] of Object.entries(ctx.manifest.repos)) {
-    const can = canonicalize(repo.sourcePath);
+    if (!repo.worktreePath) continue;
+    const can = canonicalize(repo.worktreePath);
     if (can) out.push({ name, canonical: can });
   }
   return out;
@@ -223,11 +232,18 @@ async function captureFingerprints(
   for (const { canonical } of protectedRepos(ctx)) {
     try {
       const head = await headSha(exec, canonical);
+      const branch = await symbolicRef(exec, canonical);
       const status = await statusPorcelain(exec, canonical);
-      out.set(canonical, fingerprintFromGitOutput(head, status));
+      out.set(canonical, fingerprintFromGitOutput(head, status, branch));
     } catch { /* ignore — repo gone or not git */ }
   }
   return out;
+}
+
+async function symbolicRef(exec: ExecFn, repoPath: string): Promise<string> {
+  const r = await exec("git", ["-C", repoPath, "rev-parse", "--symbolic-full-name", "HEAD"]);
+  if (r.code !== 0) return repoPath;
+  return r.stdout.trim();
 }
 
 async function headSha(exec: ExecFn, repoPath: string): Promise<string> {
@@ -303,6 +319,8 @@ export function registerWritePolicy(pi: ExtensionAPI): void {
     const sessionFile = ctx.sessionManager.getSessionFile();
     const role = roleForSession(manifest, sessionFile);
     if (!role) return;
+    // Only cracker sessions are write-protected during bash.
+    if (role !== "cracker") return;
     const before = await captureFingerprints(exec, { role, manifest });
     pending.set(event.toolCallId, { ctx: { role, manifest }, before });
     return undefined;
@@ -314,6 +332,7 @@ export function registerWritePolicy(pi: ExtensionAPI): void {
     if (!p) return;
     pending.delete(event.toolCallId);
     const after = await captureFingerprints(exec, p.ctx);
+    const manifest = p.ctx.manifest;
     const mutated: string[] = [];
     for (const [path, beforeFp] of p.before) {
       const afterFp = after.get(path);
@@ -322,58 +341,81 @@ export function registerWritePolicy(pi: ExtensionAPI): void {
     }
     if (mutated.length === 0) return;
 
-    // §26.5: only safe-rollback repos that were CLEAN before the bash call.
-    // If a repo was dirty before AND changed further, we cannot isolate
-    // agent-introduced changes from pre-existing work → loud failure, no reset.
-    const safe: { path: string; headBefore: string }[] = [];
-    const unsafe: string[] = [];
+    const rollbackErrors: string[] = [];
+    const cleanedRepos: string[] = [];
+    const repoNameByPath = new Map<string, string>();
+    for (const [name, repo] of Object.entries(manifest.repos)) {
+      if (!repo.worktreePath) continue;
+      const can = canonicalize(repo.worktreePath);
+      if (can) repoNameByPath.set(can, name);
+    }
+
     for (const path of mutated) {
       const beforeFp = p.before.get(path)!;
-      if (beforeFp.trackedDelta === "" && beforeFp.untracked === "") {
-        safe.push({ path, headBefore: beforeFp.head });
-      } else {
-        unsafe.push(path);
+      const afterFp = after.get(path)!;
+      const repoName = repoNameByPath.get(path) ?? path;
+
+      // Resolve baseSha from manifest.
+      let baseSha = beforeFp.head; // fallback to pre-call HEAD if no baseSha recorded
+      if (repoName !== path && manifest.repos[repoName]?.baseSha) {
+        baseSha = manifest.repos[repoName].baseSha!;
       }
-    }
-    const rollbackErrors: string[] = [];
-    for (const { path, headBefore } of safe) {
       try {
-        // Restore tracked files to pre-call HEAD. Do NOT clean untracked
-        // files — they were created by the agent during bash, and restoring
-        // HEAD alone discards them without destroying pre-existing work
-        // (there was none).
-        const reset = await exec("git", ["-C", path, "reset", "--hard", headBefore]);
-        if (reset.code !== 0) {
-          throw new Error(`reset failed: ${reset.stderr}`);
+        // Reset tracked/committed state to factory baseline.
+        let resetR = await exec("git", ["-C", path, "reset", "--hard", baseSha]);
+        if (resetR.code !== 0) throw new Error(`git reset --hard ${baseSha.slice(0, 8)} failed: ${resetR.stderr}`);
+
+        // Restore detached HEAD identity (factory baseline).
+        // git reset --hard on a branch moves the branch; we need plain detached HEAD.
+        const symRef = await exec("git", ["-C", path, "rev-parse", "--symbolic-full-name", "HEAD"]);
+        if (symRef.code === 0 && symRef.stdout.trim() === "HEAD") {
+          // Already detached at baseSha (reset --hard moved it). No extra step needed.
+        } else {
+          // On a branch or unexpected state — force detach.
+          const detach = await exec("git", ["-C", path, "checkout", "--detach", baseSha]);
+          if (detach.code !== 0) throw new Error(`git checkout --detach ${baseSha.slice(0, 8)} failed: ${detach.stderr}`);
         }
-        // P0-6: NEVER git clean -fdx. The repo was "clean" only by git status
-        // --porcelain, which excludes .gitignore-d files (e.g. .env).
-        // git clean -fdx would destroy those pre-existing ignored user files.
-        // Agent-created untracked files remain on disk as evidence.
+
+        // Remove newly appearing untracked files (files created by bash).
+        const beforeUntracked = new Set(beforeFp.untracked.split("\n").filter(Boolean));
+        const afterUntracked = new Set(afterFp.untracked.split("\n").filter(Boolean));
+        for (const f of afterUntracked) {
+          if (beforeUntracked.has(f)) continue;
+          const absF = resolve(path, f);
+          if (existsSync(absF) && pathContained(path, absF)) {
+            await rm(absF, { force: true, recursive: true });
+          }
+        }
+
+        cleanedRepos.push(repoName);
       } catch (e) {
-        rollbackErrors.push(`${path}: ${(e as Error).message}`);
+        rollbackErrors.push(`${repoName}: ${(e as Error).message}`);
       }
     }
+
     // Append policy_violation event
     try {
       const events = (await import("./events.ts")).recordEvent;
       await events(p.ctx.manifest.id, "policy_violation", {
         toolCallId: event.toolCallId,
         mutatedRepos: mutated,
+        cleanedRepos,
         rollbackErrors,
       });
     } catch { /* events dir may not exist outside a real run */ }
-    const unsafeMsg = unsafe.length > 0
-      ? ` POLICY_VIOLATION_UNSAFE: repos [${unsafe.join(", ")}] were dirty before bash — cannot safely rollback agent changes without destroying pre-existing work. Manual cleanup required.`
-      : "";
+
+    let msg = `CRACKER_READ_ONLY\n\nThe command modified product state in ${cleanedRepos.length > 0 ? cleanedRepos.join(", ") : mutated.length > 0 ? "protected repos" : "unknown"}.`;
+    if (p.ctx.role === "cracker") {
+      msg += `\nCracker may inspect product repositories but may not change them.\nThe attempted changes were not accepted as task implementation.`;
+      if (cleanedRepos.length > 0) {
+        msg += `\n\ntask worktrees restored to factory baseline (${cleanedRepos.join(", ")}).`;
+      }
+    }
+    if (rollbackErrors.length > 0) {
+      msg += `\nRollback errors: ${rollbackErrors.join("; ")}`;
+    }
     return {
-      content: [{
-        type: "text" as const,
-        text: `POLICY_VIOLATION: bash mutated protected repos [${mutated.join(", ")}].` +
-              (safe.length > 0 ? ` ${safe.length} repo(s) rolled back to pre-call state.` : "") +
-              unsafeMsg +
-              (rollbackErrors.length ? ` Rollback errors: ${rollbackErrors.join("; ")}` : ""),
-      }],
+      content: [{ type: "text" as const, text: msg }],
       isError: true,
     };
   });
