@@ -592,6 +592,8 @@ export async function preflightSubmit(
     throw new LifecycleError(`approval snapshot is no longer valid: ${v.mismatches.join("; ")}`);
   }
 
+  // Source checkouts may be arbitrarily dirty; only task worktrees matter.
+  // Still verify source paths exist for sanity.
   for (const [name, repo] of Object.entries(manifest.repos)) {
     if (!existsSync(repo.sourcePath)) {
       throw new LifecycleError(`repo "${name}" source path ${repo.sourcePath} disappeared`);
@@ -599,8 +601,11 @@ export async function preflightSubmit(
   }
 
   let policyVerdict: "ok" | "dirty_protected_repo" = "ok";
-  for (const [, repo] of Object.entries(manifest.repos)) {
-    const dirty = await isRepoClean(exec, repo.sourcePath);
+  // Only check that task worktrees are consistent.
+  for (const [name, repo] of Object.entries(manifest.repos)) {
+    if (!repo.worktreePath) continue;
+    if (repo.role !== "reference") continue;
+    const dirty = await isRepoClean(exec, repo.worktreePath);
     if (!dirty.clean) {
       policyVerdict = "dirty_protected_repo";
       break;
