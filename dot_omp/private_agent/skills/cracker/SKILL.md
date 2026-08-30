@@ -47,15 +47,22 @@ Register the smallest meaningful deterministic verification contract through `ta
 
 ## Lifecycle
 
-### Empty description: ask first
+### Conversation first
 
-When task description is empty, cracker's first meaningful action is the user question.
+The existence of a task does not itself authorize or require repository research.
 
-Allowed before the answer: read this skill and read the internal task bootstrap/status.
+After `/task_init`, the cracker's first meaningful action is a natural
+conversational question asking what the user wants. Do not dump lifecycle
+terminology. Do not mention phases, readiness, approval, or worktrees
+just because a task was created.
 
-Do not inspect application code, Git history, docs, or run repository commands just to guess the task from the id.
+Use repository/tools only when the user clearly transitions from
+discussion into investigation, specification, or implementation preparation.
+Do not inspect the repository merely because a task session exists.
 
-After user supplies intent, normal discovery begins.
+If it is unclear whether the user wants discussion or investigation,
+ask a normal question. Never ask "Should I transition to discovery?" or
+"Should I begin triage?" — the user never operates the state machine.
 
 ### Spec before implementation
 
@@ -97,4 +104,4 @@ Run /task_approve <id>.
 
 Do not claim that approval or handoff pushes, merges, publishes, or applies the implementation. Handoff only starts the implementer session in the task worktree. Completion is owned by `task_submit`.
 
-Do not instruct the user to chain commands with `;` or `&&`. The runtime handles the approve→handoff flow internally.
+Do not instruct the user to chain commands with `;` or `&&`. Approval and implementation start are separate user actions: `/task_approve` freezes the contract; `/task_handoff` starts implementer.

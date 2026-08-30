@@ -18,6 +18,8 @@ Generic coding discipline lives in `skill://implementation`. This adapter adds T
 
 If handoff state is inconsistent, do not compensate with stale absolute paths. Block/report the conflict.
 
+Runtime-provided bootstrap inputs are authoritative. If a required runtime-owned input is inaccessible or internally inconsistent, do not invent a substitute: do not search for alternate copies, inspect host task directories, reconstruct the spec from product docs, or copy the snapshot into the worktree. Report/block the runtime conflict once. Do not perform filesystem archaeology.
+
 ## Authority and workspace
 
 Allowed task tools:

@@ -13,7 +13,7 @@
 import { existsSync, realpathSync } from "node:fs";
 import { appendFile, mkdir, rm } from "node:fs/promises";
 import { basename, dirname, isAbsolute, resolve, sep } from "node:path";
-import { artifactsDir, worktreePath } from "./paths.ts";
+import { artifactsDir, snapshotDir, worktreePath } from "./paths.ts";
 import type { ExtensionAPI } from "@oh-my-pi/pi-coding-agent";
 import type { TaskManifestV2, ExecFn } from "./types.ts";
 import { loadManifest } from "./storage.ts";
@@ -444,6 +444,13 @@ export function registerWritePolicy(pi: ExtensionAPI): void {
         if (!repo.worktreePath) continue;
         const wt = canonicalize(repo.worktreePath) ?? repo.worktreePath;
         if (pathContained(wt, canonical)) return undefined;
+      }
+
+      // Allowed: implementer reading from current approval snapshot.
+      if (role === "implementer" && manifest.approval?.id) {
+        const snapDir = snapshotDir(manifest.id, manifest.approval.id);
+        const snapCanonical = canonicalize(snapDir);
+        if (snapCanonical && pathContained(snapCanonical, canonical)) return undefined;
       }
 
       // Blocked: under any human source checkout.
