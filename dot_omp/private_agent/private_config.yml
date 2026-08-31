@@ -1,5 +1,5 @@
 modelRoles:
-  default: opencode-go/deepseek-v4-flash:high
+  default: openai-codex/gpt-5.6-luna:high
   tiny: cloudru/openai/gpt-oss-120b:high
   smol: opencode-go/mimo-v2.5:high
   slow: cloudru/deepseek-ai/DeepSeek-V4-Pro:max
@@ -7,8 +7,8 @@ modelRoles:
   plan: openai-codex/gpt-5.6-luna:high
   designer: opencode-go/muse-spark-1.2-contributor:high
   commit: opencode-go/deepseek-v4-flash:high
-  task: cloudru/Qwen/Qwen3.5-397B-A17B:high
-  advisor: openai-codex/gpt-5.6-luna:auto
+  task: openai-codex/gpt-5.6-luna:high
+  advisor: cloudru/deepseek-ai/DeepSeek-V4-Pro:auto
 symbolPreset: nerd
 composer:
   shape: box
@@ -18,8 +18,8 @@ theme:
 setupVersion: 2
 hideThinkingBlock: false
 statusLine:
-  preset: compact
-  separator: powerline-thin
+  preset: default
+  separator: powerline
   contextLine: embedded
   sessionAccent: true
   transparent: false
@@ -108,3 +108,5 @@ disabledProviders:
   - agents-md
   - claude
 colorBlindMode: true
+features:
+  unexpectedStopDetection: smart

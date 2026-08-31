@@ -1,1 +1,0 @@
-const marker = process.env.TCSF_WORKER_MARKER; if (marker) await Bun.write(marker, `${JSON.stringify({ pid: process.pid, startedAt: new Date().toISOString(), argv: process.argv })}\n`, { append: true }); await new Promise<void>(resolve => { process.once("SIGTERM", () => resolve()); process.once("SIGINT", () => resolve()); });
