@@ -1,0 +1,20 @@
+import { mkdir, writeFile } from "node:fs/promises";
+import { join } from "node:path";
+import { OmpCandidateRuntime } from "../../adapters/omp/candidate-runtime.ts";
+import { createManifest } from "../../conformance/manifest.ts";
+
+const acceptanceRoot = process.env.TCSF_ACCEPTANCE_ROOT ?? join(process.env.HOME ?? ".", ".omp", "tcsf-acceptance-20260830");
+const candidateRoot = join(acceptanceRoot, "candidate", new Date().toISOString().replace(/[:.]/gu, "-"));
+const sourceRoot = join(import.meta.dir, "..", "..");
+await mkdir(candidateRoot, { recursive: true });
+const sourceBefore = await createManifest(sourceRoot);
+await writeFile(join(candidateRoot, "candidate-parent-before.json"), `${JSON.stringify({ sourceRoot, sourceSnapshotHash: sourceBefore.treeHash, sourceFileCount: sourceBefore.files.length, capturedAt: new Date().toISOString() }, null, 2)}\n`);
+const runtime = new OmpCandidateRuntime("omp", 300_000);
+const result = await runtime.executePack({ extensionPath: join(sourceRoot, "index.ts"), cwd: candidateRoot, sessionDirectory: join(candidateRoot, "runtime"), scenarioRoot: candidateRoot, timeoutMs: 300_000 });
+const sourceAfter = await createManifest(sourceRoot);
+const unchanged = sourceBefore.treeHash === sourceAfter.treeHash;
+await writeFile(join(candidateRoot, "candidate-parent-after.json"), `${JSON.stringify({ sourceRoot, sourceSnapshotHash: sourceAfter.treeHash, sourceFileCount: sourceAfter.files.length, unchanged, capturedAt: new Date().toISOString() }, null, 2)}\n`);
+const pack = { catalog: "C-01..C-10", packRunId: result.packRunId, sourceSnapshotRoot: result.sourceSnapshotRoot, sourceSnapshotHash: result.sourceSnapshotHash, parentBefore: sourceBefore.treeHash, parentAfter: sourceAfter.treeHash, unchanged, finalCandidateState: result.scenarios.at(-1)?.scenario?.passed === true ? "passed" : "failed", result };
+await writeFile(join(candidateRoot, "candidate-pack.json"), `${JSON.stringify(pack, null, 2)}\n`); await writeFile(join(candidateRoot, "result.json"), `${JSON.stringify({ id: "candidate-pack", verdict: result.passed && unchanged ? "PASS" : "FAIL", packRunId: result.packRunId, sourceSnapshotHash: result.sourceSnapshotHash, scenarios: result.scenarios.map(scenario => ({ id: scenario.id, sequence: scenario.sequence, passed: scenario.inspection?.passed ?? scenario.scenario?.passed })) }, null, 2)}\n`);
+console.log(JSON.stringify({ candidateRoot, packRunId: result.packRunId, sourceSnapshotHash: result.sourceSnapshotHash, unchanged, passed: result.passed, scenarios: result.scenarios.map(scenario => ({ id: scenario.id, sequence: scenario.sequence, passed: scenario.inspection?.passed ?? scenario.scenario?.passed })) }, null, 2));
+if (!unchanged || !result.passed) process.exitCode = 1;

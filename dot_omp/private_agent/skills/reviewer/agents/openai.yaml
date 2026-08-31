@@ -1,0 +1,3 @@
+interface:
+  display_name: "Reviewer"
+  short_description: "Fresh-context read-only review for TCSF"
