@@ -70,7 +70,6 @@ disabledExtensions:
   - skill:execution-plan
   - skill:feature-interrogation
   - skill:find-docs
-  - skill:git-commit
   - skill:go-review
   - skill:kanban-discipline
   - skill:llm-wiki
@@ -82,7 +81,6 @@ disabledExtensions:
   - skill:repo-reconnaissance
   - skill:review
   - skill:review-against-plan
-  - skill:security-review
   - skill:security-surface-mapping
   - skill:sing-box-remote-routing
   - skill:spec-discovery
