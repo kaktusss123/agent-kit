@@ -1,0 +1,24 @@
+{
+  "$schema": "https://raw.githubusercontent.com/can1357/oh-my-pi/main/packages/coding-agent/src/config/mcp-schema.json",
+  "mcpServers": {
+    "atlassian": {
+      "command": "uvx",
+      "args": [
+        "mcp-atlassian",
+        "--transport",
+        "stdio"
+      ],
+      "env": {
+        "JIRA_URL": "https://jira.cloud.ru",
+        "JIRA_PERSONAL_TOKEN": "JIRA_PERSONAL_TOKEN",
+        "CONFLUENCE_URL": "https://wiki.cloud.ru",
+        "CONFLUENCE_PERSONAL_TOKEN": "CONFLUENCE_PERSONAL_TOKEN",
+        "JIRA_PROJECTS_FILTER": "EVODP",
+        "CONFLUENCE_SPACES_FILTER": "OCP"
+      }
+    }
+  },
+  "disabledServers": [
+    "kanban"
+  ]
+}
