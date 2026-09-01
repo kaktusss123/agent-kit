@@ -1,0 +1,10 @@
+interface:
+  display_name: Change Request
+  short_description: Draft and publish safe GitHub PRs or GitLab MRs
+policy:
+  products:
+  - chatgpt
+  - codex
+  - api
+  - atlas
+  allow_implicit_invocation: true
