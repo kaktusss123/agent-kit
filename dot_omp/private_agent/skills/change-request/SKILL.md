@@ -18,12 +18,13 @@ Use a lightweight workflow. Prefer the installed forge CLI over custom API wrapp
 - Treat create and update as different operations. `create` must never silently become `update`.
 - Before changing an existing PR/MR, read its current title and description. Preserve fields and manual content the user did not ask to replace.
 - Do not fabricate test counts, coverage, commands, links, ticket IDs, or implementation claims.
+- When several related PRs/MRs are drafted together, normalize them as a set rather than preserving accidental stylistic differences between drafts.
 
 ## Workflow
 
 1. Determine the requested operation: `draft`, `inspect`, `create`, or `update`.
 2. Gather facts from the current conversation and available repository evidence. Read-only git commands are allowed when they help understand the change or identify candidate remotes.
-3. Load [references/description.md](references/description.md) and prepare the title/body.
+3. Load [references/description.md](references/description.md) and prepare the title/body. If several sibling PRs/MRs are in scope, compare and normalize them together before finalizing any one draft.
 4. If the request is only `draft`, return the draft and stop.
 5. Resolve the publication target. Require provider, host, repository, source branch, and target branch to be known. If provider/host/repository are not explicit, ask the user instead of guessing. Candidate remotes may be shown as suggestions.
 6. Load [references/github.md](references/github.md) for GitHub or [references/gitlab.md](references/gitlab.md) for GitLab.
