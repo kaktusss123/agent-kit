@@ -16,16 +16,6 @@
       },
       "enabled": true
     },
-    "kanban": {
-      "type": "local",
-      "command": ["kanban-mcp"],
-      "environment": {
-        "KANBAN_DB_HOST": "localhost",
-        "KANBAN_DB_USER": "kanban",
-        "KANBAN_DB_PASSWORD": "{env:KANBAN_DB_PASSWORD}",
-        "KANBAN_DB_NAME": "kanban"
-      }
-    },
     "playwright": {
       "type": "local",
       "command": ["npx", "@playwright/mcp@latest"],
@@ -35,31 +25,13 @@
   "permission": {
     "bash": {
       "*": "allow",
-      "git push*": "ask",
-      "rtk git push*": "ask"
+      "*git push*": "ask"
     },
     "task": {
       "*": "deny"
     },
     "skill": {
       "*": "allow",
-      "python-codestyle": "allow",
-      "python-knowledge": "allow",
-      "workflow-gates": "deny",
-      "kanban-discipline": "deny",
-      "codegraph-impact-analysis": "deny",
-      "design-brief": "deny",
-      "execution-plan": "deny",
-      "replan-on-surprise": "deny",
-      "verification-gate": "deny",
-      "review-against-plan": "deny",
-      "commit-readiness": "deny",
-      "decision-log": "deny",
-      "complexity-review": "deny",
-      "implementation": "deny",
-      "verification": "deny",
-      "review": "deny",
-      "orchestration": "deny"
     },
     "external_directory": {
       "~/.config/opencode/*": "allow",
@@ -75,13 +47,6 @@
         "apiKey": "{env:CLOUDRU_API_KEY}"
       },
       "models": {
-        "zai-org/GLM-5.1": {
-          "name": "GLM-5.1",
-          "limit": {
-            "context": 202000,
-            "output": 20000
-          }
-        },
         "moonshotai/Kimi-K2.6": {
           "name": "Kimi-k2.6",
           "limit": {
@@ -128,299 +93,59 @@
     }
   },
   "agent": {
-    "explore": {
-      "disable": true
-    },
-    "build": {
-      "disable": true
-    },
-    "plan": {
-      "disable": true
-    },
+    "explore": { "disable": true },
+    "build": { "disable": true },
+    "plan": { "disable": true },
 
-    "project-init-runner": {
-      "model": "{env:OC_MODEL_PROTOCOL}"
-    },
+    "project-init-runner": { "model": "{env:OC_MODEL_PROTOCOL}" },
 
     "repo-scout": {
       "hidden": true,
       "model": "{env:OC_MODEL_RESEARCH}",
-      "tools": {
-        "kanban_*": false
-      },
-      "permission": {
-        "task": "deny"
-      }
+      "permission": { "task": "deny" }
     },
-
-    "feature-triager": {
-      "hidden": true,
-      "model": "{env:OC_MODEL_ANALYSIS}",
-      "tools": {
-        "kanban_*": true
-      },
-      "permission": {
-        "task": "deny"
-      }
-    },
-
-    "graph-impact-analyst": {
-      "hidden": true,
-      "model": "{env:OC_MODEL_RESEARCH}",
-      "permission": {
-        "task": "deny"
-      }
-    },
-
-    "design-planner": {
+    "designer": {
       "hidden": true,
       "model": "{env:OC_MODEL_DESIGN}",
-      "tools": {
-        "kanban_*": true
-      },
-      "permission": {
-        "task": "deny"
-      }
+      "permission": { "task": "deny" }
     },
-
-    "edge-case-harvester": {
-      "hidden": true,
-      "model": "{env:OC_MODEL_ANALYSIS}",
-      "tools": {
-        "kanban_*": false
-      },
-      "permission": {
-        "task": "deny"
-      }
-    },
-
-    "contract-impact-auditor": {
-      "hidden": true,
-      "model": "{env:OC_MODEL_ANALYSIS}",
-      "tools": {
-        "kanban_*": false
-      },
-      "permission": {
-        "task": "deny"
-      }
-    },
-
-    "non-functional-prober": {
-      "hidden": true,
-      "model": "{env:OC_MODEL_ANALYSIS}",
-      "tools": {
-        "kanban_*": false
-      },
-      "permission": {
-        "task": "deny"
-      }
-    },
-
-    "traceability-checker": {
-      "hidden": true,
-      "model": "{env:OC_MODEL_REVIEW}",
-      "tools": {
-        "kanban_*": false
-      },
-      "permission": {
-        "task": "deny"
-      }
-    },
-
     "implementer": {
       "hidden": true,
       "model": "{env:OC_MODEL_CODE}",
-      "tools": {
-        "kanban_*": true
-      },
-      "permission": {
-        "task": "deny"
-      }
+      "permission": { "task": "deny" }
     },
-
-    "verification-engineer": {
+    "reviewer": {
       "hidden": true,
       "model": "{env:OC_MODEL_REVIEW}",
-      "tools": {
-        "kanban_*": true
-      },
-      "permission": {
-        "task": "deny"
-      }
+      "permission": { "task": "deny" }
     },
-
-    "reviewer-against-plan": {
-      "hidden": true,
-      "model": "{env:OC_MODEL_REVIEW}",
-      "tools": {
-        "kanban_*": false
-      },
-      "permission": {
-        "task": "deny"
-      }
-    },
-
-    "reviewer-security": {
+    "security-reviewer": {
       "hidden": true,
       "model": "{env:OC_MODEL_SECURITY}",
-      "tools": {
-        "kanban_*": false
-      },
-      "permission": {
-        "task": "deny"
-      }
+      "permission": { "task": "deny" }
     },
-
-    "reviewer-deep": {
-      "hidden": true,
-      "model": "{env:OC_MODEL_REVIEW}",
-      "tools": {
-        "kanban_*": false
-      },
-      "permission": {
-        "task": "deny"
-      }
-    },
-
-    "reviewer-contracts": {
-      "hidden": true,
-      "model": "{env:OC_MODEL_REVIEW}",
-      "tools": {
-        "kanban_*": false
-      },
-      "permission": {
-        "task": "deny"
-      }
-    },
-
-    "reviewer-tests": {
-      "hidden": true,
-      "model": "{env:OC_MODEL_REVIEW}",
-      "tools": {
-        "kanban_*": false
-      },
-      "permission": {
-        "task": "deny"
-      }
-    },
-
-    "reviewer-performance": {
-      "hidden": true,
-      "model": "{env:OC_MODEL_REVIEW}",
-      "tools": {
-        "kanban_*": false
-      },
-      "permission": {
-        "task": "deny"
-      }
-    },
-
-    "reviewer-complexity": {
-      "hidden": true,
-      "model": "{env:OC_MODEL_REVIEW}",
-      "tools": {
-        "kanban_*": false
-      },
-      "permission": {
-        "task": "deny"
-      }
-    },
-
     "committer": {
       "hidden": true,
       "model": "{env:OC_MODEL_PROTOCOL}",
-      "tools": {
-        "kanban_*": false
-      },
-      "permission": {
-        "task": "deny"
-      }
+      "permission": { "task": "deny" }
     },
 
+    "dev-orchestrator": { "model": "{env:OC_MODEL_CONTROL}" },
+    "spec-analyst": { "model": "{env:OC_MODEL_ANALYSIS}" },
+    "General": { "model": "{env:OC_MODEL_CODE}" },
+
+    "tester": { "model": "{env:OC_MODEL_TEST}" },
     "test-planner": {
       "model": "{env:OC_MODEL_TEST}",
-      "permission": {
-        "task": "deny"
-      }
+      "permission": { "task": "deny" }
     },
-
-    "test-reviewer": {
-      "model": "{env:OC_MODEL_TEST}",
-      "permission": {
-        "task": "deny"
-      }
-    },
-
     "test-writer": {
       "model": "{env:OC_MODEL_TEST}",
-      "permission": {
-        "task": "deny"
-      }
+      "permission": { "task": "deny" }
     },
-
-    "dev-orchestrator": {
-      "model": "{env:OC_MODEL_CONTROL}",
-      "tools": {
-        "kanban_*": true
-      }
-    },
-
-    "FastSpecAnalyst": {
-      "model": "{env:OC_MODEL_ANALYSIS}",
-      "tools": {
-        "kanban_*": true
-      }
-    },
-
-    "FullSpecAnalyst": {
-      "model": "{env:OC_MODEL_DESIGN}",
-      "tools": {
-        "kanban_*": true
-      }
-    },
-
-    "General": {
-      "model": "{env:OC_MODEL_CODE}",
-      "tools": {
-        "kanban_*": true
-      }
-    },
-
-    "project-analyst": {
-      "hidden": false,
-      "model": "{env:OC_MODEL_RESEARCH}",
-      "tools": {
-        "kanban_*": false
-      }
-    },
-
-    "security-surface-mapper": {
-      "hidden": true,
-      "model": "{env:OC_MODEL_RESEARCH}",
-      "tools": {
-        "kanban_*": false
-      },
-      "permission": {
-        "task": "deny"
-      }
-    },
-
-    "security-scanner": {
-      "hidden": true,
-      "model": "{env:OC_MODEL_SECURITY}",
-      "tools": {
-        "kanban_*": false
-      },
-      "permission": {
-        "task": "deny"
-      }
-    },
-
-    "security-scan-orchestrator": {
-      "model": "{env:OC_MODEL_CONTROL}",
-      "tools": {
-        "kanban_*": false
-      }
+    "test-reviewer": {
+      "model": "{env:OC_MODEL_TEST}",
+      "permission": { "task": "deny" }
     }
   }
 }
