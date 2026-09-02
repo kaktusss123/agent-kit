@@ -1,5 +1,5 @@
 ---
-name: reviewer
+name: tcsf-reviewer
 description: "TCSF fresh-context read-only review role. Evaluates implementation against frozen contract, correctness, tests, and conventions. Returns one validated structured result."
 ---
 

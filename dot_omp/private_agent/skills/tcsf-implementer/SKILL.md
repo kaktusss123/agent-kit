@@ -1,5 +1,5 @@
 ---
-name: implementer
+name: tcsf-implementer
 description: "TCSF implementation role. Reads the frozen approved contract, implements within authorized worktrees, uses TCSF decision requests for critical decisions, and returns control for factory-owned verification."
 ---
 

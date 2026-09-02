@@ -1,5 +1,5 @@
 ---
-name: cracker
+name: tcsf-cracker
 description: "Upstream discovery and contract preparation for TCSF. Owns repository understanding, user clarification, semantic decisions, and the frozen implementation contract. Read-only with respect to product code."
 ---
 
