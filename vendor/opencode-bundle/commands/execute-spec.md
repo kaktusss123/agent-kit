@@ -1,18 +1,10 @@
 ---
-description: Execute an approved specification through the dev-orchestrator engineering workflow
+description: Execute a durable specification through implement, commit, and fresh verification loops
 agent: dev-orchestrator
 ---
 
-<!-- markdownlint-disable MD041 -->
-
-Execute the approved specification referenced by the user:
+Implement the governing specification or complete requirements referenced here:
 
 $ARGUMENTS
 
-The spec reference must be explicit — a path to a spec workspace folder, a path to a `spec.md` file, or a task-id/workspace identifier. If `$ARGUMENTS` is empty or contains no accepted spec reference, do not guess from recency or chat state; return a short usage hint listing the accepted reference forms and stop.
-
-Inspect the referenced paths early using read/glob/grep tools; surface any external path that needs approval before continuing.
-
-Begin with a spec-validation phase: read every artifact in the referenced spec workspace, cross-check the spec's claims against the current repository state, and look for contradictions, missing decisions, or untestable acceptance criteria. If material gaps remain, stop and list them to the user — do not skip to implementation on an incomplete or contradictory spec.
-
-After validation passes, continue through the normal engineering workflow and stop when the latest implementation commit has no remaining defects awaiting user approval.
+Read the durable spec when a path is provided. Validate only material contradictions against the current repository. Then decompose the task into coherent slices and run every changing slice through implement, checkpoint commit, and fresh verification. Finish with task-level acceptance against the original contract.

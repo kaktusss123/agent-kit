@@ -40,8 +40,24 @@ repository_dir="$(git -C "$FRAMEWORK_DIR" rev-parse --show-toplevel)"
 bundle_prefix="$(git -C "$FRAMEWORK_DIR" rev-parse --show-prefix)"
 revision="$(git -C "$FRAMEWORK_DIR" rev-parse HEAD)"
 
-git -C "$repository_dir" archive --format=tar HEAD "$bundle_prefix" | \
-  tar -x -C "$temporary_dir" --strip-components=1
+if [ -n "$bundle_prefix" ]; then
+  archive_pathspec="$bundle_prefix"
+  without_slashes="${bundle_prefix//\//}"
+  strip_components=$(( ${#bundle_prefix} - ${#without_slashes} ))
+else
+  # Bundle dir is the repository root: --show-prefix is empty, so archive
+  # the whole tree and do not strip any path components.
+  archive_pathspec="."
+  strip_components=0
+fi
+
+tar_args=(-x -C "$temporary_dir")
+if [ "$strip_components" -gt 0 ]; then
+  tar_args+=(--strip-components="$strip_components")
+fi
+
+git -C "$repository_dir" archive --format=tar HEAD -- "$archive_pathspec" | \
+  tar "${tar_args[@]}"
 rsync -a --delete "$temporary_dir/" "$VENDOR_DIR/"
 synced_at="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 printf 'source=%s\ncommit=%s\nsynced_at=%s\n' \

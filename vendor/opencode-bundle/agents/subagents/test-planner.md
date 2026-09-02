@@ -17,7 +17,9 @@ permission:
     "**/*": "allow"
   glob:
     "**/*": "allow"
-  edit: deny
+  edit:
+    "**/*": "deny"
+    "docs/agent-testing/**": "allow"
   skill:
     "*": "deny"
     "testing-python": "allow"

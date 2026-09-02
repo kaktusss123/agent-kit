@@ -1,20 +1,12 @@
 ---
-description: Comprehensive specification discovery for complex features — interview, analyze, and produce an implementation-ready spec
-agent: FullSpecAnalyst
+description: Adaptive discovery and durable implementation specification
+agent: spec-analyst
 ---
 
-<!-- markdownlint-disable MD041 -->
-
-Run the comprehensive specification discovery workflow for this task:
+Create an implementation-ready specification for:
 
 $ARGUMENTS
 
-Goal: systematically remove ambiguity through structured analysis before implementation starts.
+Investigate only as much as the task needs. Use non-overlapping research fan-out when useful, resolve material design choices, ask only questions that change intended behavior, and persist the final spec so a clean session can implement it.
 
-Inspect repository context, referenced docs, and any paths the user provided. Probe each referenced path early using read/glob/grep tools; if a path sits outside the workspace, surface it to the user for approval before continuing.
-
-If the request is empty or too vague to act on, return a short usage hint and stop — do not guess from recency or chat state.
-
-Ask blocking questions in focused rounds, propose defaults when useful, and write the final handoff-ready spec only after the questioning loop is complete. Before producing the spec, summarize your understanding of the task in Russian and wait for explicit user approval. Do not write a placeholder design doc with unresolved questions.
-
-Do not implement code. Stop when the spec is ready to be handed off (via `/execute-spec`) or when more user answers are required.
+Do not implement product code. Finish with the spec path and a ready `/execute-spec <path>` next step.

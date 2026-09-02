@@ -43,7 +43,6 @@ permission:
   skill:
     "*": "deny"
     "testing-python": "allow"
-    "delegation-context": "allow"
 ---
 
 # Role
