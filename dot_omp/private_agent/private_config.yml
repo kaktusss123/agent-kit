@@ -1,5 +1,5 @@
 modelRoles:
-  default: openai-codex/gpt-5.6-luna:high
+  default: zai/glm-5.3-flash:high
   tiny: cloudru/openai/gpt-oss-120b:high
   smol: opencode-go/mimo-v2.5:high
   slow: cloudru/deepseek-ai/DeepSeek-V4-Pro:max
@@ -16,7 +16,7 @@ theme:
   dark: onyx
   light: light
 setupVersion: 2
-hideThinkingBlock: false
+hideThinkingBlock: true
 statusLine:
   preset: default
   separator: powerline
@@ -39,13 +39,15 @@ display:
   cacheMissMarker: true
 task:
   showResolvedModelBadge: true
+  isolation:
+    commits: ai
 defaultThinkingLevel: auto
 modelRoleStorage: global
 personality: pragmatic
 advisor:
   enabled: true
   immuneTurns: 5
-doubleEscapeAction: tree
+doubleEscapeAction: rewind
 treeFilterMode: default
 error:
   notify: "on"
@@ -111,3 +113,21 @@ disabledProviders:
 colorBlindMode: true
 features:
   unexpectedStopDetection: smart
+cycleOrder:
+  - smol
+  - slow
+  - default
+  - plan
+browser:
+  headless: false
+  cmux: false
+  enabled: false
+plan:
+  enabled: false
+magicKeywords:
+  workflow: false
+  orchestrate: false
+  enabled: true
+eval:
+  py: false
+  js: false
