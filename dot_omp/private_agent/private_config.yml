@@ -3,11 +3,11 @@ modelRoles:
   tiny: cloudru/openai/gpt-oss-120b:high
   smol: opencode-go/mimo-v2.5:high
   slow: cloudru/deepseek-ai/DeepSeek-V4-Pro:max
-  vision: opencode-go/deepseek-v4-flash-vision-exp:high
+  vision: opencode-go/glm-5.3-flash:high
   plan: openai-codex/gpt-5.6-luna:high
-  designer: opencode-go/muse-spark-1.2-contributor:high
+  designer: opencode-go/glm-5.3-flash:high
   commit: opencode-go/deepseek-v4-flash:high
-  task: openai-codex/gpt-5.6-luna:high
+  task: opencode-go/mimo-v2.5:high
   advisor: cloudru/deepseek-ai/DeepSeek-V4-Pro:auto
 symbolPreset: nerd
 composer:
