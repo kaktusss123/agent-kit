@@ -105,6 +105,9 @@ disabledProviders:
   - opencode
   - agents-md
   - claude
+  - agents
+  - cursor
+  - omp-managed
 colorBlindMode: true
 features:
   unexpectedStopDetection: smart
