@@ -43,6 +43,8 @@ Transient subagent output is evidence for the current session, not the cross-ses
 
 Core generic skills contain reusable engineering judgment:
 - `engineering-core`
+- `tdd`
+- `unslop`
 - `system-understanding`
 - `blast-radius`
 - `codebase-design`
@@ -54,7 +56,7 @@ Core generic skills contain reusable engineering judgment:
 - `git-commit`
 - `security-review`
 
-Existing generic skills such as `find-docs`, project initialization helpers, and `testing-python` remain available where useful.
+Existing generic skills such as `engineering-research`, project initialization helpers, and `testing-python` remain available where useful.
 
 ## Kanban
 
