@@ -1,6 +1,6 @@
 ---
 name: git-commit
-description: "Safe repository checkpoint commit policy for implementation workflows and explicit commit requests. Use when an agent must stage and commit a coherent change while enforcing protected-branch rules, EVODP ticket extraction, ticketless mode, concise English commit messages, explicit staging, secret-file exclusions, and repository hooks."
+description: "Safe repository checkpoint commit policy for implementation workflows and explicit commit requests. Use when an agent must stage and commit a coherent change while enforcing branch and push policy, ticket extraction for any tracker, ticketless mode for personal repositories, concise English commit messages, explicit staging, secret-file exclusions, and repository hooks."
 ---
 
 # Git commit
@@ -9,8 +9,6 @@ Create a checkpoint from the repository state without broadening its scope.
 
 ## Hard policy
 
-- Never commit on `main`, `master`, or `develop`.
-- Never push as part of this workflow.
 - Never use `--no-verify`.
 - Never use blanket staging such as `git add .` or `git add -A`.
 - Never stage likely secret files such as `.env`, `.env.*`, `*.pem`, `*.key`, or `credentials.json` unless the user explicitly identifies a safe tracked fixture that merely matches the pattern.
@@ -18,16 +16,29 @@ Create a checkpoint from the repository state without broadening its scope.
 
 These are behavioral rules until a runtime hook enforces them mechanically.
 
+## Branch and push
+
+Before staging, read the current branch and the last 20 commit subjects of the default branch (`git log --format=%s -20 <default-branch>`).
+
+Default: never commit on `main`, `master`, or `develop`, and never push. Two exceptions:
+
+- The user explicitly requested committing on this branch or pushing in this conversation.
+- The default branch carries direct history: plain subjects, no `Merge pull request ...` entries and no squash suffixes like `(#123)`. Then committing on it is allowed, but pushing still requires an explicit user request.
+
+If neither exception applies, create a work branch and leave publishing to the repository's normal flow.
+
 ## Ticket and message
 
-Read the current branch before staging.
+Extract a ticket key — any uppercase `KEY-<number>` such as `EVODP-1234` — from the branch name, the user request, or the parent task.
 
-For normal work, extract `EVODP-<number>` from the branch name. If it is absent, stop with `missing_ticket` unless ticketless mode was explicitly requested.
+If no ticket is found, decide by repository context:
+- Ticket prefixes are the norm in the sampled subjects (most carry a `KEY-123:` style prefix) → ticketed repo: stop with `missing_ticket` unless the user explicitly chose ticketless.
+- Otherwise → ticketless: commit without a ticket.
 
 Ticketless mode is explicit when the user or parent task says `--no-ticket`, `ticketless`, `no ticket`, or `без тикета`.
 
 Use:
-- with ticket: `<type>(EVODP-1234): <description>`
+- with ticket: `<type>(KEY-1234): <description>`
 - ticketless: `<type>: <description>`
 
 Choose `fix`, `feat`, or `chore` from the branch prefix and actual change. Prefer `chore` for maintenance, refactoring, docs, and framework work that is not a product feature or bug fix.
@@ -36,7 +47,7 @@ Write the description in English, imperative mood, focused on what changed. Keep
 
 ## Commit procedure
 
-1. Confirm the protected-branch rule.
+1. Confirm the branch and push policy.
 2. Inspect `git status` and the diff needed to understand the intended checkpoint.
 3. Keep an existing staged set, or stage only explicit intended paths.
 4. Inspect the staged diff and ensure it is one coherent checkpoint with no accidental files or secrets.
