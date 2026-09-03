@@ -2,7 +2,7 @@ modelRoles:
   default: zai/glm-5.3-flash:high
   tiny: cloudru/openai/gpt-oss-120b:high
   smol: opencode-go/mimo-v2.5:high
-  slow: cloudru/deepseek-ai/DeepSeek-V4-Pro:max
+  slow: openai-codex/gpt-5.6-sol:high
   vision: opencode-go/glm-5.3-flash:high
   plan: openai-codex/gpt-5.6-luna:high
   designer: opencode-go/glm-5.3-flash:high
