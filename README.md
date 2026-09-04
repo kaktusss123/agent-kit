@@ -28,6 +28,7 @@ private Git repository  (github.com:kaktusss123/omp-cmux-dotfiles)
 | `~/.omp/agent/mcp.json` | `dot_omp/private_agent/private_mcp.json` |
 | `~/.omp/agent/extensions/*` | `dot_omp/private_agent/extensions/*` |
 | `~/.omp/agent/skills/*` | `dot_omp/private_agent/skills/*` |
+| `~/.omp/agent/prompts/*` | `dot_omp/private_agent/prompts/*` |
 | `~/.omp/agent/managed-skills/*` | `dot_omp/private_agent/managed-skills/*` |
 | `~/.config/cmux/cmux.json` | `private_dot_config/cmux/private_cmux.json` |
 | `~/.zshrc.d/10-dotsync.zsh` | `dot_zshrc.d/10-dotsync.zsh` |
