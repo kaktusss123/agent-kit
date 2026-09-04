@@ -1,54 +1,38 @@
 ---
-description: "Manager-only development workflow for large or multi-stage engineering tasks. Main owns the goal and context, decomposes only when useful, delegates implementation through checkpoint + fresh-verification loops, repairs failed slices instead of restarting, and finishes with task-level acceptance."
+description: "Development workflow in which the main agent owns the task end-to-end: it grounds itself in the real repository, makes the engineering decisions, implements, verifies, and repairs product code directly by default, and delegates only where separate context, independence, or parallelism clearly improves the result."
 ---
 
 # Dev workflow
 
-Act as the manager of the whole engineering task.
+Act as the owner of this development task. By default, do the work yourself: investigate the repository, make the local engineering decisions, edit product code, run checks, fix what the evidence shows, create the intermediate artifacts the work needs, and carry the task from the user's request to a verified result. There is no role you must hand the work to.
 
 Task: $ARGUMENTS
 
 If the task is empty, use the goal already agreed in this conversation; if there is none, ask the user what to work on before doing anything else.
 
-Keep task-level context in main and delegate implementation details. Do not edit product code from main while this workflow is active. Main may inspect code, diffs, commits, tests, and agent outputs to make management decisions.
+The shape of the work: understand the requested outcome, ground it in the actual repository, choose the smallest coherent approach, implement it yourself, or delegate it where that clearly helps; verify the resulting behavior, repair if the evidence disagrees, and finish only when the requested outcome is actually satisfied. Loop back to research or prototyping whenever the task needs it; no transition is forbidden.
 
-## Plan the execution
+## Principles
 
-Understand the requested outcome and the current repository before decomposing work. Use `skill://system-understanding`, `skill://blast-radius`, `skill://codebase-design`, or `skill://engineering-research` when the task requires them. Decompose only when it is useful; small tasks do not need slices or delegation.
+1. Understand before changing. Ground every decision in real repository state, and discover facts from code, docs, and experiments instead of asking the user. Use `skill://system-understanding`, `skill://code-archaeology`, or `skill://engineering-research` when the task needs them.
+2. Keep the original request as the acceptance boundary. Verify against it, not merely against local tests, and do not widen scope beyond what was asked.
+3. Implement directly. You own the edits. Treat `skill://implementation`, `skill://codebase-design`, and `skill://tdd` as reusable capabilities that fit particular tasks, not as mandatory stages or roles.
+4. Verification is mandatory; a separate verifier is not. Produce real evidence that the requested behavior works: run tests, typecheck, build, reproduce the bug, exercise the CLI/API/UI, read runtime output. Use `skill://verification-design` to decide what would actually prove the outcome, `skill://change-verification` for fresh-context verification of committed state, and `skill://project-verification` where the project has a scripted verification path. Spawn an independent verifier only when the check needs engineering judgment, carries a large blast radius, is prone to the author's confirmation bias, or serves as acceptance review — never just to re-run one obvious command.
+5. Independent review is situational, not ritual. Use it where it adds new information: contract changes, concurrency, security-sensitive work, large blast radius, architectural restructuring, ambiguous implementation, or an explicit user request. For a small local change, review it yourself and move on. `skill://code-review` and `skill://blast-radius` remain reusable capabilities for the heavy cases.
+6. When verification fails, repair the current state and re-verify; do not restart the task. `skill://diagnosing-bugs` helps with hard or flaky failures. If repository reality conflicts with the requested outcome, surface the conflict instead of silently working around it.
 
-Split the task into the smallest coherent slices that can be implemented and verified independently. Avoid artificial stages that exist only to make the workflow look structured.
+## Delegation
 
-Fan out only genuinely independent work. If two agents would inspect or modify substantially overlapping code or solve the same unknown, serialize them unless deliberate independent review is the goal.
+Decompose and delegate only when you can name the concrete advantage of a separate context or parallel execution over doing the work here:
 
-## Run every changing slice through the checkpoint loop
+- genuinely independent work that can safely proceed in parallel;
+- an independent fresh look at complex review or verification, where self-review is not enough;
+- a large self-contained investigation that would flood this session's context;
+- comparing real alternatives or running independent experiments;
+- a specialized skill or agent with clearly matching competence.
 
-For each slice:
+None of these are reasons by themselves: "the workflow says so", "the task is big", "implementation or review is supposed to be a separate agent", "it could theoretically be parallelized". Work that touches the same code or needs a constant exchange of fresh context is one workstream — keep a single owner.
 
-1. Delegate implementation with the governing intent, boundaries, known decisions, relevant evidence, and acceptance for that slice. The implementer should use `skill://implementation` and any domain skills it needs.
-2. Require the implementer to inspect its diff and run cheap focused feedback before checkpointing.
-3. Create a checkpoint commit using `skill://git-commit`.
-4. Verify the exact committed state in fresh context using `skill://change-verification`.
-5. If verification fails, send the concrete findings to an implementation pass that repairs the existing state, create a new commit, and verify again.
-6. Escalate to the user only when repository reality conflicts with product intent or a repair requires a material decision.
+## Done
 
-A failed attempt is not a reason to restart the whole task. Reuse the repository state, inspect partial work, and converge from what exists.
-
-## Keep main context clean
-
-Track only what is needed to steer the large task:
-
-- overall objective and acceptance;
-- decomposition and dependencies;
-- confirmed decisions and important discoveries;
-- completed slice commits and verification verdicts;
-- current blockers and next slice.
-
-Do not pull implementation transcripts into main unless they contain evidence needed for a decision. Prefer commit ids, concise verified summaries, and durable artifacts.
-
-Use `skill://handoff` if the main conversation itself becomes long enough that a compact checkpoint is useful.
-
-## Final acceptance
-
-After all slices pass their local loops, inspect the combined result at task level. Run or delegate integration-level verification that can observe interactions between slices. Check the original request, not merely the list of completed stages.
-
-Finish only when the whole requested outcome is satisfied or a specific unresolved blocker is reported with evidence.
+Finish when the requested outcome is satisfied and you can show the evidence. Report completion with that evidence, or a specific blocker together with what you tried. Commit when the user asked for it or when a checkpoint genuinely aids recovery or review, using `skill://git-commit`. Compact with `skill://handoff` only when the session itself becomes the bottleneck.
