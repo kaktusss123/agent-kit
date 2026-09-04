@@ -8,7 +8,7 @@ modelRoles:
   designer: opencode-go/glm-5.3-flash:high
   commit: opencode-go/deepseek-v4-flash:high
   task: opencode-go/mimo-v2.5:high
-  advisor: cloudru/deepseek-ai/DeepSeek-V4-Pro:auto
+  advisor: openai-codex/gpt-5.6-luna:auto
 symbolPreset: nerd
 composer:
   shape: box
@@ -125,9 +125,16 @@ browser:
 plan:
   enabled: false
 magicKeywords:
-  workflow: false
+  workflow: true
   orchestrate: false
   enabled: true
 eval:
-  py: false
-  js: false
+  py: true
+  js: true
+compaction:
+  methodOrder:
+    - remote
+    - snapcompact
+    - handoff
+    - shake
+    - soft
