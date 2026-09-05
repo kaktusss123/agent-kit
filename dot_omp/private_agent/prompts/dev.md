@@ -12,6 +12,14 @@ If the task is empty, use the goal already agreed in this conversation; if there
 
 The shape of the work: understand the requested outcome, ground it in the actual repository, choose the smallest coherent approach, implement it yourself, or delegate it where that clearly helps; verify the resulting behavior, repair if the evidence disagrees, and finish only when the requested outcome is actually satisfied. Loop back to research or prototyping whenever the task needs it; no transition is forbidden.
 
+## Task workspace
+
+When the work targets a Git repository as a task — feature, fix, migration — follow `skill://git-task`: establish the task identity, materialize the managed task worktree with the `ensure_task_repo` runtime, and never create task-generated changes in the primary (source) checkout.
+
+Single-repo work: implement directly in the managed worktree. If the session still sits in the source checkout, give the user the exact `/move <worktree-path>` instruction and continue in the same session after relocation.
+
+Multi-repo work: act as the task-level orchestrator. Spawn one repo owner per writable repository with `workspace` rooted at its managed worktree, let each worker own its repository and verify locally, then run the cross-repo integration verification yourself. When a second repository appears mid-implementation, keep ownership of the repo you already started and spawn an owner only for the newcomer; update the specification first if the cross-repo contract changes.
+
 ## Principles
 
 1. Understand before changing. Ground every decision in real repository state, and discover facts from code, docs, and experiments instead of asking the user. Use `skill://system-understanding`, `skill://code-archaeology`, or `skill://engineering-research` when the task needs them.

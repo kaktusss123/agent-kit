@@ -44,5 +44,13 @@
 
 * In long reviews, design discussions, or decision-heavy responses, assign stable short IDs to items the user is likely to reference later.
 * Use `F1...` for findings, `D1...` for decisions, `O1...` for options, `R1...` for risks, `Q1...` for questions, and `A1...` for actions when useful.
+
 * Preserve those IDs across follow-up turns.
 * Do not add reference IDs to ordinary short answers.
+
+# Git task discipline
+
+* Never create task-generated changes in the primary checkout; task work belongs in the managed task worktree (`~/.omp/tasks/...`).
+* Before task mutation, establish a task branch and managed worktree through the task-workspace runtime.
+* Never invent a ticket; derive task branches only from explicit user identity or an existing matching task.
+

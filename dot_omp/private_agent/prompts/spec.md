@@ -12,6 +12,12 @@ If the task is empty, use the goal already agreed in this conversation; if there
 
 Do not implement product code unless the user explicitly leaves this workflow.
 
+## Establish the task workspace
+
+Before substantive task-oriented analysis, establish the task's Git identity per `skill://git-task` — never invent a ticket — and ensure the initial repository's managed worktree with the `ensure_task_repo` runtime. Analyze the fresh task worktree rather than a dirty source checkout, and materialize additional repositories lazily as the scope demands.
+
+Durable task artifacts live in the task workspace next to the worktrees: `SPEC.md` is the canonical entrypoint; `ADR-*.md`, `EXECUTION.md`, and `specs/<repo>.md` appear only when they earn their place. For multi-repo tasks, `SPEC.md` must fix the common desired outcome, the cross-repo contract, the writable repositories and their ownership, dependencies and parallelization constraints, and the integration acceptance criteria.
+
 ## Own the whole problem
 
 Keep the user goal, confirmed decisions, important evidence, open questions, and acceptance boundary in the main session. Delegate bounded investigation, not ownership of the problem.

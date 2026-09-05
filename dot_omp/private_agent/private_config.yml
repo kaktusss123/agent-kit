@@ -34,9 +34,11 @@ tui:
 terminal:
   showProgress: false
 display:
-  shimmer: classic
+  shimmer: kitt
   showTokenUsage: true
   cacheMissMarker: true
+  smoothStreaming: false
+  showTurnTime: true
 task:
   showResolvedModelBadge: true
   isolation:
