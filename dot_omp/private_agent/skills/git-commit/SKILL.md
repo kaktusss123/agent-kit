@@ -7,32 +7,34 @@ description: "Safe repository checkpoint commit policy for implementation workfl
 
 Create a checkpoint from the repository state without broadening its scope.
 
+## Division of responsibility
+
+Judgment (model): whether a checkpoint is warranted, the semantic message, ticket policy, and choosing the intended path set.
+
+Mechanics (runtime): when the `task-workspace` extension is available, commit through the `checkpoint_commit` runtime — it enforces exact staging, secret-path rejection, ambiguous-staged detection, hook execution, single retry on hook-modified files, and primary-checkout protection. Do not duplicate those guarantees by hand; call the runtime and read its structured result.
+
+When the runtime is unavailable, apply the behavioral rules below by hand.
+
 ## Hard policy
 
-- Never use `--no-verify`.
+- Never use raw `--no-verify` (the bash guard blocks it everywhere). The only hook-bypass path is the runtime's deferred hook verification below.
 - Never use blanket staging such as `git add .` or `git add -A`.
 - Never stage likely secret files such as `.env`, `.env.*`, `*.pem`, `*.key`, or `credentials.json` unless the user explicitly identifies a safe tracked fixture that merely matches the pattern.
-- Preserve an existing staged set. If nothing is staged, select explicit paths from the intended change.
+- Preserve an existing staged set only when it is unambiguous. If the pre-staged set differs from the intended checkpoint paths, stop and ask instead of silently merging.
+- Never push.
 
-These are behavioral rules until a runtime hook enforces them mechanically.
+## Branch and checkpoint location
 
-## Branch and push
-
-Before staging, read the current branch and the last 20 commit subjects of the default branch (`git log --format=%s -20 <default-branch>`).
-
-Default: never commit on `main`, `master`, or `develop`, and never push. Two exceptions:
-
-- The user explicitly requested committing on this branch or pushing in this conversation.
-- The default branch carries direct history: plain subjects, no `Merge pull request ...` entries and no squash suffixes like `(#123)`. Then committing on it is allowed, but pushing still requires an explicit user request.
-
-If neither exception applies, create a work branch and leave publishing to the repository's normal flow.
+- Task work (anything driven by this workflow) commits in the managed task worktree on the task branch — never in the primary (source) checkout.
+- Committing in a primary checkout is allowed only when the user explicitly asked for it in this conversation (for example: "я руками поправил dotfiles, закоммить") — and only for the user's own manual changes, never for task-generated work.
+- Never commit on `main`, `master`, or `develop` on your own initiative. If the work has no task branch and the user did not explicitly name a target branch, establish one first (`skill://git-task`) instead of committing to the default branch.
 
 ## Ticket and message
 
 Extract a ticket key — any uppercase `KEY-<number>` such as `EVODP-1234` — from the branch name, the user request, or the parent task.
 
 If no ticket is found, decide by repository context:
-- Ticket prefixes are the norm in the sampled subjects (most carry a `KEY-123:` style prefix) → ticketed repo: stop with `missing_ticket` unless the user explicitly chose ticketless.
+- Ticket prefixes are the norm in recent subjects (`KEY-123:` style) → ticketed repo: stop with `missing_ticket` unless the user explicitly chose ticketless.
 - Otherwise → ticketless: commit without a ticket.
 
 Ticketless mode is explicit when the user or parent task says `--no-ticket`, `ticketless`, `no ticket`, or `без тикета`.
@@ -45,18 +47,29 @@ Choose `fix`, `feat`, or `chore` from the branch prefix and actual change. Prefe
 
 Write the description in English, imperative mood, focused on what changed. Keep the complete commit subject at 20 words or fewer.
 
-## Commit procedure
+## Procedure
 
-1. Confirm the branch and push policy.
-2. Inspect `git status` and the diff needed to understand the intended checkpoint.
-3. Keep an existing staged set, or stage only explicit intended paths.
-4. Inspect the staged diff and ensure it is one coherent checkpoint with no accidental files or secrets.
-5. Build the message from the actual staged change and ticket policy.
-6. Run `git commit -m <message>` and let hooks execute normally.
-7. If hooks modify files from the selected set, inspect the modifications, re-stage only that same intended set, and retry once with the same message.
-8. Confirm the resulting commit id and inspect repository status.
+1. Decide whether a checkpoint is warranted now, and where it belongs (task worktree vs explicit user-requested primary commit).
+2. Inspect `git status` and the diff needed to understand the intended checkpoint; select the exact intended paths.
+3. Via `checkpoint_commit` when available: pass `repo`, `paths`, `message` (plus `allow_primary: true` only for the explicit user-requested primary case). Handle its statuses: `primary_commit_blocked`, `secret_path_rejected`, `ambiguous_staged`, `path_outside_repo`, `commit_failed` (with a `deferred_hook_hint`), `deferred_hook_rejected`, `committed`, `committed_with_deferred_hook`.
+4. Otherwise by hand: keep an unambiguous staged set or stage only explicit intended paths, inspect the staged diff, run `git commit -m <message>` letting hooks execute normally, and if hooks modify files from the intended set, re-stage exactly that set and retry once.
+5. Confirm the resulting commit id and inspect repository status.
 
-If the second commit attempt fails, stop with the actual error. Do not bypass hooks.
+If the second attempt fails, stop with the actual error. A code-validation failure (test, lint, typecheck, format, secret scan, generated-code mismatch, hook that modified the intended files, unknown failure, or a missing tool you could reasonably install) is never deferred — fix it or escalate.
+
+## Deferred hook verification
+
+Autonomous long-run tasks can hit a hook that physically cannot pass yet — typically `uv lock`/`pip compile` on a same-task dependency version another repository has not published. `checkpoint_commit` implements the controlled deferral; the model supplies only evidence, never a bypass switch.
+
+The runtime always attempts the normal hooked commit first, inside the same call. Deferred bypass happens only when that attempt failed, the failing step appears in the actual hook output, and the staged contents are unchanged. Retry with `deferred_hook` only when you can attest all of:
+
+1. Which hook/check failed and why (cause established, not guessed).
+2. The failure is an external prerequisite (`blocker_kind: external_prerequisite`) or external availability (`external_availability`) after a reasonable retry — never a negative verdict on the changed code.
+3. Every hook check runnable without the blocker was executed manually and passed (`manual_checks` with command + result).
+4. The intended commit contents are exactly the ones the manual evidence covers.
+5. The remaining gap is written down (`remaining_gap`).
+
+Result `committed_with_deferred_hook` returns the commit id, failed hook, failure reason, manual checks, and the remaining gap. Downstream: the repository is NOT fully verified; surface the gap in the task report and in any MR created from it; if the prerequisite becomes available later in the same run, rerun the deferred check — a pass closes the gap, a fail is a real verification failure requiring repair.
 
 ## Return
 

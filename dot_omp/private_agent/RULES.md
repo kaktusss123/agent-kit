@@ -44,5 +44,17 @@
 
 * In long reviews, design discussions, or decision-heavy responses, assign stable short IDs to items the user is likely to reference later.
 * Use `F1...` for findings, `D1...` for decisions, `O1...` for options, `R1...` for risks, `Q1...` for questions, and `A1...` for actions when useful.
+
 * Preserve those IDs across follow-up turns.
 * Do not add reference IDs to ordinary short answers.
+
+# Git task discipline
+
+* Never create task-generated changes in the primary checkout; task work belongs in the managed task worktree (`~/.omp/tasks/...`).
+* Before task mutation, establish a task branch and managed worktree through the task-workspace runtime.
+* Never invent a ticket; derive task branches only from explicit user identity or an existing matching task.
+* A blocked task-workspace mutation is a routing failure, not a bypass authorization — never route around the guard through eval, Python, shell, another tool, or another agent; use the managed worktree or report the blocker.
+* If a task is known to touch several repositories before meaningful mutation, Main orchestrates and every writable repository gets its own repo owner; Main does not keep one of them for itself.
+* Never pass an inferred `base_ref` (a release/hotfix/maintenance branch picked from context) to `ensure_task_repo`; use an explicit user base, the deterministic runtime policy, or ask.
+* Raw `git commit --no-verify` is forbidden everywhere; the only hook-bypass path is `checkpoint_commit`'s deferred hook verification after a real, current hook failure.
+
