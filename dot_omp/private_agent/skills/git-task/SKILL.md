@@ -42,7 +42,7 @@ One repository may need several branches inside one logical task (e.g. `hotfix/*
 - The lane becomes a sibling `<repo>__<slot>` worktree inside the same canonical task workspace — no second task workspace, no manifest.
 - Never auto-create lanes; they appear only on explicit need (user request or an explicit task requirement).
 - The lane's branch and base come from the user or the task specification; on ambiguity, ask.
-- The canonical worktree stays the default target; name the lane explicitly in every `workspace:` handoff.
+- The canonical worktree stays the default target; name the lane's absolute worktree path explicitly in every owner handoff.
 
 ## /spec
 
@@ -54,7 +54,7 @@ Main implements directly in the managed worktree. If the session still sits in t
 
 ## /dev, multi repo
 
-Main is the task-level orchestrator. When the task is known to touch several repositories before meaningful mutation begins, every writable repository gets its own repo owner — Main does not keep one of them for itself because the change looks small or first in the dependency DAG. Spawn each owner with `workspace: <managed worktree path>` so the child is a full session rooted in its repo. Workers change only their own repository, verify locally, and return contract conflicts to Main instead of resolving them silently.
+Main is the task-level orchestrator. When the task is known to touch several repositories before meaningful mutation begins, every writable repository gets its own repo owner — Main does not keep one of them for itself because the change looks small or first in the dependency DAG. Spawn each owner and put the absolute managed worktree path in the owner's prompt: the stock task tool does not root child sessions, so owners must address their repository by absolute paths only (reads, writes, `git -C`). Workers change only their own repository, verify locally, and return contract conflicts to Main instead of resolving them silently.
 
 Dependencies are model judgment, not a scheduler: when repos form a DAG, Main spawns owners in dependency order and treats a contract-fixing checkpoint (implementation + local verification yielded) as the barrier before dependents mutate against it. Workers need not run simultaneously.
 
