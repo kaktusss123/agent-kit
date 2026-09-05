@@ -222,18 +222,48 @@ function extractGitRepoFromBash(command: string): string | null {
   if (dashCMatch) return dashCMatch[1];
 
   // Check for git subcommand without -C (in CWD)
-  if (command.match(/git\s+(?:-[^\s]+\s+)*(?:commit|add|checkout|switch|restore|reset|clean|merge|rebase|cherry-pick|worktree)\b/)) {
+  if (
+    command.match(
+      /git\s+(?:-[^\s]+\s+)*(?:commit|add|checkout|switch|restore|reset|clean|merge|rebase|cherry-pick|worktree)\b/,
+    )
+  ) {
     return ".";
   }
   return null;
 }
 
+/** Internal-URL targets (xd://, local://, skill://, …) are session resources
+ *  dispatched by the core router — never filesystem paths. Feeding them
+ *  through expandPath/classifyPath silently resolved them against the primary
+ *  checkout and made the guard block its own extension tools (field-run F1). */
+const INTERNAL_URI_RE = /^[A-Za-z][A-Za-z0-9+.-]*:\/\//;
+const MUTATING_GIT_SUBCOMMANDS: Record<string, true> = {
+  commit: true,
+  add: true,
+  checkout: true,
+  switch: true,
+  restore: true,
+  reset: true,
+  clean: true,
+  merge: true,
+  rebase: true,
+  "cherry-pick": true,
+};
+
 function isMutatingGitCommand(command: string): boolean {
   // Match: git [-flags] [-C <path>] <subcommand> ...
   // The -C flag takes a non-flag argument (path), so handle it explicitly.
-  return /git\s+(?:-[^\s]+\s+(?:\S+\s+)?)*(?:commit|add|checkout|switch|restore|reset|clean|merge|rebase|cherry-pick|worktree)\b/.test(
-    command,
-  );
+  const match = command.match(/git\s+(?:-[^\s]+\s+(?:\S+\s+)?)*([a-z-]+)\b/);
+  if (!match || match.index === undefined) return false;
+  const subcommand = match[1];
+  if (subcommand === "worktree") {
+    // Read-only introspection is not a mutation (field-run F3); every other
+    // worktree subcommand — add/remove/move/prune/lock/unlock/repair or bare
+    // usage — stays on the mutating side.
+    const rest = command.slice(match.index + match[0].length).trim();
+    return !/^(?:list|show)\b/.test(rest);
+  }
+  return MUTATING_GIT_SUBCOMMANDS[subcommand] === true;
 }
 
 // ─── Secret path detection ──────────────────────────────────────────────
@@ -329,7 +359,9 @@ export default function (pi: ExtensionAPI): void {
     description:
       "Attach a source repo to the task workspace as a git worktree. Reuses existing worktrees, creates new ones from local/remote branches, or fetches and creates from remote default. Never forces, resets, or detaches.",
     parameters: z.object({
-      branch: z.string().describe("Task branch name (task identity)"),
+      branch: z
+        .string()
+        .describe("Task branch name. Canonical call: this is the task identity. Lane call (with slot): the lane's own branch."),
       source_path: z
         .string()
         .describe("Path to the source git repository"),
@@ -343,6 +375,18 @@ export default function (pi: ExtensionAPI): void {
         .string()
         .optional()
         .describe("Remote name to use (defaults to auto-detect)"),
+      task: z
+        .string()
+        .optional()
+        .describe(
+          "Canonical task identity (workspace name). Required with slot for secondary lanes; ignored otherwise.",
+        ),
+      slot: z
+        .string()
+        .optional()
+        .describe(
+          "Secondary lane name (e.g. develop-backport). Creates a sibling <repo>__<slot> worktree inside the canonical task workspace with its own branch/base, without creating a second task workspace.",
+        ),
     }),
     execute: async (_toolCallId, params, _signal, _onUpdate, _ctx) => {
       try {
@@ -365,10 +409,42 @@ export default function (pi: ExtensionAPI): void {
         }
         const sourceRoot = srcRoot.stdout;
 
-        // 2. Workspace + target path
-        const branchFlat = params.branch.replace(/\//g, "_");
-        const ws = join(TASK_ROOT, branchFlat);
-        const target = join(ws, basename(sourceRoot));
+        // 2. Workspace + target path. Canonical call: workspace identity is the
+        // branch, target dir is the repo basename. Lane call: same canonical
+        // workspace (identity from `task`), sibling dir <repo>__<slot>, and the
+        // lane's own `branch`/base — no second task workspace, no manifest.
+        if (params.slot && !params.task) {
+          return {
+            content: [
+              {
+                type: "text" as const,
+                text: JSON.stringify({
+                  status: "error",
+                  message:
+                    "slot requires task (the canonical workspace identity) so the lane lands inside the existing task workspace",
+                }),
+              },
+            ],
+          };
+        }
+        if (params.slot && !/^[A-Za-z0-9][A-Za-z0-9._-]*$/.test(params.slot)) {
+          return {
+            content: [
+              {
+                type: "text" as const,
+                text: JSON.stringify({
+                  status: "error",
+                  message: "slot must match [A-Za-z0-9][A-Za-z0-9._-]*",
+                }),
+              },
+            ],
+          };
+        }
+        const identity = params.slot ? params.task : params.branch;
+        const ws = join(TASK_ROOT, identity.replace(/\//g, "_"));
+        const target = params.slot
+          ? join(ws, `${basename(sourceRoot)}__${params.slot}`)
+          : join(ws, basename(sourceRoot));
 
         // 3. Check if target exists but is not a worktree of source
         if (existsSync(target)) {
@@ -806,7 +882,7 @@ export default function (pi: ExtensionAPI): void {
     name: "checkpoint_commit",
     label: "Checkpoint Commit",
     description:
-      "Stage exact paths and commit within a repository. Guards: blocks primary checkout unless allow_primary=true, rejects secret-like paths, verifies paths inside repo, enforces exact staging.",
+      "Stage exact paths and commit within a repository. Guards: blocks primary checkout unless allow_primary=true, rejects secret-like paths, verifies paths inside repo, enforces exact staging, requires hooks to run. deferred_hook enables controlled commit with deferred hook verification after a real external-prerequisite hook failure.",
     parameters: z.object({
       repo: z
         .string()
@@ -819,6 +895,21 @@ export default function (pi: ExtensionAPI): void {
         .boolean()
         .optional()
         .describe("Allow committing to primary checkout (manual source commit exception)"),
+      deferred_hook: z
+        .object({
+          blocker_kind: z.enum(["external_prerequisite", "external_availability"]),
+          failed_hook: z.string(),
+          failed_step_command: z.string(),
+          failure_reason: z.string(),
+          manual_checks: z.array(
+            z.object({ command: z.string(), result: z.string() }),
+          ),
+          remaining_gap: z.string(),
+        })
+        .optional()
+        .describe(
+          "Deferred hook verification evidence. Only for hook failures caused by an external prerequisite or availability blocker (e.g. unpublished same-task dependency) — never for test/lint/typecheck/format/secret-scan failures. The normal hooked commit is always attempted first, in the same call.",
+        ),
     }),
     execute: async (_toolCallId, params, _signal, _onUpdate, _ctx) => {
       try {
@@ -933,23 +1024,115 @@ export default function (pi: ExtensionAPI): void {
             ],
           };
         }
+        // Capture the staged state so the deferred-hook path can prove the
+        // intended contents did not change across the failed hook attempt.
+        const stagedTreeSha = (await git(repoRoot, "write-tree")).stdout.trim();
 
         // 6. Commit (hooks run normally)
         let commit = await git(repoRoot, "commit", "-m", params.message);
 
-        // 7. Hook-modified retry
+        // 7. Hook-modified retry: some hooks rewrite the files they inspect
+        // (formatters, import sorting). Re-stage only the intended paths and
+        // retry the normal hooked commit once before any failure handling.
         if (!commit.ok) {
           const diffCheck = await git(repoRoot, "diff", "--name-only");
           if (diffCheck.ok && diffCheck.stdout) {
             const modifiedFiles = new Set(diffCheck.stdout.split("\n"));
-            const needsRestage = relPaths.some((p) =>
-              modifiedFiles.has(p),
-            );
+            const needsRestage = relPaths.some((p) => modifiedFiles.has(p));
             if (needsRestage) {
               await git(repoRoot, "add", "--", ...relPaths);
               commit = await git(repoRoot, "commit", "-m", params.message);
             }
           }
+        }
+        if (!commit.ok) {
+          const failureOutput = `${commit.stderr}\n${commit.stdout}`;
+          if (!params.deferred_hook) {
+            return {
+              content: [
+                {
+                  type: "text" as const,
+                  text: JSON.stringify({
+                    status: "commit_failed",
+                    stderr: commit.stderr,
+                    deferred_hook_hint:
+                      "If and only if this hook failure is caused by an external prerequisite that cannot be satisfied at this task stage (e.g. an unpublished same-task dependency) — not by a code-validation failure — retry checkpoint_commit with deferred_hook evidence naming the failing step.",
+                  }),
+                },
+              ],
+            };
+          }
+          const d = params.deferred_hook;
+          const stagedUnchanged =
+            stagedTreeSha !== "" &&
+            (await git(repoRoot, "write-tree")).stdout.trim() === stagedTreeSha;
+          const evidenceMatches =
+            d.failed_step_command.trim().length > 0 &&
+            failureOutput.includes(d.failed_step_command);
+          const checksComplete =
+            d.failed_hook.trim().length > 0 &&
+            d.failure_reason.trim().length > 0 &&
+            d.remaining_gap.trim().length > 0 &&
+            d.manual_checks.length > 0 &&
+            d.manual_checks.every(
+              (c) => c.command.trim().length > 0 && c.result.trim().length > 0,
+            );
+          if (!stagedUnchanged || !evidenceMatches || !checksComplete) {
+            return {
+              content: [
+                {
+                  type: "text" as const,
+                  text: JSON.stringify({
+                    status: "deferred_hook_rejected",
+                    stagedUnchanged,
+                    evidenceMatches,
+                    checksComplete,
+                    reason:
+                      "Deferred hook verification requires a current hook failure on unchanged staged contents plus complete evidence. Fix the failure or escalate instead of bypassing.",
+                  }),
+                },
+              ],
+            };
+          }
+          const bypass = await git(repoRoot, "commit", "--no-verify", "-m", params.message);
+          if (!bypass.ok) {
+            return {
+              content: [
+                {
+                  type: "text" as const,
+                  text: JSON.stringify({
+                    status: "error",
+                    message: `Deferred hook commit failed: ${bypass.stderr}`,
+                  }),
+                },
+              ],
+            };
+          }
+          const deferredLog = await git(repoRoot, "log", "-1", "--format=%H");
+          return {
+            content: [
+              {
+                type: "text" as const,
+                text: JSON.stringify({
+                  status: "committed_with_deferred_hook",
+                  commit: deferredLog.stdout,
+                  branch: await getRepoBranch(repoRoot),
+                  files: relPaths,
+                  failed_hook: d.failed_hook,
+                  failure_reason: d.failure_reason,
+                  manual_checks: d.manual_checks,
+                  remaining_gap: d.remaining_gap,
+                  note:
+                    "Do not report this repository fully verified. Re-run the deferred check once the prerequisite is available (a pass closes the gap); surface the gap in any MR or task report.",
+                }),
+              },
+            ],
+            details: {
+              status: "committed_with_deferred_hook",
+              commit: deferredLog.stdout,
+              remaining_gap: d.remaining_gap,
+            },
+          };
         }
 
         if (!commit.ok) {
@@ -1018,6 +1201,9 @@ export default function (pi: ExtensionAPI): void {
       const input = event.input as Record<string, unknown>;
       const filePath = input.path as string | undefined;
       if (!filePath) return;
+      // Internal URLs are dispatched by the core router, never resolved as
+      // filesystem paths — skip classification entirely (field-run F1).
+      if (INTERNAL_URI_RE.test(filePath.trim())) return;
 
       // Session-bound cwd (NOT process.cwd()): workspace-rooted child sessions
       // share the parent process, so relative targets must resolve against the
@@ -1028,7 +1214,6 @@ export default function (pi: ExtensionAPI): void {
       if (classification === "PRIMARY_CHECKOUT") {
         const abs = realpath(expandPath(filePath, cwd));
         const root = findGitRoot(abs);
-        ;
         if (root) {
           // Check if this repo has any managed task worktrees
           // Synchronous check via Bun.spawnSync for the guard
@@ -1049,7 +1234,7 @@ export default function (pi: ExtensionAPI): void {
                 if (underTaskRoot(wtPath)) {
                   return {
                     block: true,
-                    reason: `Blocked: writing to primary checkout ${root}. Use the managed task worktree at ${wtPath} instead.`,
+                    reason: `Blocked: writing to primary checkout ${root}. Use the managed task worktree at ${wtPath} instead. This block is a routing failure, not a bypass authorization — do not work around it with eval, Python, shell, or another agent; write to the managed worktree or report the blocker.`,
                   };
                 }
               }
@@ -1065,11 +1250,25 @@ export default function (pi: ExtensionAPI): void {
     const command = input.command as string | undefined;
     if (!command) return;
 
+    // Raw hook bypass is policy, not routing: forbidden everywhere, including
+    // managed worktrees. The controlled deferral path lives in
+    // checkpoint_commit, which requires a real, current hook failure first.
+    if (/(?:^|\s)--no-verify(?:\s|$)/.test(command) && isMutatingGitCommand(command)) {
+      return {
+        block: true,
+        reason:
+          "Blocked: raw `git commit --no-verify` bypasses pre-commit hooks. Commit normally (hooks run); if a hook fails on an external prerequisite such as an unpublished same-task dependency, retry via checkpoint_commit with deferred_hook evidence.",
+      };
+    }
+
     const mutating = isMutatingGitCommand(command);
     if (!mutating) return;
 
     const repoRef = extractGitRepoFromBash(command);
     if (!repoRef) return;
+    // A URI-like repo ref (git -C local://… …) is never a filesystem repo.
+    if (INTERNAL_URI_RE.test(repoRef.trim())) return;
+
 
     const cwd = realpath(ctx.cwd);
     const repoAbs = realpath(expandPath(repoRef, cwd));
@@ -1095,7 +1294,7 @@ export default function (pi: ExtensionAPI): void {
               if (underTaskRoot(wtPath)) {
                 return {
                   block: true,
-                  reason: `Blocked: mutating git command on primary checkout ${root}. Use the managed task worktree at ${wtPath} instead.`,
+                  reason: `Blocked: mutating git command on primary checkout ${root}. Use the managed task worktree at ${wtPath} instead. This block is a routing failure, not a bypass authorization — do not work around it with eval, Python, shell, or another agent; run the command in the managed worktree or report the blocker.`,
                 };
               }
             }

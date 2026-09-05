@@ -17,7 +17,7 @@ When the runtime is unavailable, apply the behavioral rules below by hand.
 
 ## Hard policy
 
-- Never use `--no-verify`.
+- Never use raw `--no-verify` (the bash guard blocks it everywhere). The only hook-bypass path is the runtime's deferred hook verification below.
 - Never use blanket staging such as `git add .` or `git add -A`.
 - Never stage likely secret files such as `.env`, `.env.*`, `*.pem`, `*.key`, or `credentials.json` unless the user explicitly identifies a safe tracked fixture that merely matches the pattern.
 - Preserve an existing staged set only when it is unambiguous. If the pre-staged set differs from the intended checkpoint paths, stop and ask instead of silently merging.
@@ -51,11 +51,25 @@ Write the description in English, imperative mood, focused on what changed. Keep
 
 1. Decide whether a checkpoint is warranted now, and where it belongs (task worktree vs explicit user-requested primary commit).
 2. Inspect `git status` and the diff needed to understand the intended checkpoint; select the exact intended paths.
-3. Via `checkpoint_commit` when available: pass `repo`, `paths`, `message` (plus `allow_primary: true` only for the explicit user-requested primary case). Handle its statuses: `primary_commit_blocked`, `secret_path_rejected`, `ambiguous_staged`, `path_outside_repo`, `commit_failed`.
+3. Via `checkpoint_commit` when available: pass `repo`, `paths`, `message` (plus `allow_primary: true` only for the explicit user-requested primary case). Handle its statuses: `primary_commit_blocked`, `secret_path_rejected`, `ambiguous_staged`, `path_outside_repo`, `commit_failed` (with a `deferred_hook_hint`), `deferred_hook_rejected`, `committed`, `committed_with_deferred_hook`.
 4. Otherwise by hand: keep an unambiguous staged set or stage only explicit intended paths, inspect the staged diff, run `git commit -m <message>` letting hooks execute normally, and if hooks modify files from the intended set, re-stage exactly that set and retry once.
 5. Confirm the resulting commit id and inspect repository status.
 
-If the second attempt fails, stop with the actual error. Do not bypass hooks.
+If the second attempt fails, stop with the actual error. A code-validation failure (test, lint, typecheck, format, secret scan, generated-code mismatch, hook that modified the intended files, unknown failure, or a missing tool you could reasonably install) is never deferred — fix it or escalate.
+
+## Deferred hook verification
+
+Autonomous long-run tasks can hit a hook that physically cannot pass yet — typically `uv lock`/`pip compile` on a same-task dependency version another repository has not published. `checkpoint_commit` implements the controlled deferral; the model supplies only evidence, never a bypass switch.
+
+The runtime always attempts the normal hooked commit first, inside the same call. Deferred bypass happens only when that attempt failed, the failing step appears in the actual hook output, and the staged contents are unchanged. Retry with `deferred_hook` only when you can attest all of:
+
+1. Which hook/check failed and why (cause established, not guessed).
+2. The failure is an external prerequisite (`blocker_kind: external_prerequisite`) or external availability (`external_availability`) after a reasonable retry — never a negative verdict on the changed code.
+3. Every hook check runnable without the blocker was executed manually and passed (`manual_checks` with command + result).
+4. The intended commit contents are exactly the ones the manual evidence covers.
+5. The remaining gap is written down (`remaining_gap`).
+
+Result `committed_with_deferred_hook` returns the commit id, failed hook, failure reason, manual checks, and the remaining gap. Downstream: the repository is NOT fully verified; surface the gap in the task report and in any MR created from it; if the prerequisite becomes available later in the same run, rerun the deferred check — a pass closes the gap, a fail is a real verification failure requiring repair.
 
 ## Return
 
