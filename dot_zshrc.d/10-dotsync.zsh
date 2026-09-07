@@ -106,7 +106,8 @@ dots-status() {
 # Always runs chezmoi apply when there is anything to apply, even when git is
 # already up to date: git sync and home apply are independent steps.
 # Safety: refuses on uncommitted tracked changes (run 'dots-push' first) and
-# is fast-forward only; local commits ahead of upstream must be pushed first.
+# on diverged history; fast-forward only. Local-only unpushed commits are
+# applied to home and flagged for 'dots-push'.
 dots-pull() {
   local repo upstream counts behind ahead tracked_dirty
   repo="$(_dots_repo)" || return 1
@@ -136,10 +137,12 @@ dots-pull() {
   counts="$(git -C "$repo" rev-list --left-right --count "$upstream"...HEAD 2>/dev/null)"
   behind="${counts%%$'\t'*}"
   ahead="${counts##*$'\t'}"
-  if (( behind == 0 )); then
+  if (( behind == 0 && ahead == 0 )); then
     echo "Git: already up to date with $upstream."
+  elif (( behind == 0 )); then
+    echo "Git: $ahead local commit(s) not pushed yet — 'dots-push' will publish them."
   elif (( ahead > 0 )); then
-    echo "dots-pull: local is $ahead commit(s) ahead and $behind behind — run 'dots-push' first (it rebases)" >&2
+    echo "dots-pull: diverged from $upstream — local is $ahead commit(s) ahead and $behind behind — run 'dots-push' first (it rebases)" >&2
     return 1
   else
     echo "Pulling $behind commit(s):"

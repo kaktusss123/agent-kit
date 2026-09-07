@@ -152,7 +152,8 @@ only real rebase conflicts need manual work. Optional commit message:
 
 ## Recovery from conflicts
 
-- Diverged history (pull refuses when local commits are not pushed):
+- Diverged history (local and remote both have commits — the only case
+  pull refuses):
   `dots-push` rebases onto origin automatically; if it reports rebase
   conflicts, resolve them with standard git commands, then run
   `dots-push` again.
