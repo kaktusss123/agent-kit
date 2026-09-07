@@ -21,7 +21,7 @@ Never invent a ticket. Resolve in order:
    - exactly one → reuse it;
    - several → ask the user which one;
    - none → derive `<type>/<TICKET>_<slug_with_underscores>`; choose `feat`/`fix`/`chore` and a semantic slug from the task intent.
-3. Neither → ask the user for the ticket. Ticketless branches only on explicit user choice.
+3. Neither → ask the user whether a ticket exists and, if not, whether ticketless work is authorized. Do not state that a ticket is mandatory or raise `missing_ticket` before this question is answered. If the user explicitly approves ticketless work, proceed with a ticketless branch (`<type>/<slug_with_underscores>`); otherwise wait for the ticket. Never invent one.
 
 ## Establish the worktree
 

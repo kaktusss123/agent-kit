@@ -14,7 +14,7 @@ The shape of the work: understand the requested outcome, ground it in the actual
 
 ## Task workspace
 
-When the work targets a Git repository as a task — feature, fix, migration — follow `skill://git-task`: establish the task identity, materialize the managed task worktree with the `ensure_task_repo` runtime, and never create task-generated changes in the primary (source) checkout.
+When the work targets a Git repository as a task — feature, fix, migration — follow `skill://git-task`: establish the task identity, materialize the managed task worktree with the `ensure_task_repo` runtime, and never create task-generated changes in the primary (source) checkout. If neither a branch nor a ticket is provided, ask whether the user authorizes ticketless work before creating a branch; do not treat the missing ticket as an automatic blocker.
 
 Single-repo work: implement directly in the managed worktree. If the session still sits in the source checkout, give the user the exact `/move <worktree-path>` instruction and continue in the same session after relocation.
 
