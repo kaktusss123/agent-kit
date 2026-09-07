@@ -14,7 +14,7 @@ Use a lightweight workflow. Prefer the installed forge CLI over custom API wrapp
 - Never silently choose GitHub vs GitLab, a host, or a repository when the publication target is not explicit. Ask the user. Read-only remote inspection may be used to offer likely choices.
 - Support arbitrary GitHub and GitLab hosts. Never encode organization-specific hostnames as architecture.
 - Use `gh` for GitHub and `glab` for GitLab. Load only the matching provider reference.
-- Every GitLab MR creation MUST pass `--squash` to `glab mr create`; do not rely on a GitLab UI or project default to enable squash.
+- Every GitLab MR creation MUST pass `--squash-before-merge=true` to `glab mr create`; do not rely on a GitLab UI or project default to enable squash.
 - Preserve CLI failures. Report the command context, exit status, stdout, and stderr as produced. Do not map message text to a private error taxonomy.
 - Treat create and update as different operations. `create` must never silently become `update`.
 - Before changing an existing PR/MR, read its current title and description. Preserve fields and manual content the user did not ask to replace.
@@ -33,7 +33,7 @@ Use a lightweight workflow. Prefer the installed forge CLI over custom API wrapp
 8. For `create`, verify that the source branch already exists remotely. If it does not, stop and hand off to the git workflow. Do not push or let an interactive CLI flow push/fork on this skill's behalf.
 9. For `create`, check for an existing open PR/MR from the same source branch to the same target repository/branch. If one exists, report it and stop. Do not edit it unless the user explicitly requests `update`.
 10. For `update`, inspect the existing PR/MR first. Change only the fields requested by the user. If replacing the description would discard unrelated manual content and the user's intent is not explicit, show the conflict and ask before overwriting.
-11. Execute the requested provider operation non-interactively where practical, supplying explicit repository, branches, title, and description. For GitLab MR creation, pass `--squash` explicitly.
+11. Execute the requested provider operation non-interactively where practical, supplying explicit repository, branches, title, and description. For GitLab MR creation, pass `--squash-before-merge=true` explicitly.
 12. Return the resulting PR/MR URL. If the CLI fails, return the original failure output and do not invent a diagnosis that the CLI did not establish.
 
 ## Publication readiness
