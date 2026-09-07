@@ -1,0 +1,278 @@
+/**
+ * Deterministic deep-guard scenarios for the task-workspace runtime extension:
+ * URI targets, compound shell commands, raw --no-verify, same-repo worktree
+ * hints, secondary lanes, and deferred-hook evidence bound to the staged tree.
+ * Imports the extension from the repo working tree (TW_EXTENSIONS_DIR override)
+ * with a mock `pi` — no OMP runtime, no model, no provider.
+ */
+import * as fs from "node:fs/promises";
+import path from "node:path";
+
+const FIXTURE = process.env.TW_FIXTURE_ROOT ?? "/tmp/omp-taskws";
+const EXTENSIONS_DIR =
+	process.env.TW_EXTENSIONS_DIR ??
+	path.join(import.meta.dir, "..", "..", "dot_omp", "private_agent", "extensions");
+process.env.OMP_TASK_ROOT = `${FIXTURE}/tasks`;
+const TASK_ROOT = `${FIXTURE}/tasks`;
+
+interface ToolResult {
+	content: Array<{ type: string; text?: string }>;
+}
+type Json = Record<string, unknown>;
+
+const tools = new Map<string, any>();
+const guards: Array<(e: any, ctx: any) => any> = [];
+const omptype = await import(
+	process.env.TW_OMPTYPE_PATH ??
+		"/Users/vekomarnitskiy/projects/devtools/oh-my-pi/packages/omptype/src/typebox.ts"
+);
+const pi: any = {
+	registerTool: (t: { name: string; execute: Function }) => tools.set(t.name, t),
+	on: (event: string, handler: (e: unknown, ctx: unknown) => unknown) => {
+		if (event === "tool_call") guards.push(handler);
+	},
+	typebox: omptype,
+};
+const mod = await import(path.join(EXTENSIONS_DIR, "task-workspace.ts"));
+mod.default(pi);
+
+const driverCwd = FIXTURE;
+async function call(name: string, params: Json): Promise<Json> {
+	const tool = tools.get(name) as { execute: Function };
+	if (!tool) throw new Error(`missing tool ${name}`);
+	const res = (await tool.execute("probe", params, undefined, undefined, { cwd: driverCwd })) as ToolResult;
+	const text = res.content.find((c) => c.type === "text")?.text ?? "";
+	try {
+		return JSON.parse(text) as Json;
+	} catch {
+		return { unparsed: text };
+	}
+}
+function guard(toolName: string, input: Json, cwd = driverCwd): { blocked: boolean; reason?: string } {
+	for (const h of guards) {
+		const r = h({ type: "tool_call", toolCallId: "p", toolName, input }, { cwd });
+		if (r?.block) return { blocked: true, reason: String(r.reason) };
+	}
+	return { blocked: false };
+}
+function ok(cond: boolean, label: string): void {
+	console.log(`${cond ? "PASS" : "FAIL"}: ${label}`);
+	if (!cond) process.exitCode = 1;
+}
+function section(title: string): void {
+	console.log(`\n=== ${title} ===`);
+}
+function sh(cmd: string, dir: string): string {
+	const out = Bun.spawnSync(["bash", "-c", cmd], { cwd: dir });
+	return out.stdout.toString().trim();
+}
+
+const PRODUCER = `${FIXTURE}/work/producer`;
+const CONSUMER = `${FIXTURE}/work/consumer`;
+const FAILED_STEP = "uv run pytest -k deferred_contract";
+
+// --- setup: two managed workspaces over producer, one over consumer ----------
+section("setup");
+const r0 = await call("ensure_task_repo", {
+	branch: "feat/EVODP-60002_uri",
+	source_path: PRODUCER,
+	base_ref: "origin/develop",
+});
+ok(r0.status === "created", `canonical created (got ${r0.status})`);
+const ws = `${TASK_ROOT}/feat_EVODP-60002_uri`;
+const r0b = await call("ensure_task_repo", {
+	branch: "feat/EVODP-60003_second",
+	source_path: PRODUCER,
+	base_ref: "origin/main",
+});
+ok(r0b.status === "created", `second producer workspace created (got ${r0b.status})`);
+const ws2 = `${TASK_ROOT}/feat_EVODP-60003_second`;
+const r0c = await call("ensure_task_repo", {
+	branch: "feat/EVODP-60002_uri",
+	source_path: CONSUMER,
+});
+ok(r0c.status === "created", `consumer joined canonical (got ${r0c.status})`);
+
+// --- S1: internal-URI targets are never filesystem paths --------------------
+section("S1 URI guard");
+ok(guard("write", { path: "local://report.md", content: "x" }).blocked === false, "write to local:// not classified as path");
+ok(guard("bash", { command: "git -C local://repo commit -m x" }).blocked === false, "git -C local:// skipped by guard");
+
+// --- S2: compound commands cannot hide mutating git -------------------------
+section("S2 compound mutation guard");
+const c1 = guard("bash", { command: `git -C ${PRODUCER} status && git -C ${PRODUCER} commit -m x` });
+ok(c1.blocked === true, "status && commit blocked (compound)");
+const c2 = guard("bash", { command: `git -C ${PRODUCER} diff; git -C ${PRODUCER} add README.md` });
+ok(c2.blocked === true, "diff ; add blocked (compound)");
+const c3 = guard("bash", { command: "echo ok && git -C . reset" }, PRODUCER);
+ok(c3.blocked === true, "echo && git reset blocked from primary cwd (compound)");
+const c4 = guard("bash", { command: `git -C ${PRODUCER} status && git -C ${PRODUCER} diff` });
+ok(c4.blocked === false, "read-only compound allowed");
+const c5 = guard("bash", { command: `git -C ${PRODUCER} log | grep x` });
+ok(c5.blocked === false, "piped read-only allowed");
+const c6 = guard("bash", {
+	command: `git -C ${CONSUMER} commit -m x && git -C ${PRODUCER} commit -m y`,
+});
+ok(c6.blocked === true, "any primary-target mutation in compound blocks the whole command");
+const c7 = guard("bash", { command: `git -C ${ws}/producer commit -m x` });
+ok(c7.blocked === false, "mutating git inside managed worktree allowed");
+const c8 = guard("bash", {
+	command: `git -C ${PRODUCER} worktree list && git -C ${PRODUCER} add x`,
+});
+ok(c8.blocked === true, "worktree list (read-only) does not mask following add");
+const c9 = guard("bash", { command: `git -C ${ws}/producer commit -m "fix: git add bug"` });
+ok(c9.blocked === false, "quoted argument mentioning git subcommand not re-parsed as invocation");
+
+// --- S3: raw --no-verify is policy-forbidden everywhere ---------------------
+section("S3 raw --no-verify");
+const n1 = guard("bash", { command: `git -C ${PRODUCER} commit --no-verify -m x` });
+ok(n1.blocked === true, "commit --no-verify on primary blocked");
+const n2 = guard("bash", { command: `git -C ${ws}/producer commit --no-verify -m x` });
+ok(n2.blocked === true, "commit --no-verify blocked even in managed worktree");
+const n3 = guard("bash", { command: `git -C ${ws}/producer commit -m "use --no-verify next time"` });
+ok(n3.blocked === false, "--no-verify inside quoted message is not a bypass flag");
+
+// --- S4: blocked mutations hint worktrees of the SAME repository ------------
+section("S4 same-repo worktree hints");
+const h1 = guard("bash", { command: `git -C ${PRODUCER} commit -m x` });
+ok(
+	h1.blocked === true &&
+		String(h1.reason).includes(`${ws}/producer`) &&
+		String(h1.reason).includes(`${ws2}/producer`),
+	"multi-candidate hint lists all managed worktrees of the repo",
+);
+ok(!String(h1.reason).includes(`${ws}/consumer`), "hint does not leak other repos' worktrees");
+const h2 = guard("bash", { command: `git -C ${CONSUMER} commit -m x` });
+ok(
+	h2.blocked === true &&
+		String(h2.reason).includes(`${ws}/consumer`) &&
+		!String(h2.reason).includes(`${ws}/producer`),
+	"single-candidate hint names exactly the one consumer worktree",
+);
+const STALE = `${FIXTURE}/work/stalefail`;
+sh("git clone -q ../remotes/producer.git stalehint", `${FIXTURE}/work`);
+const h3 = guard("write", { path: `${FIXTURE}/work/stalehint/README.md`, content: "x" });
+ok(h3.blocked === false, "primary with no managed worktrees is not blocked and no path invented");
+
+// --- S5: secondary lanes stay inside the canonical workspace ----------------
+section("S5 secondary lanes");
+const l1 = await call("ensure_task_repo", {
+	task: "feat/EVODP-60002_uri",
+	slot: "develop-backport",
+	branch: "hotfix/EVODP-60002_uri",
+	source_path: PRODUCER,
+	base_ref: "origin/develop",
+});
+ok(l1.status === "created", `lane worktree created (got ${l1.status})`);
+ok(
+	sh("git branch --show-current", `${ws}/producer__develop-backport`) === "hotfix/EVODP-60002_uri",
+	"lane worktree on its own branch inside the canonical workspace",
+);
+const st5 = await call("task_status", {});
+const ws5 = ((st5.taskWorkspaces ?? []) as Array<Json>).find((s) => s.key === "feat_EVODP-60002_uri");
+const repos5 = (ws5?.repos ?? []) as Array<Json>;
+ok(
+	repos5.some((r) => r.name === "producer__develop-backport") && repos5.length === 3,
+	"lane listed as a repo of the same workspace (no second workspace)",
+);
+ok(
+	((st5.taskWorkspaces ?? []) as Array<Json>).filter((s) => String(s.key).includes("EVODP-60002")).length === 1,
+	"lane did not spawn a second task workspace",
+);
+
+// --- S6: deferred-hook evidence is bound to the staged tree -----------------
+section("S6 deferred hook evidence");
+const deferFile = `${ws}/producer/feature-defer.txt`;
+await fs.writeFile(deferFile, "deferred work\n");
+// Install a pre-commit hook that fails on everything (simulated external
+// prerequisite); hooks of the source repo apply to its managed worktrees.
+sh(
+	`printf '#!/bin/sh\\necho "%s: external prerequisite missing" >&2\\nexit 1\\n' '${FAILED_STEP}' > .git/hooks/pre-commit && chmod +x .git/hooks/pre-commit`,
+	PRODUCER,
+);
+const d1 = await call("checkpoint_commit", {
+	repo: `${ws}/producer`,
+	paths: ["feature-defer.txt"],
+	message: "feat: deferred work",
+});
+ok(d1.status === "commit_failed", `hook failure surfaces (got ${d1.status})`);
+const stagedTree = String(d1.staged_tree ?? "");
+ok(/^[0-9a-f]{40}$/.test(stagedTree), `commit_failed reports the staged tree identity (${stagedTree.slice(0, 12)}…)`);
+const d2 = await call("checkpoint_commit", {
+	repo: `${ws}/producer`,
+	paths: ["feature-defer.txt"],
+	message: "feat: deferred work",
+	deferred_hook: {
+		blocker_kind: "external_prerequisite",
+		failed_hook: "pre-commit",
+		failed_step_command: FAILED_STEP,
+		failure_reason: "sibling lib unpublished at this task stage",
+		staged_tree: stagedTree,
+		manual_checks: [{ command: "manual smoke against published lib", result: "pass" }],
+		remaining_gap: "re-run deferred check once lib is published",
+	},
+});
+ok(d2.status === "committed_with_deferred_hook", `tree-bound evidence authorizes bypass (got ${d2.status})`);
+// Wrong tree: new staged content, stale evidence from the previous tree.
+await fs.writeFile(`${ws}/producer/feature-defer-2.txt`, "more deferred work\n");
+const d3 = await call("checkpoint_commit", {
+	repo: `${ws}/producer`,
+	paths: ["feature-defer-2.txt"],
+	message: "feat: deferred work 2",
+});
+const staleTree = String(d3.staged_tree ?? "");
+const d4 = await call("checkpoint_commit", {
+	repo: `${ws}/producer`,
+	paths: ["feature-defer-2.txt"],
+	message: "feat: deferred work 2",
+	deferred_hook: {
+		blocker_kind: "external_prerequisite",
+		failed_hook: "pre-commit",
+		failed_step_command: FAILED_STEP,
+		failure_reason: "sibling lib unpublished at this task stage",
+		staged_tree: stagedTree, // evidence from the FIRST tree, not the current one
+		manual_checks: [{ command: "manual smoke against published lib", result: "pass" }],
+		remaining_gap: "re-run deferred check once lib is published",
+	},
+});
+ok(
+	d4.status === "deferred_hook_rejected" && d4.evidenceTreeMatches === false,
+	`stale evidence for a different staged tree rejected (got ${d4.status})`,
+);
+const d5 = await call("checkpoint_commit", {
+	repo: `${ws}/producer`,
+	paths: ["feature-defer-2.txt"],
+	message: "feat: deferred work 2",
+	deferred_hook: {
+		blocker_kind: "external_prerequisite",
+		failed_hook: "pre-commit",
+		failed_step_command: FAILED_STEP,
+		failure_reason: "sibling lib unpublished at this task stage",
+		staged_tree: staleTree,
+		manual_checks: [{ command: "manual smoke against published lib", result: "skipped — no time" }],
+		remaining_gap: "re-run deferred check once lib is published",
+	},
+});
+ok(
+	d5.status === "deferred_hook_rejected" && d5.checksComplete === false,
+	`non-pass manual check result rejected (got ${d5.status})`,
+);
+// Fresh evidence for the CURRENT tree authorizes the bypass.
+const d6 = await call("checkpoint_commit", {
+	repo: `${ws}/producer`,
+	paths: ["feature-defer-2.txt"],
+	message: "feat: deferred work 2",
+	deferred_hook: {
+		blocker_kind: "external_prerequisite",
+		failed_hook: "pre-commit",
+		failed_step_command: FAILED_STEP,
+		failure_reason: "sibling lib unpublished at this task stage",
+		staged_tree: staleTree,
+		manual_checks: [{ command: "manual smoke against published lib", result: "PASS" }],
+		remaining_gap: "re-run deferred check once lib is published",
+	},
+});
+ok(d6.status === "committed_with_deferred_hook", `current-tree evidence with machine-readable pass commits (got ${d6.status})`);
+sh("rm -f .git/hooks/pre-commit", PRODUCER);
+
+console.log(`\ndeep-guard scenario run complete on ${path.join(EXTENSIONS_DIR, "task-workspace.ts")}`);

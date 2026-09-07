@@ -13,7 +13,7 @@
  */
 
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { mkdir, mkdtemp, rm, symlink } from "node:fs/promises";
+import { mkdir, mkdtemp, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { ExecFn, ExecResult } from "../types.ts";
@@ -27,6 +27,12 @@ beforeEach(async () => {
   homeDir = await mkdtemp(join(tmpdir(), "tr-repos-"));
   workDir = join(homeDir, "work");
   await mkdir(workDir, { recursive: true });
+  // Fake HOME hides the developer's global git config; commits in fixtures
+  // need an identity or git exits 128.
+  await writeFile(
+    join(homeDir, ".gitconfig"),
+    "[user]\n\tname = Task Runtime Test\n\temail = task-runtime@example.com\n",
+  );
   originalBunHome = Bun.env.HOME;
   originalProcHome = process.env.HOME;
   Bun.env.HOME = homeDir;

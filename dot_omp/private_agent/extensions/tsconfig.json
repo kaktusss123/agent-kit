@@ -1,0 +1,11 @@
+{
+  "extends": "/Users/vekomarnitskiy/projects/devtools/oh-my-pi/tsconfig.base.json",
+  "compilerOptions": {
+    "paths": {
+      "@oh-my-pi/pi-coding-agent": [
+        "/Users/vekomarnitskiy/projects/devtools/oh-my-pi/packages/coding-agent/src/index.ts"
+      ]
+    }
+  },
+  "include": ["*.ts"]
+}

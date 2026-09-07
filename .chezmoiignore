@@ -4,3 +4,5 @@ README.md
 .chezmoiignore
 **/node_modules
 **/*.bak.*
+tests
+.omp/agent/extensions/tsconfig.json

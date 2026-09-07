@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { mkdir, mkdtemp, rm } from "node:fs/promises";
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { execSync } from "child_process";
 import { realpathSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -23,6 +23,12 @@ beforeEach(async () => {
   primaryRepo = join(workDir, "primary-repo");
   primaryWorktree = join(homeDir, ".omp", "tasks", TASK_ID, "worktrees", "primary-repo");
   await mkdir(primaryRepo, { recursive: true });
+  // Fake HOME (set below) hides the developer's global git config; commits
+  // inside tests need an identity or git exits 128.
+  await writeFile(
+    join(homeDir, ".gitconfig"),
+    "[user]\n\tname = Task Runtime Test\n\temail = task-runtime@example.com\n",
+  );
   await mkdir(join(primaryRepo, ".git"), { recursive: true });
   execSync("git init && git commit --allow-empty -m init", { cwd: primaryRepo, stdio: "ignore" });
   originalBunHome = Bun.env.HOME;
