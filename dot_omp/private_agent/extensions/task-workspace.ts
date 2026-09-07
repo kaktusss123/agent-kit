@@ -99,6 +99,50 @@ function classifyPath(p: string, cwd: string): PathClassification {
   return "PRIMARY_CHECKOUT";
 }
 
+const HASHLINE_HEADER_RE = /^\[([^\]\r\n]+)\]\s*$/;
+
+function parseHashlinePath(value: string): string | undefined {
+  const match = HASHLINE_HEADER_RE.exec(value.trim());
+  if (!match) return value;
+
+  const authoredPath = match[1]!.trim().replace(/#[0-9a-f]{4}$/i, "");
+  // A basename-only hashline header is resolved by the native edit
+  // session's snapshot store. The extension cannot reconstruct that
+  // binding from tool_call input; never classify the guessed basename
+  // against the session cwd as if it were the actual target.
+  return authoredPath.includes("/") || authoredPath.startsWith("~")
+    ? authoredPath
+    : undefined;
+}
+
+function extractMutationPath(
+  toolName: string,
+  input: Record<string, unknown>,
+): string | undefined {
+  let hasBasenameOnlyHashline = false;
+  if (toolName === "edit") {
+    const payload = input.input;
+    if (typeof payload === "string") {
+      const firstLine = payload.split(/\r?\n/, 1)[0] ?? "";
+      if (HASHLINE_HEADER_RE.test(firstLine.trim())) {
+        const authoredPath = parseHashlinePath(firstLine);
+        if (authoredPath) return authoredPath;
+        hasBasenameOnlyHashline = true;
+      }
+    }
+  }
+
+  const directPath = input.path ?? input.file_path;
+  if (typeof directPath !== "string") return undefined;
+  const authoredPath = parseHashlinePath(directPath);
+  if (!authoredPath) return undefined;
+  return hasBasenameOnlyHashline &&
+    !authoredPath.includes("/") &&
+    !authoredPath.startsWith("~")
+    ? undefined
+    : authoredPath;
+}
+
 // ─── Git data helpers ───────────────────────────────────────────────────
 
 async function getRepoBranch(repoRoot: string): Promise<string> {
@@ -1199,7 +1243,7 @@ export default function (pi: ExtensionAPI): void {
   pi.on("tool_call", (event, ctx) => {
     if (event.toolName === "write" || event.toolName === "edit") {
       const input = event.input as Record<string, unknown>;
-      const filePath = input.path as string | undefined;
+      const filePath = extractMutationPath(event.toolName, input);
       if (!filePath) return;
       // Internal URLs are dispatched by the core router, never resolved as
       // filesystem paths — skip classification entirely (field-run F1).
