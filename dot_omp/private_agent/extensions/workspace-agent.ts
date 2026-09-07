@@ -3,7 +3,8 @@
  *
  * Spawns a RepoOwner: a full stock OMP agent session rooted (cwd AND
  * SessionManager) in a managed task worktree, with the target repo's project
- * instructions passed explicitly via contextFiles and a strict structured
+ * instructions delivered through the stock `discoverContextFiles` helper
+ * (`.omp/AGENTS.md` shadows root `AGENTS.md`) and a strict structured
  * output contract (yield envelope validated in strict mode).
  *
  * Architecture contract:
@@ -104,28 +105,76 @@ async function git(
 
 // ─── Project context of the target repo ─────────────────────────────────
 
-/** Project-root instruction filenames recognized by stock OMP discovery for
- *  v1. Deliberately root-only: the managed worktree IS the git root, and the
- *  bridge must not walk above it. */
-const PROJECT_INSTRUCTION_FILES = ["AGENTS.md", "CLAUDE.md", "GEMINI.md", "SYSTEM.md"] as const;
-
+/** Project context strategy (explicit compatibility contract):
+ *
+ *  1. Stock `discoverContextFiles(repoRoot)` is authoritative for native OMP
+ *     context: `.omp/AGENTS.md` (which shadows root `AGENTS.md` in the same
+ *     project scope). SYSTEM.md / CLAUDE.md / GEMINI.md and other editor
+ *     conventions are never part of the contract.
+ *  2. Known embedded-runtime gap: inside some host processes the helper
+ *     misses the ROOT `AGENTS.md` of a linked worktree (deterministically
+ *     returns nothing for it). Since a managed worktree IS the project root,
+ *     the bridge adds root `AGENTS.md` explicitly as fallback whenever the
+ *     native `.omp/AGENTS.md` was not found by discovery — priority stays
+ *     with `.omp/AGENTS.md`, and no duplicate is added when discovery
+ *     already returned the root file.
+ *  3. A discovered/selected file that cannot be read fails the dispatch:
+ *     a RepoOwner is never launched without the policy the framework
+ *     expected to apply. */
 async function collectProjectContext(
+  sdk: { discoverContextFiles?: (cwd?: string) => Promise<unknown> },
   repoRoot: string,
 ): Promise<{ files: Array<{ path: string; content: string }>; error?: string }> {
-  const files: Array<{ path: string; content: string }> = [];
-  for (const name of PROJECT_INSTRUCTION_FILES) {
-    const path = join(repoRoot, name);
-    if (!existsSync(path)) continue;
+  if (typeof sdk.discoverContextFiles !== "function") {
+    return {
+      files: [],
+      error:
+        "Public SDK capability discoverContextFiles is missing; refusing to dispatch without stock project-context discovery.",
+    };
+  }
+  let discovered: unknown;
+  try {
+    discovered = await sdk.discoverContextFiles(repoRoot);
+  } catch (e) {
+    return {
+      files: [],
+      error: `discoverContextFiles(${repoRoot}) failed: ${(e as Error).message}`,
+    };
+  }
+  const files = (
+    Array.isArray(discovered) ? discovered : (discovered as { files?: unknown } | undefined)?.files
+  ) as Array<{ path?: unknown; content?: unknown }> | undefined;
+  if (!Array.isArray(files)) {
+    return {
+      files: [],
+      error: "discoverContextFiles returned an unexpected shape; refusing to dispatch.",
+    };
+  }
+  const out: Array<{ path: string; content: string }> = [];
+  for (const f of files) {
+    if (typeof f.path !== "string" || typeof f.content !== "string") {
+      return {
+        files: [],
+        error: `discoverContextFiles returned an entry with unexpected shape: ${JSON.stringify(f).slice(0, 120)}`,
+      };
+    }
+    out.push({ path: f.path, content: f.content });
+  }
+  const nativeAgents = join(repoRoot, ".omp", "AGENTS.md");
+  const rootAgents = join(repoRoot, "AGENTS.md");
+  const hasNative = out.some((f) => f.path === nativeAgents);
+  const hasRoot = out.some((f) => f.path === rootAgents);
+  if (!hasNative && !hasRoot && existsSync(rootAgents)) {
     try {
-      files.push({ path, content: await readFile(path, "utf-8") });
+      out.push({ path: rootAgents, content: await readFile(rootAgents, "utf-8") });
     } catch (e) {
       return {
         files: [],
-        error: `Project instruction file ${path} exists but cannot be read: ${(e as Error).message}. Refusing to dispatch a RepoOwner without the policy the framework expected to apply.`,
+        error: `Project instruction file ${rootAgents} exists but cannot be read: ${(e as Error).message}. Refusing to dispatch a RepoOwner without the policy the framework expected to apply.`,
       };
     }
   }
-  return { files };
+  return { files: out };
 }
 
 // ─── Structured output contract ─────────────────────────────────────────
@@ -204,21 +253,6 @@ function namedYieldToolChoice(
 // ─── Extension entry point ──────────────────────────────────────────────
 export default function (pi: ExtensionAPI): void {
   const tb = pi.typebox.Type;
-
-  // The running session's model, captured from event contexts. workspace_agent
-  // pins the child to THIS model — it never lets the SDK pick a default that
-  // could differ from what the orchestrator is running.
-  let activeModel: ExtensionContext["model"];
-  let activeModelRegistry: ExtensionContext["modelRegistry"];
-  pi.on("turn_start", (_event, ctx) => {
-    if (ctx.model != null) activeModel = ctx.model;
-    if (ctx.modelRegistry != null) activeModelRegistry = ctx.modelRegistry;
-  });
-  pi.on("agent_start", (_event, ctx) => {
-    if (ctx.model != null) activeModel = ctx.model;
-    if (ctx.modelRegistry != null) activeModelRegistry = ctx.modelRegistry;
-  });
-
   pi.registerTool({
     name: "workspace_agent",
     label: "Workspace Agent",
@@ -250,13 +284,13 @@ export default function (pi: ExtensionAPI): void {
 
       try {
         // 0. Capability check against the PUBLIC SDK surface — fail closed
-        // before anything is dispatched.
         const sdk = pi.pi as typeof pi.pi | undefined;
         if (
           !sdk ||
           typeof sdk.createAgentSession !== "function" ||
           typeof sdk.SessionManager?.inMemory !== "function" ||
-          typeof sdk.AgentRegistry !== "function"
+          typeof sdk.AgentRegistry !== "function" ||
+          typeof sdk.discoverContextFiles !== "function"
         ) {
           return finish({
             status: "unsupported",
@@ -268,7 +302,8 @@ export default function (pi: ExtensionAPI): void {
 
         // 1. Model: pin the child to the orchestrator's active model. Fail
         // before dispatch rather than silently picking a different default.
-        const model = activeModel;
+        const model = ctx.model;
+        const modelRegistry = ctx.modelRegistry;
         if (!model) {
           return finish({
             status: "blocked",
@@ -314,15 +349,15 @@ export default function (pi: ExtensionAPI): void {
           });
         }
 
-        // 3. Explicit project context of the TARGET repo. Passing contextFiles
-        // suppresses automatic discovery, so no context from the orchestrator's
-        // repo can leak and none of the target's policy is missed.
-        const context = await collectProjectContext(ws);
+        // 3. Project context of the TARGET repo via the stock discovery helper.
+        // Passing contextFiles suppresses automatic discovery, so no context
+        // from the orchestrator's repo can leak and none of the target's own
+        // policy (including .omp/AGENTS.md shadowing rules) is missed.
+        const context = await collectProjectContext(sdk, ws);
         if (context.error) {
           return finish({ status: "unsupported", dispatched: false, reason: context.error });
         }
 
-        // 4. Deadline + abort wiring (parent signal AND internal deadline).
         const timeoutMs = params.timeout_ms ?? 600_000;
         const deadlineSignal = AbortSignal.timeout(timeoutMs);
         const abortSignal = signal ? AbortSignal.any([signal, deadlineSignal]) : deadlineSignal;
@@ -352,7 +387,7 @@ export default function (pi: ExtensionAPI): void {
               sessionManager,
               agentRegistry: new sdk.AgentRegistry(),
               model,
-              modelRegistry: activeModelRegistry,
+              modelRegistry,
               contextFiles: context.files,
               outputSchema: REPO_OWNER_OUTPUT_SCHEMA,
               outputSchemaMode: "strict",

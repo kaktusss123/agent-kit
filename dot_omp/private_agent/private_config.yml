@@ -54,7 +54,7 @@ treeFilterMode: default
 error:
   notify: "on"
 power:
-  sleepPrevention: idle
+  sleepPrevention: display
 memory:
   backend: local
 autolearn:

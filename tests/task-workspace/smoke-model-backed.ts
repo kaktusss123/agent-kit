@@ -2,13 +2,18 @@
  * Model-backed smoke for the workspace_agent bridge — OPT-IN.
  *
  * Run with TW_MODEL_SMOKE=1 after build-fixture.sh. Uses the REAL installed
- * OMP configuration and a REAL model — the "at least one real rooted-session
- * run on stock OMP" acceptance probe. Not part of the deterministic suites;
- * costs a handful of model calls.
+ * OMP configuration and a REAL model — the real rooted-session acceptance
+ * probe. Not part of the deterministic suites; costs a handful of model calls.
  *
- * The smoke pins a KNOWN-WORKING provider/id (TW_SMOKE_MODEL, default
- * "zai/glm-5.3-flash") instead of trusting registry order: configured-but-
- * stale keys exist on real machines. Missing model/auth fails the smoke.
+ * Allowed providers: cloudru, zai, openai-codex ONLY (the providers actually
+ * configured for this workflow). OpenRouter is explicitly rejected. The
+ * requested model (TW_SMOKE_MODEL, default "zai/glm-5.3-flash") must resolve
+ * with configured auth; on a provider/auth failure the smoke retries other
+ * authenticated models from the allowed set before giving up.
+ *
+ * The cloudru provider comes from the installed pi-cloudru-provider plugin
+ * (~/.omp/plugins/node_modules/pi-cloudru-provider) and is registered into the
+ * standalone ModelRegistry the same way the plugin registers it at runtime.
  */
 import * as fs from "node:fs/promises";
 import path from "node:path";
@@ -17,6 +22,13 @@ if (process.env.TW_MODEL_SMOKE !== "1") {
 	console.error("Opt-in only: run with TW_MODEL_SMOKE=1 after build-fixture.sh");
 	process.exit(2);
 }
+
+const ALLOWED_PROVIDERS: Record<string, true> = {
+	cloudru: true,
+	zai: true,
+	"openai-codex": true,
+};
+const DEFAULT_MODEL = "zai/glm-5.3-flash";
 
 const FIXTURE = process.env.TW_FIXTURE_ROOT ?? "/tmp/omp-taskws";
 const EXTENSIONS_DIR =
@@ -83,71 +95,168 @@ if (ensured.status !== "created" && ensured.status !== "reused") {
 }
 const WORKSPACE = String(ensured.worktree);
 
-// ─── real model: exact known-working provider/id, honest failure ────────
+// ─── real model: allowed providers only, explicit openrouter rejection ──
 const authStorage = await AuthStorage.create();
 const modelRegistry = new ModelRegistry(authStorage);
-const requested = (process.env.TW_SMOKE_MODEL ?? "zai/glm-5.3-flash").split("/");
-const model = modelRegistry.find(requested[0], requested.slice(1).join("/"));
-if (!model || !modelRegistry.hasConfiguredAuth(model)) {
-	const candidates = modelRegistry
-		.getAvailable()
-		.filter((m) => modelRegistry.hasConfiguredAuth(m))
-		.map((m) => `${m.provider}/${m.id}`);
-	console.error(
-		`Requested smoke model "${process.env.TW_SMOKE_MODEL ?? "zai/glm-5.3-flash"}" is not available with configured auth.`,
-		`Authenticated candidates: ${candidates.join(", ") || "none"}`,
+
+// Register the installed cloudru plugin's provider into the standalone
+// registry (the plugin ships baseUrl/fallback models and reads
+// CLOUDRU_API_KEY from the environment at runtime).
+const CLOUDRU_PLUGIN =
+	process.env.TW_CLOUDRU_PLUGIN ??
+	path.join(String(process.env.HOME) || "/nonexistent", ".omp/plugins/node_modules/pi-cloudru-provider");
+try {
+	const plugin = await import(path.join(CLOUDRU_PLUGIN, "extensions", "cloudru-provider.ts"));
+	const captured: Array<[string, unknown]> = [];
+	const shim: Record<string, unknown> = new Proxy(
+		{},
+		{
+			get: (_target, prop) => {
+				if (prop === "registerProvider") {
+					return (name: string, cfg: unknown) => {
+						captured.push([name, cfg]);
+					};
+				}
+				return () => undefined;
+			},
+		},
 	);
-	process.exit(1);
+	(plugin as { default: (pi: unknown) => void }).default(shim);
+	for (const [name, cfg] of captured) {
+		(modelRegistry as unknown as { registerProvider: (n: string, c: unknown) => void }).registerProvider(name, cfg);
+	}
+	console.log(`registered plugin providers: ${captured.map(([n]) => n).join(", ") || "(none)"}`);
+} catch (e) {
+	console.log(`cloudru plugin not registered: ${(e as Error).message}`);
 }
-console.log(`smoke model: ${model.provider}/${model.id}`);
+
+const requested = process.env.TW_SMOKE_MODEL ?? DEFAULT_MODEL;
+const requestedProvider = requested.split("/")[0];
+if (requestedProvider === "openrouter") {
+	console.error(
+		"Rejected: openrouter/* models are not allowed for this workflow (allowed: cloudru, zai, openai-codex).",
+	);
+	process.exit(2);
+}
+if (ALLOWED_PROVIDERS[requestedProvider] !== true) {
+	console.error(
+		`Rejected: provider "${requestedProvider}" is outside the allowed set (cloudru, zai, openai-codex).`,
+	);
+	process.exit(2);
+}
+
+interface ModelSpec {
+	provider: string;
+	id: string;
+}
+function parseModelId(spec: string): ModelSpec | undefined {
+	const [provider, ...rest] = spec.split("/");
+	if (!provider || rest.length === 0) return undefined;
+	return { provider, id: rest.join("/") };
+}
 
 // ─── workspace_agent under test ─────────────────────────────────────────
 const tools = new Map<string, any>();
-const eventHandlers = new Map<string, (e: unknown, ctx: unknown) => unknown>();
 const pi: any = {
 	registerTool: (t: { name: string; execute: Function }) => tools.set(t.name, t),
-	on: (event: string, handler: (e: unknown, ctx: unknown) => unknown) => {
-		eventHandlers.set(event, handler);
-	},
+	on: () => {},
 	typebox: omptype,
 	pi: SDK,
 };
 const waMod = await import(path.join(EXTENSIONS_DIR, "workspace-agent.ts"));
 waMod.default(pi);
-eventHandlers.get("turn_start")?.({ type: "turn_start" }, { model, modelRegistry });
 
-const tool = tools.get("workspace_agent");
-const res = (await tool.execute(
-	"probe",
-	{
-		workspace: WORKSPACE,
-		task: [
-			"You are the repo owner for a smoke probe.",
-			"1. Create a file named smoke-probe.txt in the repository root containing exactly: rooted-smoke",
-			"2. Read it back to confirm.",
-			'3. Finish by calling the yield tool with the envelope {"status": "done", "summary": <one line>, "verification": [{"check": "smoke-probe.txt exists", "result": "pass"}], "gaps": []}.',
-		].join(" "),
-		timeout_ms: 300000,
-	},
-	undefined,
-	undefined,
-	{ cwd: FIXTURE },
-)) as { content: Array<{ text?: string }> };
-const out = JSON.parse(res.content.find((c) => c.type === "text")?.text ?? "{}");
-console.log("bridge result:", JSON.stringify(out).slice(0, 400));
+const WORKSPACE_BASENAME = WORKSPACE.split("/").pop() ?? "";
+const SMOKE_TASK = [
+	"You are the repo owner for a smoke probe. Work with relative paths only.",
+	"1. Create a file named smoke-probe.txt in the repository root containing exactly: rooted-smoke",
+	"2. Your project context contains an AGENTS.md marker line: report its exact text in your final summary.",
+	"3. Using the stock task tool, spawn one helper subagent — prefer launching it as a background (async) job. The helper must run pwd and must NOT touch anything outside this repository.",
+	"4. Once the helper result has arrived, finish: call the yield tool with the envelope {\"status\": \"done\", \"summary\": <one line that includes (a) the exact marker text from step 2 and (b) the helper's reported directory basename>, \"verification\": [{\"check\": \"smoke-probe.txt exists\", \"result\": \"pass\"}], \"gaps\": []}.",
+].join(" ");
 
+async function runSmoke(model: unknown): Promise<any> {
+	const tool = tools.get("workspace_agent");
+	const res = (await tool.execute(
+		"probe",
+		{
+			workspace: WORKSPACE,
+			task: SMOKE_TASK,
+			timeout_ms: 420000,
+		},
+		undefined,
+		undefined,
+		{ cwd: FIXTURE, model, modelRegistry },
+	)) as { content: Array<{ text?: string }> };
+	return JSON.parse(res.content.find((c) => c.type === "text")?.text ?? "{}");
+}
+
+// Preferred model first (if resolvable); on provider/auth failure retry other
+// authenticated models from the allowed set (never openrouter).
+type ModelLike = { provider: string; id: string };
+const attempts: ModelLike[] = [];
+const requestedSpec = parseModelId(requested);
+if (requestedSpec) {
+	const primary = modelRegistry.find(requestedSpec.provider, requestedSpec.id);
+	if (primary && modelRegistry.hasConfiguredAuth(primary)) attempts.push(requestedSpec);
+}
+for (const m of modelRegistry.getAvailable()) {
+	if (attempts.length >= 3) break;
+	if (ALLOWED_PROVIDERS[m.provider] !== true) continue;
+	if (!modelRegistry.hasConfiguredAuth(m)) continue;
+	if (attempts.some((a) => a.provider === m.provider && a.id === m.id)) continue;
+	attempts.push({ provider: m.provider, id: m.id });
+}
+if (attempts.length === 0) {
+	const all = modelRegistry
+		.getAvailable()
+		.map((m) => `${m.provider}/${m.id}`)
+		.slice(0, 12);
+	console.error(
+		"No allowed-provider model (cloudru, zai, openai-codex) is available with configured auth.",
+		`Authenticated candidates outside the allowed set: ${all.join(", ") || "none"}`,
+	);
+	process.exit(1);
+}
+
+let out: any;
+let used: ModelLike | undefined;
+for (const spec of attempts) {
+	console.log(`smoke model attempt: ${spec.provider}/${spec.id}`);
+	const m = modelRegistry.find(spec.provider, spec.id);
+	if (!m) continue;
+	out = await runSmoke(m);
+	used = spec;
+	const reason = String(out.reason ?? "");
+	const providerIssue =
+		out.status === "blocked" && /model error|401|403|auth|credential|api/i.test(reason);
+	if (out.status === "done" || !providerIssue) break;
+	console.log(`attempt failed (provider/auth): ${reason.slice(0, 200)}`);
+}
+console.log("bridge result:", JSON.stringify(out).slice(0, 600));
+console.log(`used model: ${used ? `${used.provider}/${used.id}` : "?"}`);
+
+const summaryText = String((out.result as Record<string, unknown> | undefined)?.summary ?? "");
 ok(out.status === "done" && out.dispatched === true, `smoke owner completed (status ${out.status})`);
 ok(
 	Boolean(out.result) && (out.result as Record<string, unknown>).status === "done",
 	"structured envelope received with done",
 );
 ok(
+	summaryText.includes("AGENTS-SMOKE-MARKER"),
+	"D real model saw the B workspace project context marker",
+);
+ok(
+	summaryText.includes(WORKSPACE_BASENAME),
+	`B real nested stock task helper rooted at the workspace (expected basename ${WORKSPACE_BASENAME})`,
+);
+ok(
 	sh("test -f smoke-probe.txt && cat smoke-probe.txt", WORKSPACE) === "rooted-smoke",
-	"REAL model wrote RELATIVE path into the managed worktree",
+	"A REAL model wrote RELATIVE path into the managed worktree",
 );
 ok(
 	!sh("test -f smoke-probe.txt && echo present", SRC).includes("present"),
-	"probe file did not land in the source checkout",
+	"A probe file did not land in the source checkout",
 );
 
 console.log("\nmodel-backed smoke complete");
