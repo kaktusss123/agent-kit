@@ -14,7 +14,7 @@ import type { ExtensionAPI } from "@oh-my-pi/pi-coding-agent";
 import { join, basename, relative, resolve } from "node:path";
 import { homedir } from "node:os";
 import { mkdir, readdir } from "node:fs/promises";
-import { existsSync, readFileSync, realpathSync } from "node:fs";
+import { existsSync, lstatSync, readFileSync, realpathSync } from "node:fs";
 
 // Configurable root (env override for tests)
 const TASK_ROOT = realpath(process.env.OMP_TASK_ROOT ?? join(homedir(), ".omp", "tasks"));
@@ -94,6 +94,70 @@ function isLinkedWorktree(repoRoot: string): boolean {
 function underTaskRoot(p: string): boolean {
   return p.startsWith(TASK_ROOT + "/") || p === TASK_ROOT;
 }
+function isGitMetadataPath(root: string, target: string): boolean {
+  const gitDir = join(root, ".git");
+  return target === gitDir || target.startsWith(gitDir + "/");
+}
+function hasSymlinkComponent(root: string, target: string): boolean {
+  const rel = relative(root, target);
+  if (rel === ".." || rel.startsWith("../")) return true;
+  let current = root;
+  for (const part of rel.split("/")) {
+    if (!part) continue;
+    current = join(current, part);
+    try {
+      if (lstatSync(current).isSymbolicLink()) return true;
+    } catch {
+      // Missing path components cannot contain a symlink at this point.
+      break;
+    }
+  }
+  return false;
+}
+
+function literalPathspec(root: string, target: string): string {
+  return `./${relative(root, target)}`;
+}
+// check-ignore rejects the global --literal-pathspecs option, so prefixing the
+// path with ./ prevents a leading :(...) from being parsed as pathspec magic.
+
+function isTrackedPath(root: string, target: string): boolean {
+  const proc = Bun.spawnSync([
+    "git",
+    "--literal-pathspecs",
+    "-C",
+    root,
+    "ls-files",
+    "--error-unmatch",
+    "--",
+    literalPathspec(root, target),
+  ]);
+  return proc.exitCode === 0;
+}
+
+function isGitIgnoredPath(root: string, target: string): boolean {
+  const proc = Bun.spawnSync([
+    "git",
+    "-C",
+    root,
+    "check-ignore",
+    "--quiet",
+    "--no-index",
+    "--",
+    literalPathspec(root, target),
+  ]);
+  // Only Git's explicit "ignored" result authorizes the escape hatch.
+  // Errors and non-ignored paths remain blocked.
+  return proc.exitCode === 0;
+}
+
+function isAllowedIgnoredPrimaryPath(root: string, target: string): boolean {
+  if (isGitMetadataPath(root, target)) return false;
+  if (hasSymlinkComponent(root, target)) return false;
+  if (isTrackedPath(root, target)) return false;
+  return isGitIgnoredPath(root, target);
+}
+
 
 function classifyPath(p: string, cwd: string): PathClassification {
   const expanded = expandPath(p, cwd);
@@ -1374,16 +1438,27 @@ export default function (pi: ExtensionAPI): void {
       // share the parent process, so relative targets must resolve against the
       // session's own directory to classify the real write target.
       const cwd = realpath(ctx.cwd);
+      const abs = realpath(expandPath(filePath, cwd));
+      const root = findGitRoot(abs);
+      if (root && isGitMetadataPath(root, abs)) {
+        return {
+          block: true,
+          reason: `Blocked: writing to Git metadata under ${join(root, ".git")} is not allowed.`,
+        };
+      }
       const classification = classifyPath(filePath, cwd);
 
       if (classification === "PRIMARY_CHECKOUT") {
-        const root = findGitRoot(expandPath(filePath, cwd));
-        const hint = root ? managedWorktreeHint(root) : null;
-        if (root && hint) {
-          return {
-            block: true,
-            reason: `Blocked: writing to primary checkout ${root}. Use the managed task worktree(s) of this repo: ${hint}. This block is a routing failure, not a bypass authorization — do not work around it with eval, Python, shell, or another agent; write to the managed worktree or report the blocker.`,
-          };
+        // Ignored, untracked, non-symlink paths stay writable in the primary
+        // checkout; everything else routes to the managed task worktree(s).
+        if (root && !isAllowedIgnoredPrimaryPath(root, abs)) {
+          const hint = managedWorktreeHint(root);
+          if (hint) {
+            return {
+              block: true,
+              reason: `Blocked: writing to primary checkout ${root}. Use the managed task worktree(s) of this repo: ${hint}. This block is a routing failure, not a bypass authorization — do not work around it with eval, Python, shell, or another agent; write to the managed worktree or report the blocker.`,
+            };
+          }
         }
       }
       return;
