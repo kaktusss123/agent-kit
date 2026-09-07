@@ -89,6 +89,45 @@ function isLinkedWorktree(repoRoot: string): boolean {
 function underTaskRoot(p: string): boolean {
   return p.startsWith(TASK_ROOT + "/") || p === TASK_ROOT;
 }
+function isGitMetadataPath(root: string, target: string): boolean {
+  const gitDir = join(root, ".git");
+  return target === gitDir || target.startsWith(gitDir + "/");
+}
+
+function isTrackedPath(root: string, target: string): boolean {
+  const proc = Bun.spawnSync([
+    "git",
+    "-C",
+    root,
+    "ls-files",
+    "--error-unmatch",
+    "--",
+    relative(root, target),
+  ]);
+  return proc.exitCode === 0;
+}
+
+function isGitIgnoredPath(root: string, target: string): boolean {
+  const proc = Bun.spawnSync([
+    "git",
+    "-C",
+    root,
+    "check-ignore",
+    "--quiet",
+    "--no-index",
+    "--",
+    relative(root, target),
+  ]);
+  // Only Git's explicit "ignored" result authorizes the escape hatch.
+  // Errors and non-ignored paths remain blocked.
+  return proc.exitCode === 0;
+}
+
+function isAllowedIgnoredPrimaryPath(root: string, target: string): boolean {
+  if (isGitMetadataPath(root, target)) return false;
+  if (isTrackedPath(root, target)) return false;
+  return isGitIgnoredPath(root, target);
+}
 
 function classifyPath(p: string, cwd: string): PathClassification {
   const abs = realpath(expandPath(p, cwd));
@@ -1209,11 +1248,17 @@ export default function (pi: ExtensionAPI): void {
       // share the parent process, so relative targets must resolve against the
       // session's own directory to classify the real write target.
       const cwd = realpath(ctx.cwd);
+      const abs = realpath(expandPath(filePath, cwd));
+      const root = findGitRoot(abs);
+      if (root && isGitMetadataPath(root, abs)) {
+        return {
+          block: true,
+          reason: `Blocked: writing to Git metadata under ${join(root, ".git")} is not allowed.`,
+        };
+      }
       const classification = classifyPath(filePath, cwd);
 
       if (classification === "PRIMARY_CHECKOUT") {
-        const abs = realpath(expandPath(filePath, cwd));
-        const root = findGitRoot(abs);
         if (root) {
           // Check if this repo has any managed task worktrees
           // Synchronous check via Bun.spawnSync for the guard
@@ -1232,6 +1277,7 @@ export default function (pi: ExtensionAPI): void {
               if (line.startsWith("worktree ")) {
                 const wtPath = line.slice("worktree ".length);
                 if (underTaskRoot(wtPath)) {
+                  if (isAllowedIgnoredPrimaryPath(root, abs)) return;
                   return {
                     block: true,
                     reason: `Blocked: writing to primary checkout ${root}. Use the managed task worktree at ${wtPath} instead. This block is a routing failure, not a bypass authorization — do not work around it with eval, Python, shell, or another agent; write to the managed worktree or report the blocker.`,
