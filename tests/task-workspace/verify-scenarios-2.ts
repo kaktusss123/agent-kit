@@ -8,7 +8,7 @@
 import * as fs from "node:fs/promises";
 import path from "node:path";
 
-const FIXTURE = process.env.TW_FIXTURE_ROOT ?? "/tmp/omp-taskws";
+const FIXTURE = process.env.TW_FIXTURE_ROOT ?? "/var/tmp/omp-taskws";
 const EXTENSIONS_DIR =
 	process.env.TW_EXTENSIONS_DIR ??
 	path.join(import.meta.dir, "..", "..", "dot_omp", "private_agent", "extensions");
@@ -97,6 +97,26 @@ ok(r0c.status === "created", `consumer joined canonical (got ${r0c.status})`);
 section("S1 URI guard");
 ok(guard("write", { path: "local://report.md", content: "x" }).blocked === false, "write to local:// not classified as path");
 ok(guard("bash", { command: "git -C local://repo commit -m x" }).blocked === false, "git -C local:// skipped by guard");
+// --- S1b: temporary git repositories are exempt from routing guards ----------
+section("S1b temporary git repositories");
+const TEMP_REPOS = ["/tmp/omp-taskws-git-exempt", "/private/tmp/omp-taskws-git-exempt"];
+for (const tempRepo of TEMP_REPOS) {
+	await fs.rm(tempRepo, { recursive: true, force: true });
+	await fs.mkdir(tempRepo, { recursive: true });
+	sh("git init -q", tempRepo);
+}
+const t1 = guard("write", { path: `${TEMP_REPOS[0]}/.git/config`, content: "x" }, PRODUCER);
+ok(t1.blocked === false, "writes inside /tmp git repositories are exempt");
+const t2 = guard("bash", { command: `git -C ${TEMP_REPOS[0]} commit -m x` }, PRODUCER);
+ok(t2.blocked === false, "mutating git in /tmp repositories is exempt");
+const t3 = guard("bash", { command: `cd ${TEMP_REPOS[1]} && git commit -m x` }, PRODUCER);
+ok(t3.blocked === false, "mutating git after cd into /private/tmp is exempt");
+const t4 = guard("bash", { command: `cd ${TEMP_REPOS[0]} && git -C ${PRODUCER} commit -m x` }, PRODUCER);
+ok(t4.blocked === true, "temporary cwd does not exempt an explicitly targeted primary checkout");
+for (const tempRepo of TEMP_REPOS) {
+	await fs.rm(tempRepo, { recursive: true, force: true });
+}
+
 
 // --- S2: compound commands cannot hide mutating git -------------------------
 section("S2 compound mutation guard");

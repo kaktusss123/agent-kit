@@ -94,6 +94,17 @@ function isLinkedWorktree(repoRoot: string): boolean {
 function underTaskRoot(p: string): boolean {
   return p.startsWith(TASK_ROOT + "/") || p === TASK_ROOT;
 }
+
+const TEMPORARY_ROOT_RE = /^\/(?:private\/)?tmp(?:\/|$)/;
+
+function isTemporaryPath(p: string): boolean {
+  return TEMPORARY_ROOT_RE.test(realpath(p));
+}
+
+function hasTemporaryShellCwd(command: string): boolean {
+  return /(?:^|[;&|]\s*)cd\s+(?:"|')?\/(?:private\/)?tmp(?:\/|(?=["'\s;&|]|$))/.test(command);
+}
+
 function isGitMetadataPath(root: string, target: string): boolean {
   const gitDir = join(root, ".git");
   return target === gitDir || target.startsWith(gitDir + "/");
@@ -1439,6 +1450,7 @@ export default function (pi: ExtensionAPI): void {
       // session's own directory to classify the real write target.
       const cwd = realpath(ctx.cwd);
       const abs = realpath(expandPath(filePath, cwd));
+      if (isTemporaryPath(abs)) return;
       const root = findGitRoot(abs);
       if (root && isGitMetadataPath(root, abs)) {
         return {
@@ -1481,18 +1493,23 @@ export default function (pi: ExtensionAPI): void {
           "Blocked: raw `git commit --no-verify` bypasses pre-commit hooks. Commit normally (hooks run); if a hook fails on an external prerequisite such as an unpublished same-task dependency, retry via checkpoint_commit with deferred_hook evidence.",
       };
     }
+    const cwd = realpath(ctx.cwd);
+    if (
+      hasTemporaryShellCwd(command) &&
+      invocations.every((inv) => !inv.mutating || inv.repoRef === null)
+    ) return;
 
     // Compound commands must not hide a mutating git invocation behind
     // read-only ones: EVERY git invocation in the command is classified, and
     // any mutating one aimed at a primary checkout with managed worktrees
     // blocks the whole command (fail closed on ambiguity).
-    const cwd = realpath(ctx.cwd);
     for (const inv of invocations) {
       if (!inv.mutating) continue;
       const repoRef = inv.repoRef ?? ".";
       // A URI-like repo ref (git -C local://… …) is never a filesystem repo.
       if (INTERNAL_URI_RE.test(repoRef.trim())) continue;
       const repoAbs = expandPath(repoRef, cwd);
+      if (isTemporaryPath(repoAbs)) continue;
       let classification: PathClassification;
       try {
         classification = classifyPath(repoAbs, cwd);
