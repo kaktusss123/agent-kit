@@ -131,27 +131,31 @@ personal Mac — same-user and safe, but a visible change if your work Mac
 ## Normal workflow
 
 ```bash
-dots-status   # overview: machine, repo, branch, changes, ahead/behind
-dots-pull     # fetch + show changes + chezmoi apply (safe: ff-only, refuses dirty repo)
-dots-push     # re-add managed changes → secret scan → commit → push
+dots-status   # all three legs: git vs origin, repo vs home, per-file next actions
+dots-pull     # origin → repo (ff-only) → chezmoi apply to home (always applies, even when git is up to date)
+dots-push     # home → repo (re-add + adopted files) → secret scan → commit → rebase → push
+dots-sync     # both directions in one command
 ```
 
-Short aliases: `dstatus`, `dpull`, `dpush`.
+Short aliases: `dstatus`, `dpull`, `dpush`, `dsync`.
 
 `dots-pull` never destroys work: it refuses when the source repo has
-uncommitted changes (run `dots-push` first) and uses `--ff-only` so a
-diverged history fails loudly instead of merging.
+uncommitted changes (run `dots-push` first) and is fast-forward only.
+It always syncs home to the repo afterwards (`chezmoi apply`) — "already
+up to date" in git does not mean the home files are applied.
 
-`dots-push` never auto-adds untracked files and refuses when the remote is
-ahead (run `dots-pull` first). Optional commit message:
+`dots-push` never adopts unmanaged home files implicitly (run `chezmoi add`
+first); files you have adopted are staged and committed automatically. When
+the remote is ahead it rebases local commits onto it instead of refusing —
+only real rebase conflicts need manual work. Optional commit message:
 `dots-push "tune OMP model profiles"`.
 
 ## Recovery from conflicts
 
-- Diverged history (pull refuses): inspect with
-  `git -C ~/projects/dotfiles log --oneline --graph --all`, then either
-  `git pull --rebase` after a deliberate review or reset with
-  `git reset --hard origin/main` (only if local commits are disposable).
+- Diverged history (pull refuses when local commits are not pushed):
+  `dots-push` rebases onto origin automatically; if it reports rebase
+  conflicts, resolve them with standard git commands, then run
+  `dots-push` again.
 - Unmerged paths: resolve with standard git commands
   (`git status` lists them), then `git add` + `chezmoi apply`.
 - A secret slipped into a commit: remove it from the file, commit the fix,
