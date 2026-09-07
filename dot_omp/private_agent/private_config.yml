@@ -140,3 +140,5 @@ compaction:
     - handoff
     - shake
     - soft
+dev:
+  autoqaConsent: granted
