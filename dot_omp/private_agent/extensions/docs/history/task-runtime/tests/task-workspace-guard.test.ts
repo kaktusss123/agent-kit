@@ -60,6 +60,7 @@ beforeAll(async () => {
   });
   const pi = {
     zod: new Proxy({}, { get: () => (..._args: unknown[]) => schema }),
+    typebox: new Proxy({}, { get: () => schema }),
     registerTool: (_tool: unknown) => undefined,
     on: (event: string, handler: Guard) => {
       if (event === "tool_call") handlers.push(handler);
