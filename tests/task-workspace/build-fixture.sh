@@ -1,11 +1,11 @@
 #!/usr/bin/env bash
 # Disposable multi-repo fixture for task-workspace + workspace_agent verification.
-# Fixture root /tmp/omp-taskws is disposable and rebuilt from scratch every run;
+# Fixture root /var/tmp/omp-taskws is disposable and rebuilt from scratch every run;
 # the harness scripts in this directory import the extensions from the repo
 # working tree (override with TW_EXTENSIONS_DIR) or the deployed agent dir.
 set -euo pipefail
 
-ROOT=${TW_FIXTURE_ROOT:-/tmp/omp-taskws}
+ROOT=${TW_FIXTURE_ROOT:-/var/tmp/omp-taskws}
 rm -rf "$ROOT"
 mkdir -p "$ROOT/remotes" "$ROOT/work"
 

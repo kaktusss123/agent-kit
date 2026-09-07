@@ -30,7 +30,7 @@ const ALLOWED_PROVIDERS: Record<string, true> = {
 };
 const DEFAULT_MODEL = "zai/glm-5.3-flash";
 
-const FIXTURE = process.env.TW_FIXTURE_ROOT ?? "/tmp/omp-taskws";
+const FIXTURE = process.env.TW_FIXTURE_ROOT ?? "/var/tmp/omp-taskws";
 const EXTENSIONS_DIR =
 	process.env.TW_EXTENSIONS_DIR ??
 	path.join(import.meta.dir, "..", "..", "dot_omp", "private_agent", "extensions");

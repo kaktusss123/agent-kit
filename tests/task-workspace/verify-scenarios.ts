@@ -11,7 +11,7 @@
 import * as fs from "node:fs/promises";
 import path from "node:path";
 
-const FIXTURE = process.env.TW_FIXTURE_ROOT ?? "/tmp/omp-taskws";
+const FIXTURE = process.env.TW_FIXTURE_ROOT ?? "/var/tmp/omp-taskws";
 const EXTENSIONS_DIR =
 	process.env.TW_EXTENSIONS_DIR ??
 	path.join(import.meta.dir, "..", "..", "dot_omp", "private_agent", "extensions");
