@@ -14,7 +14,7 @@ Do not implement product code unless the user explicitly leaves this workflow.
 
 ## Establish the task workspace
 
-Before substantive task-oriented analysis, establish the task's Git identity per `skill://git-task` — never invent a ticket — and ensure the initial repository's managed worktree with the `ensure_task_repo` runtime. If neither a branch nor a ticket is provided, ask whether the user authorizes ticketless work; do not treat the missing ticket as an automatic blocker. Analyze the fresh task worktree rather than a dirty source checkout, and materialize additional repositories lazily as the scope demands.
+Before substantive task-oriented analysis, establish the task's Git identity per `skill://git-task` — never invent a ticket — and ensure the initial repository's managed worktree with the `ensure_task_repo` runtime. Analyze the fresh task worktree rather than a dirty source checkout, and materialize additional repositories lazily as the scope demands.
 
 Durable task artifacts live in the task workspace next to the worktrees: `SPEC.md` is the canonical entrypoint; `ADR-*.md`, `EXECUTION.md`, and `specs/<repo>.md` appear only when they earn their place. For multi-repo tasks, `SPEC.md` must fix the common desired outcome, the cross-repo contract, the writable repositories and their ownership, dependencies and parallelization constraints, and the integration acceptance criteria.
 

@@ -17,11 +17,11 @@ Decide whether the conversation is a task; establish its Git identity; materiali
 Never invent a ticket. Resolve in order:
 
 1. User named a branch → use it exactly; reuse its existing task workspace if one exists.
-2. User named a ticket, no branch → `task_status`, find task workspaces whose `key` (the workspace directory name, the flattened branch) contains the exact ticket key (`KEY-1234`); repo branches are reported per repository and are not the workspace identity:
+2. User named a ticket, no branch → `task_status`, find task workspaces whose branch contains the exact ticket key (`KEY-1234`):
    - exactly one → reuse it;
    - several → ask the user which one;
    - none → derive `<type>/<TICKET>_<slug_with_underscores>`; choose `feat`/`fix`/`chore` and a semantic slug from the task intent.
-3. Neither → ask the user whether a ticket exists and, if not, whether ticketless work is authorized. Do not state that a ticket is mandatory or raise `missing_ticket` before this question is answered. If the user explicitly approves ticketless work, proceed with a ticketless branch (`<type>/<slug_with_underscores>`); otherwise wait for the ticket. Never invent one.
+3. Neither → ask the user for the ticket. Ticketless branches only on explicit user choice.
 
 ## Establish the worktree
 
@@ -54,7 +54,7 @@ Main implements directly in the managed worktree. If the session still sits in t
 
 ## /dev, multi repo
 
-Main is the task-level orchestrator. When the task is known to touch several repositories before meaningful mutation begins, every writable repository gets its own repo owner — Main does not keep one of them for itself because the change looks small or first in the dependency DAG. Spawn each owner with the `workspace_agent` tool: `workspace` = the absolute managed worktree path from `ensure_task_repo`, `task` = the complete owner assignment. The owner session is rooted in that worktree — it works with relative paths, sees the repository's own project instructions, may delegate repo-local helpers via the stock `task` tool (they inherit the same worktree), and yields a structured envelope (`status`/`summary`/`verification`/`gaps`). Run independent owners as parallel `workspace_agent` calls. Only when `workspace_agent` returns `unsupported` with `dispatched=false` (required public SDK capability missing) fall back to a stock `task` owner whose prompt carries the absolute managed worktree path and which addresses its repository by absolute paths only (reads, writes, `git -C`). After dispatch there is never an automatic fallback: a failed owner returns `partial` or `blocked` with `child_may_have_mutated_repo` — inspect the worktree and repair with a fresh `workspace_agent` invocation that first inspects existing state. Workers change only their own repository, verify locally, and return contract conflicts to Main instead of resolving them silently.
+Main is the task-level orchestrator. When the task is known to touch several repositories before meaningful mutation begins, every writable repository gets its own repo owner — Main does not keep one of them for itself because the change looks small or first in the dependency DAG. Spawn each owner and put the absolute managed worktree path in the owner's prompt: the stock task tool does not root child sessions, so owners must address their repository by absolute paths only (reads, writes, `git -C`). Workers change only their own repository, verify locally, and return contract conflicts to Main instead of resolving them silently.
 
 Dependencies are model judgment, not a scheduler: when repos form a DAG, Main spawns owners in dependency order and treats a contract-fixing checkpoint (implementation + local verification yielded) as the barrier before dependents mutate against it. Workers need not run simultaneously.
 
