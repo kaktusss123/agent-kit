@@ -14,8 +14,7 @@
         "CONFLUENCE_URL": "https://wiki.cloud.ru",
         "CONFLUENCE_PERSONAL_TOKEN": "CONFLUENCE_PERSONAL_TOKEN",
         "JIRA_PROJECTS_FILTER": "EVODP",
-        "CONFLUENCE_SPACES_FILTER": "OCP",
-        "ENABLED_TOOLS": "jira_search,jira_get_issue,jira_search_fields,jira_download_attachments,confluence_search,confluence_get_page,confluence_get_page_children,confluence_get_space_page_tree,confluence_get_comments"
+        "CONFLUENCE_SPACES_FILTER": "OCP"
       }
     }
   },
