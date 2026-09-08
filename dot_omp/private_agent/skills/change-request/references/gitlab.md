@@ -37,7 +37,7 @@ Before creation:
 2. Search for an open MR for the same source branch and target branch/project.
 3. If one exists, report it and stop.
 
-Use `glab mr create` non-interactively with explicit project/repository, source branch, target branch, title, and description using flags supported by the installed version. Prefer a file-based description option when available; otherwise use a quoting-safe invocation.
+Use `glab mr create --squash-before-merge=true` non-interactively with explicit project/repository, source branch, target branch, title, and description using flags supported by the installed version. The `--squash-before-merge=true` flag is mandatory for every MR; do not rely on a GitLab UI or project default to enable it. Prefer a file-based description option when available; otherwise use a quoting-safe invocation.
 
 Do not rely on interactive behavior that performs git mutation.
 

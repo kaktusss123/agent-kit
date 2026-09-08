@@ -1,4 +1,6 @@
 # Полевой прогон Git Task Workspace + Multi-Repo: отчёт по кейсу EVODP-11781
+>
+> **Архитектура на 2026-09-05:** упор на ядерные патчи (`task(workspace=…)`, `/move`-refresh, embedded-URI) закрыт; фреймворк работает на стоковом OMP через extension `workspace_agent` (repo-rooted SDK-сессия) + absolute-path fallback. Упоминания `task(workspace=…)` ниже — исторические, к текущей архитектуре не применяются. См. `dot_omp/private_agent/docs/TASK_WORKSPACE.md`.
 
 Дата: 2026-09-05. Прогон: реальный инцидент на трёх репозиториях (`trino-lib`, `trino-instance`, `user-plane-api`), две OMP-сессии в истории `user-plane-api` (спек — старт 18:10, дев — старт 19:34), работа до ~02:00.
 
