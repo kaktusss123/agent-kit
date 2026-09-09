@@ -257,19 +257,27 @@ function namedYieldToolChoice(
 
 // ─── Post-mortem retention ───────────────────────────────────────────────
 
-/** Finished RepoOwners stay registered (idle) so their transcript remains
- *  readable and follow-up messages are possible from the Agent Hub. The
- *  registry unregisters disposed sessions that lack a tombstone, and the
+/** Finished RepoOwners stay registered so their transcript remains readable
+ *  and follow-up messages are possible from the Agent Hub. The registry
+ *  unregisters disposed sessions that lack a tombstone, and the
  *  tombstone/release path is internal to OMP — so instead of parking we
- *  keep the most recent sessions alive and dispose only the FIFO overflow. */
-const RETAINED_REPO_OWNERS: AgentSession[] = [];
+ *  keep the most recent sessions alive and dispose only the FIFO overflow.
+ *  Each retained session keeps its run-state mirror (syncSessionStatus) so
+ *  the roster shows the session's true state instead of a frozen one. */
+interface RetainedRepoOwner {
+  session: AgentSession;
+  stopStatusSync: () => void;
+}
+
+const RETAINED_REPO_OWNERS: RetainedRepoOwner[] = [];
 const RETAINED_REPO_OWNER_LIMIT = 5;
 
-function retainRepoOwnerSession(session: AgentSession): void {
-  RETAINED_REPO_OWNERS.push(session);
+function retainRepoOwnerSession(retained: RetainedRepoOwner): void {
+  RETAINED_REPO_OWNERS.push(retained);
   while (RETAINED_REPO_OWNERS.length > RETAINED_REPO_OWNER_LIMIT) {
     const oldest = RETAINED_REPO_OWNERS.shift();
-    void oldest?.dispose().catch(() => {});
+    oldest?.stopStatusSync();
+    void oldest?.session.dispose().catch(() => {});
   }
 }
 
@@ -404,7 +412,11 @@ export default function (pi: ExtensionAPI): void {
           return await Promise.race([p, abortPromise]);
         };
 
+        const agentRegistry = sdk.AgentRegistry.global();
+        const repoLabel = basename(ws);
+        const repoOwnerId = `RepoOwner-${repoLabel}-${Date.now().toString(36)}`;
         let unsub: (() => void) | undefined;
+        let stopStatusSync: (() => void) | undefined;
         try {
           let created: CreateAgentSessionResult;
           try {
@@ -413,11 +425,10 @@ export default function (pi: ExtensionAPI): void {
             // per dispatch avoids colliding with a parked ref from a previous
             // run; parent "Main" (MAIN_AGENT_ID) + taskDepth 1 place it in the
             // user-facing agent tree.
-            const repoLabel = basename(ws);
             created = await sdk.createAgentSession({
               cwd: ws,
               sessionManager,
-              agentRegistry: sdk.AgentRegistry.global(),
+              agentRegistry,
               model,
               modelRegistry,
               contextFiles: context.files,
@@ -427,7 +438,7 @@ export default function (pi: ExtensionAPI): void {
               autoApprove: true,
               hasUI: false,
               agentName: "RepoOwner",
-              agentId: `RepoOwner-${repoLabel}-${Date.now().toString(36)}`,
+              agentId: repoOwnerId,
               agentDisplayName: `RepoOwner (${repoLabel})`,
               parentAgentId: "Main",
               taskDepth: 1,
@@ -440,6 +451,9 @@ export default function (pi: ExtensionAPI): void {
             });
           }
           session = created.session;
+          // Mirror the child's authoritative run-state into its registry ref;
+          // without this the ref freezes at "running" forever.
+          stopStatusSync = agentRegistry.syncSessionStatus(repoOwnerId, session);
           if (abortSignal.aborted) {
             return finish({
               status: "blocked",
@@ -622,7 +636,9 @@ export default function (pi: ExtensionAPI): void {
           abortSignal.removeEventListener("abort", onAbort);
           // Keep the child registered and readable (idle in the Agent Hub);
           // retainRepoOwnerSession disposes only the FIFO overflow.
-          if (session) retainRepoOwnerSession(session);
+          if (session && stopStatusSync) {
+            retainRepoOwnerSession({ session, stopStatusSync });
+          }
         }
       } catch (e) {
         return finish({
