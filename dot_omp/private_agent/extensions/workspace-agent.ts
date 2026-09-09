@@ -9,7 +9,7 @@
  *
  * Architecture contract:
  * - Public SDK only, accessed through the injected `pi.pi` namespace
- *   (createAgentSession, SessionManager.inMemory, AgentRegistry). No OMP core
+ *   (createAgentSession, SessionManager.create, AgentRegistry). No OMP core
  *   patch, no private runtime imports, no npm runtime dependency.
  * - Not a task replacement: stock "task" stays the delegation mechanism
  *   INSIDE the RepoOwner; nested helpers inherit the workspace because the
@@ -25,6 +25,11 @@
  *   workspace owners). "task" and everything else stay active.
  * - The child's extension runner is initialized, so tool_call hooks (the
  *   task-workspace mutation guard) fire inside RepoOwner sessions.
+ * - Hub visibility: the child registers in AgentRegistry.global() as a
+ *   "Main"-parented sub (taskDepth 1, unique agentId), so it appears in the
+ *   Agent Hub roster while running and stays live-idle after settlement —
+ *   transcript persisted, follow-up messages possible — with a FIFO cap of
+ *   the RETAINED_REPO_OWNER_LIMIT most recent children.
  * - Settlement mirrors the stock task semantics: a yield with pending async
  *   work is a scheduling pause, not completion — jobs are settled, delivered
  *   results invalidate the yield, and a fresh one is demanded until the run
@@ -36,7 +41,7 @@ import type {
   ExtensionAPI,
   ExtensionContext,
 } from "@oh-my-pi/pi-coding-agent";
-import { join, resolve } from "node:path";
+import { basename, join, resolve } from "node:path";
 import { homedir } from "node:os";
 import { existsSync, readFileSync, realpathSync } from "node:fs";
 import { readFile } from "node:fs/promises";
@@ -250,6 +255,32 @@ function namedYieldToolChoice(
   return undefined;
 }
 
+// ─── Post-mortem retention ───────────────────────────────────────────────
+
+/** Finished RepoOwners stay registered so their transcript remains readable
+ *  and follow-up messages are possible from the Agent Hub. The registry
+ *  unregisters disposed sessions that lack a tombstone, and the
+ *  tombstone/release path is internal to OMP — so instead of parking we
+ *  keep the most recent sessions alive and dispose only the FIFO overflow.
+ *  Each retained session keeps its run-state mirror (syncSessionStatus) so
+ *  the roster shows the session's true state instead of a frozen one. */
+interface RetainedRepoOwner {
+  session: AgentSession;
+  stopStatusSync: () => void;
+}
+
+const RETAINED_REPO_OWNERS: RetainedRepoOwner[] = [];
+const RETAINED_REPO_OWNER_LIMIT = 5;
+
+function retainRepoOwnerSession(retained: RetainedRepoOwner): void {
+  RETAINED_REPO_OWNERS.push(retained);
+  while (RETAINED_REPO_OWNERS.length > RETAINED_REPO_OWNER_LIMIT) {
+    const oldest = RETAINED_REPO_OWNERS.shift();
+    oldest?.stopStatusSync();
+    void oldest?.session.dispose().catch(() => {});
+  }
+}
+
 // ─── Extension entry point ──────────────────────────────────────────────
 export default function (pi: ExtensionAPI): void {
   const tb = pi.typebox.Type;
@@ -362,8 +393,11 @@ export default function (pi: ExtensionAPI): void {
         const deadlineSignal = AbortSignal.timeout(timeoutMs);
         const abortSignal = signal ? AbortSignal.any([signal, deadlineSignal]) : deadlineSignal;
 
-        // 5. Child session: in-memory, privately registered, rooted twice.
-        const sessionManager = sdk.SessionManager.inMemory(ws);
+        // 5. Child session: file-backed (transcript under the agent sessions
+        // root, keyed by the workspace path — the worktree stays clean),
+        // globally registered (Agent Hub visible, kept idle after settle),
+        // rooted twice (cwd + SessionManager).
+        const sessionManager = sdk.SessionManager.create(ws);
         let session: AgentSession | undefined;
         const onAbort = (): void => {
           void session?.abort({ reason: "workspace_agent deadline or parent abort" }).catch(() => {});
@@ -378,14 +412,23 @@ export default function (pi: ExtensionAPI): void {
           return await Promise.race([p, abortPromise]);
         };
 
+        const agentRegistry = sdk.AgentRegistry.global();
+        const repoLabel = basename(ws);
+        const repoOwnerId = `RepoOwner-${repoLabel}-${Date.now().toString(36)}`;
         let unsub: (() => void) | undefined;
+        let stopStatusSync: (() => void) | undefined;
         try {
           let created: CreateAgentSessionResult;
           try {
+            // Global registry, not a private instance: this is what makes the
+            // RepoOwner visible/focusable in the Agent Hub. A unique agentId
+            // per dispatch avoids colliding with a parked ref from a previous
+            // run; parent "Main" (MAIN_AGENT_ID) + taskDepth 1 place it in the
+            // user-facing agent tree.
             created = await sdk.createAgentSession({
               cwd: ws,
               sessionManager,
-              agentRegistry: new sdk.AgentRegistry(),
+              agentRegistry,
               model,
               modelRegistry,
               contextFiles: context.files,
@@ -395,6 +438,10 @@ export default function (pi: ExtensionAPI): void {
               autoApprove: true,
               hasUI: false,
               agentName: "RepoOwner",
+              agentId: repoOwnerId,
+              agentDisplayName: `RepoOwner (${repoLabel})`,
+              parentAgentId: "Main",
+              taskDepth: 1,
             });
           } catch (e) {
             return finish({
@@ -404,6 +451,9 @@ export default function (pi: ExtensionAPI): void {
             });
           }
           session = created.session;
+          // Mirror the child's authoritative run-state into its registry ref;
+          // without this the ref freezes at "running" forever.
+          stopStatusSync = agentRegistry.syncSessionStatus(repoOwnerId, session);
           if (abortSignal.aborted) {
             return finish({
               status: "blocked",
@@ -575,7 +625,7 @@ export default function (pi: ExtensionAPI): void {
             workspace: ws,
             child_may_have_mutated_repo: true,
             reason: timedOut
-              ? `Deadline (${timeoutMs}ms) fired before a quiescent structured yield; the child was aborted and disposed and the repository may contain partial changes.`
+              ? `Deadline (${timeoutMs}ms) fired before a quiescent structured yield; the child was aborted and retained for inspection; the repository may contain partial changes.`
               : modelError
                 ? "RepoOwner ended with a terminal model error before submitting a valid structured yield."
                 : `No valid structured yield after ${MAX_YIELD_RETRIES} reminders${driveError ? ` (last drive error: ${driveError})` : ""}. Inspect the worktree and repair with a fresh workspace_agent invocation.`,
@@ -584,10 +634,10 @@ export default function (pi: ExtensionAPI): void {
         } finally {
           unsub?.();
           abortSignal.removeEventListener("abort", onAbort);
-          try {
-            await session?.dispose();
-          } catch {
-            // dispose is idempotent; a failure here must not mask the result
+          // Keep the child registered and readable (idle in the Agent Hub);
+          // retainRepoOwnerSession disposes only the FIFO overflow.
+          if (session && stopStatusSync) {
+            retainRepoOwnerSession({ session, stopStatusSync });
           }
         }
       } catch (e) {
