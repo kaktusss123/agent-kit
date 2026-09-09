@@ -143,6 +143,72 @@ ok(c8.blocked === true, "worktree list (read-only) does not mask following add")
 const c9 = guard("bash", { command: `git -C ${ws}/producer commit -m "fix: git add bug"` });
 ok(c9.blocked === false, "quoted argument mentioning git subcommand not re-parsed as invocation");
 
+// --- S2b: form-aware branch, tag, ref, refresh, and push classification ------
+section("S2b Git operation classes");
+ok(
+	guard("bash", { command: `git -C ${PRODUCER} branch --show-current` }).blocked === false,
+	"branch --show-current is read-only",
+);
+ok(
+	guard("bash", { command: `git -C ${PRODUCER} branch --list` }).blocked === false,
+	"branch --list is read-only",
+);
+ok(
+	guard("bash", { command: `git -C ${PRODUCER} branch -a` }).blocked === false,
+	"branch -a is read-only",
+);
+ok(
+	guard("bash", { command: `git -C ${PRODUCER} branch new-name` }).blocked === true,
+	"branch name creation is a local mutation",
+);
+ok(
+	guard("bash", { command: `git -C ${PRODUCER} branch -D old` }).blocked === true,
+	"branch -D is a local mutation",
+);
+ok(
+	guard("bash", { command: `git -C ${PRODUCER} branch -m old new` }).blocked === true,
+	"branch -m is a local mutation",
+);
+ok(
+	guard("bash", { command: `git -C ${PRODUCER} tag --list` }).blocked === false &&
+		guard("bash", { command: `git -C ${PRODUCER} tag` }).blocked === false,
+	"tag listing is read-only",
+);
+ok(
+	guard("bash", { command: `git -C ${PRODUCER} tag v1` }).blocked === true,
+	"tag creation is a local mutation",
+);
+ok(
+	guard("bash", { command: `git -C ${PRODUCER} tag -d v1` }).blocked === true &&
+		guard("bash", { command: `git -C ${PRODUCER} tag -f v1` }).blocked === true,
+	"tag deletion and force are local mutations",
+);
+ok(
+	guard("bash", { command: `git -C ${PRODUCER} update-ref refs/heads/x HEAD` }).blocked === true,
+	"update-ref is a local ref mutation",
+);
+ok(
+	guard("bash", { command: `git -C ${PRODUCER} fetch` }).blocked === false,
+	"fetch is a safe refresh allowed from primary",
+);
+ok(
+	guard("bash", { command: `git -C ${PRODUCER} push` }).blocked === false,
+	"push is an external side effect, not primary routing mutation",
+);
+ok(
+	guard("bash", { command: `git -C ${PRODUCER} branch --show-current && git -C ${PRODUCER} branch -D foo` }).blocked === true,
+	"read-only branch followed by mutation blocks the compound command",
+);
+ok(
+	guard("bash", { command: `git -C ${PRODUCER} branch --list && git -C ${PRODUCER} tag` }).blocked === false,
+	"read-only branch and tag compound command remains allowed",
+);
+
+
+ok(
+	guard("bash", { command: `git -C ${PRODUCER} worktree show` }).blocked === false,
+	"worktree show is read-only",
+);
 // --- S3: raw --no-verify is policy-forbidden everywhere ---------------------
 section("S3 raw --no-verify");
 const n1 = guard("bash", { command: `git -C ${PRODUCER} commit --no-verify -m x` });
@@ -191,6 +257,28 @@ ok(
 const st5 = await call("task_status", {});
 const ws5 = ((st5.taskWorkspaces ?? []) as Array<Json>).find((s) => s.key === "feat_EVODP-60002_uri");
 const repos5 = (ws5?.repos ?? []) as Array<Json>;
+const laneRepo = repos5.find((r) => r.name === "producer__develop-backport");
+const laneInput = (l1.inputRepo ?? {}) as Json;
+ok(
+	l1.kind === "lane" &&
+		l1.slot === "develop-backport" &&
+		laneInput.inputPath === PRODUCER &&
+		laneInput.classification === "PRIMARY_CHECKOUT",
+	"lane result identifies kind, slot, and its exact input checkout",
+);
+ok(
+	laneRepo?.kind === "lane" &&
+		laneRepo?.slot === "develop-backport" &&
+		laneRepo?.path === sh("pwd -P", `${ws}/producer__develop-backport`) &&
+		"upstream" in (laneRepo ?? {}) &&
+		laneRepo?.dirty !== undefined,
+	"task_status exposes lane slot, path, upstream, and dirty facts",
+);
+ok(
+	(l1.base as Json)?.ref === "origin/develop" &&
+		typeof (l1.base as Json)?.sha === "string",
+	"lane result retains known explicit base provenance",
+);
 ok(
 	repos5.some((r) => r.name === "producer__develop-backport") && repos5.length === 3,
 	"lane listed as a repo of the same workspace (no second workspace)",
@@ -294,5 +382,92 @@ const d6 = await call("checkpoint_commit", {
 });
 ok(d6.status === "committed_with_deferred_hook", `current-tree evidence with machine-readable pass commits (got ${d6.status})`);
 sh("rm -f .git/hooks/pre-commit", PRODUCER);
+
+// --- S7: secondary lane cleanup is explicit and non-destructive -------------
+section("S7 secondary lane cleanup");
+const canonicalRemoval = await call("remove_task_lane", {
+	task: "feat/EVODP-60002_uri",
+	path: `${ws}/producer`,
+});
+ok(
+	canonicalRemoval.status === "lane_rejected",
+	"canonical worktree cannot be removed as a lane",
+);
+
+const dirtyLanePath = `${ws}/producer__dirty-lane`;
+const dirtyLane = await call("ensure_task_repo", {
+	task: "feat/EVODP-60002_uri",
+	slot: "dirty-lane",
+	branch: "hotfix/EVODP-60002_dirty",
+	source_path: PRODUCER,
+	base_ref: "origin/develop",
+});
+ok(dirtyLane.status === "created", "clean lane can be created for cleanup coverage");
+await fs.writeFile(`${dirtyLanePath}/dirty.txt`, "uncommitted\n");
+const dirtyRemoval = await call("remove_task_lane", {
+	task: "feat/EVODP-60002_uri",
+	path: dirtyLanePath,
+});
+ok(
+	dirtyRemoval.status === "lane_dirty" &&
+		((dirtyRemoval.dirty as Json)?.unstaged as string[]).includes("dirty.txt"),
+	"dirty lane is rejected and its dirty facts are returned",
+);
+const dirtyStatus = await call("task_status", {});
+const dirtyStatusRepo = (
+	((dirtyStatus.taskWorkspaces ?? []) as Array<Json>).find(
+		(s) => s.key === "feat_EVODP-60002_uri",
+	)?.repos as Array<Json>
+).find((r) => r.name === "producer__dirty-lane");
+ok(
+	((dirtyStatusRepo?.dirty as Json)?.unstaged as string[]).includes("dirty.txt"),
+	"task_status exposes dirty state for the retained lane",
+);
+
+const unmergedLanePath = `${ws}/producer__unmerged-lane`;
+const unmergedLane = await call("ensure_task_repo", {
+	task: "feat/EVODP-60002_uri",
+	slot: "unmerged-lane",
+	branch: "hotfix/EVODP-60002_unmerged",
+	source_path: PRODUCER,
+	base_ref: "origin/develop",
+});
+ok(unmergedLane.status === "created", "unmerged lane can be created for safe-delete coverage");
+await fs.writeFile(`${unmergedLanePath}/unmerged.txt`, "committed\n");
+sh("git add unmerged.txt && git commit -qm 'test: unmerged lane history'", unmergedLanePath);
+const unmergedRemoval = await call("remove_task_lane", {
+	task: "feat/EVODP-60002_uri",
+	path: unmergedLanePath,
+});
+ok(
+	unmergedRemoval.status === "branch_delete_blocked" &&
+		!((await fs.stat(unmergedLanePath).then(() => true).catch(() => false))),
+	"unmerged lane worktree is removed but safe branch deletion blocks",
+);
+ok(
+	sh("git show-ref --verify refs/heads/hotfix/EVODP-60002_unmerged >/dev/null && echo yes", PRODUCER) ===
+		"yes",
+	"unmerged lane branch history is retained after cleanup blocker",
+);
+
+const cleanRemoval = await call("remove_task_lane", {
+	task: "feat/EVODP-60002_uri",
+	path: `${ws}/producer__develop-backport`,
+});
+ok(
+	cleanRemoval.status === "removed" &&
+		!((await fs.stat(`${ws}/producer__develop-backport`).then(() => true).catch(() => false))),
+	"clean secondary lane is removed through the managed lifecycle path",
+);
+ok(
+	sh("git show-ref --verify refs/heads/hotfix/EVODP-60002_uri >/dev/null && echo yes", PRODUCER) !==
+		"yes",
+	"clean lane branch is deleted only with safe branch -d",
+);
+const unknownRemoval = await call("remove_task_lane", {
+	task: "feat/EVODP-60002_uri",
+	path: "/tmp/not-a-managed-lane",
+});
+ok(unknownRemoval.status === "lane_rejected", "unknown or non-managed lane path is rejected");
 
 console.log(`\ndeep-guard scenario run complete on ${path.join(EXTENSIONS_DIR, "task-workspace.ts")}`);

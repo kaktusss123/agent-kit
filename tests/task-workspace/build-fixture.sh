@@ -44,7 +44,8 @@ EOF
 git add -A
 git commit -qm "chore: producer baseline"
 git branch -q develop
-git push -q origin main develop
+git branch -q feat/EVODP-70002_same_tip
+git push -q origin main develop feat/EVODP-70002_same_tip
 git checkout -q develop
 echo "producer work-in-progress dirt (never touch)" > WIP-PRODUCER.txt
 git checkout -q main
