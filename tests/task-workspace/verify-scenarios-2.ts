@@ -244,6 +244,35 @@ ok(
 	"fetch --stdin is ambiguous because refspec content is unavailable",
 );
 ok(
+	guard("bash", { command: `git -C ${PRODUCER} fetch --prune origin` }).blocked === false,
+	"fetch --prune remains a safe refresh",
+);
+ok(
+	guard("bash", { command: `git -C ${PRODUCER} fetch --prune-tags origin` }).blocked === true,
+	"fetch --prune-tags is a local ref mutation",
+);
+ok(
+	guard("bash", { command: `git -C ${PRODUCER} fetch -P origin` }).blocked === true,
+	"fetch -P is a local ref mutation",
+);
+const localOnlyTag = "local-only-refresh-tag";
+sh(`git tag ${localOnlyTag}`, PRODUCER);
+sh("git config fetch.pruneTags true", PRODUCER);
+const refresh = await call("ensure_task_repo", {
+	branch: "feat/EVODP-90001_refresh",
+	source_path: PRODUCER,
+	base_ref: "origin/develop",
+});
+const tagSurvives = sh(
+	`git show-ref --verify --quiet refs/tags/${localOnlyTag} && echo present || echo missing`,
+	PRODUCER,
+);
+ok(
+	refresh.status === "created" && tagSurvives === "present",
+	"ensure_task_repo refresh preserves local-only tags with fetch.pruneTags=true",
+);
+sh(`git tag -d ${localOnlyTag} >/dev/null 2>&1; git config --unset fetch.pruneTags`, PRODUCER);
+ok(
 	guard("bash", { command: `git -C ${PRODUCER} push` }).blocked === false,
 	"push is an external side effect, not primary routing mutation",
 );
@@ -269,6 +298,12 @@ const n2 = guard("bash", { command: `git -C ${ws}/producer commit --no-verify -m
 ok(n2.blocked === true, "commit --no-verify blocked even in managed worktree");
 const n3 = guard("bash", { command: `git -C ${ws}/producer commit -m "use --no-verify next time"` });
 ok(n3.blocked === false, "--no-verify inside quoted message is not a bypass flag");
+const n4 = guard("bash", { command: `git -C ${PRODUCER} commit -n -m x` });
+ok(n4.blocked === true, "commit -n on primary is blocked as a hook bypass");
+const n5 = guard("bash", { command: `git -C ${ws}/producer commit -n -m x` });
+ok(n5.blocked === true, "commit -n blocked even in managed worktree");
+const n6 = guard("bash", { command: `git -C ${PRODUCER} tag -n` });
+ok(n6.blocked === false, "tag -n is not classified as a hook bypass");
 
 // --- S4: blocked mutations hint worktrees of the SAME repository ------------
 section("S4 same-repo worktree hints");

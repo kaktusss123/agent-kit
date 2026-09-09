@@ -662,6 +662,9 @@ function classifyFetchOperation(rest: string[]): GitOperationClass {
     const token = unquoteToken(rest[i]);
     const flag = flagName(token);
     if (flag === "--stdin") return "ambiguous";
+    if (flag === "-P" || flag === "--prune-tags") {
+      return "local/ref-mutation";
+    }
     if (flag === "--refmap") {
       const refspec = token.includes("=")
         ? token.slice(token.indexOf("=") + 1)
@@ -768,7 +771,10 @@ function parseGitTokens(tokens: string[]): ParsedGitInvocation {
   inv.mutating =
     inv.operationClass === "local/ref-mutation" ||
     inv.operationClass === "ambiguous";
-  inv.noVerify = rest.some((t) => unquoteToken(t) === "--no-verify");
+  inv.noVerify =
+    rest.some((t) => unquoteToken(t) === "--no-verify") ||
+    (inv.subcommand === "commit" &&
+      rest.some((t) => unquoteToken(t) === "-n"));
   return inv;
 }
 const DEFERRED_PASS_RESULTS: Record<string, true> = {
@@ -1224,11 +1230,16 @@ export default function (pi: ExtensionAPI): void {
             details: { status: "attached", worktree: target },
           };
         }
-
         // 6b. Local absent — one required successful fetch of the chosen
         // remote, then resolve against the refreshed refs. Fail closed on
         // fetch failure: stale remote refs never materialize a task branch.
-        const fetchRes = await git(sourceRoot, "fetch", "--prune", remote);
+        const fetchRes = await git(
+          sourceRoot,
+          "fetch",
+          "--prune",
+          "--no-prune-tags",
+          remote,
+        );
         if (!fetchRes.ok) {
           return {
             content: [

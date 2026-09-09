@@ -61,10 +61,12 @@ guard. Highlights:
   attempt, and manual checks require machine-readable pass results;
  - the guard classifies every `git` invocation in a compound command and blocks
   any local/ref mutation aimed at a primary checkout, hinting the managed
-  worktrees of the same repository only. Ordinary `fetch` is safe refresh;
-  `refs/heads/*` destinations and `--refmap` destinations are local mutations;
-  `--stdin` and other unproven fetch destinations fail closed; `push` is an
-  external side effect.
+  worktrees of the same repository only. The runtime refresh uses
+  `fetch --prune --no-prune-tags` so `fetch.pruneTags` cannot change its
+  semantics; ordinary `fetch --prune` is a safe refresh;
+  `-P`/`--prune-tags`, `refs/heads/*` destinations, and `--refmap` destinations
+  are local mutations; `--stdin` and other unproven fetch destinations fail
+  closed; `push` is an external side effect.
 
 ## Fallback and guarantees
 
