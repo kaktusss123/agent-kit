@@ -9,7 +9,7 @@
  *
  * Architecture contract:
  * - Public SDK only, accessed through the injected `pi.pi` namespace
- *   (createAgentSession, SessionManager.inMemory, AgentRegistry). No OMP core
+ *   (createAgentSession, SessionManager.create, AgentRegistry). No OMP core
  *   patch, no private runtime imports, no npm runtime dependency.
  * - Not a task replacement: stock "task" stays the delegation mechanism
  *   INSIDE the RepoOwner; nested helpers inherit the workspace because the
@@ -366,9 +366,11 @@ export default function (pi: ExtensionAPI): void {
         const deadlineSignal = AbortSignal.timeout(timeoutMs);
         const abortSignal = signal ? AbortSignal.any([signal, deadlineSignal]) : deadlineSignal;
 
-        // 5. Child session: in-memory, globally registered (Agent Hub visible,
-        // parked after settle), rooted twice (cwd + SessionManager).
-        const sessionManager = sdk.SessionManager.inMemory(ws);
+        // 5. Child session: file-backed (transcript under the agent sessions
+        // root, keyed by the workspace path — the worktree stays clean),
+        // globally registered (Agent Hub visible, parked after settle),
+        // rooted twice (cwd + SessionManager).
+        const sessionManager = sdk.SessionManager.create(ws);
         let session: AgentSession | undefined;
         const onAbort = (): void => {
           void session?.abort({ reason: "workspace_agent deadline or parent abort" }).catch(() => {});
