@@ -186,6 +186,22 @@ ok(
 	"tag separate read-only option value is consumed",
 );
 ok(
+	guard("bash", { command: `git -C ${PRODUCER} branch --column -D foo` }).blocked === true,
+	"branch --column does not mask -D mutation",
+);
+ok(
+	guard("bash", { command: `git -C ${PRODUCER} tag --column -d foo` }).blocked === true,
+	"tag --column does not mask -d mutation",
+);
+ok(
+	guard("bash", { command: `git -C ${PRODUCER} branch --column=always --list` }).blocked === false,
+	"branch attached --column value remains read-only",
+);
+ok(
+	guard("bash", { command: `git -C ${PRODUCER} tag --column=always --list` }).blocked === false,
+	"tag attached --column value remains read-only",
+);
+ok(
 	guard("bash", { command: `git -C ${PRODUCER} tag --list` }).blocked === false &&
 		guard("bash", { command: `git -C ${PRODUCER} tag` }).blocked === false,
 	"tag listing is read-only",
@@ -214,6 +230,18 @@ ok(
 ok(
 	guard("bash", { command: `git -C ${PRODUCER} fetch origin main:refs/remotes/origin/foo` }).blocked === true,
 	"unknown fetch destination refspec fails closed",
+);
+ok(
+	guard("bash", { command: `git -C ${PRODUCER} fetch --refmap=refs/heads/main:refs/heads/foo origin main` }).blocked === true,
+	"fetch attached --refmap targeting refs/heads is a local mutation",
+);
+ok(
+	guard("bash", { command: `git -C ${PRODUCER} fetch --refmap refs/heads/main:refs/heads/foo origin main` }).blocked === true,
+	"fetch separate --refmap targeting refs/heads is a local mutation",
+);
+ok(
+	guard("bash", { command: `git -C ${PRODUCER} fetch --stdin origin` }).blocked === true,
+	"fetch --stdin is ambiguous because refspec content is unavailable",
 );
 ok(
 	guard("bash", { command: `git -C ${PRODUCER} push` }).blocked === false,
@@ -266,6 +294,22 @@ ok(h3.blocked === false, "primary with no managed worktrees is not blocked and n
 
 // --- S5: secondary lanes stay inside the canonical workspace ----------------
 section("S5 secondary lanes");
+const invalidSlot = await call("ensure_task_repo", {
+	task: "feat/EVODP-60002_uri",
+	slot: "qa__east",
+	branch: "hotfix/EVODP-60008_invalid-slot",
+	source_path: PRODUCER,
+	base_ref: "origin/develop",
+});
+const invalidSlotPath = `${ws}/producer__qa__east`;
+const invalidSlotExists = await fs
+	.stat(invalidSlotPath)
+	.then(() => true)
+	.catch(() => false);
+ok(
+	invalidSlot.status === "error" && !invalidSlotExists,
+	"slot containing __ is rejected before worktree creation",
+);
 const l1 = await call("ensure_task_repo", {
 	task: "feat/EVODP-60002_uri",
 	slot: "develop-backport",

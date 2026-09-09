@@ -566,7 +566,6 @@ const READ_ONLY_VALUE_FLAGS: Record<string, true> = {
   "--no-merged": true,
   "--points-at": true,
   "--sort": true,
-  "--column": true,
   "-n": true,
 };
 
@@ -643,19 +642,36 @@ const FETCH_VALUE_FLAGS: Record<string, true> = {
   "--depth": true,
   "--filter": true,
   "--negotiation-tip": true,
-  "--refmap": true,
   "--server-option": true,
   "--shallow-exclude": true,
   "--shallow-since": true,
   "--upload-pack": true,
 };
 
+function classifyFetchRefspec(refspec: string): GitOperationClass {
+  const separator = refspec.indexOf(":");
+  if (separator === -1) return "ambiguous";
+  const destination = refspec.slice(separator + 1);
+  return destination.startsWith("refs/heads/")
+    ? "local/ref-mutation"
+    : "ambiguous";
+}
+
 function classifyFetchOperation(rest: string[]): GitOperationClass {
   for (let i = 0; i < rest.length; i++) {
     const token = unquoteToken(rest[i]);
+    const flag = flagName(token);
+    if (flag === "--stdin") return "ambiguous";
+    if (flag === "--refmap") {
+      const refspec = token.includes("=")
+        ? token.slice(token.indexOf("=") + 1)
+        : rest[++i];
+      if (refspec === undefined) return "ambiguous";
+      return classifyFetchRefspec(unquoteToken(refspec));
+    }
     if (token.startsWith("-")) {
       if (
-        FETCH_VALUE_FLAGS[flagName(token)] === true &&
+        FETCH_VALUE_FLAGS[flag] === true &&
         !token.includes("=")
       ) {
         i++;
@@ -663,13 +679,7 @@ function classifyFetchOperation(rest: string[]): GitOperationClass {
       continue;
     }
 
-    const separator = token.indexOf(":");
-    if (separator === -1) continue;
-    const destination = token.slice(separator + 1);
-    if (destination.startsWith("refs/heads/")) {
-      return "local/ref-mutation";
-    }
-    return "ambiguous";
+    if (token.includes(":")) return classifyFetchRefspec(token);
   }
   return "safe-refresh";
 }
@@ -950,14 +960,18 @@ export default function (pi: ExtensionAPI): void {
             ],
           };
         }
-        if (params.slot && !/^[A-Za-z0-9][A-Za-z0-9._-]*$/.test(params.slot)) {
+        if (
+          params.slot &&
+          (!/^[A-Za-z0-9][A-Za-z0-9._-]*$/.test(params.slot) ||
+            params.slot.includes("__"))
+        ) {
           return {
             content: [
               {
                 type: "text" as const,
                 text: JSON.stringify({
                   status: "error",
-                  message: "slot must match [A-Za-z0-9][A-Za-z0-9._-]*",
+                  message: "slot must match [A-Za-z0-9][A-Za-z0-9._-]* and must not contain __",
                 }),
               },
             ],

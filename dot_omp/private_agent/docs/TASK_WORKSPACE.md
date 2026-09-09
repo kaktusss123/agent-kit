@@ -49,6 +49,8 @@ guard. Highlights:
   remote default is used when it is `develop` or when `develop` is absent, and
   `base_selection_required` is returned when both a non-`develop` default and
   `develop` exist. Missing remote default fails closed.
+ - secondary lane slots preserve an unambiguous `<repo>__<slot>` topology and
+  therefore reject `__` inside the slot value;
 - `task_status` reports the opaque workspace `key`/`task` and, for every managed
   repository, canonical-or-lane kind, slot, path, branch, HEAD, upstream,
   classification, and dirty paths;
@@ -60,8 +62,9 @@ guard. Highlights:
  - the guard classifies every `git` invocation in a compound command and blocks
   any local/ref mutation aimed at a primary checkout, hinting the managed
   worktrees of the same repository only. Ordinary `fetch` is safe refresh;
-  fetch refspecs targeting `refs/heads/*` are local mutations and other
-  explicit destinations fail closed; `push` is an external side effect.
+  `refs/heads/*` destinations and `--refmap` destinations are local mutations;
+  `--stdin` and other unproven fetch destinations fail closed; `push` is an
+  external side effect.
 
 ## Fallback and guarantees
 
