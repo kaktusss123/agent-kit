@@ -170,6 +170,22 @@ ok(
 	"branch -m is a local mutation",
 );
 ok(
+	guard("bash", { command: `git -C ${PRODUCER} branch --sort=refname -D foo` }).blocked === true,
+	"branch attached read-only option does not mask -D mutation",
+);
+ok(
+	guard("bash", { command: `git -C ${PRODUCER} tag --sort=refname -d foo` }).blocked === true,
+	"tag attached read-only option does not mask -d mutation",
+);
+ok(
+	guard("bash", { command: `git -C ${PRODUCER} branch --sort refname --list` }).blocked === false,
+	"branch separate read-only option value is consumed",
+);
+ok(
+	guard("bash", { command: `git -C ${PRODUCER} tag --sort refname --list` }).blocked === false,
+	"tag separate read-only option value is consumed",
+);
+ok(
 	guard("bash", { command: `git -C ${PRODUCER} tag --list` }).blocked === false &&
 		guard("bash", { command: `git -C ${PRODUCER} tag` }).blocked === false,
 	"tag listing is read-only",
@@ -190,6 +206,14 @@ ok(
 ok(
 	guard("bash", { command: `git -C ${PRODUCER} fetch` }).blocked === false,
 	"fetch is a safe refresh allowed from primary",
+);
+ok(
+	guard("bash", { command: `git -C ${PRODUCER} fetch origin main:refs/heads/foo` }).blocked === true,
+	"fetch refspec targeting refs/heads is a local mutation",
+);
+ok(
+	guard("bash", { command: `git -C ${PRODUCER} fetch origin main:refs/remotes/origin/foo` }).blocked === true,
+	"unknown fetch destination refspec fails closed",
 );
 ok(
 	guard("bash", { command: `git -C ${PRODUCER} push` }).blocked === false,
@@ -286,6 +310,51 @@ ok(
 ok(
 	((st5.taskWorkspaces ?? []) as Array<Json>).filter((s) => String(s.key).includes("EVODP-60002")).length === 1,
 	"lane did not spawn a second task workspace",
+);
+
+const trickyRemote = `${FIXTURE}/remotes/foo__bar.git`;
+const trickySource = `${FIXTURE}/work/foo__bar`;
+sh(`git init -q --bare -b main ${trickyRemote}`, FIXTURE);
+sh(`git init -q -b main ${trickySource}`, FIXTURE);
+sh(`git -C ${trickySource} config user.email fixture@local`, FIXTURE);
+sh(`git -C ${trickySource} config user.name fixture`, FIXTURE);
+await fs.writeFile(`${trickySource}/README.md`, "# foo__bar\n");
+sh(
+	`git -C ${trickySource} add -A && git -C ${trickySource} commit -qm 'chore: foo__bar baseline' && git -C ${trickySource} remote add origin ${trickyRemote} && git -C ${trickySource} push -q origin main`,
+	FIXTURE,
+);
+const trickyCanonical = await call("ensure_task_repo", {
+	branch: "feat/EVODP-60002_uri",
+	source_path: trickySource,
+	base_ref: "origin/main",
+});
+const trickyCanonicalPath = sh("pwd -P", `${ws}/foo__bar`);
+const trickyLane = await call("ensure_task_repo", {
+	task: "feat/EVODP-60002_uri",
+	slot: "release",
+	branch: "hotfix/EVODP-60007_release",
+	source_path: trickySource,
+	base_ref: "origin/main",
+});
+const topology = await call("task_status", {});
+const topologyWorkspace = ((topology.taskWorkspaces ?? []) as Array<Json>).find(
+	(s) => s.key === "feat_EVODP-60002_uri",
+);
+const topologyRepos = (topologyWorkspace?.repos ?? []) as Array<Json>;
+const trickyCanonicalRepo = topologyRepos.find((r) => r.name === "foo__bar");
+const trickyLaneRepo = topologyRepos.find((r) => r.name === "foo__bar__release");
+ok(
+	trickyCanonical.status === "created" &&
+		trickyCanonicalRepo?.kind === "canonical" &&
+		trickyCanonicalRepo?.slot === null &&
+		trickyCanonicalRepo?.path === trickyCanonicalPath,
+	"repository basename containing __ remains canonical",
+);
+ok(
+	trickyLane.status === "created" &&
+		trickyLaneRepo?.kind === "lane" &&
+		trickyLaneRepo?.slot === "release",
+	"lane is recognized only with a canonical sibling of the same Git repository",
 );
 
 // --- S6: deferred-hook evidence is bound to the staged tree -----------------
@@ -392,6 +461,32 @@ const canonicalRemoval = await call("remove_task_lane", {
 ok(
 	canonicalRemoval.status === "lane_rejected",
 	"canonical worktree cannot be removed as a lane",
+);
+const trickyCanonicalRemoval = await call("remove_task_lane", {
+	task: "feat/EVODP-60002_uri",
+	path: trickyCanonicalPath,
+});
+ok(
+	trickyCanonicalRemoval.status === "lane_rejected",
+	"canonical foo__bar cannot be removed as a lane",
+);
+const trickyLaneRemoval = await call("remove_task_lane", {
+	task: "feat/EVODP-60002_uri",
+	path: `${ws}/foo__bar__release`,
+});
+const trickyCanonicalExists = await fs
+	.stat(trickyCanonicalPath)
+	.then(() => true)
+	.catch(() => false);
+const trickyLaneExists = await fs
+	.stat(`${ws}/foo__bar__release`)
+	.then(() => true)
+	.catch(() => false);
+ok(
+	trickyLaneRemoval.status === "removed" &&
+		trickyCanonicalExists &&
+		!trickyLaneExists,
+	"cleanup removes foo__bar__release without removing canonical foo__bar",
 );
 
 const dirtyLanePath = `${ws}/producer__dirty-lane`;

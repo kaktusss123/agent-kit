@@ -45,8 +45,10 @@ guard. Highlights:
  - `ensure_task_repo` returns the target worktree plus `task`, `kind`, `slot`, and
   an `inputRepo` object naming the exact input path, Git root, classification,
   branch, HEAD, and dirty paths. Dirty state is never an unnamed `source`;
- - remote HEAD/default is the deterministic base fallback; if no default can be
-  resolved, base creation fails closed instead of guessing a branch by name;
+ - base selection uses an explicit `base_ref` when provided; otherwise the
+  remote default is used when it is `develop` or when `develop` is absent, and
+  `base_selection_required` is returned when both a non-`develop` default and
+  `develop` exist. Missing remote default fails closed.
 - `task_status` reports the opaque workspace `key`/`task` and, for every managed
   repository, canonical-or-lane kind, slot, path, branch, HEAD, upstream,
   classification, and dirty paths;
@@ -55,10 +57,11 @@ guard. Highlights:
   rejected; it never force-deletes a branch and is not automatic GC;
 - deferred-hook bypass evidence is bound to the exact staged tree of the failed
   attempt, and manual checks require machine-readable pass results;
-- the guard classifies every `git` invocation in a compound command and blocks
+ - the guard classifies every `git` invocation in a compound command and blocks
   any local/ref mutation aimed at a primary checkout, hinting the managed
-  worktrees of the same repository only. `fetch` is safe refresh; `push` is an
-  external side effect; unknown forms fail closed.
+  worktrees of the same repository only. Ordinary `fetch` is safe refresh;
+  fetch refspecs targeting `refs/heads/*` are local mutations and other
+  explicit destinations fail closed; `push` is an external side effect.
 
 ## Fallback and guarantees
 

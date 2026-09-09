@@ -266,20 +266,44 @@ function parseWorktreePaths(output: string): string[] {
     .map((line) => line.slice("worktree ".length));
 }
 
-function laneIdentity(name: string): {
+type LinkedWorktreeFact = {
+  path: string;
+  commonDir: string | null;
+};
+
+async function getRepoCommonDir(repoRoot: string): Promise<string | null> {
+  const result = await git(repoRoot, "rev-parse", "--git-common-dir");
+  return result.ok && result.stdout
+    ? realpath(resolve(repoRoot, result.stdout))
+    : null;
+}
+
+function parseLaneName(name: string): { repo: string; slot: string } | null {
+  const marker = name.lastIndexOf("__");
+  if (marker <= 0 || marker === name.length - 2) return null;
+  return { repo: name.slice(0, marker), slot: name.slice(marker + 2) };
+}
+
+function laneIdentity(
+  name: string,
+  linked: Map<string, LinkedWorktreeFact>,
+): {
   kind: "canonical" | "lane";
   slot: string | null;
   repo: string;
 } {
-  const marker = name.lastIndexOf("__");
-  if (marker <= 0 || marker === name.length - 2) {
-    return { kind: "canonical", slot: null, repo: name };
+  const parsed = parseLaneName(name);
+  const current = linked.get(name);
+  const canonical = parsed ? linked.get(parsed.repo) : undefined;
+  if (
+    parsed &&
+    current?.commonDir &&
+    canonical?.commonDir &&
+    current.commonDir === canonical.commonDir
+  ) {
+    return { kind: "lane", slot: parsed.slot, repo: parsed.repo };
   }
-  return {
-    kind: "lane",
-    slot: name.slice(marker + 2),
-    repo: name.slice(0, marker),
-  };
+  return { kind: "canonical", slot: null, repo: name };
 }
 async function getLaneFacts(
   task: string,
@@ -358,28 +382,35 @@ async function scanTaskWorkspaces(): Promise<
       continue;
     }
 
-    const repos: ManagedRepoStatus[] = [];
+    const linked = new Map<string, LinkedWorktreeFact>();
     for (const sub of subEntries) {
       const subPath = join(wsPath, sub);
       try {
         const gitContent = readFileSync(join(subPath, ".git"), "utf-8");
         if (!gitContent.startsWith("gitdir:")) continue;
+        linked.set(sub, {
+          path: subPath,
+          commonDir: await getRepoCommonDir(subPath),
+        });
       } catch {
         continue;
       }
+    }
 
-      const identity = laneIdentity(sub);
-      const branch = await getRepoBranch(subPath);
+    const repos: ManagedRepoStatus[] = [];
+    for (const [sub, worktree] of linked) {
+      const identity = laneIdentity(sub, linked);
+      const branch = await getRepoBranch(worktree.path);
       repos.push({
         name: sub,
-        path: subPath,
+        path: worktree.path,
         kind: identity.kind,
         slot: identity.slot,
         classification: "MANAGED_TASK_WORKTREE",
         branch,
-        headSha: await getRepoSha(subPath),
-        upstream: await getUpstream(subPath, branch),
-        dirty: await getSourceDirty(subPath),
+        headSha: await getRepoSha(worktree.path),
+        upstream: await getUpstream(worktree.path, branch),
+        dirty: await getSourceDirty(worktree.path),
       });
     }
 
@@ -528,6 +559,16 @@ const TAG_MUTATION_FLAGS: Record<string, true> = {
   "-m": true,
   "-s": true,
 };
+const READ_ONLY_VALUE_FLAGS: Record<string, true> = {
+  "--contains": true,
+  "--format": true,
+  "--merged": true,
+  "--no-merged": true,
+  "--points-at": true,
+  "--sort": true,
+  "--column": true,
+  "-n": true,
+};
 
 
 function unquoteToken(token: string): string {
@@ -544,6 +585,9 @@ function unquoteToken(token: string): string {
 function flagName(token: string): string {
   return unquoteToken(token).split("=", 1)[0];
 }
+function consumesSeparateValue(token: string, flag: string): boolean {
+  return READ_ONLY_VALUE_FLAGS[flag] === true && !token.includes("=");
+}
 
 function classifyBranchOperation(rest: string[]): GitOperationClass {
   let readMode = false;
@@ -555,18 +599,7 @@ function classifyBranchOperation(rest: string[]): GitOperationClass {
     }
     if (BRANCH_READ_ONLY_FLAGS[flag] === true) {
       readMode = true;
-      if (
-        flag === "--contains" ||
-        flag === "--format" ||
-        flag === "--merged" ||
-        flag === "--no-merged" ||
-        flag === "--points-at" ||
-        flag === "--sort" ||
-        flag === "--column" ||
-        flag === "-n"
-      ) {
-        i++;
-      }
+      if (consumesSeparateValue(token, flag)) i++;
       continue;
     }
     if (token.startsWith("-")) return "ambiguous";
@@ -583,18 +616,7 @@ function classifyTagOperation(rest: string[]): GitOperationClass {
     if (TAG_MUTATION_FLAGS[flag] === true) return "local/ref-mutation";
     if (TAG_READ_ONLY_FLAGS[flag] === true) {
       readMode = true;
-      if (
-        flag === "--contains" ||
-        flag === "--format" ||
-        flag === "--merged" ||
-        flag === "--no-merged" ||
-        flag === "--points-at" ||
-        flag === "--sort" ||
-        flag === "--column" ||
-        flag === "-n"
-      ) {
-        i++;
-      }
+      if (consumesSeparateValue(token, flag)) i++;
       continue;
     }
     if (token.startsWith("-")) return "ambiguous";
@@ -617,6 +639,40 @@ function classifyRemoteOperation(rest: string[]): GitOperationClass {
   }
   return "local/ref-mutation";
 }
+const FETCH_VALUE_FLAGS: Record<string, true> = {
+  "--depth": true,
+  "--filter": true,
+  "--negotiation-tip": true,
+  "--refmap": true,
+  "--server-option": true,
+  "--shallow-exclude": true,
+  "--shallow-since": true,
+  "--upload-pack": true,
+};
+
+function classifyFetchOperation(rest: string[]): GitOperationClass {
+  for (let i = 0; i < rest.length; i++) {
+    const token = unquoteToken(rest[i]);
+    if (token.startsWith("-")) {
+      if (
+        FETCH_VALUE_FLAGS[flagName(token)] === true &&
+        !token.includes("=")
+      ) {
+        i++;
+      }
+      continue;
+    }
+
+    const separator = token.indexOf(":");
+    if (separator === -1) continue;
+    const destination = token.slice(separator + 1);
+    if (destination.startsWith("refs/heads/")) {
+      return "local/ref-mutation";
+    }
+    return "ambiguous";
+  }
+  return "safe-refresh";
+}
 
 /** Conservative scan of EVERY `git` invocation in a (possibly compound) shell
  * command. It is not a shell interpreter: ambiguous input errs toward
@@ -625,6 +681,7 @@ function parseGitInvocations(command: string): ParsedGitInvocation[] {
   const invocations: ParsedGitInvocation[] = [];
   const gitWord = /(^|[\s;&|(`])git(?=$|[\s;&|(`])/g;
   let m: RegExpExecArray | null;
+
   while ((m = gitWord.exec(command)) !== null) {
     const tokens: string[] = [];
     let i = m.index + m[0].length;
@@ -686,7 +743,7 @@ function parseGitTokens(tokens: string[]): ParsedGitInvocation {
     inv.operationClass =
       first === "list" || first === "show" ? "read-only" : "local/ref-mutation";
   } else if (inv.subcommand === "fetch") {
-    inv.operationClass = "safe-refresh";
+    inv.operationClass = classifyFetchOperation(rest);
   } else if (inv.subcommand === "push") {
     inv.operationClass = "external-side-effect";
   } else if (inv.subcommand === "update-ref") {
@@ -1286,6 +1343,27 @@ export default function (pi: ExtensionAPI): void {
             };
           }
 
+          const devRef = await git(
+            sourceRoot,
+            "show-ref",
+            "--verify",
+            `refs/remotes/${remote}/develop`,
+          );
+          if (remoteDefault !== "develop" && devRef.ok) {
+            return {
+              content: [
+                {
+                  type: "text" as const,
+                  text: JSON.stringify({
+                    status: "base_selection_required",
+                    remoteDefault,
+                    developExists: true,
+                  }),
+                },
+              ],
+            };
+          }
+
           const baseBranch = `${remote}/${remoteDefault}`;
           const baseRes = await git(sourceRoot, "rev-parse", baseBranch);
           if (!baseRes.ok) {
@@ -1301,11 +1379,8 @@ export default function (pi: ExtensionAPI): void {
               ],
             };
           }
-
-
           baseSha = baseRes.stdout;
           baseRef = baseBranch;
-
         }
         // Create branch from base
         await mkdir(ws, { recursive: true });
@@ -1392,18 +1467,14 @@ export default function (pi: ExtensionAPI): void {
         const workspace = realpath(taskWorkspacePath(params.task));
         const relativeTarget = relative(workspace, target);
         const laneName = basename(target);
-        const marker = laneName.lastIndexOf("__");
+        const parsedLane = parseLaneName(laneName);
         const isDirectChild =
           relativeTarget.length > 0 &&
           !relativeTarget.startsWith("..") &&
           !relativeTarget.includes("/") &&
           resolve(workspace, relativeTarget) === target;
 
-        if (
-          !isDirectChild ||
-          marker <= 0 ||
-          marker === laneName.length - 2
-        ) {
+        if (!isDirectChild || !parsedLane) {
           return {
             content: [
               {
@@ -1420,14 +1491,37 @@ export default function (pi: ExtensionAPI): void {
           };
         }
 
-        const slot = laneName.slice(marker + 2);
-        const repo = laneName.slice(0, marker);
+        const repo = parsedLane.repo;
+        const slot = parsedLane.slot;
         const root = findGitRoot(target);
         const classification = classifyPath(target, cwd);
+        const canonicalPath = join(workspace, repo);
+        const linked = new Map<string, LinkedWorktreeFact>();
+        if (
+          classification === "MANAGED_TASK_WORKTREE" &&
+          root === target &&
+          isLinkedWorktree(target)
+        ) {
+          linked.set(laneName, {
+            path: target,
+            commonDir: await getRepoCommonDir(target),
+          });
+        }
+        if (
+          existsSync(canonicalPath) &&
+          findGitRoot(canonicalPath) === canonicalPath &&
+          isLinkedWorktree(canonicalPath)
+        ) {
+          linked.set(repo, {
+            path: canonicalPath,
+            commonDir: await getRepoCommonDir(canonicalPath),
+          });
+        }
+        const identity = laneIdentity(laneName, linked);
         if (
           classification !== "MANAGED_TASK_WORKTREE" ||
           root !== target ||
-          !isLinkedWorktree(target)
+          identity.kind !== "lane"
         ) {
           return {
             content: [
@@ -1441,7 +1535,7 @@ export default function (pi: ExtensionAPI): void {
                   path: target,
                   classification,
                   reason:
-                    "The target is not a managed linked secondary lane.",
+                    "The target is not a managed linked secondary lane with a canonical sibling.",
                 }),
               },
             ],

@@ -101,16 +101,11 @@ const r1default = await call("ensure_task_repo", {
 	branch: "feat/EVODP-60004_default_base",
 	source_path: PRODUCER,
 });
-const producerMainSha = sh("git rev-parse refs/remotes/origin/main", PRODUCER);
-const sameTipFeatureSha = sh(
-	"git rev-parse refs/remotes/origin/feat/EVODP-70002_same_tip",
-	PRODUCER,
-);
 ok(
-	r1default.status === "created" &&
-		(r1default.base as Json)?.ref === "origin/main" &&
-		producerMainSha === sameTipFeatureSha,
-	"producer uses origin/main from remote HEAD despite a same-tip feature ref",
+	r1default.status === "base_selection_required" &&
+		r1default.remoteDefault === "main" &&
+		r1default.developExists === true,
+	"producer requires explicit base when develop coexists with non-develop remote default",
 );
 const noDefaultRoot = `${FIXTURE}/work/no-default`;
 sh(`git init -q --bare ${FIXTURE}/remotes/no-default.git`, FIXTURE);
