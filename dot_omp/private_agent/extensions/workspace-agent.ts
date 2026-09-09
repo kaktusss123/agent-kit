@@ -25,6 +25,10 @@
  *   workspace owners). "task" and everything else stay active.
  * - The child's extension runner is initialized, so tool_call hooks (the
  *   task-workspace mutation guard) fire inside RepoOwner sessions.
+ * - Hub visibility: the child registers in AgentRegistry.global() as a
+ *   "Main"-parented sub (taskDepth 1, unique agentId), so it appears in the
+ *   Agent Hub roster while running and stays parked (revivable, transcript
+ *   retained) after settlement instead of vanishing with the device call.
  * - Settlement mirrors the stock task semantics: a yield with pending async
  *   work is a scheduling pause, not completion — jobs are settled, delivered
  *   results invalidate the yield, and a fresh one is demanded until the run
@@ -36,7 +40,7 @@ import type {
   ExtensionAPI,
   ExtensionContext,
 } from "@oh-my-pi/pi-coding-agent";
-import { join, resolve } from "node:path";
+import { basename, join, resolve } from "node:path";
 import { homedir } from "node:os";
 import { existsSync, readFileSync, realpathSync } from "node:fs";
 import { readFile } from "node:fs/promises";
@@ -362,7 +366,8 @@ export default function (pi: ExtensionAPI): void {
         const deadlineSignal = AbortSignal.timeout(timeoutMs);
         const abortSignal = signal ? AbortSignal.any([signal, deadlineSignal]) : deadlineSignal;
 
-        // 5. Child session: in-memory, privately registered, rooted twice.
+        // 5. Child session: in-memory, globally registered (Agent Hub visible,
+        // parked after settle), rooted twice (cwd + SessionManager).
         const sessionManager = sdk.SessionManager.inMemory(ws);
         let session: AgentSession | undefined;
         const onAbort = (): void => {
@@ -382,10 +387,16 @@ export default function (pi: ExtensionAPI): void {
         try {
           let created: CreateAgentSessionResult;
           try {
+            // Global registry, not a private instance: this is what makes the
+            // RepoOwner visible/focusable in the Agent Hub. A unique agentId
+            // per dispatch avoids colliding with a parked ref from a previous
+            // run; parent "Main" (MAIN_AGENT_ID) + taskDepth 1 place it in the
+            // user-facing agent tree.
+            const repoLabel = basename(ws);
             created = await sdk.createAgentSession({
               cwd: ws,
               sessionManager,
-              agentRegistry: new sdk.AgentRegistry(),
+              agentRegistry: sdk.AgentRegistry.global(),
               model,
               modelRegistry,
               contextFiles: context.files,
@@ -395,6 +406,10 @@ export default function (pi: ExtensionAPI): void {
               autoApprove: true,
               hasUI: false,
               agentName: "RepoOwner",
+              agentId: `RepoOwner-${repoLabel}-${Date.now().toString(36)}`,
+              agentDisplayName: `RepoOwner (${repoLabel})`,
+              parentAgentId: "Main",
+              taskDepth: 1,
             });
           } catch (e) {
             return finish({
