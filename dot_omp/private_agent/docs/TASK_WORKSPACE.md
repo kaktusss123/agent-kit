@@ -34,20 +34,39 @@ workspace spawner and does not root sessions.
 
 ## Deterministic runtime tools
 
-`task_status`, `ensure_task_repo`, `checkpoint_commit` (extension
-`task-workspace.ts`) manage worktree lifecycle, branch/fetch semantics, commit
-staging, hooks, and the primary-checkout mutation guard. Highlights:
+`task_status`, `ensure_task_repo`, `remove_task_lane`, and
+`checkpoint_commit` (extension `task-workspace.ts`) manage worktree lifecycle,
+branch/fetch semantics, commit staging, hooks, and the primary-checkout mutation
+guard. Highlights:
 
-- a local task branch is attached without network; an absent branch is
+ - a local task branch is attached without network; an absent branch is
   materialized only after one successful fetch (fail closed on fetch failure)
   as an attached tracking branch, never detached HEAD;
-- workspace identity is the workspace path; `task_status` reports a `key`
-  (flattened branch, opaque) and per-repository branches;
+ - `ensure_task_repo` returns the target worktree plus `task`, `kind`, `slot`, and
+  an `inputRepo` object naming the exact input path, Git root, classification,
+  branch, HEAD, and dirty paths. Dirty state is never an unnamed `source`;
+ - base selection uses an explicit `base_ref` when provided; otherwise the
+  remote default is used when it is `develop` or when `develop` is absent, and
+  `base_selection_required` is returned when both a non-`develop` default and
+  `develop` exist. Missing remote default fails closed.
+ - secondary lane slots preserve an unambiguous `<repo>__<slot>` topology and
+  therefore reject `__` inside the slot value;
+- `task_status` reports the opaque workspace `key`/`task` and, for every managed
+  repository, canonical-or-lane kind, slot, path, branch, HEAD, upstream,
+  classification, and dirty paths;
+- secondary lanes are removed only by explicit `remove_task_lane`: canonical
+  worktrees, dirty lanes, unknown paths, and unsafe branch deletion are
+  rejected; it never force-deletes a branch and is not automatic GC;
 - deferred-hook bypass evidence is bound to the exact staged tree of the failed
   attempt, and manual checks require machine-readable pass results;
-- the guard classifies every `git` invocation in a compound command and blocks
-  any mutating one aimed at a primary checkout, hinting the managed worktrees
-  of the same repository only.
+ - the guard classifies every `git` invocation in a compound command and blocks
+  any local/ref mutation aimed at a primary checkout, hinting the managed
+  worktrees of the same repository only. The runtime refresh uses
+  `fetch --prune --no-prune-tags` so `fetch.pruneTags` cannot change its
+  semantics; ordinary `fetch --prune` is a safe refresh;
+  `-P`/`--prune-tags`, `refs/heads/*` destinations, and `--refmap` destinations
+  are local mutations; `--stdin` and other unproven fetch destinations fail
+  closed; `push` is an external side effect.
 
 ## Fallback and guarantees
 

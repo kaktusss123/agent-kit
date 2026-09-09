@@ -54,8 +54,7 @@
 * Before task mutation, establish a task branch and managed worktree through the task-workspace runtime.
 * Never invent a ticket; derive task branches only from explicit user identity or an existing matching task.
 * A ticket is not mandatory by default. When neither ticket nor branch is provided, ask whether the user authorizes ticketless work; do not block or emit `missing_ticket` before that answer. After explicit approval, use ticketless branch and commit naming.
-* A blocked task-workspace mutation is a routing failure, not a bypass authorization — never route around the guard through eval, Python, shell, another tool, or another agent; use the managed worktree or report the blocker.
-* If a task is known to touch several repositories before meaningful mutation, Main orchestrates and every writable repository gets its own repo owner; Main does not keep one of them for itself.
-* Never pass an inferred `base_ref` (a release/hotfix/maintenance branch picked from context) to `ensure_task_repo`; use an explicit user base, the deterministic runtime policy, or ask.
+* A blocked task-workspace mutation is a routing failure, not authorization to reproduce the same mutation through eval, Python, shell, sed/cp, or another agent. Manual tracked-file adaptation is allowed only when it is an explicit implementation/recovery decision, with the reason and a re-verified diff.
+* Never pass an inferred `base_ref` (a release/hotfix/maintenance branch picked from context or merely observed in Git output); use an explicit user/SPEC/task decision, the deterministic runtime, or ask.
 * Raw `git commit --no-verify` is forbidden everywhere; the only hook-bypass path is `checkpoint_commit`'s deferred hook verification after a real, current hook failure.
 

@@ -87,15 +87,61 @@ const r1a = await call("ensure_task_repo", {
 });
 ok(r1a.status === "created", `producer created from explicit base (got ${JSON.stringify(r1a)})`);
 ok(r1a.branchSource === "base" && r1a.upstream === null, "created reports branchSource=base, upstream=null");
+const producerRoot = sh("pwd -P", PRODUCER);
+const canonicalInput = (r1a.inputRepo ?? {}) as Json;
+ok(
+	canonicalInput.inputPath === PRODUCER &&
+		canonicalInput.gitRoot === producerRoot &&
+		canonicalInput.classification === "PRIMARY_CHECKOUT" &&
+		canonicalInput.branch === "main" &&
+		typeof canonicalInput.headSha === "string",
+	"canonical result identifies the exact primary input checkout",
+);
+const r1default = await call("ensure_task_repo", {
+	branch: "feat/EVODP-60004_default_base",
+	source_path: PRODUCER,
+});
+ok(
+	r1default.status === "base_selection_required" &&
+		r1default.remoteDefault === "main" &&
+		r1default.developExists === true,
+	"producer requires explicit base when develop coexists with non-develop remote default",
+);
+const noDefaultRoot = `${FIXTURE}/work/no-default`;
+sh(`git init -q --bare ${FIXTURE}/remotes/no-default.git`, FIXTURE);
+sh(`git init -q ${noDefaultRoot}`, FIXTURE);
+sh(
+	`git -C ${noDefaultRoot} remote add origin ${FIXTURE}/remotes/no-default.git`,
+	FIXTURE,
+);
+const noDefaultRemote = sh("git remote get-url origin", noDefaultRoot);
+ok(
+	noDefaultRemote === `${FIXTURE}/remotes/no-default.git`,
+	"no-default fixture has the expected origin remote",
+);
+const noDefault = await call("ensure_task_repo", {
+	branch: "feat/EVODP-60005_no_default",
+	source_path: noDefaultRoot,
+});
+const noDefaultTarget = `${TASK_ROOT}/feat_EVODP-60005_no_default/no-default`;
+const noDefaultWorktreeExists = await fs
+	.stat(noDefaultTarget)
+	.then(() => true)
+	.catch(() => false);
+ok(
+	noDefault.status === "error" && !noDefaultWorktreeExists,
+	"missing remote default fails closed instead of guessing a base",
+);
 const r1b = await call("ensure_task_repo", {
 	branch: "feat/EVODP-60001_multi",
 	source_path: CONSUMER,
 });
 ok(
 	r1b.status === "created" && String((r1b.base as Json | undefined)?.ref).includes("develop"),
-	`consumer created from develop auto-base (got ${r1b.status}, base ${JSON.stringify(r1b.base)})`,
+	`consumer uses its deterministic remote default (got ${r1b.status}, base ${JSON.stringify(r1b.base)})`,
 );
 const ws1 = `${TASK_ROOT}/feat_EVODP-60001_multi`;
+const managedProducerPath = sh("pwd -P", `${ws1}/producer`);
 const wsGit = await fs
 	.stat(`${ws1}/.git`)
 	.then((s) => s.isDirectory())
@@ -121,8 +167,10 @@ ok(
 	"remote-only worktree is an attached local branch, not detached HEAD",
 );
 ok(
-	r2c.branchSource === "remote" && r2c.upstream === "origin/feat/EVODP-70001_remote_only",
-	`created_from_remote reports remote source and upstream (got ${JSON.stringify({ branchSource: r2c.branchSource, upstream: r2c.upstream })})`,
+	r2c.branchSource === "remote" &&
+		r2c.upstream === "origin/feat/EVODP-70001_remote_only" &&
+		(r2c.inputRepo as Json)?.inputPath === PRODUCER,
+	`created_from_remote reports source identity and upstream (got ${JSON.stringify({ inputRepo: r2c.inputRepo, upstream: r2c.upstream })})`,
 );
 
 // --- V3: status identity is the workspace key, not a repo branch ------------
@@ -132,6 +180,18 @@ const spaces = (st.taskWorkspaces ?? []) as Array<Json>;
 const multi = spaces.find((s) => s.key === "feat_EVODP-60001_multi");
 ok(multi !== undefined, `workspace keyed by directory basename (keys: ${spaces.map((s) => s.key).join(", ")})`);
 ok(multi !== undefined && !("branch" in multi), "workspace entry carries no lossy branch field");
+const canonicalRepo = (multi?.repos as Array<Json> | undefined)?.find(
+	(r) => r.name === "producer",
+);
+ok(
+	canonicalRepo?.kind === "canonical" &&
+		canonicalRepo?.slot === null &&
+		canonicalRepo?.path === managedProducerPath &&
+		canonicalRepo?.classification === "MANAGED_TASK_WORKTREE" &&
+		typeof canonicalRepo?.headSha === "string" &&
+		canonicalRepo?.dirty !== undefined,
+	"task_status exposes canonical worktree topology and dirty facts",
+);
 ok(
 	multi !== undefined &&
 	(multi.repos as Array<Json>).length === 2 &&
@@ -140,21 +200,44 @@ ok(
 );
 const remoteOnly = spaces.find((s) => s.key === "feat_EVODP-70001_remote_only");
 ok(
-	remoteOnly !== undefined && (remoteOnly.repos as Array<Json>)[0]?.branch === "feat/EVODP-70001_remote_only",
-	"lane-style workspaces keep their own repo branch separate from the key",
+	remoteOnly !== undefined &&
+	(remoteOnly.repos as Array<Json>)[0]?.kind === "canonical" &&
+	(remoteOnly.repos as Array<Json>)[0]?.slot === null &&
+	(remoteOnly.repos as Array<Json>)[0]?.branch === "feat/EVODP-70001_remote_only",
+	"task_status marks a single-repo workspace as canonical",
 );
 
 // --- V4: dirty source untouched ---------------------------------------------
 section("V4 dirty source");
 ok(sh("test -f WIP-PRODUCER.txt && echo yes", PRODUCER) === "yes", "producer WIP file still present");
+await fs.writeFile(`${ws1}/producer/source-work.txt`, "managed input dirt\n");
+const managedInputResult = await call("ensure_task_repo", {
+	branch: "feat/EVODP-60001_multi",
+	source_path: `${ws1}/producer`,
+});
+const managedInput = (managedInputResult.inputRepo ?? {}) as Json;
+const managedDirty = (managedInput.dirty ?? {}) as Json;
+ok(
+	managedInput.inputPath === `${ws1}/producer` &&
+		managedInput.gitRoot === managedProducerPath &&
+		managedInput.classification === "MANAGED_TASK_WORKTREE" &&
+		managedInput.branch === "feat/EVODP-60001_multi" &&
+		(managedDirty.unstaged as string[]).includes("source-work.txt"),
+	"dirty managed source_path is explicitly identified as a managed worktree",
+);
+await fs.rm(`${ws1}/producer/source-work.txt`);
 const dirty = await call("ensure_task_repo", {
 	branch: "feat/EVODP-60001_multi",
 	source_path: PRODUCER,
 });
-const dirtyInfo = (dirty.sourceDirty ?? {}) as Json;
+const inputDirty = (dirty.inputRepo ?? {}) as Json;
+const dirtyInfo = (inputDirty.dirty ?? {}) as Json;
 ok(
-	Array.isArray(dirtyInfo.unstaged) && (dirtyInfo.unstaged as string[]).includes("WIP-PRODUCER.txt"),
-	`sourceDirty reports producer WIP (got ${JSON.stringify(dirtyInfo)})`,
+	inputDirty.inputPath === PRODUCER &&
+		inputDirty.gitRoot === producerRoot &&
+		inputDirty.classification === "PRIMARY_CHECKOUT" &&
+		(dirtyInfo.unstaged as string[]).includes("WIP-PRODUCER.txt"),
+	`primary input dirt is tied to inputRepo (got ${JSON.stringify(dirtyInfo)})`,
 );
 ok(
 	sh("test ! -f WIP-PRODUCER.txt && echo clean", `${ws1}/producer`) === "clean",

@@ -27,22 +27,46 @@ Never invent a ticket. Resolve in order:
 
 `ensure_task_repo(branch, source_path, base_ref?, remote?)` per repository. Handle statuses:
 
-- `reused` / `attached` / `created` / `created_from_remote` → proceed; note `sourceDirty` but never touch it.
+- `reused` / `attached` / `created` / `created_from_remote` → proceed; inspect the self-describing `inputRepo` facts and never touch that input checkout.
 - `base_selection_required` / `remote_selection_required` → ask the user; never guess product branching semantics.
 - `branch_in_use` → report which worktree holds the branch and ask; never force or detach.
 
-Base selection contract: use `base_ref` only when the user explicitly named the base, or when a previous run fixed it for this task. Never infer a base from product context (a release, hotfix, or maintenance branch that "looks right") — let the deterministic runtime policy decide, and when it returns `base_selection_required`, ask the user.
+Base selection contract: `base_ref` is allowed only when the user explicitly named
+the base, a SPEC/task decision fixed it, or an earlier continuation of this same
+task fixed it unambiguously. Seeing a branch or SHA in `git log`, `git status`, or
+`origin/<branch>` is Git evidence, not provenance. Never infer a release, hotfix,
+maintenance, or other product base from context; omit `base_ref` and let the
+deterministic runtime select it. If the runtime returns `base_selection_required`,
+ask the user instead of guessing.
 
 Never create task-generated changes in the primary checkout. The write/edit guard blocks the primary once a task workspace exists for that repository; manual linked worktrees and outside-Git writes stay unblocked.
 
-## Secondary lanes (backport / release branches)
+## Canonical continuation and secondary lanes
 
-One repository may need several branches inside one logical task (e.g. `hotfix/*` from a release plus `fix/*` from develop). Materialize each additional lane with `ensure_task_repo(task: <canonical task identity>, branch: <lane branch>, slot: <lane name>, base_ref: <explicit base>)`:
+If this task already has a canonical worktree for a repository, continue there by
+default. Do not create a secondary lane merely to test separately, deploy,
+isolate a commit, try another sequence, bypass a blocked Git operation, or obtain
+a clean branch.
 
-- The lane becomes a sibling `<repo>__<slot>` worktree inside the same canonical task workspace — no second task workspace, no manifest.
-- Never auto-create lanes; they appear only on explicit need (user request or an explicit task requirement).
-- The lane's branch and base come from the user or the task specification; on ambiguity, ask.
-- The canonical worktree stays the default target; name the lane's absolute worktree path explicitly in every owner handoff.
+Create a secondary lane only for a real additional branch lane explicitly required
+by the user or SPEC/task decision: backport/forward-port, or a release/hotfix
+branch that must coexist with the canonical implementation branch. The canonical
+worktree remains the default target; name the absolute path explicitly in owner
+handoffs.
+
+## Git side effects and recovery
+
+Commit, push, deployment, and acceptance are different states. Before an
+external side effect, check only the prerequisites or SPEC gates explicitly
+linked to that side effect. An open deployment gate blocks a push that triggers
+deployment, but does not block an ordinary push for a draft MR; report the
+specific blocker instead of calling the side effect ready.
+
+A guard block is a routing failure, not permission to repeat the same mutation
+through `sed`, `cp`, `eval`, Python, or another agent. Manual tracked-file
+adaptation is allowed only as an explicit implementation decision (for example
+a conflict or backport), with the reason stated and the resulting diff
+re-verified.
 
 ## /spec
 

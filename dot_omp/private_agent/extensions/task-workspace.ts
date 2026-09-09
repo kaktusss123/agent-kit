@@ -229,21 +229,140 @@ async function getSourceDirty(
     unstaged: unstaged.slice(0, 50),
   };
 }
+type DirtyState = { staged: string[]; unstaged: string[] };
+
+interface InputRepoFacts {
+  inputPath: string;
+  gitRoot: string;
+  classification: PathClassification;
+  branch: string;
+  headSha: string;
+  dirty: DirtyState;
+}
+
+async function getInputRepoFacts(
+  inputPath: string,
+  gitRoot: string,
+  cwd: string,
+): Promise<InputRepoFacts> {
+  return {
+    inputPath,
+    gitRoot,
+    classification: classifyPath(inputPath, cwd),
+    branch: await getRepoBranch(gitRoot),
+    headSha: await getRepoSha(gitRoot),
+    dirty: await getSourceDirty(gitRoot),
+  };
+}
+
+function taskWorkspacePath(task: string): string {
+  return join(TASK_ROOT, task.replace(/\//g, "_"));
+}
+
+function parseWorktreePaths(output: string): string[] {
+  return output
+    .split("\n")
+    .filter((line) => line.startsWith("worktree "))
+    .map((line) => line.slice("worktree ".length));
+}
+
+type LinkedWorktreeFact = {
+  path: string;
+  commonDir: string | null;
+};
+
+async function getRepoCommonDir(repoRoot: string): Promise<string | null> {
+  const result = await git(repoRoot, "rev-parse", "--git-common-dir");
+  return result.ok && result.stdout
+    ? realpath(resolve(repoRoot, result.stdout))
+    : null;
+}
+
+function parseLaneName(name: string): { repo: string; slot: string } | null {
+  const marker = name.lastIndexOf("__");
+  if (marker <= 0 || marker === name.length - 2) return null;
+  return { repo: name.slice(0, marker), slot: name.slice(marker + 2) };
+}
+
+function laneIdentity(
+  name: string,
+  linked: Map<string, LinkedWorktreeFact>,
+): {
+  kind: "canonical" | "lane";
+  slot: string | null;
+  repo: string;
+} {
+  const parsed = parseLaneName(name);
+  const current = linked.get(name);
+  const canonical = parsed ? linked.get(parsed.repo) : undefined;
+  if (
+    parsed &&
+    current?.commonDir &&
+    canonical?.commonDir &&
+    current.commonDir === canonical.commonDir
+  ) {
+    return { kind: "lane", slot: parsed.slot, repo: parsed.repo };
+  }
+  return { kind: "canonical", slot: null, repo: name };
+}
+async function getLaneFacts(
+  task: string,
+  path: string,
+  slot: string,
+  repo: string,
+): Promise<{
+  task: string;
+  repo: string;
+  slot: string;
+  path: string;
+  branch: string;
+  headSha: string;
+  upstream: string | null;
+  dirty: DirtyState;
+}> {
+  const branch = await getRepoBranch(path);
+  return {
+    task,
+    repo,
+    slot,
+    path,
+    branch,
+    headSha: await getRepoSha(path),
+    upstream: await getUpstream(path, branch),
+    dirty: await getSourceDirty(path),
+  };
+}
+
+
 
 // ─── Worktree scanning ──────────────────────────────────────────────────
+
+type ManagedRepoStatus = {
+  name: string;
+  path: string;
+  kind: "canonical" | "lane";
+  slot: string | null;
+  classification: "MANAGED_TASK_WORKTREE";
+  branch: string;
+  headSha: string;
+  upstream: string | null;
+  dirty: DirtyState;
+};
 
 async function scanTaskWorkspaces(): Promise<
   {
     workspace: string;
     key: string;
-    repos: { name: string; path: string; branch: string; headSha: string }[];
+    task: string;
+    repos: ManagedRepoStatus[];
     artifacts: string[];
   }[]
 > {
   const workspaces: {
     workspace: string;
     key: string;
-    repos: { name: string; path: string; branch: string; headSha: string }[];
+    task: string;
+    repos: ManagedRepoStatus[];
     artifacts: string[];
   }[] = [];
 
@@ -256,8 +375,6 @@ async function scanTaskWorkspaces(): Promise<
 
   for (const entry of entries) {
     const wsPath = join(TASK_ROOT, entry);
-
-    // Scan subdirectories of the workspace for git worktrees
     let subEntries: string[];
     try {
       subEntries = await readdir(wsPath);
@@ -265,37 +382,45 @@ async function scanTaskWorkspaces(): Promise<
       continue;
     }
 
-    const repos: { name: string; path: string; branch: string; headSha: string }[] = [];
+    const linked = new Map<string, LinkedWorktreeFact>();
     for (const sub of subEntries) {
       const subPath = join(wsPath, sub);
-      // A git worktree has a .git file (not directory) pointing to the main repo
       try {
         const gitContent = readFileSync(join(subPath, ".git"), "utf-8");
         if (!gitContent.startsWith("gitdir:")) continue;
+        linked.set(sub, {
+          path: subPath,
+          commonDir: await getRepoCommonDir(subPath),
+        });
       } catch {
-        continue; // not a worktree
+        continue;
       }
+    }
 
-      const branchResult = await git(subPath, "branch", "--show-current");
-      const branch = branchResult.ok ? branchResult.stdout : "";
-      const headResult = await git(subPath, "rev-parse", "HEAD");
-      const headSha = headResult.ok ? headResult.stdout : "";
-
-      repos.push({ name: sub, path: subPath, branch, headSha });
+    const repos: ManagedRepoStatus[] = [];
+    for (const [sub, worktree] of linked) {
+      const identity = laneIdentity(sub, linked);
+      const branch = await getRepoBranch(worktree.path);
+      repos.push({
+        name: sub,
+        path: worktree.path,
+        kind: identity.kind,
+        slot: identity.slot,
+        classification: "MANAGED_TASK_WORKTREE",
+        branch,
+        headSha: await getRepoSha(worktree.path),
+        upstream: await getUpstream(worktree.path, branch),
+        dirty: await getSourceDirty(worktree.path),
+      });
     }
 
     if (repos.length === 0) continue;
 
-    // Scan for model-authored artifacts
     const artifacts: string[] = [];
     try {
       const files = await readdir(wsPath);
       for (const f of files) {
-        if (
-          f.endsWith(".md") ||
-          f.endsWith(".json") ||
-          f.endsWith(".txt")
-        ) {
+        if (f.endsWith(".md") || f.endsWith(".json") || f.endsWith(".txt")) {
           artifacts.push(f);
         }
       }
@@ -303,30 +428,29 @@ async function scanTaskWorkspaces(): Promise<
       // workspace dir may not be readable
     }
 
-    workspaces.push({ workspace: wsPath, key: entry, repos, artifacts });
+    workspaces.push({
+      workspace: wsPath,
+      key: entry,
+      task: entry,
+      repos,
+      artifacts,
+    });
   }
 
   return workspaces;
 }
 
-// ─── Bash command parsing (best-effort) ─────────────────────────────────
-
-/** Machine-readable pass outcomes accepted as deferred-hook manual check
- *  results. Anything else — failure, skipped, unknown, prose — does not
- *  authorize a --no-verify bypass. */
-const DEFERRED_PASS_RESULTS: Record<string, true> = {
-  pass: true,
-  passed: true,
-  ok: true,
-  success: true,
-  successful: true,
-  true: true,
-  yes: true,
-};
+type GitOperationClass =
+  | "read-only"
+  | "safe-refresh"
+  | "local/ref-mutation"
+  | "external-side-effect"
+  | "ambiguous";
 
 interface ParsedGitInvocation {
   subcommand: string;
   repoRef: string | null; // -C <path> target, or null for the session cwd
+  operationClass: GitOperationClass;
   mutating: boolean;
   noVerify: boolean;
 }
@@ -341,15 +465,236 @@ const GIT_VALUE_FLAGS: Record<string, true> = {
   "--super-prefix": true,
 };
 
+const READ_ONLY_GIT_SUBCOMMANDS: Record<string, true> = {
+  "cat-file": true,
+  describe: true,
+  diff: true,
+  "for-each-ref": true,
+  log: true,
+  "ls-files": true,
+  "ls-tree": true,
+  "rev-parse": true,
+  show: true,
+  "show-ref": true,
+  status: true,
+};
+
+const LOCAL_MUTATION_GIT_SUBCOMMANDS: Record<string, true> = {
+  add: true,
+  checkout: true,
+  "cherry-pick": true,
+  clean: true,
+  commit: true,
+  merge: true,
+  rebase: true,
+  reset: true,
+  restore: true,
+  switch: true,
+};
+
+const BRANCH_READ_ONLY_FLAGS: Record<string, true> = {
+  "--all": true,
+  "--contains": true,
+  "--format": true,
+  "--list": true,
+  "--merged": true,
+  "--no-merged": true,
+  "--points-at": true,
+  "--remotes": true,
+  "--show-current": true,
+  "--sort": true,
+  "--verbose": true,
+  "--column": true,
+  "-a": true,
+  "-l": true,
+  "-r": true,
+  "-v": true,
+  "-vv": true,
+  "-n": true,
+};
+
+const BRANCH_MUTATION_FLAGS: Record<string, true> = {
+  "--copy": true,
+  "--delete": true,
+  "--edit-description": true,
+  "--move": true,
+  "--set-upstream-to": true,
+  "--track": true,
+  "--unset-upstream": true,
+  "-c": true,
+  "-C": true,
+  "-d": true,
+  "-D": true,
+  "-m": true,
+  "-M": true,
+};
+
+const TAG_READ_ONLY_FLAGS: Record<string, true> = {
+  "--contains": true,
+  "--format": true,
+  "--list": true,
+  "--merged": true,
+  "--no-merged": true,
+  "--points-at": true,
+  "--sort": true,
+  "--column": true,
+  "--verify": true,
+  "-l": true,
+  "-n": true,
+  "-v": true,
+};
+
+const TAG_MUTATION_FLAGS: Record<string, true> = {
+  "--annotate": true,
+  "--create-reflog": true,
+  "--delete": true,
+  "--force": true,
+  "--local-user": true,
+  "--message": true,
+  "--sign": true,
+  "--cleanup": true,
+  "-a": true,
+  "-d": true,
+  "-f": true,
+  "-m": true,
+  "-s": true,
+};
+const READ_ONLY_VALUE_FLAGS: Record<string, true> = {
+  "--contains": true,
+  "--format": true,
+  "--merged": true,
+  "--no-merged": true,
+  "--points-at": true,
+  "--sort": true,
+  "-n": true,
+};
+
+
+function unquoteToken(token: string): string {
+  if (
+    token.length >= 2 &&
+    ((token.startsWith('"') && token.endsWith('"')) ||
+      (token.startsWith("'") && token.endsWith("'")))
+  ) {
+    return token.slice(1, -1);
+  }
+  return token;
+}
+
+function flagName(token: string): string {
+  return unquoteToken(token).split("=", 1)[0];
+}
+function consumesSeparateValue(token: string, flag: string): boolean {
+  return READ_ONLY_VALUE_FLAGS[flag] === true && !token.includes("=");
+}
+
+function classifyBranchOperation(rest: string[]): GitOperationClass {
+  let readMode = false;
+  for (let i = 0; i < rest.length; i++) {
+    const token = unquoteToken(rest[i]);
+    const flag = flagName(token);
+    if (BRANCH_MUTATION_FLAGS[flag] === true || flag === "--force") {
+      return "local/ref-mutation";
+    }
+    if (BRANCH_READ_ONLY_FLAGS[flag] === true) {
+      readMode = true;
+      if (consumesSeparateValue(token, flag)) i++;
+      continue;
+    }
+    if (token.startsWith("-")) return "ambiguous";
+    if (!readMode) return "local/ref-mutation";
+  }
+  return "read-only";
+}
+
+function classifyTagOperation(rest: string[]): GitOperationClass {
+  let readMode = false;
+  for (let i = 0; i < rest.length; i++) {
+    const token = unquoteToken(rest[i]);
+    const flag = flagName(token);
+    if (TAG_MUTATION_FLAGS[flag] === true) return "local/ref-mutation";
+    if (TAG_READ_ONLY_FLAGS[flag] === true) {
+      readMode = true;
+      if (consumesSeparateValue(token, flag)) i++;
+      continue;
+    }
+    if (token.startsWith("-")) return "ambiguous";
+    if (!readMode) return "local/ref-mutation";
+  }
+  return "read-only";
+}
+
+function classifyRemoteOperation(rest: string[]): GitOperationClass {
+  const first = rest[0] ? unquoteToken(rest[0]) : "";
+  if (
+    first === "" ||
+    first === "-v" ||
+    first === "--verbose" ||
+    first === "get-url" ||
+    first === "get-branches" ||
+    first === "show"
+  ) {
+    return "read-only";
+  }
+  return "local/ref-mutation";
+}
+const FETCH_VALUE_FLAGS: Record<string, true> = {
+  "--depth": true,
+  "--filter": true,
+  "--negotiation-tip": true,
+  "--server-option": true,
+  "--shallow-exclude": true,
+  "--shallow-since": true,
+  "--upload-pack": true,
+};
+
+function classifyFetchRefspec(refspec: string): GitOperationClass {
+  const separator = refspec.indexOf(":");
+  if (separator === -1) return "ambiguous";
+  const destination = refspec.slice(separator + 1);
+  return destination.startsWith("refs/heads/")
+    ? "local/ref-mutation"
+    : "ambiguous";
+}
+
+function classifyFetchOperation(rest: string[]): GitOperationClass {
+  for (let i = 0; i < rest.length; i++) {
+    const token = unquoteToken(rest[i]);
+    const flag = flagName(token);
+    if (flag === "--stdin") return "ambiguous";
+    if (flag === "-P" || flag === "--prune-tags") {
+      return "local/ref-mutation";
+    }
+    if (flag === "--refmap") {
+      const refspec = token.includes("=")
+        ? token.slice(token.indexOf("=") + 1)
+        : rest[++i];
+      if (refspec === undefined) return "ambiguous";
+      return classifyFetchRefspec(unquoteToken(refspec));
+    }
+    if (token.startsWith("-")) {
+      if (
+        FETCH_VALUE_FLAGS[flag] === true &&
+        !token.includes("=")
+      ) {
+        i++;
+      }
+      continue;
+    }
+
+    if (token.includes(":")) return classifyFetchRefspec(token);
+  }
+  return "safe-refresh";
+}
+
 /** Conservative scan of EVERY `git` invocation in a (possibly compound) shell
- *  command. Not a shell interpreter: a word-boundary `git` starts a candidate
- *  invocation, tokens are split on whitespace and quotes, hard shell
- *  separators (`;`, `&`, `|`, parens, backticks) end one, and ambiguous input
- *  errs toward "mutating" so the guard fails closed. */
+ * command. It is not a shell interpreter: ambiguous input errs toward
+ * local/ref-mutation so the guard fails closed. */
 function parseGitInvocations(command: string): ParsedGitInvocation[] {
   const invocations: ParsedGitInvocation[] = [];
   const gitWord = /(^|[\s;&|(`])git(?=$|[\s;&|(`])/g;
   let m: RegExpExecArray | null;
+
   while ((m = gitWord.exec(command)) !== null) {
     const tokens: string[] = [];
     let i = m.index + m[0].length;
@@ -371,43 +716,24 @@ function parseGitInvocations(command: string): ParsedGitInvocation[] {
       }
     }
     invocations.push(parseGitTokens(tokens));
-    // Resume after the consumed invocation so arguments that merely contain
-    // the word "git" are not re-parsed as invocations.
     gitWord.lastIndex = i;
   }
   return invocations;
 }
 
-/** Internal-URL targets (xd://, local://, skill://, …) are session resources
- *  dispatched by the core router — never filesystem paths. Feeding them
- *  through expandPath/classifyPath silently resolved them against the primary
- *  checkout and made the guard block its own extension tools (field-run F1). */
-const INTERNAL_URI_RE = /^[A-Za-z][A-Za-z0-9+.-]*:\/\//;
-const MUTATING_GIT_SUBCOMMANDS: Record<string, true> = {
-  commit: true,
-  add: true,
-  checkout: true,
-  switch: true,
-  restore: true,
-  reset: true,
-  clean: true,
-  merge: true,
-  rebase: true,
-  "cherry-pick": true,
-};
-
 function parseGitTokens(tokens: string[]): ParsedGitInvocation {
   const inv: ParsedGitInvocation = {
     subcommand: "",
     repoRef: null,
-    mutating: false,
+    operationClass: "ambiguous",
+    mutating: true,
     noVerify: false,
   };
   let i = 0;
   while (i < tokens.length && tokens[i].startsWith("-") && tokens[i] !== "-") {
     const flag = tokens[i];
     if (flag.includes("=")) {
-      i++; // attached-value flag (--git-dir=/x)
+      i++;
       continue;
     }
     if (GIT_VALUE_FLAGS[flag] === true) {
@@ -419,19 +745,51 @@ function parseGitTokens(tokens: string[]): ParsedGitInvocation {
     }
     i++;
   }
-  inv.subcommand = tokens[i] ?? "";
+  inv.subcommand = unquoteToken(tokens[i] ?? "");
   const rest = tokens.slice(i + 1);
-  if (inv.subcommand === "worktree") {
-    // Read-only introspection is not a mutation (field-run F3); every other
-    // worktree subcommand — add/remove/move/prune/lock/unlock/repair or bare
-    // usage — stays on the mutating side.
-    inv.mutating = !/^(?:list|show)\b/.test(rest.join(" "));
-  } else {
-    inv.mutating = MUTATING_GIT_SUBCOMMANDS[inv.subcommand] === true;
+  if (inv.subcommand === "branch") {
+    inv.operationClass = classifyBranchOperation(rest);
+  } else if (inv.subcommand === "tag") {
+    inv.operationClass = classifyTagOperation(rest);
+  } else if (inv.subcommand === "worktree") {
+    const first = rest[0] ? flagName(rest[0]) : "";
+    inv.operationClass =
+      first === "list" || first === "show" ? "read-only" : "local/ref-mutation";
+  } else if (inv.subcommand === "fetch") {
+    inv.operationClass = classifyFetchOperation(rest);
+  } else if (inv.subcommand === "push") {
+    inv.operationClass = "external-side-effect";
+  } else if (inv.subcommand === "update-ref") {
+    inv.operationClass = "local/ref-mutation";
+  } else if (inv.subcommand === "remote") {
+    inv.operationClass = classifyRemoteOperation(rest);
+  } else if (READ_ONLY_GIT_SUBCOMMANDS[inv.subcommand] === true) {
+    inv.operationClass = "read-only";
+  } else if (LOCAL_MUTATION_GIT_SUBCOMMANDS[inv.subcommand] === true) {
+    inv.operationClass = "local/ref-mutation";
   }
-  inv.noVerify = rest.some((t) => t === "--no-verify");
+  inv.mutating =
+    inv.operationClass === "local/ref-mutation" ||
+    inv.operationClass === "ambiguous";
+  inv.noVerify =
+    rest.some((t) => unquoteToken(t) === "--no-verify") ||
+    (inv.subcommand === "commit" &&
+      rest.some((t) => unquoteToken(t) === "-n"));
   return inv;
 }
+const DEFERRED_PASS_RESULTS: Record<string, true> = {
+  pass: true,
+  passed: true,
+  ok: true,
+  success: true,
+  successful: true,
+  true: true,
+  yes: true,
+};
+
+/** Internal-URL targets are session resources, never filesystem paths. */
+const INTERNAL_URI_RE = /^[A-Za-z][A-Za-z0-9+.-]*:\/\//;
+
 
 /** Managed worktrees of the SAME repository that a blocked primary-checkout
  *  mutation should be redirected to: all of them when several exist, none
@@ -481,7 +839,7 @@ export default function (pi: ExtensionAPI): void {
     name: "task_status",
     label: "Task Status",
     description:
-      "Classify the current path (PRIMARY_CHECKOUT / MANAGED_TASK_WORKTREE / etc.), report the current branch, and list all task workspaces with their branches, repos, and artifacts.",
+      "Classify the current path and report current Git facts; list each managed task workspace with canonical-or-lane kind, slot, path, branch, HEAD, upstream, classification, dirty paths, and artifacts.",
     parameters: tb.Object({
       path: tb.Optional(
         tb.String({ description: "Path to classify (defaults to session cwd)" }),
@@ -541,7 +899,7 @@ export default function (pi: ExtensionAPI): void {
     name: "ensure_task_repo",
     label: "Ensure Task Repo",
     description:
-      "Attach a source repo to the task workspace as a git worktree. Reuses existing worktrees, creates new ones from local/remote branches, or fetches and creates from remote default. Never forces, resets, or detaches.",
+      "Attach a source repo to the task workspace as a git worktree. Results identify the task, canonical-or-lane kind, slot, target worktree, branch/base provenance, upstream, and the exact inputRepo checkout facts. Reuses existing worktrees, creates new ones from local/remote branches, or fetches and creates from remote default. Never forces, resets, or detaches.",
     parameters: tb.Object({
       branch: tb.String({
         description:
@@ -608,14 +966,18 @@ export default function (pi: ExtensionAPI): void {
             ],
           };
         }
-        if (params.slot && !/^[A-Za-z0-9][A-Za-z0-9._-]*$/.test(params.slot)) {
+        if (
+          params.slot &&
+          (!/^[A-Za-z0-9][A-Za-z0-9._-]*$/.test(params.slot) ||
+            params.slot.includes("__"))
+        ) {
           return {
             content: [
               {
                 type: "text" as const,
                 text: JSON.stringify({
                   status: "error",
-                  message: "slot must match [A-Za-z0-9][A-Za-z0-9._-]*",
+                  message: "slot must match [A-Za-z0-9][A-Za-z0-9._-]* and must not contain __",
                 }),
               },
             ],
@@ -635,7 +997,7 @@ export default function (pi: ExtensionAPI): void {
             ],
           };
         }
-        const ws = join(TASK_ROOT, identity.replace(/\//g, "_"));
+        const ws = taskWorkspacePath(identity);
         const target = params.slot
           ? join(ws, `${basename(sourceRoot)}__${params.slot}`)
           : join(ws, basename(sourceRoot));
@@ -691,7 +1053,7 @@ export default function (pi: ExtensionAPI): void {
           }
           if (realpath(currentPath) === resolvedTarget) {
             if (currentBranch === params.branch) {
-              const sourceDirty = await getSourceDirty(sourceRoot);
+              const inputRepo = await getInputRepoFacts(sourceAbs, sourceRoot, cwd);
               const headSha = await getRepoSha(target);
               const upstream = await getUpstream(sourceRoot, params.branch);
               return {
@@ -700,11 +1062,15 @@ export default function (pi: ExtensionAPI): void {
                     type: "text" as const,
                     text: JSON.stringify({
                       status: "reused",
+                      task: identity,
                       worktree: target,
+                      kind: params.slot ? "lane" : "canonical",
+                      slot: params.slot ?? null,
                       branch: params.branch,
                       branchSource: "local",
                       upstream,
-                      sourceDirty,
+                      base: null,
+                      inputRepo,
                       headSha,
                     }),
                   },
@@ -839,7 +1205,7 @@ export default function (pi: ExtensionAPI): void {
               ],
             };
           }
-          const sourceDirty = await getSourceDirty(sourceRoot);
+          const inputRepo = await getInputRepoFacts(sourceAbs, sourceRoot, cwd);
           const headSha = await getRepoSha(target);
           const upstream = await getUpstream(sourceRoot, params.branch);
           return {
@@ -848,11 +1214,15 @@ export default function (pi: ExtensionAPI): void {
                 type: "text" as const,
                 text: JSON.stringify({
                   status: "attached",
+                  task: identity,
                   worktree: target,
+                  kind: params.slot ? "lane" : "canonical",
+                  slot: params.slot ?? null,
                   branch: params.branch,
                   branchSource: "local",
                   upstream,
-                  sourceDirty,
+                  base: null,
+                  inputRepo,
                   headSha,
                 }),
               },
@@ -860,11 +1230,16 @@ export default function (pi: ExtensionAPI): void {
             details: { status: "attached", worktree: target },
           };
         }
-
         // 6b. Local absent — one required successful fetch of the chosen
         // remote, then resolve against the refreshed refs. Fail closed on
         // fetch failure: stale remote refs never materialize a task branch.
-        const fetchRes = await git(sourceRoot, "fetch", "--prune", remote);
+        const fetchRes = await git(
+          sourceRoot,
+          "fetch",
+          "--prune",
+          "--no-prune-tags",
+          remote,
+        );
         if (!fetchRes.ok) {
           return {
             content: [
@@ -910,7 +1285,7 @@ export default function (pi: ExtensionAPI): void {
               ],
             };
           }
-          const sourceDirty = await getSourceDirty(sourceRoot);
+          const inputRepo = await getInputRepoFacts(sourceAbs, sourceRoot, cwd);
           const headSha = await getRepoSha(target);
           return {
             content: [
@@ -918,12 +1293,16 @@ export default function (pi: ExtensionAPI): void {
                 type: "text" as const,
                 text: JSON.stringify({
                   status: "created_from_remote",
+                  task: identity,
                   worktree: target,
+                  kind: params.slot ? "lane" : "canonical",
+                  slot: params.slot ?? null,
                   branch: params.branch,
                   branchSource: "remote",
                   upstream: `${remote}/${params.branch}`,
                   remoteSha,
-                  sourceDirty,
+                  base: null,
+                  inputRepo,
                   headSha,
                 }),
               },
@@ -989,17 +1368,13 @@ export default function (pi: ExtensionAPI): void {
             };
           }
 
-          // Check if develop branch exists
           const devRef = await git(
             sourceRoot,
             "show-ref",
             "--verify",
             `refs/remotes/${remote}/develop`,
           );
-          const developExists = devRef.ok;
-
-          if (remoteDefault !== "develop" && developExists) {
-            // Ambiguous — ask the user
+          if (remoteDefault !== "develop" && devRef.ok) {
             return {
               content: [
                 {
@@ -1014,11 +1389,7 @@ export default function (pi: ExtensionAPI): void {
             };
           }
 
-          // Pick base
-          const baseBranch =
-            remoteDefault === "develop"
-              ? `${remote}/develop`
-              : `${remote}/${remoteDefault}`;
+          const baseBranch = `${remote}/${remoteDefault}`;
           const baseRes = await git(sourceRoot, "rev-parse", baseBranch);
           if (!baseRes.ok) {
             return {
@@ -1036,7 +1407,6 @@ export default function (pi: ExtensionAPI): void {
           baseSha = baseRes.stdout;
           baseRef = baseBranch;
         }
-
         // Create branch from base
         await mkdir(ws, { recursive: true });
         const add = await git(
@@ -1061,7 +1431,7 @@ export default function (pi: ExtensionAPI): void {
             ],
           };
         }
-        const sourceDirty = await getSourceDirty(sourceRoot);
+        const inputRepo = await getInputRepoFacts(sourceAbs, sourceRoot, cwd);
         const headSha = await getRepoSha(target);
         return {
           content: [
@@ -1069,17 +1439,231 @@ export default function (pi: ExtensionAPI): void {
               type: "text" as const,
               text: JSON.stringify({
                 status: "created",
+                task: identity,
                 worktree: target,
+                kind: params.slot ? "lane" : "canonical",
+                slot: params.slot ?? null,
                 branch: params.branch,
                 branchSource: "base",
                 upstream: null,
                 base: { ref: baseRef, sha: baseSha },
-                sourceDirty,
+                inputRepo,
                 headSha,
               }),
             },
           ],
           details: { status: "created", worktree: target },
+        };
+      } catch (e) {
+        return {
+          content: [
+            {
+              type: "text" as const,
+              text: JSON.stringify({
+                status: "error",
+                message: (e as Error).message,
+              }),
+            },
+          ],
+        };
+      }
+    },
+  });
+
+  // ─── remove_task_lane ─────────────────────────────────────────────────
+  pi.registerTool({
+    name: "remove_task_lane",
+    label: "Remove Task Lane",
+    description:
+      "Safely remove one clean secondary lane from its managed task workspace. Canonical worktrees are rejected; worktree removal and branch deletion are both non-force operations.",
+    parameters: tb.Object({
+      task: tb.String({
+        description: "Canonical task identity (workspace name)",
+      }),
+      path: tb.String({
+        description: "Absolute or session-relative path to the secondary lane",
+      }),
+    }),
+    approval: "write",
+    execute: async (_toolCallId, params, _signal, _onUpdate, _ctx) => {
+      try {
+        const cwd = realpath(_ctx.cwd);
+        const target = realpath(expandPath(params.path, cwd));
+        const workspace = realpath(taskWorkspacePath(params.task));
+        const relativeTarget = relative(workspace, target);
+        const laneName = basename(target);
+        const parsedLane = parseLaneName(laneName);
+        const isDirectChild =
+          relativeTarget.length > 0 &&
+          !relativeTarget.startsWith("..") &&
+          !relativeTarget.includes("/") &&
+          resolve(workspace, relativeTarget) === target;
+
+        if (!isDirectChild || !parsedLane) {
+          return {
+            content: [
+              {
+                type: "text" as const,
+                text: JSON.stringify({
+                  status: "lane_rejected",
+                  task: params.task,
+                  path: target,
+                  reason:
+                    "Only a secondary lane directly inside the requested managed task workspace can be removed.",
+                }),
+              },
+            ],
+          };
+        }
+
+        const repo = parsedLane.repo;
+        const slot = parsedLane.slot;
+        const root = findGitRoot(target);
+        const classification = classifyPath(target, cwd);
+        const canonicalPath = join(workspace, repo);
+        const linked = new Map<string, LinkedWorktreeFact>();
+        if (
+          classification === "MANAGED_TASK_WORKTREE" &&
+          root === target &&
+          isLinkedWorktree(target)
+        ) {
+          linked.set(laneName, {
+            path: target,
+            commonDir: await getRepoCommonDir(target),
+          });
+        }
+        if (
+          existsSync(canonicalPath) &&
+          findGitRoot(canonicalPath) === canonicalPath &&
+          isLinkedWorktree(canonicalPath)
+        ) {
+          linked.set(repo, {
+            path: canonicalPath,
+            commonDir: await getRepoCommonDir(canonicalPath),
+          });
+        }
+        const identity = laneIdentity(laneName, linked);
+        if (
+          classification !== "MANAGED_TASK_WORKTREE" ||
+          root !== target ||
+          identity.kind !== "lane"
+        ) {
+          return {
+            content: [
+              {
+                type: "text" as const,
+                text: JSON.stringify({
+                  status: "lane_rejected",
+                  task: params.task,
+                  repo,
+                  slot,
+                  path: target,
+                  classification,
+                  reason:
+                    "The target is not a managed linked secondary lane with a canonical sibling.",
+                }),
+              },
+            ],
+          };
+        }
+
+        const facts = await getLaneFacts(params.task, target, slot, repo);
+        if (!facts.branch) {
+          return {
+            content: [
+              {
+                type: "text" as const,
+                text: JSON.stringify({
+                  status: "lane_rejected",
+                  ...facts,
+                  reason: "A secondary lane must have an attached local branch.",
+                }),
+              },
+            ],
+          };
+        }
+        if (facts.dirty.staged.length > 0 || facts.dirty.unstaged.length > 0) {
+          return {
+            content: [
+              {
+                type: "text" as const,
+                text: JSON.stringify({
+                  status: "lane_dirty",
+                  ...facts,
+                  reason:
+                    "Refusing to remove a dirty lane; inspect or commit its changes first.",
+                }),
+              },
+            ],
+          };
+        }
+
+        const worktrees = await git(target, "worktree", "list", "--porcelain");
+        const controlPath = worktrees.ok
+          ? parseWorktreePaths(worktrees.stdout).find(
+              (path) => realpath(path) !== target,
+            )
+          : undefined;
+        if (!controlPath) {
+          return {
+            content: [
+              {
+                type: "text" as const,
+                text: JSON.stringify({
+                  status: "lane_rejected",
+                  ...facts,
+                  reason:
+                    "Cannot find another worktree from which to perform safe lane cleanup.",
+                }),
+              },
+            ],
+          };
+        }
+
+        const remove = await git(controlPath, "worktree", "remove", target);
+        if (!remove.ok) {
+          return {
+            content: [
+              {
+                type: "text" as const,
+                text: JSON.stringify({
+                  status: "worktree_remove_failed",
+                  ...facts,
+                  reason: remove.stderr,
+                }),
+              },
+            ],
+          };
+        }
+
+        const deleteBranch = await git(controlPath, "branch", "-d", facts.branch);
+        if (!deleteBranch.ok) {
+          return {
+            content: [
+              {
+                type: "text" as const,
+                text: JSON.stringify({
+                  status: "branch_delete_blocked",
+                  ...facts,
+                  reason:
+                    `Worktree removed, but safe branch deletion was refused: ${deleteBranch.stderr}. The branch was not force-deleted.`,
+                }),
+              },
+            ],
+          };
+        }
+
+        return {
+          content: [
+            {
+              type: "text" as const,
+              text: JSON.stringify({
+                status: "removed",
+                ...facts,
+              }),
+            },
+          ],
+          details: { status: "removed", ...facts },
         };
       } catch (e) {
         return {

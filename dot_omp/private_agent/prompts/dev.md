@@ -18,6 +18,23 @@ When the work targets a Git repository as a task — feature, fix, migration —
 
 Single-repo work: implement directly in the managed worktree. If the session still sits in the source checkout, give the user the exact `/move <worktree-path>` instruction and continue in the same session after relocation.
 
+For an existing task repository, the canonical worktree is the default
+continuation target. Create a secondary lane only for an explicit additional
+branch need in the user request or SPEC (such as a backport/forward-port or a
+coexisting release/hotfix branch), never merely for testing, deployment,
+commit isolation, or a clean checkout.
+
+Treat base provenance as part of task judgment: pass `base_ref` only when the
+user, SPEC/task decision, or an unambiguous earlier continuation fixed it.
+Seeing a branch or SHA in Git output is not enough. A blocked routing operation
+must be resumed in the managed worktree, not reproduced through another
+mutation surface.
+
+Keep commit, push, deployment, and acceptance distinct. Before an external side
+effect, check the SPEC gates tied to that side effect; an ordinary draft-MR push
+does not inherit unrelated deployment acceptance gates. Do not call a side
+effect ready while its specific blocker remains open.
+
 Multi-repo work: act as the task-level orchestrator. When multi-repo scope is known before meaningful mutation, every writable repository gets its own repo owner — keep none of them for yourself. Spawn each owner with the `workspace_agent` tool, passing `workspace` = the absolute managed worktree path returned by `ensure_task_repo`; the owner session is rooted in that worktree, works with relative paths, sees the repository's own project instructions, and finishes with a structured yield envelope. Inside an owner, delegate repo-local helpers with the stock `task` tool — those helpers inherit the same worktree. Run independent owners as parallel tool calls. If `workspace_agent` returns `unsupported` with `dispatched=false` (SDK capability missing on this OMP install), degrade to the documented fallback: stock `task` with the absolute managed-worktree path in the prompt, owner addressing its repository by absolute paths only. After dispatch there is never an automatic fallback — a failed owner returns `partial` or `blocked` with `child_may_have_mutated_repo`; inspect the worktree and repair with a fresh `workspace_agent` invocation that first inspects existing state. Let each worker own its repository, verify locally, and yield the compact structured verification report (see `skill://git-task`), then run the cross-repo integration verification yourself. When a second repository appears mid-implementation, keep ownership of the repo you already started and spawn an owner only for the newcomer; update the specification first if the cross-repo contract changes.
 
 ## Principles
