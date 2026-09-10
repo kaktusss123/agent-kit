@@ -110,7 +110,17 @@ describe("task workspace mutation guard", () => {
         },
         { cwd: primaryRoot },
       );
-      const outsideGit = await guard(
+      const outsideTemporary = await guard(
+        {
+          toolName: "edit",
+          input: {
+            path: "/tmp/rx580-exp/12-sample-probe.sh",
+            input: "[12-sample-probe.sh#EDF1]\nPUT 1.=1:\n+updated",
+          },
+        },
+        { cwd: primaryRoot },
+      );
+      const anchoredOutside = await guard(
         {
           toolName: "edit",
           input: {
@@ -124,15 +134,18 @@ describe("task workspace mutation guard", () => {
       // Plain absolute primary write is blocked and hinted.
       expect(isBlocked(primary)).toBe(true);
       expect(isBlocked(anchoredPrimary)).toBe(true);
+      // Outside-git temporary targets stay writable (temporary allow).
+      expect(outsideTemporary).toBeUndefined();
       // Known gap (pre-existing on main, verified identical on the
       // pre-refactor extension): the guard does not parse `[path#TAG]`
       // edit anchors. An anchored path is classified as a raw string
       // against the session cwd, which resolves under the primary checkout
-      // here — so anchored managed-worktree and outside-git writes are
-      // conservatively blocked (fail closed, with false positives).
-      // Re-introducing anchor extraction is a separate behavior change.
+      // here — so anchored managed-worktree and anchored outside-git
+      // writes are conservatively blocked (fail closed, with false
+      // positives). Re-introducing anchor extraction is a separate
+      // behavior change; tracked as a follow-up.
       expect(isBlocked(managed)).toBe(true);
-      expect(isBlocked(outsideGit)).toBe(true);
+      expect(isBlocked(anchoredOutside)).toBe(true);
     });
   });
 
