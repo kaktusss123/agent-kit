@@ -1,97 +1,59 @@
 /**
  * Perf Stats — omp-style usage rows for pi.
  *
- * Under each assistant response: local timestamp, prompt→yield Δ, input
- * (cache writes folded in), output, cache-read tokens, TTFT and tok/s over
- * the full request duration. Under each tool call: execution time.
+ * Under each assistant response: local timestamp (provider request start),
+ * prompt→yield Δ across the whole agent run, input (cache writes folded in),
+ * output, cache-read tokens, TTFT and tok/s over the full request duration.
+ * Under each tool call: execution time.
  *
- * pi's AssistantMessage carries no duration/ttft, so timing is measured here
- * from extension events. First content = any streamed block (thinking, text,
- * or tool call start) — matching what the provider actually produced first.
+ * pi's AssistantMessage carries no duration/ttft, so timing lives in
+ * `timing.ts` (PerfTracker) and is fed from extension events:
+ * - request start = `message.timestamp` (stamped by the provider before the
+ *   HTTP request; `message_start` delivery alone would miss the wait for
+ *   response headers),
+ * - first content = any streamed block (thinking/text/toolcall start or
+ *   delta) after `message_start` delivery,
+ * - run end (Δ reset) = `agent_settled`, which pi emits in a finally block
+ *   covering success, errors, and aborts.
  */
 
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { Text } from "@earendil-works/pi-tui";
-import { type PerfRow, type TextUsageRow, type ToolUsageRow, formatToolRow, formatUsageRow } from "./format";
-
-/** Streaming events that mark the first provider-produced content block. */
-const FIRST_CONTENT_EVENTS = new Set([
-	"thinking_start",
-	"thinking_delta",
-	"text_start",
-	"text_delta",
-	"toolcall_start",
-]);
+import { type PerfRow, type ToolUsageRow, formatToolRow, formatUsageRow } from "./format";
+import { PerfTracker } from "./timing";
 
 export default function (pi: ExtensionAPI) {
-	let requestStart = 0;
-	let firstContentAt = 0;
-	/** Timestamp of the user prompt that started the current run (Δ anchor). */
-	let turnStartedAt: number | undefined;
-	const toolStarts = new Map<string, number>();
+	const tracker = new PerfTracker();
 
 	pi.on("message_start", async (event) => {
 		if (event.message.role === "user") {
-			// First user message of a run anchors Δ; later ones (steering) don't
-			// reset it, so multi-request runs keep the original prompt→yield span.
-			turnStartedAt ??= event.message.timestamp;
+			tracker.onUserMessage(event.message.timestamp);
 		} else if (event.message.role === "assistant") {
-			requestStart = Date.now();
-			firstContentAt = 0;
+			tracker.onAssistantStart(event.message.timestamp);
 		}
 	});
 
 	pi.on("message_update", async (event) => {
-		if (firstContentAt > 0) return;
-		if (FIRST_CONTENT_EVENTS.has(event.assistantMessageEvent.type)) {
-			firstContentAt = Date.now();
-		}
+		tracker.onStreamEvent(event.assistantMessageEvent.type);
 	});
 
 	pi.on("message_end", async (event) => {
 		if (event.message.role !== "assistant") return;
-		if (requestStart === 0) return;
-
-		const end = Date.now();
-		const durationMs = Math.max(0, Math.round(end - requestStart));
-		const ttftMs = firstContentAt > 0 ? firstContentAt - requestStart : undefined;
-		const usage = event.message.usage;
-		const turnElapsedMs = turnStartedAt !== undefined ? Math.max(0, end - turnStartedAt) : undefined;
-		turnStartedAt = undefined;
-
-		if (usage.input > 0 || usage.output > 0 || usage.cacheRead > 0 || usage.cacheWrite > 0 || (ttftMs ?? 0) > 0) {
-			const data: TextUsageRow = {
-				kind: "text",
-				timestamp: event.message.timestamp,
-				input: usage.input,
-				output: usage.output,
-				cacheRead: usage.cacheRead,
-				cacheWrite: usage.cacheWrite,
-				ttftMs,
-				durationMs,
-				turnElapsedMs,
-			};
-			pi.appendEntry("perf-stats", data);
-		}
-
-		requestStart = 0;
-		firstContentAt = 0;
+		const row = tracker.onAssistantEnd(event.message.usage);
+		if (row) pi.appendEntry("perf-stats", row);
 	});
 
 	pi.on("tool_execution_start", async (event) => {
-		toolStarts.set(event.toolCallId, Date.now());
+		tracker.onToolStart(event.toolCallId);
 	});
 
 	pi.on("tool_execution_end", async (event) => {
-		const start = toolStarts.get(event.toolCallId);
-		toolStarts.delete(event.toolCallId);
-		if (start === undefined) return;
-		const data: ToolUsageRow = {
-			kind: "tool",
-			toolName: event.toolName,
-			execTimeMs: Math.max(0, Date.now() - start),
-		};
-		pi.appendEntry("perf-stats", data);
+		const row = tracker.onToolEnd(event.toolCallId, event.toolName);
+		if (row) pi.appendEntry("perf-stats", row);
+	});
+
+	pi.on("agent_settled", async () => {
+		tracker.onAgentSettled();
 	});
 
 	pi.registerEntryRenderer<PerfRow>("perf-stats", (entry, _opts, theme) => {
