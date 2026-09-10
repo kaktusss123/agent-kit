@@ -50,7 +50,7 @@ advisor:
   enabled: true
   immuneTurns: 5
 doubleEscapeAction: rewind
-treeFilterMode: default
+treeFilterMode: user-only
 error:
   notify: "on"
 power:
@@ -109,7 +109,6 @@ disabledProviders:
   - opencode
   - agents-md
   - claude
-  - agents
   - cursor
   - omp-managed
 colorBlindMode: true
