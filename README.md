@@ -12,6 +12,10 @@ tuning, ported from my oh-my-pi setup.
   local timestamp, prompt→yield Δ, input (cache writes folded in), output and
   cache-read tokens, TTFT, tok/s over the full request duration; plus per-tool
   execution time.
+- `extensions/web-search/` — `web_search` tool over the ChatGPT Codex backend's
+  hosted web search, reusing pi's `/login openai-codex` OAuth credential (no
+  separate auth). Forced hosted tool, SSE parsing, citations/source
+  deduplication, typed failures, compact model-facing output.
 
 ## Layout
 
