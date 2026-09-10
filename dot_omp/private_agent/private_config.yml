@@ -16,7 +16,7 @@ theme:
   dark: onyx
   light: light
 setupVersion: 2
-hideThinkingBlock: false
+hideThinkingBlock: true
 statusLine:
   preset: default
   separator: powerline
