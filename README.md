@@ -22,6 +22,7 @@ Symlink the extensions of this checkout into the pi extensions directory:
 ```sh
 ./install.sh                # everything under extensions/
 ./install.sh todo           # only the named entities
+./install.sh --prune        # also drop dangling links into deleted pi-tuning checkouts
 ```
 
 Run it from the worktree you want pi to load: links are repointed at that

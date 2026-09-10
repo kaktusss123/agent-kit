@@ -4,27 +4,39 @@
 # Usage:
 #   ./install.sh                 # install everything under extensions/
 #   ./install.sh todo perf-stats # install only the named entities
+#   ./install.sh --prune         # also drop dangling links into deleted pi-tuning checkouts
 #
 # Symlinks are (re)pointed at THIS checkout: run the script from the worktree
 # you want pi to load. Without arguments the last run wins — when several
 # worktrees are active, pass explicit names to relink only your entities.
 # The previous target is never modified, so switching links never touches
-# another worktree's files; a dangling symlink from a deleted worktree is
-# replaced. Non-symlink files in the destination are never touched.
+# another worktree's files. Non-symlink files in the destination are never
+# touched.
+#
+# --prune removes symlinks whose target path points into a pi-tuning
+# checkout that no longer exists (dangling links from deleted worktrees).
+# Anything else — valid links, real files, links into other projects —
+# stays untouched.
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(git -C "$SCRIPT_DIR" rev-parse --show-toplevel 2>/dev/null || echo "$SCRIPT_DIR")"
 DEST="${PI_EXTENSIONS_DIR:-$HOME/.pi/agent/extensions}"
 
+prune=false
+names=()
+for arg in "$@"; do
+	if [ "$arg" = "--prune" ]; then prune=true; else names+=("$arg"); fi
+done
+
 if [ ! -d "$REPO_ROOT/extensions" ]; then
 	echo "error: no extensions/ directory in $REPO_ROOT" >&2
 	exit 1
 fi
 
-if [ $# -gt 0 ]; then
+if [ ${#names[@]} -gt 0 ]; then
 	entities=()
-	for name in "$@"; do
+	for name in "${names[@]}"; do
 		if [ ! -e "$REPO_ROOT/extensions/$name" ]; then
 			echo "error: no entity '$name' in $REPO_ROOT/extensions" >&2
 			exit 1
@@ -39,6 +51,27 @@ mkdir -p "$DEST"
 echo "installing from $REPO_ROOT"
 echo "into $DEST"
 echo
+
+pruned=0
+if [ "$prune" = true ]; then
+	for dst in "$DEST"/*; do
+		[ -L "$dst" ] || continue
+		target="$(readlink "$dst")"
+		case "$target" in
+			*/pi-tuning/*) ;; # managed by this repo
+			*) continue ;;
+		esac
+		if [ ! -e "$dst" ]; then
+			echo "prune $(basename "$dst") (dangling -> $target)"
+			rm "$dst"
+			pruned=$((pruned + 1))
+		fi
+	done
+	if [ "$pruned" -eq 0 ]; then
+		echo "prune: nothing dangling"
+	fi
+	echo
+fi
 
 installed=0
 skipped=0
