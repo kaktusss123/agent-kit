@@ -54,6 +54,8 @@ real `pi-tui` line utilities.
 
 ## Install
 
+From the repo checkout you want live:
+
 ```sh
-ln -s "$PWD/extensions/todo" ~/.pi/agent/extensions/todo
+./install.sh todo
 ```
