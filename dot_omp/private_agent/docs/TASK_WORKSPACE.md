@@ -35,9 +35,15 @@ workspace spawner and does not root sessions.
 ## Deterministic runtime tools
 
 `task_status`, `ensure_task_repo`, `remove_task_lane`, and
-`checkpoint_commit` (extension `task-workspace.ts`) manage worktree lifecycle,
-branch/fetch semantics, commit staging, hooks, and the primary-checkout mutation
-guard. Highlights:
+`checkpoint_commit` manage worktree lifecycle, branch/fetch semantics, commit
+staging, hooks, and the primary-checkout mutation guard. The runtime is split
+into an OMP binding (`extensions/task-workspace.ts`: tool registration,
+TypeBox schemas, session-cwd translation, task-root policy — `OMP_TASK_ROOT`
+override, default `~/.omp/tasks` — and the OMP result `details` attachment)
+and a host-independent deterministic core (`extensions/task-workspace/`:
+`types.ts`, `git.ts`, `guard.ts`, `flows.ts`) that imports no OMP/Pi SDK,
+receives its task root explicitly from the host, and returns plain domain
+results; a second host can drive it with its own task root. Highlights:
 
  - a local task branch is attached without network; an absent branch is
   materialized only after one successful fetch (fail closed on fetch failure)

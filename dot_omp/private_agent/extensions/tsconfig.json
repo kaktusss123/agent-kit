@@ -7,5 +7,5 @@
       ]
     }
   },
-  "include": ["*.ts"]
+  "include": ["*.ts", "task-workspace/**/*.ts"]
 }
