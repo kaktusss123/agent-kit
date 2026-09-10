@@ -1,4 +1,5 @@
 import { execFileSync } from "node:child_process";
+import { realpathSync } from "node:fs";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -23,14 +24,33 @@ function fakeSchema(): unknown {
   return z;
 }
 
-function registerBinding(): Map<string, ToolCall> {
-  const tools = new Map<string, ToolCall>();
-  registerTaskWorkspace({
-    typebox: { Type: fakeSchema() },
-    registerTool: (t: never) => tools.set((t as { name: string }).name, t as never),
-    on() {},
-  } as never);
-  return tools;
+/**
+ * Register the production binding against a disposable task root.
+ *
+ * The binding resolves its task root at registration time, so the env var is
+ * set only around the register call and restored immediately afterwards —
+ * correctness never depends on import order or module cache. The real
+ * ~/.omp/tasks is neither read as fixture root nor mutated.
+ */
+async function registerIsolatedBinding(): Promise<{
+  tools: Map<string, ToolCall>;
+  taskRoot: string;
+}> {
+  const taskRoot = realpathSync(await mkdtemp(join(tmpdir(), "tw-details-root-")));
+  const previous = process.env.OMP_TASK_ROOT;
+  process.env.OMP_TASK_ROOT = taskRoot;
+  try {
+    const tools = new Map<string, ToolCall>();
+    registerTaskWorkspace({
+      typebox: { Type: fakeSchema() },
+      registerTool: (t: never) => tools.set((t as { name: string }).name, t as never),
+      on() {},
+    } as never);
+    return { tools, taskRoot };
+  } finally {
+    if (previous === undefined) delete process.env.OMP_TASK_ROOT;
+    else process.env.OMP_TASK_ROOT = previous;
+  }
 }
 
 /** Fixture source repo with a bare origin remote, one commit, and local
@@ -61,26 +81,63 @@ function payloadOf(res: { content: { type: string; text?: string }[] }): Record<
   return JSON.parse(text) as Record<string, unknown>;
 }
 
-async function cleanupDir(path: string): Promise<void> {
-  await rm(path, { recursive: true, force: true });
+interface FixtureCleanup {
+  taskRoot: string;
+  src: string;
+  remote: string;
+  /** Flattened workspace directory under taskRoot, when one was created. */
+  workspaceDir?: string;
+  /** Worktrees created through the binding, force-removed via their source. */
+  worktrees: { repo: string; path: string }[];
 }
 
-describe("OMP binding details attachment", () => {
+/** Guaranteed teardown: worktrees, git metadata, repos, remote, task root —
+ *  force flags are fixture cleanup only, never product behavior. */
+async function cleanupFixture(fx: FixtureCleanup): Promise<void> {
+  for (const wt of fx.worktrees) {
+    try {
+      execFileSync("git", ["-C", wt.repo, "worktree", "remove", "--force", wt.path]);
+    } catch {
+      // Already removed (e.g. the lane scenario removes its own lane).
+    }
+  }
+  try {
+    execFileSync("git", ["-C", fx.src, "worktree", "prune"]);
+  } catch {
+    // Source repo may already be gone on exotic failure paths.
+  }
+  await rm(fx.src, { recursive: true, force: true });
+  await rm(fx.remote, { recursive: true, force: true });
+  if (fx.workspaceDir !== undefined) {
+    await rm(fx.workspaceDir, { recursive: true, force: true });
+  }
+  await rm(fx.taskRoot, { recursive: true, force: true });
+}
+
+describe("OMP binding details attachment (isolated task root)", () => {
   test("task_status attaches the whole result as details", async () => {
-    const tools = registerBinding();
+    const { tools, taskRoot } = await registerIsolatedBinding();
     const res = await tools.get("task_status")!.execute("p", {}, undefined, undefined, {
       cwd: tmpdir(),
     });
     const payload = payloadOf(res);
     expect(payload.classification).toBe("OUTSIDE_GIT");
     expect(res.details).toEqual(payload);
+    await rm(taskRoot, { recursive: true, force: true });
   });
 
-  test("ensure_task_repo attaches {status, worktree} on success outcomes", async () => {
+  test("ensure_task_repo attaches {status, worktree} under the isolated root", async () => {
     const identity = `details-ens-${Date.now()}`;
     const branch = `feat/${identity}`;
     const { src, remote } = await makeSourceRepo("details-ens", [branch]);
-    const tools = registerBinding();
+    const { tools, taskRoot } = await registerIsolatedBinding();
+    const fx: FixtureCleanup = {
+      taskRoot,
+      src,
+      remote,
+      workspaceDir: join(taskRoot, `feat_${identity}`),
+      worktrees: [],
+    };
     try {
       const res = await tools.get("ensure_task_repo")!.execute(
         "p",
@@ -96,18 +153,19 @@ describe("OMP binding details attachment", () => {
         worktree: payload.worktree,
       });
       const worktree = payload.worktree as string;
-      expect(worktree).toContain(identity);
-      execFileSync("git", ["-C", src, "worktree", "remove", "--force", worktree]);
+      // Regression guard: the binding must materialize the worktree inside
+      // the injected temporary root, never inside the real ~/.omp/tasks.
+      expect(worktree.startsWith(taskRoot), `${worktree} outside isolated root`).toBe(true);
+      fx.worktrees.push({ repo: src, path: worktree });
     } finally {
-      await cleanupDir(src);
-      await cleanupDir(remote);
-      await cleanupDir(join(tmpdir(), `feat_${identity}`));
+      await cleanupFixture(fx);
     }
   });
 
   test("checkpoint_commit attaches the committed subset and nothing on failure", async () => {
     const { src, remote } = await makeSourceRepo("details-commit", []);
-    const tools = registerBinding();
+    const { tools, taskRoot } = await registerIsolatedBinding();
+    const fx: FixtureCleanup = { taskRoot, src, remote, worktrees: [] };
     try {
       await writeFile(join(src, "new-file.txt"), "committed\n");
       // A temp-dir fixture classifies as a primary checkout; the explicit
@@ -144,12 +202,11 @@ describe("OMP binding details attachment", () => {
       expect(payloadOf(miss).status).toBe("path_outside_repo");
       expect(miss.details).toBeUndefined();
     } finally {
-      await cleanupDir(src);
-      await cleanupDir(remote);
+      await cleanupFixture(fx);
     }
   });
 
-  test("remove_task_lane attaches the full removed result and nothing on rejection", async () => {
+  test("remove_task_lane attaches the full removed result; canonical and lane are cleaned up", async () => {
     // The canonical workspace identity is the canonical branch itself; the
     // lane call must address the same workspace via `task`.
     const identity = `feat/details-lane-${Date.now()}`;
@@ -158,7 +215,14 @@ describe("OMP binding details attachment", () => {
       identity,
       laneBranch,
     ]);
-    const tools = registerBinding();
+    const { tools, taskRoot } = await registerIsolatedBinding();
+    const fx: FixtureCleanup = {
+      taskRoot,
+      src,
+      remote,
+      workspaceDir: join(taskRoot, identity.replace(/\//g, "_")),
+      worktrees: [],
+    };
     try {
       const canonical = await tools.get("ensure_task_repo")!.execute(
         "p",
@@ -167,7 +231,16 @@ describe("OMP binding details attachment", () => {
         undefined,
         { cwd: src },
       );
-      expect(payloadOf(canonical).status).toBe("attached");
+      const canonicalPayload = payloadOf(canonical);
+      expect(canonicalPayload.status).toBe("attached");
+      expect(
+        (canonicalPayload.worktree as string).startsWith(taskRoot),
+        "canonical worktree outside isolated root",
+      ).toBe(true);
+      fx.worktrees.push({
+        repo: src,
+        path: canonicalPayload.worktree as string,
+      });
 
       const lane = await tools.get("ensure_task_repo")!.execute(
         "p",
@@ -178,6 +251,10 @@ describe("OMP binding details attachment", () => {
       );
       const lanePayload = payloadOf(lane);
       expect(lanePayload.status).toBe("attached");
+      expect(
+        (lanePayload.worktree as string).startsWith(taskRoot),
+        "lane worktree outside isolated root",
+      ).toBe(true);
 
       const removed = await tools.get("remove_task_lane")!.execute(
         "p",
@@ -200,10 +277,7 @@ describe("OMP binding details attachment", () => {
       expect(payloadOf(rejected).status).toBe("lane_rejected");
       expect(rejected.details).toBeUndefined();
     } finally {
-      execFileSync("git", ["-C", src, "worktree", "prune"], { stdio: "ignore" });
-      await cleanupDir(src);
-      await cleanupDir(remote);
-      await cleanupDir(join(tmpdir(), identity.replace(/\//g, "_")));
+      await cleanupFixture(fx);
     }
   });
 });

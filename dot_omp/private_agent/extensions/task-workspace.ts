@@ -33,11 +33,6 @@ import {
   guardManagedWriteTarget,
 } from "./task-workspace/guard";
 
-// OMP task-root policy: OMP_TASK_ROOT overrides the default ~/.omp/tasks.
-// Resolved once at import; the core receives it explicitly and never reads
-// the environment itself.
-const TASK_ROOT = realpath(process.env.OMP_TASK_ROOT ?? join(homedir(), ".omp", "tasks"));
-
 function respond(result: Record<string, unknown>, details?: unknown): {
   content: { type: "text"; text: string }[];
   details?: unknown;
@@ -96,8 +91,13 @@ function detailsFor(tool: string, result: Record<string, unknown>): unknown {
 }
 
 export default function (pi: ExtensionAPI): void {
-  const tb = pi.typebox.Type;
+  // OMP task-root policy: OMP_TASK_ROOT overrides the default ~/.omp/tasks.
+  // Resolved once per registration (production registers at startup, so the
+  // effective behavior equals module-load resolution); the core receives it
+  // explicitly and never reads the environment itself.
+  const TASK_ROOT = realpath(process.env.OMP_TASK_ROOT ?? join(homedir(), ".omp", "tasks"));
 
+  const tb = pi.typebox.Type;
   // ─── task_status ─────────────────────────────────────────────────────
   pi.registerTool({
     name: "task_status",
