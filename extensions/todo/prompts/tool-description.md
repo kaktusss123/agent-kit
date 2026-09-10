@@ -1,6 +1,8 @@
 Tasks: verbatim content strings, NEVER auto-generated IDs; no "task-1"/"task-N". Pass content in `task`.
 
-After each successful state-changing op: if nothing is `in_progress`, the earliest `pending` task (phase order) auto-promotes to `in_progress`; if several are `in_progress`, only the earliest stays. Blocked tasks NEVER auto-promote—`unblock` first. Out-of-order completion may move pointer back to an earlier phase—expected; completed tasks NEVER revert.
+After each successful state-changing op: if nothing is `in_progress`, the earliest `pending` task (phase order) auto-promotes to `in_progress`; if several are `in_progress`, only the earliest stays. Blocked tasks NEVER auto-promote—`unblock` first. Out-of-order completion may move pointer back to an earlier phase—expected.
+
+Terminal states are enforced: `completed` and `abandoned` tasks NEVER re-enter work through `start`/`done`/`drop`; repeating a settle on an already-settled task is a no-op; `blocked` returns to work only via `unblock`. Phase-wide `done`/`drop` settle open tasks and skip already-settled ones.
 
 ## Operations
 
@@ -8,9 +10,9 @@ After each successful state-changing op: if nothing is `in_progress`, the earlie
 |---|---|---|
 |`init`|`list: [{phase, items: string[]}]`|Initialize full list; replaces existing|
 |`init`|`items: string[]`|Flattened single-phase init|
-|`start`|`task`|Mark in progress|
-|`done`|`task` or `phase`|Mark completed|
-|`drop`|`task` or `phase`|Mark abandoned|
+|`start`|`task`|Mark in progress; `pending` tasks only (repeat on `in_progress` is a no-op; `completed`/`abandoned`/`blocked` are rejected)|
+|`done`|`task` or `phase`|Mark completed; already-settled tasks are no-op/skipped, never flipped|
+|`drop`|`task` or `phase`|Mark abandoned; already-settled tasks are no-op/skipped, never flipped|
 |`block`|`task` or `phase`; optional `reason`|Mark blocked: awaiting external input; never auto-promotes; excluded from stop-time incomplete-todo reminder|
 |`unblock`|`task` or `phase`|Blocked task → `pending`|
 |`rm`|optional `task` or `phase`|Remove task/phase; omit both → clear|

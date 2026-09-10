@@ -5,6 +5,8 @@ import {
 	applyTodoOp,
 	applyParams,
 	clonePhases,
+	formatErrorResult,
+	formatMutationSummary,
 	formatSummary,
 	incompleteByPhase,
 	inferTodoOp,
@@ -328,4 +330,192 @@ describe("misc", () => {
 		expect(incomplete).toHaveLength(1);
 		expect(incomplete[0]).toEqual({ name: "P1", tasks: [{ content: "B", status: "pending" }] });
 	});
+});
+
+describe("terminal state protection", () => {
+	test("start on completed/abandoned is rejected", () => {
+		const current = phasesWith({
+			name: "P",
+			tasks: [["Done", "completed"], ["Dropped", "abandoned"]],
+		});
+		const started = applyTodoOp(current, { op: "start", task: "Done" });
+		expect(started.errors[0]).toContain('Cannot start "Done": task is completed (terminal)');
+		expect(started.phases).toEqual(current);
+		const startedDropped = applyTodoOp(current, { op: "start", task: "Dropped" });
+		expect(startedDropped.errors[0]).toContain("task is abandoned (terminal)");
+		expect(startedDropped.phases).toEqual(current);
+	});
+
+	test("start on blocked is rejected and points at unblock", () => {
+		const current = phasesWith({ name: "P", tasks: [["Waiting", "blocked"]] });
+		const { errors, phases } = applyTodoOp(current, { op: "start", task: "Waiting" });
+		expect(errors[0]).toContain("unblock");
+		expect(phases[0]!.tasks[0]!.status).toBe("blocked");
+	});
+
+	test("start on in_progress is an idempotent no-op", () => {
+		const current = phasesWith({ name: "P", tasks: [["A", "in_progress"], ["B", "pending"]] });
+		const { phases, errors, moved } = applyTodoOp(current, { op: "start", task: "A" });
+		expect(errors).toEqual([]);
+		expect(moved).toBe(0);
+		expect(phases[0]!.tasks.map(t => t.status)).toEqual(["in_progress", "pending"]);
+	});
+
+	test("done on completed is an idempotent no-op; done on abandoned is rejected", () => {
+		const current = phasesWith({ name: "P", tasks: [["Done", "completed"], ["Dropped", "abandoned"]] });
+		const redone = applyTodoOp(current, { op: "done", task: "Done" });
+		expect(redone.errors).toEqual([]);
+		expect(redone.moved).toBe(0);
+		expect(redone.phases).toEqual(current);
+		const resurrected = applyTodoOp(current, { op: "done", task: "Dropped" });
+		expect(resurrected.errors[0]).toContain('Cannot done "Dropped": task is already abandoned (terminal)');
+		expect(resurrected.phases).toEqual(current);
+	});
+
+	test("drop on abandoned is an idempotent no-op; drop on completed is rejected", () => {
+		const current = phasesWith({ name: "P", tasks: [["Done", "completed"], ["Dropped", "abandoned"]] });
+		const redropped = applyTodoOp(current, { op: "drop", task: "Dropped" });
+		expect(redropped.errors).toEqual([]);
+		expect(redropped.moved).toBe(0);
+		expect(redropped.phases).toEqual(current);
+		const flipped = applyTodoOp(current, { op: "drop", task: "Done" });
+		expect(flipped.errors[0]).toContain('Cannot drop "Done": task is already completed (terminal)');
+		expect(flipped.phases).toEqual(current);
+	});
+
+	test("done on a blocked task is allowed (a resolved wait is a legitimate close)", () => {
+		const current = phasesWith({ name: "P", tasks: [["A", "in_progress"], ["Waiting", "blocked"]] });
+		const { phases, errors } = applyTodoOp(current, { op: "done", task: "Waiting" });
+		expect(errors).toEqual([]);
+		expect(phases[0]!.tasks[1]!.status).toBe("completed");
+		expect(phases[0]!.tasks[0]!.status).toBe("in_progress"); // untouched
+	});
+
+	test("phase-wide done settles open work and skips settled tasks without error", () => {
+		const current = phasesWith({
+			name: "P",
+			tasks: [
+				["AlreadyDone", "completed"],
+				["DeliberatelyDropped", "abandoned"],
+				["Active", "in_progress"],
+				["Queued", "pending"],
+				["Waiting", "blocked"],
+			],
+		});
+		const { phases, errors } = applyTodoOp(current, { op: "done", phase: "P" });
+		expect(errors).toEqual([]);
+		const byContent = new Map(phases[0]!.tasks.map(t => [t.content, t.status]));
+		expect(byContent.get("AlreadyDone")).toBe("completed");
+		expect(byContent.get("DeliberatelyDropped")).toBe("abandoned");
+		expect(byContent.get("Active")).toBe("completed");
+		expect(byContent.get("Queued")).toBe("completed");
+		expect(byContent.get("Waiting")).toBe("completed");
+	});
+
+	test("phase-wide drop abandons open work and never flips completed tasks", () => {
+		const current = phasesWith({
+			name: "P",
+			tasks: [
+				["AlreadyDone", "completed"],
+				["Active", "in_progress"],
+				["Queued", "pending"],
+			],
+		});
+		const { phases, errors } = applyTodoOp(current, { op: "drop", phase: "P" });
+		expect(errors).toEqual([]);
+		const byContent = new Map(phases[0]!.tasks.map(t => [t.content, t.status]));
+		expect(byContent.get("AlreadyDone")).toBe("completed");
+		expect(byContent.get("Active")).toBe("abandoned");
+		expect(byContent.get("Queued")).toBe("abandoned");
+	});
+});
+
+describe("compact mutation result", () => {
+	test("done reports the change, progress, and next task — not the whole tree", () => {
+		const current = phasesWith({
+			name: "P",
+			tasks: [["Implement parser", "in_progress"], ["Add parser tests", "pending"], ["Ship", "pending"]],
+		});
+		const { phases, moved } = applyTodoOp(current, { op: "done", task: "Implement parser" });
+		const text = formatMutationSummary({ op: "done", task: "Implement parser" }, phases, moved);
+		expect(text).toBe('Completed "Implement parser". 1/3 done. Next: "Add parser tests".');
+		expect(text).not.toContain("Ship"); // sibling tasks stay out of model output
+		expect(text).not.toContain("[ ]"); // no checklist dump
+	});
+
+	test("start names the started task and progress, without echoing the list", () => {
+		const current = phasesWith({ name: "P", tasks: [["A", "pending"], ["B", "pending"]] });
+		const { phases, moved } = applyTodoOp(current, { op: "start", task: "A" });
+		expect(formatMutationSummary({ op: "start", task: "A" }, phases, moved)).toBe('Started "A". 0/2 done.');
+	});
+
+	test("init reports shape and the promoted task", () => {
+		const { phases, moved } = applyTodoOp([], {
+			op: "init",
+			list: [{ phase: "P1", items: ["One"] }, { phase: "P2", items: ["Two", "Three"] }],
+		});
+		expect(formatMutationSummary({ op: "init" }, phases, moved)).toBe(
+			'Todo list initialized: 3 task(s) in 2 phase(s). Next: "One".',
+		);
+	});
+
+	test("blocked-only remainder tells the model nothing is actionable", () => {
+		const current = phasesWith({ name: "P", tasks: [["A", "in_progress"], ["Waiting", "blocked"]] });
+		const blocked = applyTodoOp(current, { op: "block", task: "Waiting", reason: "CI down" });
+		expect(formatMutationSummary({ op: "block", task: "Waiting", reason: "CI down" }, blocked.phases, blocked.moved)).toBe(
+			'Blocked "Waiting" (CI down). 0/2 done, 1 blocked. Next: "A".',
+		);
+		const doneA = applyTodoOp(blocked.phases, { op: "done", task: "A" });
+		expect(formatMutationSummary({ op: "done", task: "A" }, doneA.phases, doneA.moved)).toBe(
+			'Completed "A". 1/2 done, 1 blocked. Nothing actionable — unblock or drop blocked tasks.',
+		);
+	});
+
+	test("final task completion reports completion without a next pointer", () => {
+		const current = phasesWith({ name: "P", tasks: [["A", "in_progress"], ["B", "completed"]] });
+		const { phases, moved } = applyTodoOp(current, { op: "done", task: "A" });
+		expect(formatMutationSummary({ op: "done", task: "A" }, phases, moved)).toBe('Completed "A". 2/2 done. All done.');
+	});
+
+	test("phase-wide done reports how many tasks the sweep settled", () => {
+		const current = phasesWith({
+			name: "P",
+			tasks: [
+				["AlreadyDone", "completed"],
+				["Active", "in_progress"],
+				["Queued", "pending"],
+			],
+		});
+		const { phases, moved } = applyTodoOp(current, { op: "done", phase: "P" });
+		expect(moved).toBe(2);
+		expect(formatMutationSummary({ op: "done", phase: "P" }, phases, moved)).toBe(
+			'Completed phase "P" (2 task(s)). 3/3 done. All done.',
+		);
+	});
+
+	test("rm, append, and unblock stay compact", () => {
+		const current = phasesWith({ name: "P", tasks: [["A", "in_progress"], ["B", "pending"]] });
+		const removed = applyTodoOp(current, { op: "rm", task: "B" });
+		expect(formatMutationSummary({ op: "rm", task: "B" }, removed.phases, removed.moved)).toBe(
+			'Removed "B". 0/1 done. Next: "A".',
+		);
+		const appended = applyTodoOp(removed.phases, { op: "append", phase: "P", items: ["C", "D"] });
+		expect(formatMutationSummary({ op: "append", phase: "P", items: ["C", "D"] }, appended.phases, appended.moved)).toBe(
+			'Added 2 task(s) to "P". 0/3 done. Next: "A".',
+		);
+		const unblocked = applyTodoOp(current, { op: "unblock", task: "A" });
+		expect(formatMutationSummary({ op: "unblock", task: "A" }, unblocked.phases, unblocked.moved)).toBe(
+			'Unblocked "A". 0/2 done. Next: "A".',
+		);
+	});
+
+	test("cleared list and failed batches have fixed informative shapes", () => {
+		const cleared = applyTodoOp(current1(), { op: "rm" });
+		expect(formatMutationSummary({ op: "rm" }, cleared.phases, cleared.moved)).toBe("Todo list cleared.");
+		expect(formatErrorResult(['Task "X" not found'])).toBe("Errors: Task \"X\" not found\nTodo state unchanged.");
+	});
+
+	function current1() {
+		return phasesWith({ name: "P", tasks: [["A", "in_progress"]] });
+	}
 });

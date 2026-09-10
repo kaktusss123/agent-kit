@@ -23,6 +23,8 @@ import {
 	type TodoToolDetails,
 	applyTodoOp,
 	clonePhases,
+	formatErrorResult,
+	formatMutationSummary,
 	formatSummary,
 	latestPhasesFromEntries,
 	phasesToMarkdown,
@@ -198,18 +200,27 @@ export default function (pi: ExtensionAPI) {
 					isError: true,
 				};
 			}
-			const readOnly = resolved.op === "view";
-			const { phases: updated, errors } = readOnly
-				? { phases: previousPhases, errors: [] as string[] }
-				: applyTodoOp(previousPhases, resolved);
+			// view is the model's explicit way to read the full list; mutations
+			// answer with a compact delta — the canonical state travels in details.
+			if (resolved.op === "view") {
+				return {
+					content: [{ type: "text", text: formatSummary(previousPhases, [], true) }],
+					details: { op: "view", phases: previousPhases } satisfies TodoToolDetails,
+				};
+			}
+			const { phases: updated, errors, moved } = applyTodoOp(previousPhases, resolved);
 			const failed = errors.length > 0;
-			const effective = updated;
-			if (!readOnly && !failed) phases = effective;
+			if (!failed) phases = updated;
 			refreshHud(ctx);
 
 			return {
-				content: [{ type: "text", text: formatSummary(effective, errors, readOnly) }],
-				details: { op: resolved.op, phases: effective } satisfies TodoToolDetails,
+				content: [
+					{
+						type: "text",
+						text: failed ? formatErrorResult(errors) : formatMutationSummary(resolved, updated, moved),
+					},
+				],
+				details: { op: resolved.op, phases: updated } satisfies TodoToolDetails,
 				isError: failed ? true : undefined,
 			};
 		},

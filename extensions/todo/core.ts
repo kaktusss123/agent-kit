@@ -27,15 +27,10 @@ export interface TodoPhase {
 	tasks: TodoItem[];
 }
 
-export interface TodoCompletionTransition {
-	phase: string;
-	content: string;
-}
-
+/** Persisted in tool-result details; the only state store (rehydration, UI). */
 export interface TodoToolDetails {
 	op?: TodoOperation;
 	phases: TodoPhase[];
-	completedTasks?: TodoCompletionTransition[];
 }
 
 /** Raw params as handed to execute() (schema only enforces field types; `op` may be absent). */
@@ -76,27 +71,6 @@ export function clonePhases(phases: TodoPhase[]): TodoPhase[] {
 
 function todoTransitionKey(phase: string, content: string): string {
 	return `${phase}\u0000${content}`;
-}
-
-function getCompletionTransitions(previous: TodoPhase[], updated: TodoPhase[]): TodoCompletionTransition[] {
-	const previousStatuses = new Map<string, TodoStatus>();
-	for (const phase of previous) {
-		for (const task of phase.tasks) {
-			previousStatuses.set(todoTransitionKey(phase.name, task.content), task.status);
-		}
-	}
-
-	const transitions: TodoCompletionTransition[] = [];
-	for (const phase of updated) {
-		for (const task of phase.tasks) {
-			if (task.status !== "completed") continue;
-			const previousStatus = previousStatuses.get(todoTransitionKey(phase.name, task.content));
-			if (previousStatus && previousStatus !== "completed") {
-				transitions.push({ phase: phase.name, content: task.content });
-			}
-		}
-	}
-	return transitions;
 }
 
 /** Enforce the single-pointer invariant after every mutating op. */
@@ -343,39 +317,61 @@ function removeTasks(phases: TodoPhase[], entry: TodoOpEntry, errors: string[]):
 	return phases;
 }
 
-function applyEntry(phases: TodoPhase[], entry: TodoOpEntry, errors: string[]): TodoPhase[] {
+function applyEntry(phases: TodoPhase[], entry: TodoOpEntry, errors: string[]): { phases: TodoPhase[]; moved: number } {
+	let moved = 0;
 	switch (entry.op) {
 		case "init":
-			return initPhases(entry, errors);
+			return { phases: initPhases(entry, errors), moved };
 		case "start": {
 			const hit = resolveTaskOrError(phases, entry.task, errors);
-			if (!hit) return phases;
+			if (!hit) return { phases, moved };
+			const task = hit.task;
+			// Idempotent no-op: already the in-progress task.
+			if (task.status === "in_progress") return { phases, moved };
+			if (task.status === "blocked") {
+				errors.push(`Cannot start "${task.content}": task is blocked. Bring blocked tasks back to work with unblock, not start.`);
+				return { phases, moved };
+			}
+			if (task.status === "completed" || task.status === "abandoned") {
+				errors.push(`Cannot start "${task.content}": task is ${task.status} (terminal). Settled tasks never re-enter work.`);
+				return { phases, moved };
+			}
 			for (const phase of phases) {
 				for (const candidate of phase.tasks) {
-					if (candidate.status === "in_progress" && candidate !== hit.task) {
+					if (candidate.status === "in_progress" && candidate !== task) {
 						candidate.status = "pending";
 					}
 				}
 			}
-			hit.task.status = "in_progress";
-			return phases;
+			task.status = "in_progress";
+			return { phases, moved: 1 };
 		}
-		case "done": {
-			for (const task of getTaskTargets(phases, entry, errors)) {
-				task.status = "completed";
-			}
-			return phases;
-		}
+		case "done":
 		case "drop": {
-			for (const task of getTaskTargets(phases, entry, errors)) {
-				task.status = "abandoned";
+			// Terminal states are protected: settled tasks are never flipped by a
+			// stale call. Targeted repeats of the same settle are idempotent no-ops;
+			// targeted attempts to flip one terminal state to another are errors.
+			// Phase-wide sweeps skip settled tasks instead of erroring.
+			const to = entry.op === "done" ? "completed" : "abandoned";
+			const targeted = Boolean(entry.task);
+			const targets = getTaskTargets(phases, entry, errors);
+			for (const task of targets) {
+				if (task.status === to) continue; // idempotent no-op
+				if (task.status === "completed" || task.status === "abandoned") {
+					if (targeted) {
+						errors.push(`Cannot ${entry.op} "${task.content}": task is already ${task.status} (terminal). Settled tasks never change state.`);
+					}
+					continue; // phase-wide: skip settled tasks
+				}
+				task.status = to;
+				moved++;
 			}
-			return phases;
+			return { phases, moved };
 		}
 		case "block": {
 			if (!entry.task && !entry.phase) {
 				errors.push("block requires a task or phase target");
-				return phases;
+				return { phases, moved };
 			}
 			// Blocker notes ride on one Markdown checklist line and one HUD line,
 			// so collapse whitespace runs to keep every consumer one-line-safe.
@@ -384,33 +380,35 @@ function applyEntry(phases: TodoPhase[], entry: TodoOpEntry, errors: string[]): 
 				// Only actionable open work can be blocked; an already-blocked task
 				// stays eligible so a later block can refine its note.
 				if (task.status !== "pending" && task.status !== "in_progress" && task.status !== "blocked") continue;
+				if (task.status !== "blocked") moved++;
 				task.status = "blocked";
 				task.blocker = reason;
 			}
-			return phases;
+			return { phases, moved };
 		}
 		case "unblock": {
 			if (!entry.task && !entry.phase) {
 				errors.push("unblock requires a task or phase target");
-				return phases;
+				return { phases, moved };
 			}
 			for (const task of getTaskTargets(phases, entry, errors)) {
 				if (task.status === "blocked") {
 					task.status = "pending";
 					task.blocker = undefined;
+					moved++;
 				}
 			}
-			return phases;
+			return { phases, moved };
 		}
 		case "rm":
-			return removeTasks(phases, entry, errors);
+			return { phases: removeTasks(phases, entry, errors), moved };
 		case "append":
-			return appendItems(phases, entry, errors);
+			return { phases: appendItems(phases, entry, errors), moved };
 		case "view":
-			return phases;
+			return { phases, moved };
 		default:
 			errors.push(`Unknown op "${entry.op}"`);
-			return phases;
+			return { phases, moved };
 	}
 }
 
@@ -441,11 +439,11 @@ export function resolveTodoParams(raw: TodoOpEntry, hasExistingPhases: boolean):
 	return raw;
 }
 
-export function applyParams(phases: TodoPhase[], params: TodoOpEntry): { phases: TodoPhase[]; errors: string[] } {
+export function applyParams(phases: TodoPhase[], params: TodoOpEntry): { phases: TodoPhase[]; errors: string[]; moved: number } {
 	const errors: string[] = [];
-	const next = applyEntry(phases, params, errors);
+	const { phases: next, moved } = applyEntry(phases, params, errors);
 	normalizeInProgressTask(next);
-	return { phases: next, errors };
+	return { phases: next, errors, moved };
 }
 
 /**
@@ -456,9 +454,9 @@ export function applyParams(phases: TodoPhase[], params: TodoOpEntry): { phases:
 export function applyTodoOp(
 	previous: TodoPhase[],
 	entry: TodoOpEntry,
-): { phases: TodoPhase[]; errors: string[] } {
-	const { phases: next, errors } = applyParams(clonePhases(previous), entry);
-	return errors.length > 0 ? { phases: previous, errors } : { phases: next, errors };
+): { phases: TodoPhase[]; errors: string[]; moved: number } {
+	const { phases: next, errors, moved } = applyParams(clonePhases(previous), entry);
+	return errors.length > 0 ? { phases: previous, errors, moved } : { phases: next, errors, moved };
 }
 
 // =============================================================================
@@ -530,6 +528,71 @@ export function formatSummary(phases: TodoPhase[], errors: string[], readOnly = 
 		}
 	}
 	return lines.join("\n");
+}
+
+/**
+ * Compact model-facing result of a successful mutating op: what changed,
+ * overall progress, and the next actionable task. The full canonical state
+ * lives in `details.phases`; `view` is the explicit way to see the whole list.
+ */
+export function formatMutationSummary(entry: TodoOpEntry, phases: TodoPhase[], moved: number): string {
+	const tasks = phases.flatMap(phase => phase.tasks);
+	const closed = tasks.filter(isClosedTodo).length;
+	const blocked = tasks.filter(task => task.status === "blocked").length;
+	const progress = `${closed}/${tasks.length} done${blocked > 0 ? `, ${blocked} blocked` : ""}`;
+	const next = nextActionableTask(phases);
+	const nextPart =
+		next === undefined
+			? blocked > 0
+				? " Nothing actionable — unblock or drop blocked tasks."
+				: tasks.length > 0
+					? " All done."
+					: ""
+			: ` Next: "${next.content}".`;
+
+	switch (entry.op) {
+		case "init":
+			return `Todo list initialized: ${tasks.length} task(s) in ${phases.length} phase(s).${nextPart}`;
+		case "start":
+			// The started task is the next actionable one; naming it twice is noise.
+			return `Started "${entry.task}". ${progress}.`;
+		case "done":
+			if (entry.phase) {
+				const swept = moved > 0 ? ` (${moved} task(s))` : " (nothing left to settle)";
+				return `Completed phase "${entry.phase}"${swept}. ${progress}.${nextPart}`;
+			}
+			return `Completed "${entry.task}". ${progress}.${nextPart}`;
+		case "drop":
+			if (entry.phase) {
+				const swept = moved > 0 ? ` (${moved} task(s))` : " (nothing left to settle)";
+				return `Dropped phase "${entry.phase}"${swept}. ${progress}.${nextPart}`;
+			}
+			return `Dropped "${entry.task}". ${progress}.${nextPart}`;
+		case "block":
+			if (entry.phase) {
+				return `Blocked phase "${entry.phase}" (${moved} task(s)). ${progress}.`;
+			}
+			return `Blocked "${entry.task}"${entry.reason ? ` (${entry.reason})` : ""}. ${progress}.${nextPart}`;
+		case "unblock":
+			if (entry.phase) {
+				return `Unblocked ${moved} task(s) in phase "${entry.phase}". ${progress}.${nextPart}`;
+			}
+			return `Unblocked "${entry.task}". ${progress}.${nextPart}`;
+		case "rm":
+			if (tasks.length === 0) return "Todo list cleared.";
+			if (entry.task) return `Removed "${entry.task}". ${progress}.${nextPart}`;
+			if (entry.phase) return `Removed phase "${entry.phase}". ${progress}.`;
+			return `Removed tasks. ${progress}.`;
+		case "append":
+			return `Added ${entry.items?.length ?? 0} task(s) to "${entry.phase}". ${progress}.${nextPart}`;
+		case "view":
+			return formatSummary(phases, [], true);
+	}
+}
+
+/** Model-facing text for a discarded (failed) batch. */
+export function formatErrorResult(errors: string[]): string {
+	return `Errors: ${errors.join("; ")}\nTodo state unchanged.`;
 }
 
 /** Open tasks grouped by phase, for stop-time reminders. */
