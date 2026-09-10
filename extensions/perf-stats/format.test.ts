@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import {
 	type TextUsageRow,
+	CACHE_READ_ICON,
 	formatDuration,
 	formatToolRow,
 	formatTokens,
@@ -43,8 +44,10 @@ describe("formatUsageRow", () => {
 	});
 
 	test("cacheRead segment appears only when non-zero", () => {
-		expect(formatUsageRow(row())).not.toContain("💾");
-		expect(formatUsageRow(row({ cacheRead: 45_678 }))).toContain(`💾 ${formatTokens(45_678)}`);
+		expect(formatUsageRow(row())).not.toContain(CACHE_READ_ICON);
+		expect(formatUsageRow(row({ cacheRead: 45_678 }))).toContain(
+			`${CACHE_READ_ICON} ${formatTokens(45_678)}`,
+		);
 	});
 
 	test("TTFT segment appears only when measured", () => {
