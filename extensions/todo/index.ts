@@ -14,6 +14,7 @@
  * branch, so branching, rewinding, and resuming restore the list for free.
  */
 
+import { readFileSync } from "node:fs";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { StringEnum } from "@earendil-works/pi-ai";
 import { Type } from "typebox";
@@ -105,19 +106,15 @@ const TodoParams = Type.Object({
 // Extension
 // =============================================================================
 
-export default async function (pi: ExtensionAPI) {
+export default function (pi: ExtensionAPI) {
 	// Prompt texts live in .md files next to this module. pi loads extensions
-	// through jiti, which has no Bun-style `.md` import attributes, so read
-	// them at startup instead.
-	const readPrompt = async (name: string): Promise<string> => {
-		const url = new URL(`./prompts/${name}`, import.meta.url);
-		return await Bun.file(url).text();
-	};
-	const [toolDescription, eagerPreludePrompt, midRunNudgePrompt] = await Promise.all([
-		readPrompt("tool-description.md"),
-		readPrompt("eager-prelude.md"),
-		readPrompt("mid-run-nudge.md"),
-	]);
+	// through jiti (no Bun-style `.md` import attributes) and may run on the
+	// bundled Node dist where the Bun global does not exist — read the files
+	// with node:fs so the extension is runtime-agnostic.
+	const readPrompt = (name: string): string => readFileSync(new URL(`./prompts/${name}`, import.meta.url), "utf8");
+	const toolDescription = readPrompt("tool-description.md");
+	const eagerPreludePrompt = readPrompt("eager-prelude.md");
+	const midRunNudgePrompt = readPrompt("mid-run-nudge.md");
 
 	// Canonical in-memory state; rehydrated from the session branch on
 	// session_start / session_tree, written on successful tool ops.
