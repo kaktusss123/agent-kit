@@ -380,6 +380,7 @@ export function isSecretPath(filePath: string): boolean {
 export function guardManagedWriteTarget(
   filePath: string | undefined,
   ctxCwd: string,
+  opts: { taskRoot: string },
 ): GuardVerdict {
   if (!filePath) return undefined;
   // Internal URLs are dispatched by the core router, never resolved as
@@ -399,13 +400,13 @@ export function guardManagedWriteTarget(
       reason: `Blocked: writing to Git metadata under ${join(root, ".git")} is not allowed.`,
     };
   }
-  const classification = classifyPath(filePath, cwd);
+  const classification = classifyPath(filePath, cwd, opts.taskRoot);
 
   if (classification === "PRIMARY_CHECKOUT") {
     // Ignored, untracked, non-symlink paths stay writable in the primary
     // checkout; everything else routes to the managed task worktree(s).
     if (root && !isAllowedIgnoredPrimaryPath(root, abs)) {
-      const hint = managedWorktreeHint(root);
+      const hint = managedWorktreeHint(root, opts.taskRoot);
       if (hint) {
         return {
           block: true,
@@ -421,6 +422,7 @@ export function guardManagedWriteTarget(
 export function guardManagedBashCommand(
   command: string | undefined,
   ctxCwd: string,
+  opts: { taskRoot: string },
 ): GuardVerdict {
   if (!command) return undefined;
 
@@ -456,14 +458,14 @@ export function guardManagedBashCommand(
     if (isTemporaryPath(repoAbs)) continue;
     let classification: PathClassification;
     try {
-      classification = classifyPath(repoAbs, cwd);
+      classification = classifyPath(repoAbs, cwd, opts.taskRoot);
     } catch {
       continue; // unresolvable -C target can never be the primary checkout
     }
     if (classification !== "PRIMARY_CHECKOUT") continue;
     const root = findGitRoot(repoAbs);
     if (!root) continue;
-    const hint = managedWorktreeHint(root);
+    const hint = managedWorktreeHint(root, opts.taskRoot);
     if (!hint) continue;
     return {
       block: true,

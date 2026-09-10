@@ -3,15 +3,15 @@
  *
  * Deterministic mechanics behind task_status / ensure_task_repo /
  * remove_task_lane / checkpoint_commit. Host-independent: no OMP/Pi SDK
- * imports. Each flow takes plain parameters plus the session cwd and returns
- * a FlowOutcome (JSON payload + optional structured details); the host
- * binding owns schemas, envelopes, and error catching.
+ * imports, no host result representation. Each flow takes plain parameters,
+ * the session cwd, and an explicit task root, and returns a plain domain
+ * result object; the host binding owns schemas, serialization, result
+ * attachment (e.g. details), and error catching.
  */
 import { basename, join, relative, resolve } from "node:path";
 import { mkdir } from "node:fs/promises";
 import { existsSync } from "node:fs";
 import {
-  TASK_ROOT,
   classifyPath,
   expandPath,
   findGitRoot,
@@ -31,7 +31,7 @@ import {
   taskWorkspacePath,
 } from "./git";
 import { isSecretPath } from "./guard";
-import type { FlowOutcome, LinkedWorktreeFact } from "./types";
+import type { LinkedWorktreeFact } from "./types";
 
 const DEFERRED_PASS_RESULTS: Record<string, true> = {
   pass: true,
@@ -48,10 +48,11 @@ const DEFERRED_PASS_RESULTS: Record<string, true> = {
 export async function taskStatus(
   params: { path?: string },
   ctxCwd: string,
-): Promise<FlowOutcome> {
+  opts: { taskRoot: string },
+) {
   const cwd = realpath(ctxCwd);
   const targetPath = params.path ? expandPath(params.path, cwd) : cwd;
-  const classification = classifyPath(targetPath, cwd);
+  const classification = classifyPath(targetPath, cwd, opts.taskRoot);
 
   let repoRoot = "";
   let branch = "";
@@ -66,7 +67,7 @@ export async function taskStatus(
     }
   }
 
-  const taskWorkspaces = await scanTaskWorkspaces();
+  const taskWorkspaces = await scanTaskWorkspaces(opts.taskRoot);
 
   const result = {
     classification,
@@ -74,11 +75,11 @@ export async function taskStatus(
     repoRoot,
     branch,
     isLinkedWorktree: isLinked,
-    taskRoot: TASK_ROOT,
+    taskRoot: opts.taskRoot,
     taskWorkspaces,
   };
 
-  return { payload: result, details: result };
+  return result;
 }
 
 // ─── ensure_task_repo ───────────────────────────────────────────────────
@@ -95,17 +96,16 @@ export interface EnsureTaskRepoParams {
 export async function ensureTaskRepo(
   params: EnsureTaskRepoParams,
   ctxCwd: string,
-): Promise<FlowOutcome> {
+  opts: { taskRoot: string },
+) {
   // 1. Resolve source repo (canonicalize cwd to avoid symlink mismatches)
   const cwd = realpath(ctxCwd);
   const sourceAbs = expandPath(params.source_path, cwd);
   const srcRoot = await git(sourceAbs, "rev-parse", "--show-toplevel");
   if (!srcRoot.ok) {
     return {
-      payload: {
-        status: "error",
-        message: `Not a git repository: ${params.source_path}`,
-      },
+      status: "error",
+      message: `Not a git repository: ${params.source_path}`,
     };
   }
   const sourceRoot = srcRoot.stdout;
@@ -116,11 +116,9 @@ export async function ensureTaskRepo(
   // lane's own `branch`/base — no second task workspace, no manifest.
   if (params.slot && !params.task) {
     return {
-      payload: {
-        status: "error",
-        message:
-          "slot requires task (the canonical workspace identity) so the lane lands inside the existing task workspace",
-      },
+      status: "error",
+      message:
+        "slot requires task (the canonical workspace identity) so the lane lands inside the existing task workspace",
     };
   }
   if (
@@ -129,22 +127,18 @@ export async function ensureTaskRepo(
       params.slot.includes("__"))
   ) {
     return {
-      payload: {
-        status: "error",
-        message: "slot must match [A-Za-z0-9][A-Za-z0-9._-]* and must not contain __",
-      },
+      status: "error",
+      message: "slot must match [A-Za-z0-9][A-Za-z0-9._-]* and must not contain __",
     };
   }
   const identity = params.slot ? params.task : params.branch;
   if (identity === undefined) {
     return {
-      payload: {
-        status: "error",
-        message: "Task identity is required: pass branch, or slot together with task",
-      },
+      status: "error",
+      message: "Task identity is required: pass branch, or slot together with task",
     };
   }
-  const ws = taskWorkspacePath(identity);
+  const ws = taskWorkspacePath(identity, opts.taskRoot);
   const target = params.slot
     ? join(ws, `${basename(sourceRoot)}__${params.slot}`)
     : join(ws, basename(sourceRoot));
@@ -165,10 +159,8 @@ export async function ensureTaskRepo(
           );
         if (!isWorktreeOfSource) {
           return {
-            payload: {
-              status: "error",
-              message: `Target exists at ${target} but is not a worktree of ${sourceRoot}`,
-            },
+            status: "error",
+            message: `Target exists at ${target} but is not a worktree of ${sourceRoot}`,
           };
         }
       }
@@ -195,31 +187,26 @@ export async function ensureTaskRepo(
     }
     if (realpath(currentPath) === resolvedTarget) {
       if (currentBranch === params.branch) {
-        const inputRepo = await getInputRepoFacts(sourceAbs, sourceRoot, cwd);
+        const inputRepo = await getInputRepoFacts(sourceAbs, sourceRoot, cwd, opts.taskRoot);
         const headSha = await getRepoSha(target);
         const upstream = await getUpstream(sourceRoot, params.branch);
         return {
-          payload: {
-            status: "reused",
-            task: identity,
-            worktree: target,
-            kind: params.slot ? "lane" : "canonical",
-            slot: params.slot ?? null,
-            branch: params.branch,
-            branchSource: "local",
-            upstream,
-            base: null,
-            inputRepo,
-            headSha,
-          },
-          details: { status: "reused", worktree: target },
+          status: "reused",
+          task: identity,
+          worktree: target,
+          kind: params.slot ? "lane" : "canonical",
+          slot: params.slot ?? null,
+          branch: params.branch,
+          branchSource: "local",
+          upstream,
+          base: null,
+          inputRepo,
+          headSha,
         };
       }
       return {
-        payload: {
-          status: "error",
-          message: `Worktree exists at ${target} but on branch ${currentBranch}, not ${params.branch}`,
-        },
+        status: "error",
+        message: `Worktree exists at ${target} but on branch ${currentBranch}, not ${params.branch}`,
       };
     }
   }
@@ -230,10 +217,8 @@ export async function ensureTaskRepo(
     const remoteList = await git(sourceRoot, "remote");
     if (!remoteList.ok) {
       return {
-        payload: {
-          status: "error",
-          message: "No remotes configured in source repo",
-        },
+        status: "error",
+        message: "No remotes configured in source repo",
       };
     }
     const remotes = remoteList.stdout
@@ -245,10 +230,8 @@ export async function ensureTaskRepo(
       remote = remotes[0];
     } else {
       return {
-        payload: {
-          status: "remote_selection_required",
-          remotes,
-        },
+        status: "remote_selection_required",
+        remotes,
       };
     }
   }
@@ -271,10 +254,8 @@ export async function ensureTaskRepo(
         if (line.startsWith("worktree ")) {
           if (wtBranch === params.branch && realpath(wtPath) !== realpath(target)) {
             return {
-              payload: {
-                status: "branch_in_use",
-                worktree: wtPath,
-              },
+              status: "branch_in_use",
+              worktree: wtPath,
             };
           }
           wtPath = line.slice("worktree ".length);
@@ -287,10 +268,8 @@ export async function ensureTaskRepo(
       }
       if (wtBranch === params.branch && realpath(wtPath) !== realpath(target)) {
         return {
-          payload: {
-            status: "branch_in_use",
-            worktree: wtPath,
-          },
+          status: "branch_in_use",
+          worktree: wtPath,
         };
       }
     }
@@ -306,30 +285,25 @@ export async function ensureTaskRepo(
     );
     if (!add.ok) {
       return {
-        payload: {
-          status: "error",
-          message: `Failed to create worktree: ${add.stderr}`,
-        },
+        status: "error",
+        message: `Failed to create worktree: ${add.stderr}`,
       };
     }
-    const inputRepo = await getInputRepoFacts(sourceAbs, sourceRoot, cwd);
+    const inputRepo = await getInputRepoFacts(sourceAbs, sourceRoot, cwd, opts.taskRoot);
     const headSha = await getRepoSha(target);
     const upstream = await getUpstream(sourceRoot, params.branch);
     return {
-      payload: {
-        status: "attached",
-        task: identity,
-        worktree: target,
-        kind: params.slot ? "lane" : "canonical",
-        slot: params.slot ?? null,
-        branch: params.branch,
-        branchSource: "local",
-        upstream,
-        base: null,
-        inputRepo,
-        headSha,
-      },
-      details: { status: "attached", worktree: target },
+      status: "attached",
+      task: identity,
+      worktree: target,
+      kind: params.slot ? "lane" : "canonical",
+      slot: params.slot ?? null,
+      branch: params.branch,
+      branchSource: "local",
+      upstream,
+      base: null,
+      inputRepo,
+      headSha,
     };
   }
   // 6b. Local absent — one required successful fetch of the chosen
@@ -344,10 +318,8 @@ export async function ensureTaskRepo(
   );
   if (!fetchRes.ok) {
     return {
-      payload: {
-        status: "error",
-        message: `Fetch of ${remote} failed; refusing to create task branch from stale refs: ${fetchRes.stderr.trim()}`,
-      },
+      status: "error",
+      message: `Fetch of ${remote} failed; refusing to create task branch from stale refs: ${fetchRes.stderr.trim()}`,
     };
   }
   const remoteRef = await git(
@@ -371,30 +343,25 @@ export async function ensureTaskRepo(
     );
     if (!add.ok) {
       return {
-        payload: {
-          status: "error",
-          message: `Failed to create worktree from remote: ${add.stderr}`,
-        },
+        status: "error",
+        message: `Failed to create worktree from remote: ${add.stderr}`,
       };
     }
-    const inputRepo = await getInputRepoFacts(sourceAbs, sourceRoot, cwd);
+    const inputRepo = await getInputRepoFacts(sourceAbs, sourceRoot, cwd, opts.taskRoot);
     const headSha = await getRepoSha(target);
     return {
-      payload: {
-        status: "created_from_remote",
-        task: identity,
-        worktree: target,
-        kind: params.slot ? "lane" : "canonical",
-        slot: params.slot ?? null,
-        branch: params.branch,
-        branchSource: "remote",
-        upstream: `${remote}/${params.branch}`,
-        remoteSha,
-        base: null,
-        inputRepo,
-        headSha,
-      },
-      details: { status: "created_from_remote", worktree: target },
+      status: "created_from_remote",
+      task: identity,
+      worktree: target,
+      kind: params.slot ? "lane" : "canonical",
+      slot: params.slot ?? null,
+      branch: params.branch,
+      branchSource: "remote",
+      upstream: `${remote}/${params.branch}`,
+      remoteSha,
+      base: null,
+      inputRepo,
+      headSha,
     };
   }
 
@@ -406,10 +373,8 @@ export async function ensureTaskRepo(
     const baseRes = await git(sourceRoot, "rev-parse", params.base_ref);
     if (!baseRes.ok) {
       return {
-        payload: {
-          status: "error",
-          message: `Invalid base ref: ${params.base_ref}`,
-        },
+        status: "error",
+        message: `Invalid base ref: ${params.base_ref}`,
       };
     }
     baseSha = baseRes.stdout;
@@ -438,10 +403,8 @@ export async function ensureTaskRepo(
 
     if (!remoteDefault) {
       return {
-        payload: {
-          status: "error",
-          message: `Cannot determine remote default branch for ${remote}`,
-        },
+        status: "error",
+        message: `Cannot determine remote default branch for ${remote}`,
       };
     }
 
@@ -453,11 +416,9 @@ export async function ensureTaskRepo(
     );
     if (remoteDefault !== "develop" && devRef.ok) {
       return {
-        payload: {
-          status: "base_selection_required",
-          remoteDefault,
-          developExists: true,
-        },
+        status: "base_selection_required",
+        remoteDefault,
+        developExists: true,
       };
     }
 
@@ -465,10 +426,8 @@ export async function ensureTaskRepo(
     const baseRes = await git(sourceRoot, "rev-parse", baseBranch);
     if (!baseRes.ok) {
       return {
-        payload: {
-          status: "error",
-          message: `Cannot resolve base branch ${baseBranch}`,
-        },
+        status: "error",
+        message: `Cannot resolve base branch ${baseBranch}`,
       };
     }
     baseSha = baseRes.stdout;
@@ -487,29 +446,24 @@ export async function ensureTaskRepo(
   );
   if (!add.ok) {
     return {
-      payload: {
-        status: "error",
-        message: `Failed to create worktree with branch: ${add.stderr}`,
-      },
+      status: "error",
+      message: `Failed to create worktree with branch: ${add.stderr}`,
     };
   }
-  const inputRepo = await getInputRepoFacts(sourceAbs, sourceRoot, cwd);
+  const inputRepo = await getInputRepoFacts(sourceAbs, sourceRoot, cwd, opts.taskRoot);
   const headSha = await getRepoSha(target);
   return {
-    payload: {
-      status: "created",
-      task: identity,
-      worktree: target,
-      kind: params.slot ? "lane" : "canonical",
-      slot: params.slot ?? null,
-      branch: params.branch,
-      branchSource: "base",
-      upstream: null,
-      base: { ref: baseRef, sha: baseSha },
-      inputRepo,
-      headSha,
-    },
-    details: { status: "created", worktree: target },
+    status: "created",
+    task: identity,
+    worktree: target,
+    kind: params.slot ? "lane" : "canonical",
+    slot: params.slot ?? null,
+    branch: params.branch,
+    branchSource: "base",
+    upstream: null,
+    base: { ref: baseRef, sha: baseSha },
+    inputRepo,
+    headSha,
   };
 }
 
@@ -518,10 +472,11 @@ export async function ensureTaskRepo(
 export async function removeTaskLane(
   params: { task: string; path: string },
   ctxCwd: string,
-): Promise<FlowOutcome> {
+  opts: { taskRoot: string },
+) {
   const cwd = realpath(ctxCwd);
   const target = realpath(expandPath(params.path, cwd));
-  const workspace = realpath(taskWorkspacePath(params.task));
+  const workspace = realpath(taskWorkspacePath(params.task, opts.taskRoot));
   const relativeTarget = relative(workspace, target);
   const laneName = basename(target);
   const parsedLane = parseLaneName(laneName);
@@ -533,20 +488,18 @@ export async function removeTaskLane(
 
   if (!isDirectChild || !parsedLane) {
     return {
-      payload: {
-        status: "lane_rejected",
-        task: params.task,
-        path: target,
-        reason:
-          "Only a secondary lane directly inside the requested managed task workspace can be removed.",
-      },
+      status: "lane_rejected",
+      task: params.task,
+      path: target,
+      reason:
+        "Only a secondary lane directly inside the requested managed task workspace can be removed.",
     };
   }
 
   const repo = parsedLane.repo;
   const slot = parsedLane.slot;
   const root = findGitRoot(target);
-  const classification = classifyPath(target, cwd);
+  const classification = classifyPath(target, cwd, opts.taskRoot);
   const canonicalPath = join(workspace, repo);
   const linked = new Map<string, LinkedWorktreeFact>();
   if (
@@ -576,37 +529,31 @@ export async function removeTaskLane(
     identity.kind !== "lane"
   ) {
     return {
-      payload: {
-        status: "lane_rejected",
-        task: params.task,
-        repo,
-        slot,
-        path: target,
-        classification,
-        reason:
-          "The target is not a managed linked secondary lane with a canonical sibling.",
-      },
+      status: "lane_rejected",
+      task: params.task,
+      repo,
+      slot,
+      path: target,
+      classification,
+      reason:
+        "The target is not a managed linked secondary lane with a canonical sibling.",
     };
   }
 
   const facts = await getLaneFacts(params.task, target, slot, repo);
   if (!facts.branch) {
     return {
-      payload: {
-        status: "lane_rejected",
-        ...facts,
-        reason: "A secondary lane must have an attached local branch.",
-      },
+      status: "lane_rejected",
+      ...facts,
+      reason: "A secondary lane must have an attached local branch.",
     };
   }
   if (facts.dirty.staged.length > 0 || facts.dirty.unstaged.length > 0) {
     return {
-      payload: {
-        status: "lane_dirty",
-        ...facts,
-        reason:
-          "Refusing to remove a dirty lane; inspect or commit its changes first.",
-      },
+      status: "lane_dirty",
+      ...facts,
+      reason:
+        "Refusing to remove a dirty lane; inspect or commit its changes first.",
     };
   }
 
@@ -618,44 +565,35 @@ export async function removeTaskLane(
     : undefined;
   if (!controlPath) {
     return {
-      payload: {
-        status: "lane_rejected",
-        ...facts,
-        reason:
-          "Cannot find another worktree from which to perform safe lane cleanup.",
-      },
+      status: "lane_rejected",
+      ...facts,
+      reason:
+        "Cannot find another worktree from which to perform safe lane cleanup.",
     };
   }
 
   const remove = await git(controlPath, "worktree", "remove", target);
   if (!remove.ok) {
     return {
-      payload: {
-        status: "worktree_remove_failed",
-        ...facts,
-        reason: remove.stderr,
-      },
+      status: "worktree_remove_failed",
+      ...facts,
+      reason: remove.stderr,
     };
   }
 
   const deleteBranch = await git(controlPath, "branch", "-d", facts.branch);
   if (!deleteBranch.ok) {
     return {
-      payload: {
-        status: "branch_delete_blocked",
-        ...facts,
-        reason:
-          `Worktree removed, but safe branch deletion was refused: ${deleteBranch.stderr}. The branch was not force-deleted.`,
-      },
+      status: "branch_delete_blocked",
+      ...facts,
+      reason:
+        `Worktree removed, but safe branch deletion was refused: ${deleteBranch.stderr}. The branch was not force-deleted.`,
     };
   }
 
   return {
-    payload: {
-      status: "removed",
-      ...facts,
-    },
-    details: { status: "removed", ...facts },
+    status: "removed",
+    ...facts,
   };
 }
 
@@ -680,19 +618,18 @@ export async function checkpointCommit(
     deferred_hook?: DeferredHookEvidence;
   },
   ctxCwd: string,
-): Promise<FlowOutcome> {
+  opts: { taskRoot: string },
+) {
   // 1. Classify repo (canonicalize cwd to avoid symlink mismatches)
   const cwd = realpath(ctxCwd);
   const repoAbs = expandPath(params.repo, cwd);
-  const classification = classifyPath(repoAbs, cwd);
+  const classification = classifyPath(repoAbs, cwd, opts.taskRoot);
   const repoRoot = realpath(findGitRoot(repoAbs) ?? repoAbs);
 
   if (classification === "PRIMARY_CHECKOUT" && !params.allow_primary) {
     return {
-      payload: {
-        status: "primary_commit_blocked",
-        reason: `Refusing to commit to primary checkout ${repoRoot}. Use allow_primary=true or commit to a task worktree instead.`,
-      },
+      status: "primary_commit_blocked",
+      reason: `Refusing to commit to primary checkout ${repoRoot}. Use allow_primary=true or commit to a task worktree instead.`,
     };
   }
 
@@ -712,10 +649,8 @@ export async function checkpointCommit(
   }
   if (offenders.length > 0) {
     return {
-      payload: {
-        status: "path_outside_repo",
-        offenders,
-      },
+      status: "path_outside_repo",
+      offenders,
     };
   }
 
@@ -726,10 +661,8 @@ export async function checkpointCommit(
   }
   if (secrets.length > 0) {
     return {
-      payload: {
-        status: "secret_path_rejected",
-        offenders: secrets,
-      },
+      status: "secret_path_rejected",
+      offenders: secrets,
     };
   }
 
@@ -747,11 +680,9 @@ export async function checkpointCommit(
       [...existingStaged].some((f) => !intendedSet.has(f));
     if (different) {
       return {
-        payload: {
-          status: "ambiguous_staged",
-          staged: [...existingStaged],
-          intended: [...intendedSet],
-        },
+        status: "ambiguous_staged",
+        staged: [...existingStaged],
+        intended: [...intendedSet],
       };
     }
   }
@@ -761,10 +692,8 @@ export async function checkpointCommit(
   const stage = await git(repoRoot, "add", "--", ...relPaths);
   if (!stage.ok) {
     return {
-      payload: {
-        status: "error",
-        message: `Failed to stage files: ${stage.stderr}`,
-      },
+      status: "error",
+      message: `Failed to stage files: ${stage.stderr}`,
     };
   }
 
@@ -790,13 +719,11 @@ export async function checkpointCommit(
     if (!params.deferred_hook) {
       const finalTreeSha = (await git(repoRoot, "write-tree")).stdout.trim();
       return {
-        payload: {
-          status: "commit_failed",
-          stderr: commit.stderr,
-          staged_tree: finalTreeSha,
-          deferred_hook_hint:
-            "If and only if this hook failure is caused by an external prerequisite that cannot be satisfied at this task stage (e.g. an unpublished same-task dependency) — not by a code-validation failure — retry checkpoint_commit with deferred_hook evidence naming the failing step and passing this staged_tree value verbatim.",
-        },
+        status: "commit_failed",
+        stderr: commit.stderr,
+        staged_tree: finalTreeSha,
+        deferred_hook_hint:
+          "If and only if this hook failure is caused by an external prerequisite that cannot be satisfied at this task stage (e.g. an unpublished same-task dependency) — not by a code-validation failure — retry checkpoint_commit with deferred_hook evidence naming the failing step and passing this staged_tree value verbatim.",
       };
     }
     const d = params.deferred_hook;
@@ -821,53 +748,40 @@ export async function checkpointCommit(
       );
     if (!evidenceTreeMatches || !evidenceMatches || !checksComplete) {
       return {
-        payload: {
-          status: "deferred_hook_rejected",
-          evidenceTreeMatches,
-          evidenceMatches,
-          checksComplete,
-          reason:
-            "Deferred hook verification requires a current hook failure, evidence bound to the exact staged tree being committed, and manual checks with machine-readable pass results. Fix the failure or escalate instead of bypassing.",
-        },
+        status: "deferred_hook_rejected",
+        evidenceTreeMatches,
+        evidenceMatches,
+        checksComplete,
+        reason:
+          "Deferred hook verification requires a current hook failure, evidence bound to the exact staged tree being committed, and manual checks with machine-readable pass results. Fix the failure or escalate instead of bypassing.",
       };
     }
     const bypass = await git(repoRoot, "commit", "--no-verify", "-m", params.message);
     if (!bypass.ok) {
       return {
-        payload: {
-          status: "error",
-          message: `Deferred hook commit failed: ${bypass.stderr}`,
-        },
+        status: "error",
+        message: `Deferred hook commit failed: ${bypass.stderr}`,
       };
     }
     const deferredLog = await git(repoRoot, "log", "-1", "--format=%H");
     return {
-      payload: {
-        status: "committed_with_deferred_hook",
-        commit: deferredLog.stdout,
-        branch: await getRepoBranch(repoRoot),
-        files: relPaths,
-        failed_hook: d.failed_hook,
-        failure_reason: d.failure_reason,
-        manual_checks: d.manual_checks,
-        remaining_gap: d.remaining_gap,
-        note:
-          "Do not report this repository fully verified. Re-run the deferred check once the prerequisite is available (a pass closes the gap); surface the gap in any MR or task report.",
-      },
-      details: {
-        status: "committed_with_deferred_hook",
-        commit: deferredLog.stdout,
-        remaining_gap: d.remaining_gap,
-      },
+      status: "committed_with_deferred_hook",
+      commit: deferredLog.stdout,
+      branch: await getRepoBranch(repoRoot),
+      files: relPaths,
+      failed_hook: d.failed_hook,
+      failure_reason: d.failure_reason,
+      manual_checks: d.manual_checks,
+      remaining_gap: d.remaining_gap,
+      note:
+        "Do not report this repository fully verified. Re-run the deferred check once the prerequisite is available (a pass closes the gap); surface the gap in any MR or task report.",
     };
   }
 
   if (!commit.ok) {
     return {
-      payload: {
-        status: "commit_failed",
-        stderr: commit.stderr,
-      },
+      status: "commit_failed",
+      stderr: commit.stderr,
     };
   }
 
@@ -882,18 +796,10 @@ export async function checkpointCommit(
     : [];
 
   return {
-    payload: {
-      status: "committed",
-      commit: log.stdout,
-      branch,
-      files: relPaths,
-      remainingDirty,
-    },
-    details: {
-      status: "committed",
-      commit: log.stdout,
-      branch,
-      files: relPaths,
-    },
+    status: "committed",
+    commit: log.stdout,
+    branch,
+    files: relPaths,
+    remainingDirty,
   };
 }

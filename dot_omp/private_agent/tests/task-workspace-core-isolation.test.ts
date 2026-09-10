@@ -1,4 +1,7 @@
-import { readdirSync, readFileSync } from "node:fs";
+import { execFileSync } from "node:child_process";
+import { realpathSync, readdirSync, readFileSync } from "node:fs";
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, test } from "bun:test";
 
@@ -28,7 +31,7 @@ describe("task-workspace core host independence", () => {
     expect(guardCore.parseGitInvocations("git add -A")[0]?.mutating).toBe(true);
   });
 
-  test("core sources never reference the OMP/Pi SDK or host plumbing", () => {
+  test("core sources never reference the OMP/Pi SDK, host plumbing, or task-root policy", () => {
     for (const file of readdirSync(CORE_DIR).filter((f) => f.endsWith(".ts"))) {
       const src = readFileSync(join(CORE_DIR, file), "utf8");
       expect(
@@ -36,9 +39,65 @@ describe("task-workspace core host independence", () => {
         `${file} must not import the OMP/Pi SDK`,
       ).toBe(false);
       expect(
-        /\bExtensionAPI\b|\bExtensionContext\b|registerTool|typebox|\bpi\.on\b|\bctx\.cwd\b/.test(src),
-        `${file} must not reference host extension plumbing`,
+        /\bExtensionAPI\b|\bExtensionContext\b|registerTool|\btypebox\b|\bpi\.on\b|\bctx\.cwd\b|OMP_TASK_ROOT|\.omp|process\.env/.test(src),
+        `${file} must not reference host plumbing or host task-root configuration`,
       ).toBe(false);
+    }
+  });
+
+  test("core follows an injected task root — second-host shape, no OMP env", async () => {
+    const gitCore = await import("../extensions/task-workspace/git");
+    const flowsCore = await import("../extensions/task-workspace/flows");
+
+    // realpathSync mirrors the OMP binding's own task-root resolution
+    // contract (macOS /var -> /private/var must not create prefix drift).
+    const hostRoot = realpathSync(await mkdtemp(join(tmpdir(), "host2-root-")));
+    const sourceRepo = await mkdtemp(join(tmpdir(), "host2-src-"));
+    const remotePath = await mkdtemp(join(tmpdir(), "host2-remote-"));
+    try {
+      execFileSync("git", ["init", "-q", "--bare", remotePath]);
+      execFileSync("git", ["init", "-q", "-b", "main", sourceRepo]);
+      execFileSync("git", ["-C", sourceRepo, "config", "user.email", "host2@example.invalid"]);
+      execFileSync("git", ["-C", sourceRepo, "config", "user.name", "Host Two"]);
+      execFileSync("git", ["-C", sourceRepo, "remote", "add", "origin", remotePath]);
+      await writeFile(join(sourceRepo, "README.md"), "host2\n");
+      execFileSync("git", ["-C", sourceRepo, "add", "README.md"]);
+      execFileSync("git", ["-C", sourceRepo, "commit", "-qm", "init"]);
+      execFileSync("git", ["-C", sourceRepo, "branch", "feat/host2"]);
+
+      // Workspace path math follows the injected root, not any default.
+      expect(gitCore.taskWorkspacePath("some/task", hostRoot)).toBe(
+        join(hostRoot, "some_task"),
+      );
+
+      // A real flow materializes the workspace under the injected root.
+      const result = await flowsCore.ensureTaskRepo(
+        { branch: "feat/host2", source_path: sourceRepo },
+        sourceRepo,
+        { taskRoot: hostRoot },
+      );
+      expect(result).toMatchObject({ status: "attached" });
+      const worktree = (result as { worktree: string }).worktree;
+      expect(worktree.startsWith(hostRoot)).toBe(true);
+
+      // Classification and scanning are rooted at the injected root: the
+      // created worktree classifies as managed, the source repo does not.
+      expect(gitCore.classifyPath(worktree, sourceRepo, hostRoot)).toBe(
+        "MANAGED_TASK_WORKTREE",
+      );
+      expect(gitCore.classifyPath(sourceRepo, sourceRepo, hostRoot)).toBe(
+        "PRIMARY_CHECKOUT",
+      );
+      const scan = await gitCore.scanTaskWorkspaces(hostRoot);
+      // scanTaskWorkspaces lists one entry per workspace directory (the
+      // flattened branch) inside the injected root.
+      expect(scan.length).toBe(1);
+      expect(scan[0]!.workspace).toBe(join(hostRoot, "feat_host2"));
+      expect(scan[0]!.repos.map((r) => r.path)).toContain(worktree);
+    } finally {
+      await rm(hostRoot, { recursive: true, force: true });
+      await rm(sourceRepo, { recursive: true, force: true });
+      await rm(remotePath, { recursive: true, force: true });
     }
   });
 });

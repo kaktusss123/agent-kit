@@ -10,13 +10,18 @@
  * produce the same directory. No manifest or naming migration exists; resolve
  * a real collision manually if one ever materializes.
  *
- * The deterministic mechanics (task identity, worktree/lane lifecycle, git
- * mutation classification, commit safety) live in ./task-workspace/ — a
- * host-independent core with no OMP/Pi SDK imports. This file is only the
- * binding: ExtensionAPI tool registration, TypeBox schemas, session-cwd
- * translation, and result serialization.
+ * This file owns everything OMP-specific: ExtensionAPI tool registration,
+ * TypeBox schemas, session-cwd translation, the task-root policy
+ * (OMP_TASK_ROOT env override, default ~/.omp/tasks), and the OMP tool-result
+ * representation (content JSON plus the structured `details` attachment).
+ * The deterministic mechanics live in ./task-workspace/ — a host-independent
+ * core that receives its task root explicitly and returns plain domain
+ * results.
  */
 import type { ExtensionAPI } from "@oh-my-pi/pi-coding-agent";
+import { homedir } from "node:os";
+import { join } from "node:path";
+import { realpath } from "./task-workspace/git";
 import {
   checkpointCommit,
   ensureTaskRepo,
@@ -27,16 +32,67 @@ import {
   guardManagedBashCommand,
   guardManagedWriteTarget,
 } from "./task-workspace/guard";
-import type { FlowOutcome } from "./task-workspace/types";
 
-function respond(outcome: FlowOutcome): {
+// OMP task-root policy: OMP_TASK_ROOT overrides the default ~/.omp/tasks.
+// Resolved once at import; the core receives it explicitly and never reads
+// the environment itself.
+const TASK_ROOT = realpath(process.env.OMP_TASK_ROOT ?? join(homedir(), ".omp", "tasks"));
+
+function respond(result: Record<string, unknown>, details?: unknown): {
   content: { type: "text"; text: string }[];
   details?: unknown;
 } {
   return {
-    content: [{ type: "text" as const, text: JSON.stringify(outcome.payload) }],
-    ...(outcome.details !== undefined ? { details: outcome.details } : {}),
+    content: [{ type: "text" as const, text: JSON.stringify(result) }],
+    ...(details !== undefined ? { details } : {}),
   };
+}
+
+function errorResult(e: unknown): Record<string, unknown> {
+  return { status: "error", message: (e as Error).message };
+}
+
+/**
+ * OMP `details` attachment per tool and outcome. Preserves the exact
+ * pre-split behavior: only these status values carry details, and only
+ * these fields.
+ */
+function detailsFor(tool: string, result: Record<string, unknown>): unknown {
+  switch (tool) {
+    case "task_status":
+      return result;
+    case "ensure_task_repo":
+      if (
+        result.status === "reused" ||
+        result.status === "attached" ||
+        result.status === "created_from_remote" ||
+        result.status === "created"
+      ) {
+        return { status: result.status, worktree: result.worktree };
+      }
+      return undefined;
+    case "remove_task_lane":
+      return result.status === "removed" ? { ...result } : undefined;
+    case "checkpoint_commit":
+      if (result.status === "committed") {
+        return {
+          status: result.status,
+          commit: result.commit,
+          branch: result.branch,
+          files: result.files,
+        };
+      }
+      if (result.status === "committed_with_deferred_hook") {
+        return {
+          status: result.status,
+          commit: result.commit,
+          remaining_gap: result.remaining_gap,
+        };
+      }
+      return undefined;
+    default:
+      return undefined;
+  }
 }
 
 export default function (pi: ExtensionAPI): void {
@@ -56,9 +112,10 @@ export default function (pi: ExtensionAPI): void {
     approval: "read",
     execute: async (_toolCallId, params, _signal, _onUpdate, ctx) => {
       try {
-        return respond(await taskStatus(params, ctx.cwd));
+        const result = await taskStatus(params, ctx.cwd, { taskRoot: TASK_ROOT });
+        return respond(result, detailsFor("task_status", result));
       } catch (e) {
-        return respond({ payload: { status: "error", message: (e as Error).message } });
+        return respond(errorResult(e));
       }
     },
   });
@@ -98,9 +155,10 @@ export default function (pi: ExtensionAPI): void {
     }),
     execute: async (_toolCallId, params, _signal, _onUpdate, _ctx) => {
       try {
-        return respond(await ensureTaskRepo(params, _ctx.cwd));
+        const result = await ensureTaskRepo(params, _ctx.cwd, { taskRoot: TASK_ROOT });
+        return respond(result, detailsFor("ensure_task_repo", result));
       } catch (e) {
-        return respond({ payload: { status: "error", message: (e as Error).message } });
+        return respond(errorResult(e));
       }
     },
   });
@@ -122,9 +180,10 @@ export default function (pi: ExtensionAPI): void {
     approval: "write",
     execute: async (_toolCallId, params, _signal, _onUpdate, _ctx) => {
       try {
-        return respond(await removeTaskLane(params, _ctx.cwd));
+        const result = await removeTaskLane(params, _ctx.cwd, { taskRoot: TASK_ROOT });
+        return respond(result, detailsFor("remove_task_lane", result));
       } catch (e) {
-        return respond({ payload: { status: "error", message: (e as Error).message } });
+        return respond(errorResult(e));
       }
     },
   });
@@ -181,9 +240,10 @@ export default function (pi: ExtensionAPI): void {
     }),
     execute: async (_toolCallId, params, _signal, _onUpdate, _ctx) => {
       try {
-        return respond(await checkpointCommit(params, _ctx.cwd));
+        const result = await checkpointCommit(params, _ctx.cwd, { taskRoot: TASK_ROOT });
+        return respond(result, detailsFor("checkpoint_commit", result));
       } catch (e) {
-        return respond({ payload: { status: "error", message: (e as Error).message } });
+        return respond(errorResult(e));
       }
     },
   });
@@ -192,11 +252,15 @@ export default function (pi: ExtensionAPI): void {
   pi.on("tool_call", (event, ctx) => {
     if (event.toolName === "write" || event.toolName === "edit") {
       const input = event.input as Record<string, unknown>;
-      return guardManagedWriteTarget(input.path as string | undefined, ctx.cwd);
+      return guardManagedWriteTarget(input.path as string | undefined, ctx.cwd, {
+        taskRoot: TASK_ROOT,
+      });
     }
 
     if (event.toolName !== "bash") return;
     const input = event.input as Record<string, unknown>;
-    return guardManagedBashCommand(input.command as string | undefined, ctx.cwd);
+    return guardManagedBashCommand(input.command as string | undefined, ctx.cwd, {
+      taskRoot: TASK_ROOT,
+    });
   });
 }

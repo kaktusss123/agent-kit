@@ -63,9 +63,3 @@ export interface GuardBlock {
 }
 export type GuardVerdict = GuardBlock | undefined;
 
-/** Host-neutral result of a runtime tool flow: the JSON payload the model
- *  sees, plus optional structured details the host may attach. */
-export interface FlowOutcome<P = unknown> {
-  payload: P;
-  details?: unknown;
-}

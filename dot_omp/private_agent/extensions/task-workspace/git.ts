@@ -1,9 +1,9 @@
 /**
- * task-workspace core — task root, path classification, git facts.
+ * task-workspace core — path classification, git facts, workspace scanning.
  *
- * Host-independent: node/fs + git CLI only. TASK_ROOT is resolved once at
- * import (env override OMP_TASK_ROOT, used by tests), mirroring the original
- * monolith behavior.
+ * Host-independent: node/fs + git CLI only. Every function that depends on
+ * the task workspace root receives it explicitly; no host-specific default
+ * or environment lookup lives here.
  */
 import { join, relative, resolve } from "node:path";
 import { homedir } from "node:os";
@@ -18,9 +18,6 @@ import type {
   ManagedRepoStatus,
   PathClassification,
 } from "./types";
-
-
-export const TASK_ROOT = realpath(process.env.OMP_TASK_ROOT ?? join(homedir(), ".omp", "tasks"));
 
 function streamText(stream: Readable): Promise<string> {
   const { promise, resolve, reject } = Promise.withResolvers<string>();
@@ -103,8 +100,8 @@ export function isLinkedWorktree(repoRoot: string): boolean {
 }
 
 
-export function underTaskRoot(p: string): boolean {
-  return p.startsWith(TASK_ROOT + "/") || p === TASK_ROOT;
+export function underTaskRoot(p: string, taskRoot: string): boolean {
+  return p.startsWith(taskRoot + "/") || p === taskRoot;
 }
 
 
@@ -183,7 +180,7 @@ export function isAllowedIgnoredPrimaryPath(root: string, target: string): boole
 }
 
 
-export function classifyPath(p: string, cwd: string): PathClassification {
+export function classifyPath(p: string, cwd: string, taskRoot: string): PathClassification {
   const expanded = expandPath(p, cwd);
   let abs = expanded;
   try {
@@ -194,7 +191,7 @@ export function classifyPath(p: string, cwd: string): PathClassification {
   }
   const root = findGitRoot(abs);
   if (!root) return "OUTSIDE_GIT";
-  if (underTaskRoot(root)) return "MANAGED_TASK_WORKTREE";
+  if (underTaskRoot(root, taskRoot)) return "MANAGED_TASK_WORKTREE";
   if (isLinkedWorktree(root)) return "OTHER_LINKED_WORKTREE";
   return "PRIMARY_CHECKOUT";
 }
@@ -248,11 +245,12 @@ export async function getInputRepoFacts(
   inputPath: string,
   gitRoot: string,
   cwd: string,
+  taskRoot: string,
 ): Promise<InputRepoFacts> {
   return {
     inputPath,
     gitRoot,
-    classification: classifyPath(inputPath, cwd),
+    classification: classifyPath(inputPath, cwd, taskRoot),
     branch: await getRepoBranch(gitRoot),
     headSha: await getRepoSha(gitRoot),
     dirty: await getSourceDirty(gitRoot),
@@ -260,8 +258,8 @@ export async function getInputRepoFacts(
 }
 
 
-export function taskWorkspacePath(task: string): string {
-  return join(TASK_ROOT, task.replace(/\//g, "_"));
+export function taskWorkspacePath(task: string, taskRoot: string): string {
+  return join(taskRoot, task.replace(/\//g, "_"));
 }
 
 export function parseWorktreePaths(output: string): string[] {
@@ -336,7 +334,7 @@ export async function getLaneFacts(
 
 
 
-export async function scanTaskWorkspaces(): Promise<
+export async function scanTaskWorkspaces(taskRoot: string): Promise<
   {
     workspace: string;
     key: string;
@@ -355,13 +353,13 @@ export async function scanTaskWorkspaces(): Promise<
 
   let entries: string[];
   try {
-    entries = await readdir(TASK_ROOT);
+    entries = await readdir(taskRoot);
   } catch {
     return workspaces;
   }
 
   for (const entry of entries) {
-    const wsPath = join(TASK_ROOT, entry);
+    const wsPath = join(taskRoot, entry);
     let subEntries: string[];
     try {
       subEntries = await readdir(wsPath);
@@ -432,7 +430,7 @@ export async function scanTaskWorkspaces(): Promise<
 /** Managed worktrees of the SAME repository that a blocked primary-checkout
  *  mutation should be redirected to: all of them when several exist, none
  *  invented when there are none. */
-export function managedWorktreeHint(root: string): string | null {
+export function managedWorktreeHint(root: string, taskRoot: string): string | null {
   const proc = spawnSync("git", ["-C", root, "worktree", "list", "--porcelain"], {
     encoding: "utf8",
   });
@@ -441,7 +439,7 @@ export function managedWorktreeHint(root: string): string | null {
   for (const line of proc.stdout.split("\n")) {
     if (!line.startsWith("worktree ")) continue;
     const wt = line.slice("worktree ".length);
-    if (underTaskRoot(wt)) managed.push(wt);
+    if (underTaskRoot(wt, taskRoot)) managed.push(wt);
   }
   if (managed.length === 0) return null;
   if (managed.length === 1) return managed[0];
