@@ -17,8 +17,14 @@ unit tests for the pure core.
 
 ## Install
 
-Symlink an extension into the pi extensions directory:
+Symlink the extensions of this checkout into the pi extensions directory:
 
 ```sh
-ln -s "$PWD/extensions/todo" ~/.pi/agent/extensions/todo
+./install.sh                # everything under extensions/
+./install.sh todo           # only the named entities
 ```
+
+Run it from the worktree you want pi to load: links are repointed at that
+checkout, the previous target is never modified, and dangling links from
+deleted worktrees are replaced. Without arguments the last run wins — with
+several active worktrees, pass explicit entity names.
