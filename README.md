@@ -8,6 +8,10 @@ tuning, ported from my oh-my-pi setup.
 - `extensions/todo/` — phased todo-list extension: `todo` tool with transcript
   persistence, sticky HUD widget, stop-time and mid-run reminders, eager prelude.
   Ported from oh-my-pi's built-in todo subsystem.
+- `extensions/perf-stats/` — omp-style usage row under each assistant response:
+  local timestamp, prompt→yield Δ, input (cache writes folded in), output and
+  cache-read tokens, TTFT, tok/s over the full request duration; plus per-tool
+  execution time.
 
 ## Layout
 
