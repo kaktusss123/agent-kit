@@ -25,8 +25,9 @@ private Git repository  (github.com:kaktusss123/omp-cmux-dotfiles)
 | Destination | Source |
 |---|---|
 | `~/.omp/agent/config.yml` | `dot_omp/private_agent/private_config.yml` |
-| `~/.omp/agent/mcp.json` | `dot_omp/private_agent/private_mcp.json` |
+| `~/.omp/agent/mcp.json` | `dot_omp/private_agent/mcp.json` |
 | `~/.omp/agent/extensions/*` | `dot_omp/private_agent/extensions/*` |
+| `~/.omp/agent/extensions/tsconfig.json` | `dot_omp/private_agent/extensions/tsconfig.json.tmpl` — needs `ompDevRoot` in chezmoi data; without it, a minimal standalone config is applied |
 | `~/.omp/agent/skills/*` | `dot_omp/private_agent/skills/*` |
 | `~/.omp/agent/prompts/*` | `dot_omp/private_agent/prompts/*` |
 | `~/.omp/agent/managed-skills/*` | `dot_omp/private_agent/managed-skills/*` |
