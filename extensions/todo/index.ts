@@ -38,10 +38,6 @@ import {
 	buildStopReminderText,
 } from "./reminders";
 
-import toolDescription from "./prompts/tool-description.md" with { type: "text" };
-import eagerPreludePrompt from "./prompts/eager-prelude.md" with { type: "text" };
-import midRunNudgePrompt from "./prompts/mid-run-nudge.md" with { type: "text" };
-
 // =============================================================================
 // Configuration (OMP defaults; edit here — no settings registry by design)
 // =============================================================================
@@ -109,7 +105,20 @@ const TodoParams = Type.Object({
 // Extension
 // =============================================================================
 
-export default function (pi: ExtensionAPI) {
+export default async function (pi: ExtensionAPI) {
+	// Prompt texts live in .md files next to this module. pi loads extensions
+	// through jiti, which has no Bun-style `.md` import attributes, so read
+	// them at startup instead.
+	const readPrompt = async (name: string): Promise<string> => {
+		const url = new URL(`./prompts/${name}`, import.meta.url);
+		return await Bun.file(url).text();
+	};
+	const [toolDescription, eagerPreludePrompt, midRunNudgePrompt] = await Promise.all([
+		readPrompt("tool-description.md"),
+		readPrompt("eager-prelude.md"),
+		readPrompt("mid-run-nudge.md"),
+	]);
+
 	// Canonical in-memory state; rehydrated from the session branch on
 	// session_start / session_tree, written on successful tool ops.
 	let phases: TodoPhase[] = [];
