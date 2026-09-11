@@ -26,7 +26,13 @@ interface LogShape {
 
 export default function (pi: ExtensionAPI) {
 	const log: LogShape = { events: [], messages: [], results: {} };
-	const flush = () => fs.writeFileSync(LOG, JSON.stringify(log, null, 2));
+	// Atomic flush: the verify script polls this file concurrently, and a
+	// torn read of a half-written JSON would crash its parser.
+	const flush = () => {
+		const tmp = LOG + ".tmp";
+		fs.writeFileSync(tmp, JSON.stringify(log, null, 2));
+		fs.renameSync(tmp, LOG);
+	};
 	const entry = (kind: string, data?: Record<string, unknown>) => {
 		log.events.push({ at: Date.now(), kind, ...data });
 		flush();

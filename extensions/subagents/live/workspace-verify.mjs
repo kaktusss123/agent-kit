@@ -81,7 +81,14 @@ if (!stateData) {
 const modelPattern = `${stateData.model.provider}/${stateData.model.id}`;
 console.log(`-- main model: ${modelPattern}`);
 
-const log = () => JSON.parse(fs.readFileSync(path.join(LIVE, "driver-log.json"), "utf8"));
+let lastGoodLog = null;
+const log = () => {
+	try {
+		lastGoodLog = JSON.parse(fs.readFileSync(path.join(LIVE, "driver-log.json"), "utf8"));
+	} catch { /* torn read or not written yet */ }
+	if (lastGoodLog === null) throw new Error("no log yet");
+	return lastGoodLog;
+};
 const waitResult = async (key, timeoutMs) => {
 	const t0 = Date.now();
 	while (Date.now() - t0 < timeoutMs) {
@@ -201,10 +208,15 @@ const task1 = [
 		// a completion notification plus the query-mode state.
 		let q = null;
 		const t0 = Date.now();
-		while (Date.now() - t0 < 240000) {
+		while (Date.now() - t0 < 300000) {
+			await sleep(3000);
 			runCmd(`/wdrv-query ${runId} L3Q`);
-			q = await waitResult("L3Q", 15000);
-			if (q?.details?.status === "done") break;
+			await sleep(1500);
+			try {
+				const l = log();
+				q = l.results.L3Q;
+				if (q?.details?.status === "done") break;
+			} catch { /* no log yet */ }
 		}
 		check("L3/A6 completed after respond", !!q && q.details?.status === "done", JSON.stringify(q?.details ?? q).slice(0, 160));
 		check("L3 envelope mentions the magic word", !!q?.details?.result && JSON.stringify(q.details.result).includes("sesame"));
@@ -328,9 +340,14 @@ const task1 = [
 		let r = null;
 		const t0 = Date.now();
 		while (Date.now() - t0 < 120000) {
+			await sleep(3000);
 			runCmd(`/wdrv-query ${first.details.runId} L9Q`);
-			const q = await waitResult("L9Q", 15000);
-			if (q?.details?.status === "partial") { r = q; break; }
+			await sleep(1500);
+			try {
+				const l = log();
+				const v = l.results.L9Q;
+				if (v?.details?.status === "partial") { r = v; break; }
+			} catch { /* no log yet */ }
 		}
 		const l = log();
 		const ev = l.events.find((e) => e.kind === "spawned" && e.resultKey === "L9");
