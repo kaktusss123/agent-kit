@@ -398,7 +398,7 @@ describe("deadline", () => {
 });
 
 describe("needs_input", () => {
-	test("ask_parent suspends: dispatch returns needs_input, respond then completes", async () => {
+	test("structured ask suspends: dispatch returns needs_input, respond then completes", async () => {
 		const h = makeLayer();
 		try {
 			const ws = makeWorktree(h.taskRoot, "ask-ws");
@@ -408,8 +408,8 @@ describe("needs_input", () => {
 				type: "extension_ui_request",
 				id: "ui-77",
 				method: "input",
-				title: "ask_parent",
-				placeholder: "Which base ref?",
+				title: "ask",
+				placeholder: JSON.stringify({ questions: [{ id: "base", question: "Which base ref?", options: [{ label: "main" }, { label: "develop" }], recommended: 1 }] }),
 			});
 			await tick(30);
 			// The pending dispatch call must still be blocked here (needs_input
@@ -452,20 +452,23 @@ describe("needs_input", () => {
 				type: "extension_ui_request",
 				id: "ui-9",
 				method: "input",
-				title: "ask_parent",
-				placeholder: "q?",
+				title: "ask",
+				placeholder: JSON.stringify({ questions: [{ id: "q", question: "q?", options: [{ label: "yes" }, { label: "no" }] }] }),
 			});
 			const res = await pending;
 			expect(res.details).toMatchObject({
 				status: "needs_input",
 				dispatched: true,
-				question: "q?",
+				question: "q: q? (yes | no)",
 			});
 			const { runId, agentId } = res.details as { runId: string; agentId: string };
 
 			// run NOT finished: query-mode returns needs_input with deadline left
 			const q1 = await dispatchCall(h, { run_id: runId });
 			expect(q1.details).toMatchObject({ status: "needs_input", state: "waiting_input" });
+			// structured request survives to query-mode (lossless forwarding)
+			const req = (q1.details as { request?: { questions: Array<{ id?: string }> } }).request;
+			expect(req?.questions[0]?.id).toBe("q");
 			expect((q1.details.deadlineMsLeft as number) ?? 0).toBeGreaterThan(0);
 			void agentId;
 		} finally {
@@ -504,8 +507,8 @@ describe("detach and cancel", () => {
 				type: "extension_ui_request",
 				id: "ui-detach",
 				method: "input",
-				title: "ask_parent",
-				placeholder: "Second question while detached?",
+				title: "ask",
+				placeholder: JSON.stringify({ questions: [{ id: "q2", question: "Second question while detached?", options: [{ label: "a" }] }] }),
 			});
 			await tick(30);
 			const ask = h.messages.find(

@@ -50,6 +50,13 @@ async function spawnRunning(
 
 const tick = (ms = 30) => new Promise((r) => setTimeout(r, ms));
 
+// Canonical child ask wire format: title "ask", placeholder = JSON payload.
+const askPayload = (id: string, question: string, extra: Record<string, unknown> = {}) =>
+	JSON.stringify({ questions: [{ id, question, options: [{ label: "a" }, { label: "b" }], ...extra }] });
+const askUiRequest = (reqId: string, payload: string) => ({
+	type: "extension_ui_request", id: reqId, method: "input", title: "ask", placeholder: payload,
+});
+
 describe("LocalSubagentRuntime.spawn", () => {
 	test("resolves on prompt acceptance and passes a minimal controlled argv", async () => {
 		const { harness, runtime, cleanup } = makeRuntime();
@@ -223,11 +230,12 @@ describe("LocalSubagentRuntime wait", () => {
 				type: "extension_ui_request",
 				id: "ui-1",
 				method: "input",
-				title: "ask_parent",
-				placeholder: "Which database?",
+				title: "ask",
+				placeholder: askPayload("db", "Which database?"),
 			});
 			const outcome = await pending;
-			expect(outcome).toMatchObject({ status: "needs_input", question: "Which database?" });
+			expect(outcome).toMatchObject({ status: "needs_input", question: "db: Which database? (a | b)" });
+			expect(outcome.status === "needs_input" && outcome.request.questions[0]?.id).toBe("db");
 			expect(runtime.inspect(id)[0].state).toBe("waiting_input");
 		} finally {
 			await runtime.shutdown();
@@ -236,7 +244,7 @@ describe("LocalSubagentRuntime wait", () => {
 	});
 });
 
-describe("LocalSubagentRuntime escalation (ask_parent)", () => {
+describe("LocalSubagentRuntime escalation (structured ask)", () => {
 	test("respond delivers extension_ui_response and resumes the child", async () => {
 		const { harness, runtime, events, cleanup } = makeRuntime();
 		try {
@@ -245,8 +253,8 @@ describe("LocalSubagentRuntime escalation (ask_parent)", () => {
 				type: "extension_ui_request",
 				id: "ui-42",
 				method: "input",
-				title: "ask_parent",
-				placeholder: "Pick a color",
+				title: "ask",
+				placeholder: askPayload("color", "Pick a color"),
 			});
 			await tick(10);
 			expect(runtime.inspect(id)[0].state).toBe("waiting_input");
@@ -269,16 +277,16 @@ describe("LocalSubagentRuntime escalation (ask_parent)", () => {
 		try {
 			const { id, proc } = await spawnRunning(runtime, harness);
 			proc.writeToStdout({
-				type: "extension_ui_request", id: "ui-1", method: "input", title: "ask_parent", placeholder: "q1",
+				type: "extension_ui_request", id: "ui-1", method: "input", title: "ask", placeholder: askPayload("q1", "q one"),
 			});
 			await tick(5);
 			proc.writeToStdout({
-				type: "extension_ui_request", id: "ui-2", method: "input", title: "ask_parent", placeholder: "q2",
+				type: "extension_ui_request", id: "ui-2", method: "input", title: "ask", placeholder: askPayload("q2", "q two"),
 			});
 			await tick(5);
 			const resp = proc.commands.find((c) => c.type === "extension_ui_response");
 			expect(resp).toMatchObject({ id: "ui-2", cancelled: true });
-			expect(runtime.inspect(id)[0].pendingQuestion).toBe("q1");
+			expect(runtime.inspect(id)[0].pendingQuestion).toBe("q1: q one (a | b)");
 		} finally {
 			await runtime.shutdown();
 			cleanup();
@@ -374,7 +382,7 @@ describe("LocalSubagentRuntime steer / followUp", () => {
 		try {
 			const { id, proc } = await spawnRunning(runtime, harness);
 			proc.writeToStdout({
-				type: "extension_ui_request", id: "ui-1", method: "input", title: "ask_parent", placeholder: "q",
+				type: "extension_ui_request", id: "ui-1", method: "input", title: "ask", placeholder: askPayload("q", "q"),
 			});
 			await tick(5);
 			await runtime.followUp(id, "x");
@@ -605,13 +613,13 @@ describe("regressions: per-run state resets", () => {
 	});
 });
 
-describe("regressions: ask_parent dialog lifetime sync", () => {
-	test("F5: ask_parent tool end clears the pending question even without a response", async () => {
+describe("regressions: ask dialog lifetime sync", () => {
+	test("F5: ask tool end clears the pending question even without a response", async () => {
 		const { harness, runtime, cleanup } = makeRuntime();
 		try {
 			const { id, proc } = await spawnRunning(runtime, harness);
 			proc.writeToStdout({
-				type: "extension_ui_request", id: "ui-9", method: "input", title: "ask_parent", placeholder: "pick one",
+				type: "extension_ui_request", id: "ui-9", method: "input", title: "ask", placeholder: askPayload("pick", "pick one"),
 			});
 			await tick(5);
 			expect(runtime.inspect(id)[0].state).toBe("waiting_input");
@@ -621,7 +629,7 @@ describe("regressions: ask_parent dialog lifetime sync", () => {
 			proc.writeToStdout({
 				type: "tool_execution_end",
 				toolCallId: "call-1",
-				toolName: "ask_parent",
+				toolName: "ask",
 				result: { content: [{ type: "text", text: "(no answer)" }] },
 				isError: false,
 			});
@@ -784,10 +792,18 @@ describe("delivery formatting", () => {
 		expect(text).not.toContain("transcript");
 
 		const ni = formatModelEvent({
-			kind: "needs_input", agentId: "sa-2", label: "w", question: "Use which port?",
+			kind: "needs_input",
+			agentId: "sa-2",
+			label: "w",
+			question: "Use which port?",
+			request: { questions: [{ id: "port", question: "Use which port?", options: [{ label: "8080" }] }] },
 		});
 		expect(ni).toContain("needs input");
 		expect(ni).toContain("op=respond");
+		// Resolution instruction (SPEC §10) and the lossless structured request.
+		expect(ni).toContain("already established");
+		expect(ni).toContain('"id": "port"');
+		expect(ni).toContain("8080");
 	});
 
 	test("result formatting never includes more than the result itself", () => {
@@ -819,5 +835,96 @@ describe("delivery formatting", () => {
 		]);
 		const first = lines.split("\n")[0];
 		expect(first).toContain("run");
+	});
+});
+
+describe("structured canonical ask (portable-ask contract)", () => {
+	test("needs_input carries the lossless structured request (A5)", async () => {
+		const { harness, runtime, events, cleanup } = makeRuntime();
+		try {
+			const { id, proc } = await spawnRunning(runtime, harness);
+			const payload = JSON.stringify({
+				questions: [
+					{
+						id: "base_branch",
+						question: "Which base branch?",
+						header: "Branch",
+						options: [
+							{ label: "main", description: "stable", preview: "```\nmain preview\n```" },
+							{ label: "develop", description: "integration" },
+						],
+						multi: false,
+						recommended: 1,
+					},
+				],
+			});
+			const pending = runtime.wait(id);
+			proc.writeToStdout({ type: "extension_ui_request", id: "ui-11", method: "input", title: "ask", placeholder: payload });
+			const outcome = await pending;
+			expect(outcome.status).toBe("needs_input");
+			const request = (outcome as { request?: { questions: Array<Record<string, unknown>> } }).request;
+			const q = request?.questions[0] ?? {};
+			expect(q.id).toBe("base_branch");
+			expect(q.question).toBe("Which base branch?");
+			expect(q.header).toBe("Branch");
+			expect(q.multi).toBe(false);
+			expect(q.recommended).toBe(1);
+			expect((q.options as Array<{ label?: string; description?: string; preview?: string }>)[0]).toEqual({
+				label: "main",
+				description: "stable",
+				preview: "```\nmain preview\n```",
+			});
+			// The background listener never saw it: wait() consumed the event
+			// (event ownership — one consumer). The outcome carries the request.
+			expect(events.some((e) => e.kind === "needs_input")).toBe(false);
+		} finally {
+			await runtime.shutdown();
+			cleanup();
+		}
+	});
+
+	test("unparseable payload is cancelled fail-closed: no pending question, no event", async () => {
+		const { harness, runtime, events, cleanup } = makeRuntime();
+		try {
+			const { id, proc } = await spawnRunning(runtime, harness);
+			proc.writeToStdout({ type: "extension_ui_request", id: "ui-1", method: "input", title: "ask", placeholder: "plain prose not json" });
+			await tick(10);
+			const resp = proc.commands.find((c) => c.type === "extension_ui_response");
+			expect(resp).toMatchObject({ id: "ui-1", cancelled: true });
+			expect(runtime.inspect(id)[0].state).toBe("running");
+			expect(runtime.inspect(id)[0].pendingQuestion).toBeUndefined();
+			expect(events.some((e) => e.kind === "needs_input")).toBe(false);
+			// structurally invalid JSON object (missing questions)
+			proc.writeToStdout({ type: "extension_ui_request", id: "ui-2", method: "input", title: "ask", placeholder: '{"foo":1}' });
+			await tick(10);
+			expect(runtime.inspect(id)[0].state).toBe("running");
+		} finally {
+			await runtime.shutdown();
+			cleanup();
+		}
+	});
+
+	test("second sequential ask from the same child works (respond, ask again)", async () => {
+		const { harness, runtime, cleanup } = makeRuntime();
+		try {
+			const { id, proc } = await spawnRunning(runtime, harness);
+			proc.writeToStdout(askUiRequest("ui-1", askPayload("first", "first?")));
+			await tick(10);
+			await runtime.respond(id, "first answer");
+			await tick(10);
+			proc.writeToStdout(askUiRequest("ui-2", askPayload("second", "second?")));
+			await tick(10);
+			expect(runtime.inspect(id)[0].state).toBe("waiting_input");
+			await runtime.respond(id, "second answer");
+			await tick(10);
+			const responses = proc.commands.filter((c) => c.type === "extension_ui_response");
+			expect(responses).toHaveLength(2);
+			expect(responses[0]).toMatchObject({ id: "ui-1", value: "first answer" });
+			expect(responses[1]).toMatchObject({ id: "ui-2", value: "second answer" });
+			expect(runtime.inspect(id)[0].state).toBe("running");
+		} finally {
+			await runtime.shutdown();
+			cleanup();
+		}
 	});
 });

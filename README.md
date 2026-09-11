@@ -15,6 +15,14 @@ tuning, ported from my oh-my-pi setup.
   hosted web search, reusing pi's `/login openai-codex` OAuth credential (no
   separate auth). Forced hosted tool, SSE parsing, citations/source
   deduplication, typed failures, compact model-facing output.
+- `extensions/ask/` — portable `ask` tool: one canonical model-facing question
+  contract (OMP-compatible schema: multi-question, single/multi-select,
+  recommended, descriptions, previews, free-form `Other`, review,
+  `Chat about this`). Interactive main gets a rich TUI overlay dialog, RPC
+  mains degrade to standard pi dialogs, headless fails closed. Subagent
+  children answer through the same `ask` via the subagents bridge (see
+  its README); main resolves child requests from context first and only
+  escalates unknown decisions to the user.
 - `extensions/continue-shortcut/` — `.`/`c` continue shortcut: submitting a
   bare dot resumes the agent with a hidden continue directive instead of a
   visible user message. Ported from oh-my-pi's input-controller shortcut;

@@ -4,6 +4,7 @@
  * This module must stay free of pi imports so pure unit tests (bun test)
  * can import it without the pi package being resolvable.
  */
+import type { AskInput } from "../ask/contract";
 
 /** Logical agent state. Process liveness is tracked separately (`alive`). */
 export type AgentState =
@@ -58,6 +59,9 @@ export interface SpawnOptions {
 export interface PendingQuestion {
 	/** RPC extension_ui_request id used to deliver the answer. */
 	requestId: string;
+	/** The structured canonical ask request (lossless, schema-validated). */
+	request: AskInput;
+	/** Compact flat rendering for status/snapshot display. */
 	question: string;
 	askedAt: number;
 }
@@ -110,15 +114,15 @@ export type SubagentModelEvent =
 	| { kind: "completed"; agentId: string; label: string; summary: string }
 	| { kind: "failed"; agentId: string; label: string; reason: string }
 	| { kind: "cancelled"; agentId: string; label: string }
-	| { kind: "needs_input"; agentId: string; label: string; question: string }
-	/** Workspace-routed only: a pending ask_parent was resolved (respond or child-side timeout). */
+	| { kind: "needs_input"; agentId: string; label: string; question: string; request: AskInput }
+	/** Workspace-routed only: a pending ask was resolved (respond or aborted child-side). */
 	| { kind: "input_resolved"; agentId: string; label: string };
 
 export type WaitOutcome =
 	| { status: "completed"; summary: string }
 	| { status: "failed"; reason: string }
 	| { status: "cancelled" }
-	| { status: "needs_input"; question: string }
+	| { status: "needs_input"; question: string; request?: AskInput }
 	| { status: "timeout"; state: AgentState };
 
 /**
@@ -142,7 +146,7 @@ export interface SubagentRuntime {
 	): Promise<WaitOutcome>;
 	/** Lazily fetch the full persisted result of an agent. */
 	result(agentId: string): Promise<AgentResult | null>;
-	/** Answer a pending ask_parent question; the child resumes. */
+	/** Answer a pending ask question; the child resumes. */
 	respond(agentId: string, answer: string): Promise<void>;
 	/** Stop an agent: pi abort, then SIGTERM, then SIGKILL escalation. */
 	cancel(agentId: string): Promise<void>;

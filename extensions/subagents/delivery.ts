@@ -6,6 +6,33 @@
  * the persisted result file, reachable via `subagent result`.
  */
 import type { AgentResult, AgentSnapshot, SubagentModelEvent } from "./types";
+import { formatAskRequestJson, type AskInput } from "../ask/contract";
+
+/**
+ * The resolver instruction (SPEC §10): Main first tries to answer a child's
+ * ask from context it already has; only an unknown decision is re-asked of
+ * the user through Main's own `ask`.
+ */
+export const RESOLVE_INSTRUCTION =
+	"This agent is waiting for input. " +
+	"If the answer is already established by the current conversation, task context, accepted decisions, " +
+	"or supplied evidence, resolve the request directly — do not ask the user again for information that is already known. " +
+	"If the answer is not known, use `ask` with the supplied request to obtain the missing decision. " +
+	"Then respond to the waiting agent.";
+
+/**
+ * Shared needs_input rendering for every Main-facing surface (background
+ * delivery, subagent wait, workspace_agent events/query): the flat summary,
+ * the resolution instruction, and the lossless structured request.
+ */
+export function formatNeedsInputBody(question: string, request: AskInput | undefined): string[] {
+	const lines = [`question: ${question}`];
+	if (request && request.questions.length > 0) {
+		lines.push("request:", "```json", formatAskRequestJson(request), "```");
+	}
+	lines.push(RESOLVE_INSTRUCTION);
+	return lines;
+}
 
 export function formatModelEvent(ev: SubagentModelEvent): string {
 	switch (ev.kind) {
@@ -26,7 +53,7 @@ export function formatModelEvent(ev: SubagentModelEvent): string {
 		case "needs_input":
 			return [
 				`[subagent needs input] ${ev.label} (id: ${ev.agentId})`,
-				`question: ${ev.question}`,
+				...formatNeedsInputBody(ev.question, ev.request),
 				`answer with subagent op=respond id=${ev.agentId} answer=<...>; the agent is suspended until then`,
 			].join("\n");
 		case "input_resolved":

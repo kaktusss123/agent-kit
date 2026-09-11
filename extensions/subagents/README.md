@@ -27,15 +27,21 @@ usage, and failure reason live in a persisted result file
 (`$PI_CODING_AGENT_DIR/subagents/results/<id>.json`, default
 `~/.pi/agent/subagents/results/`), fetched lazily via `subagent op=result`.
 
-## Escalation (`ask_parent`)
+## Escalation (`ask`)
 
 Children run with a minimal bridge extension (`bridge.ts`) that registers one
-tool: `ask_parent`. It blocks the child (only the child) on the standard RPC
-extension UI protocol (`extension_ui_request`, method `input`, title
-`ask_parent`). The controller surfaces it to main as `needs_input`; main (or
-the user) answers via `subagent op=respond`, and the same child tool call
-resumes. A generous timeout (default 30 min, `PI_SUBAGENT_ASK_TIMEOUT_MS`)
-prevents forever-blocked orphans if main dies.
+tool: `ask` — the canonical model-facing question contract shared with main
+(see `../ask/contract.ts`). There is no `ask_parent` anywhere in the model
+surface; in every role the tool is just `ask`. The call blocks the child (only
+the child) on the standard RPC extension UI protocol (`extension_ui_request`,
+method `input`, title `ask`) carrying the structured request losslessly as the
+payload. The controller surfaces it to main as a structured `needs_input`
+(original ids, options, descriptions, previews, multi, recommended); main
+first resolves from its own context and only escalates an unknown decision to
+the user (via its own `ask`), then answers via `subagent op=respond` — a
+plain-text answer resumes the same child tool call. There is deliberately no
+answer timeout: an unresolved decision surfaces as a cancellation (runtime
+cancel/deadline/shutdown), never as an instruction to guess.
 
 ## Child environment
 

@@ -33,6 +33,14 @@ export default function (pi: ExtensionAPI) {
 		return rt;
 	};
 
+	pi.registerCommand("drv-tools", {
+		description: "Dump registered tool names/schemas as JSON",
+		handler: async (_args, ctx) => {
+			const tools = pi.getAllTools().map((t) => ({ name: t.name, parameters: t.parameters }));
+			ctx.ui.notify(`DRIVERTOOLS:${JSON.stringify(tools)}`, "info");
+		},
+	});
+
 	pi.registerCommand("drv-log", {
 		description: "Dump driver log as JSON",
 		handler: async (_args, ctx) => {
@@ -49,7 +57,7 @@ export default function (pi: ExtensionAPI) {
 			const id = ++counter;
 			const task =
 				mode === "ask"
-					? `Call the ask_parent tool with question 'What magic word should I use?' then wait for the answer. After receiving it, reply with exactly: ASKED-${mark}-ANSWERED`
+					? `Call the ask tool with questions: [{ id: 'magic', question: 'What magic word should I use?', options: [{ label: 'abra' }, { label: 'cadabra' }] }] then wait for the answer. After receiving it, reply with exactly: ASKED-${mark}-ANSWERED`
 					: `Use bash to run exactly: sleep ${dur}. Then reply with exactly: ${mark}`;
 			const pending = r.spawn({ task, label: label || `drv-${id}` });
 			pending

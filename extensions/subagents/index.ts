@@ -15,14 +15,16 @@
  * - `/subagents` command: compact live status table.
  *
  * Escalation uses the standard RPC extension UI protocol: the child bridge's
- * `ask_parent` tool blocks on ctx.ui.input; the controller answers with
- * extension_ui_response, resuming the same child tool call.
+ * `ask` tool (the canonical question contract, see ../ask/contract.ts) blocks
+ * on ctx.ui.input carrying the structured request; the controller intercepts
+ * it, surfaces it to Main, and answers with extension_ui_response, resuming
+ * the same child tool call.
  */
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { StringEnum } from "@earendil-works/pi-ai";
 import { Type } from "typebox";
 import { LocalSubagentRuntime } from "./controller";
-import { formatResult, formatStatusList } from "./delivery";
+import { formatResult, formatStatusList, RESOLVE_INSTRUCTION } from "./delivery";
 import { createWorkspaceLayer, managedAgentOpPolicy, type WorkspaceLayer } from "./workspace-agent";
 import type { SubagentRuntime } from "./types";
 import { attachDelivery } from "./wiring";
@@ -98,7 +100,7 @@ export default function (pi: ExtensionAPI) {
 			"Ops: spawn (async, returns an id immediately; the child works in parallel), status,",
 			"steer (redirect a running child), follow_up (queue work for after the current run,",
 			"or resume an idle child), wait (block until completed/failed/needs_input), result",
-			"(fetch the full persisted result), respond (answer a child's ask_parent question),",
+			"(fetch the full persisted result), respond (answer a child's pending question),",
 			"cancel (abort and terminate a child).",
 			"When a background child settles, you receive a short [subagent ...] event message;",
 			"the child transcript is never added to your context — fetch details with op=result.",
@@ -106,7 +108,8 @@ export default function (pi: ExtensionAPI) {
 		promptGuidelines: [
 			"Use subagent op=spawn to delegate self-contained work that does not need your direct involvement, especially parallelizable or exploratory tasks.",
 			"spawn returns immediately; keep working or spawn more agents, then use subagent op=wait to block for a specific child when you need its outcome.",
-			"When a child reports needs_input, answer via subagent op=respond, or ask the user first and then respond.",
+			"When a child reports needs_input, first try to resolve the request from your own conversation and task context — do not ask the user again for information that is already known.",
+			"Only if the answer is unknown, use `ask` with the child's supplied request to get the missing decision, then answer via subagent op=respond (a plain-text answer is enough).",
 		],
 		parameters: SubagentParams,
 
@@ -177,7 +180,19 @@ export default function (pi: ExtensionAPI) {
 								return err(`Subagent ${params.id} failed: ${outcome.reason}`);
 							case "needs_input":
 								return ok(
-									`Subagent ${params.id} asks: ${outcome.question}\nAnswer via op=respond id=${params.id} answer=<...> (ask the user if you don't know).`,
+									[
+										`Subagent ${params.id} asks: ${outcome.question}`,
+										...(outcome.request
+											? [
+													"request:",
+													"```json",
+													JSON.stringify(outcome.request, null, 2),
+													"```",
+												]
+											: []),
+										RESOLVE_INSTRUCTION,
+										`Answer via op=respond id=${params.id} answer=<...>.`,
+									].join("\n"),
 									{ wait: outcome },
 								);
 							case "cancelled":

@@ -249,7 +249,7 @@ describe("retire() — terminal termination preserving the record", () => {
 });
 
 describe("input_resolved routing (F3)", () => {
-	test("respond emits input_resolved to the workspace layer; a second ask_parent emits a fresh needs_input", async () => {
+	test("respond emits input_resolved to the workspace layer; a second ask emits a fresh needs_input", async () => {
 		const { harness, runtime, events, workspaceEvents, cleanup } = makeRuntime();
 		try {
 			const pending = runtime.spawn({ task: "t", label: "owner-i", eventRoute: "workspace" });
@@ -259,9 +259,9 @@ describe("input_resolved routing (F3)", () => {
 			const snap = await pending;
 
 			// first question: needs_input routed to the workspace layer only
-			proc.writeToStdout({ type: "extension_ui_request", id: "ui-1", method: "input", title: "ask_parent", placeholder: "q1" });
+			proc.writeToStdout({ type: "extension_ui_request", id: "ui-1", method: "input", title: "ask", placeholder: JSON.stringify({ questions: [{ id: "q1", question: "q one", options: [{ label: "a" }] }] }) });
 			await tick(20);
-			expect(workspaceEvents.some((e) => e.kind === "needs_input" && (e as any).question === "q1")).toBe(true);
+			expect(workspaceEvents.some((e) => e.kind === "needs_input" && (e as any).question === "q1: q one (a)")).toBe(true);
 
 			// Main responds: input_resolved clears the pending question
 			await runtime.respond(snap.id, "a1");
@@ -270,12 +270,12 @@ describe("input_resolved routing (F3)", () => {
 			expect(runtime.inspect(snap.id)[0]!.pendingQuestion).toBeUndefined();
 
 			// second question: a fresh needs_input (no dedup, no swallow)
-			proc.writeToStdout({ type: "extension_ui_request", id: "ui-2", method: "input", title: "ask_parent", placeholder: "q2" });
+			proc.writeToStdout({ type: "extension_ui_request", id: "ui-2", method: "input", title: "ask", placeholder: JSON.stringify({ questions: [{ id: "q2", question: "q two", options: [{ label: "b" }] }] }) });
 			await tick(20);
-			expect(workspaceEvents.some((e) => e.kind === "needs_input" && (e as any).question === "q2")).toBe(true);
+			expect(workspaceEvents.some((e) => e.kind === "needs_input" && (e as any).question === "q2: q two (b)")).toBe(true);
 
 			// child-side dialog timeout resolves the question: input_resolved again
-			proc.writeToStdout({ type: "tool_execution_end", toolName: "ask_parent", toolCallId: "tc-2" });
+			proc.writeToStdout({ type: "tool_execution_end", toolName: "ask", toolCallId: "tc-2" });
 			await tick(20);
 			const resolved = workspaceEvents.filter((e) => e.kind === "input_resolved");
 			expect(resolved.length).toBe(2);
@@ -335,12 +335,12 @@ describe("workspace event routing", () => {
 				type: "extension_ui_request",
 				id: "ui-1",
 				method: "input",
-				title: "ask_parent",
-				placeholder: "Which base ref?",
+				title: "ask",
+				placeholder: JSON.stringify({ questions: [{ id: "base", question: "Which base ref?", options: [{ label: "main" }] }] }),
 			});
 			await tick(20);
 			expect(workspaceEvents).toHaveLength(1);
-			expect(workspaceEvents[0]).toMatchObject({ kind: "needs_input", question: "Which base ref?" });
+			expect(workspaceEvents[0]).toMatchObject({ kind: "needs_input", question: "base: Which base ref? (main)" });
 			expect(events).toHaveLength(0);
 			expect(runtime.inspect(snap.id)[0].state).toBe("waiting_input");
 		} finally {
