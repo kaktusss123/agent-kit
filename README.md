@@ -10,8 +10,7 @@ tuning, ported from my oh-my-pi setup.
   Ported from oh-my-pi's built-in todo subsystem.
 - `extensions/perf-stats/` — omp-style usage row under each assistant response:
   local timestamp, prompt→yield Δ, input (cache writes folded in), output and
-  cache-read tokens, TTFT, tok/s over the full request duration; plus per-tool
-  execution time.
+  cache-read tokens, TTFT, tok/s over the full request duration.
 - `extensions/web-search/` — `web_search` tool over the ChatGPT Codex backend's
   hosted web search, reusing pi's `/login openai-codex` OAuth credential (no
   separate auth). Forced hosted tool, SSE parsing, citations/source
@@ -27,6 +26,13 @@ tuning, ported from my oh-my-pi setup.
   result/respond/cancel), async-first, background completion/escalation
   delivery at safe turn boundaries, child transcripts never enter main context.
   See `extensions/subagents/README.md`.
+- `extensions/agent-events/` — semantic runtime events observed from pi's
+  lifecycle hooks (no LLM-facing tool) and dispatched through a minimal
+  `AgentEventSink` interface. Ships `WarpCliAgentSink` (Warp CLI Agent
+  Protocol v1 over OSC 777, tmux passthrough included); terminal sinks are
+  gated to the top-level interactive TUI session, so headless/subagent runs
+  never write escape sequences. A future control-plane sink plugs in without
+  touching lifecycle code.
 
 ## Layout
 

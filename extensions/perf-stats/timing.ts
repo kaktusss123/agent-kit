@@ -21,7 +21,7 @@
  *   surfacing a duration-shaped fake value.
  */
 
-import type { TextUsageRow, ToolUsageRow } from "./format";
+import type { TextUsageRow } from "./format";
 
 /** Streaming events that mark the first provider-produced content block. */
 export const FIRST_CONTENT_EVENTS = new Set([
@@ -48,7 +48,6 @@ export class PerfTracker {
 	#firstContentAt = 0;
 	/** User prompt anchoring Δ; undefined until the next run anchors it. */
 	#turnStartedAt: number | undefined;
-	#toolStarts = new Map<string, number>();
 
 	constructor(now: () => number = Date.now) {
 		this.#now = now;
@@ -114,16 +113,5 @@ export class PerfTracker {
 			durationMs,
 			turnElapsedMs,
 		};
-	}
-
-	onToolStart(toolCallId: string): void {
-		if (toolCallId) this.#toolStarts.set(toolCallId, this.#now());
-	}
-
-	onToolEnd(toolCallId: string, toolName: string): ToolUsageRow | undefined {
-		const start = this.#toolStarts.get(toolCallId);
-		this.#toolStarts.delete(toolCallId);
-		if (start === undefined) return undefined;
-		return { kind: "tool", toolName, execTimeMs: Math.max(0, this.#now() - start) };
 	}
 }

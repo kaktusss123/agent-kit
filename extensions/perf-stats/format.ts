@@ -35,14 +35,6 @@ export interface TextUsageRow {
 	turnElapsedMs?: number;
 }
 
-export interface ToolUsageRow {
-	kind: "tool";
-	toolName: string;
-	execTimeMs: number;
-}
-
-export type PerfRow = TextUsageRow | ToolUsageRow;
-
 /** Local `YYYY-MM-DD HH:mm:ss` stamp. */
 export function formatUsageTimestamp(ms: number): string {
 	const d = new Date(ms);
@@ -101,9 +93,4 @@ export function formatUsageRow(row: TextUsageRow): string {
 		parts.push(`⚡ ${tps.toFixed(1)}/s`);
 	}
 	return parts.join("  ");
-}
-
-/** Format the per-tool row: `bash: 1.2s`. */
-export function formatToolRow(row: ToolUsageRow): string {
-	return `${row.toolName}: ${formatDuration(row.execTimeMs)}`;
 }

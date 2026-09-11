@@ -3,7 +3,6 @@ import {
 	type TextUsageRow,
 	CACHE_READ_ICON,
 	formatDuration,
-	formatToolRow,
 	formatTokens,
 	formatUsageRow,
 	formatUsageTimestamp,
@@ -105,8 +104,3 @@ describe("formatDuration", () => {
 	});
 });
 
-describe("formatToolRow", () => {
-	test("tool name plus duration", () => {
-		expect(formatToolRow({ kind: "tool", toolName: "bash", execTimeMs: 1234 })).toBe("bash: 1.2s");
-	});
-});
