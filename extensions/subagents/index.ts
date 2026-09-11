@@ -23,7 +23,7 @@ import { StringEnum } from "@earendil-works/pi-ai";
 import { Type } from "typebox";
 import { LocalSubagentRuntime } from "./controller";
 import { formatResult, formatStatusList } from "./delivery";
-import { createWorkspaceLayer, type WorkspaceLayer } from "./workspace-agent";
+import { createWorkspaceLayer, managedAgentOpPolicy, type WorkspaceLayer } from "./workspace-agent";
 import type { SubagentRuntime } from "./types";
 import { attachDelivery } from "./wiring";
 
@@ -121,15 +121,9 @@ export default function (pi: ExtensionAPI) {
 			// lifecycle event, and steer/follow_up would bypass the run's
 			// deadline and task contract. respond/cancel/status/result remain
 			// the Main-facing surface.
-			if (params.id && (op === "wait" || op === "steer" || op === "follow_up")) {
-				if (workspaceLayer?.isManagedAgent(params.id)) {
-					return err(
-						`${op} is not allowed for workspace_agent runs (agent ${params.id} is workspace-owned): ` +
-						(op === "wait"
-							? "its lifecycle events belong to the workspace registry — use workspace_agent(run_id) query-mode"
-							: "steering would bypass the run's deadline and task contract"),
-					);
-				}
+			if (params.id && workspaceLayer?.isManagedAgent(params.id)) {
+				const policy = managedAgentOpPolicy(op);
+				if (!policy.allowed) return err(policy.reason!);
 			}
 			try {
 				switch (op) {

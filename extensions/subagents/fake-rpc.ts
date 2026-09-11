@@ -146,11 +146,19 @@ export function createFakeSpawnFactory(): FakeHarness {
 /** Auto-accept the initial prompt like a real pi RPC child and open the run. */
 export function autoAcceptPrompt(proc: FakeRpcProcess, requestId = "spawn-prompt"): void {
 	const timer = setInterval(() => {
+		if (proc.closed) {
+			clearInterval(timer);
+			return;
+		}
 		const prompt = proc.commands.find((c) => c.type === "prompt" && c.id === requestId);
 		if (prompt) {
 			clearInterval(timer);
-			proc.writeToStdout({ id: requestId, type: "response", command: "prompt", success: true });
-			proc.writeToStdout({ type: "agent_start" });
+			try {
+				proc.writeToStdout({ id: requestId, type: "response", command: "prompt", success: true });
+				proc.writeToStdout({ type: "agent_start" });
+			} catch {
+				// process died between ticks — nothing to accept
+			}
 		}
 	}, 1);
 }
@@ -183,41 +191,50 @@ export function confirmReadiness(
 
 /** Close the current run with a final assistant text. */
 export function settleRun(proc: FakeRpcProcess, finalText: string): void {
+	if (proc.closed) return;
 	proc.writeToStdout({ type: "agent_settled" });
 	// Respond to the settle-time fetches as they arrive, consuming each so a
-	// second settle round works too.
+	// second settle round works too. Tolerates the process dying mid-round.
 	const timer = setInterval(() => {
+		if (proc.closed) {
+			clearInterval(timer);
+			return;
+		}
 		const stateCmd = proc.commands.find((c) => c.type === "get_state");
 		const statsCmd = proc.commands.find((c) => c.type === "get_session_stats");
 		const textCmd = proc.commands.find((c) => c.type === "get_last_assistant_text");
-		if (stateCmd) {
-			proc.writeToStdout({
-				id: stateCmd.id,
-				type: "response",
-				command: "get_state",
-				success: true,
-				data: { sessionFile: "/tmp/fake-session.jsonl", sessionId: "fake-session" },
-			});
-			proc.commands.splice(proc.commands.indexOf(stateCmd), 1);
-		}
-		if (statsCmd) {
-			proc.writeToStdout({
-				id: statsCmd.id,
-				type: "response",
-				command: "get_session_stats",
-				success: true,
-				data: { tokens: { input: 10, output: 5, total: 15 }, cost: 0.01 },
-			});
-			proc.commands.splice(proc.commands.indexOf(statsCmd), 1);
-		}
-		if (textCmd) {
-			proc.writeToStdout({
-				id: textCmd.id,
-				type: "response",
-				command: "get_last_assistant_text",
-				success: true,
-				data: { text: finalText },
-			});
+		try {
+			if (stateCmd) {
+				proc.writeToStdout({
+					id: stateCmd.id,
+					type: "response",
+					command: "get_state",
+					success: true,
+					data: { sessionFile: "/tmp/fake-session.jsonl", sessionId: "fake-session" },
+				});
+				proc.commands.splice(proc.commands.indexOf(stateCmd), 1);
+			}
+			if (statsCmd) {
+				proc.writeToStdout({
+					id: statsCmd.id,
+					type: "response",
+					command: "get_session_stats",
+					success: true,
+					data: { tokens: { input: 10, output: 5, total: 15 }, cost: 0.01 },
+				});
+				proc.commands.splice(proc.commands.indexOf(statsCmd), 1);
+			}
+			if (textCmd) {
+				proc.writeToStdout({
+					id: textCmd.id,
+					type: "response",
+					command: "get_last_assistant_text",
+					success: true,
+					data: { text: finalText },
+				});
+				clearInterval(timer);
+			}
+		} catch {
 			clearInterval(timer);
 		}
 	}, 1);

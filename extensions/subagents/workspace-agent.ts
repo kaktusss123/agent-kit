@@ -108,6 +108,31 @@ export interface WorkspaceLayer {
 	isManagedAgent(agentId: string): boolean;
 }
 
+/**
+ * Cross-tool allow-list for RepoOwner children on the `subagent` tool.
+ * status/result/respond/cancel stay available to Main; wait would steal the
+ * one lifecycle event from the workspace registry, steer/follow_up would
+ * bypass the run's deadline and task contract.
+ */
+export function managedAgentOpPolicy(op: string): { allowed: boolean; reason?: string } {
+	switch (op) {
+		case "wait":
+			return {
+				allowed: false,
+				reason:
+					"wait is not allowed for workspace_agent runs (workspace-owned agent): lifecycle events belong to the workspace registry — use workspace_agent(run_id) query-mode",
+			};
+		case "steer":
+		case "follow_up":
+			return {
+				allowed: false,
+				reason: `${op} is not allowed for workspace_agent runs (workspace-owned agent): it would bypass the run's deadline and task contract`,
+			};
+		default:
+			return { allowed: true };
+	}
+}
+
 /** Minimal slice of the tool-execute context the layer needs. */
 export interface DispatchContext {
 	model?: { provider: string; id: string };
@@ -575,6 +600,9 @@ export function createWorkspaceLayer(pi: ExtensionAPI, runtime: LocalSubagentRun
 				runId,
 				state: run.state,
 				deadlineMsLeft: Math.max(0, run.deadline - Date.now()),
+				...(run.terminal
+					? {}
+					: { reason: "detached by main abort; the run continues under its deadline — completion arrives as [workspace_agent completed] or via workspace_agent(run_id)" }),
 			});
 		}
 		return ok(runResult(run));
