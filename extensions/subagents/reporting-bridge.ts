@@ -2,7 +2,7 @@
  * Reporting bridge — additional extension entry for RepoOwner children.
  *
  * Loaded per-spawn via `additionalExtensions` next to the shared base bridge
- * (which keeps providing ask_parent). Adds exactly one capability:
+ * (which keeps providing `ask`). Adds exactly one capability:
  * `report_result`, the trusted structured outcome channel of the
  * workspace_agent protocol.
  *
