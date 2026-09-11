@@ -10,7 +10,7 @@ import {
 	type FakeRpcProcess,
 	settleChild,
 } from "./fake-rpc";
-import { loadResult, resultsDirFor } from "./result-store";
+import { loadResult } from "./result-store";
 import type { SubagentModelEvent } from "./types";
 
 function makeRuntime(opts?: { killGraceMs?: number }) {
@@ -19,6 +19,7 @@ function makeRuntime(opts?: { killGraceMs?: number }) {
 	const events: SubagentModelEvent[] = [];
 	const runtime = new LocalSubagentRuntime({
 		defaultCwd: tmp,
+		resultsDir: tmp,
 		piCommand: { command: "node", args: ["/fake/pi-cli.js"] },
 		bridgePath: "/fake/bridge.ts",
 		spawnFn: harness.spawnFn,
@@ -106,7 +107,7 @@ describe("LocalSubagentRuntime settle flow", () => {
 			expect(result!.tokens).toMatchObject({ total: 15 });
 
 			// persisted in the child cwd results dir
-			const persisted = loadResult(id, resultsDirFor(tmp));
+			const persisted = loadResult(id, tmp);
 			expect(persisted?.finalText).toContain("2 issues");
 		} finally {
 			await runtime.shutdown();
@@ -140,7 +141,7 @@ describe("LocalSubagentRuntime settle flow", () => {
 				type: "message_end",
 				message: { role: "assistant", stopReason: "error", errorMessage: "provider exploded" },
 			});
-			settleChild(proc, "partial text");
+			settleChild(proc, "partial text", { agentStart: false });
 			await tick(60);
 			const snap = runtime.inspect(id)[0];
 			expect(snap.state).toBe("failed");
@@ -299,12 +300,12 @@ describe("LocalSubagentRuntime escalation (ask_parent)", () => {
 });
 
 describe("LocalSubagentRuntime steer / followUp", () => {
-	test("steer on a running child sends RPC steer", async () => {
+	test("steer on a running child sends prompt with steering behavior", async () => {
 		const { harness, runtime, cleanup } = makeRuntime();
 		try {
 			const { id, proc } = await spawnRunning(runtime, harness);
 			await runtime.steer(id, "change direction");
-			const cmd = proc.commands.find((c) => c.type === "steer");
+			const cmd = proc.commands.find((c) => c.type === "prompt" && c.streamingBehavior === "steer");
 			expect(cmd).toMatchObject({ message: "change direction" });
 		} finally {
 			await runtime.shutdown();
@@ -312,25 +313,28 @@ describe("LocalSubagentRuntime steer / followUp", () => {
 		}
 	});
 
-	test("steer on an idle completed child is rejected", async () => {
+	test("steer on an idle completed child delegates to pi (prompt + steer)", async () => {
 		const { harness, runtime, cleanup } = makeRuntime();
 		try {
 			const { id, proc } = await spawnRunning(runtime, harness);
 			settleChild(proc, "done");
 			await tick(60);
-			await expect(runtime.steer(id, "x")).rejects.toThrow(/not running/);
+			// No controller-side guess: pi decides queue vs fresh run.
+			await runtime.steer(id, "wake up with this");
+			const cmd = proc.commands.find((c) => c.type === "prompt" && c.streamingBehavior === "steer");
+			expect(cmd).toMatchObject({ message: "wake up with this" });
 		} finally {
 			await runtime.shutdown();
 			cleanup();
 		}
 	});
 
-	test("follow_up on a running child queues via RPC follow_up", async () => {
+	test("follow_up on a running child sends prompt with followUp behavior", async () => {
 		const { harness, runtime, cleanup } = makeRuntime();
 		try {
 			const { id, proc } = await spawnRunning(runtime, harness);
 			await runtime.followUp(id, "then do this");
-			const cmd = proc.commands.find((c) => c.type === "follow_up");
+			const cmd = proc.commands.find((c) => c.type === "prompt" && c.streamingBehavior === "followUp");
 			expect(cmd).toMatchObject({ message: "then do this" });
 		} finally {
 			await runtime.shutdown();
@@ -338,20 +342,20 @@ describe("LocalSubagentRuntime steer / followUp", () => {
 		}
 	});
 
-	test("follow_up on an idle completed child is translated into a prompt and re-runs", async () => {
+	test("follow_up on an idle completed child re-runs via pi's followUp queue", async () => {
 		const { harness, runtime, events, cleanup } = makeRuntime();
 		try {
 			const { id, proc } = await spawnRunning(runtime, harness);
 			settleChild(proc, "first run done");
 			await tick(60);
 			await runtime.followUp(id, "now continue");
-			const cmd = proc.commands.find((c) => c.type === "prompt" && c.id !== "spawn-prompt");
+			const cmd = proc.commands.find((c) => c.type === "prompt" && c.streamingBehavior === "followUp");
 			expect(cmd).toMatchObject({ message: "now continue" });
-			expect(runtime.inspect(id)[0].state).toBe("running");
 
-			// second settle emits completed again
+			// pi starts the queued follow-up as a new run (agent_start), then settles
 			settleChild(proc, "second run done");
 			await tick(80);
+			expect(runtime.inspect(id)[0].state).toBe("completed");
 			const completions = events.filter((e) => e.kind === "completed");
 			expect(completions).toHaveLength(2);
 			const result = await runtime.result(id);
@@ -362,14 +366,17 @@ describe("LocalSubagentRuntime steer / followUp", () => {
 		}
 	});
 
-	test("follow_up while waiting for input is rejected", async () => {
+	test("follow_up while waiting for input is accepted and queued by pi", async () => {
 		const { harness, runtime, cleanup } = makeRuntime();
 		try {
 			const { id, proc } = await spawnRunning(runtime, harness);
 			proc.writeToStdout({
 				type: "extension_ui_request", id: "ui-1", method: "input", title: "ask_parent", placeholder: "q",
 			});
-			await expect(runtime.followUp(id, "x")).rejects.toThrow(/waiting for input/);
+			await tick(5);
+			await runtime.followUp(id, "x");
+			const cmd = proc.commands.find((c) => c.type === "prompt" && c.streamingBehavior === "followUp");
+			expect(cmd).toMatchObject({ message: "x" });
 		} finally {
 			await runtime.shutdown();
 			cleanup();
@@ -437,6 +444,210 @@ describe("LocalSubagentRuntime shutdown", () => {
 			await runtime.shutdown();
 			expect(harness.spawned.every((p) => p.closed)).toBe(true);
 		} finally {
+			cleanup();
+		}
+	});
+});
+
+
+describe("regressions: wait must not swallow later completion", () => {
+	test("F1: timeout does not consume the completion that arrives later", async () => {
+		const { harness, runtime, events, cleanup } = makeRuntime();
+		try {
+			const { id, proc } = await spawnRunning(runtime, harness);
+			const outcome = await runtime.wait(id, { timeoutMs: 40 });
+			expect(outcome.status).toBe("timeout");
+
+			// child completes after the wait gave up
+			settleChild(proc, "late completion");
+			await tick(60);
+
+			expect(events).toHaveLength(1);
+			expect(events[0]).toMatchObject({ kind: "completed", agentId: id });
+		} finally {
+			await runtime.shutdown();
+			cleanup();
+		}
+	});
+
+	test("F1: abort of the wait does not consume the completion either", async () => {
+		const { harness, runtime, events, cleanup } = makeRuntime();
+		try {
+			const { id, proc } = await spawnRunning(runtime, harness);
+			const controller = new AbortController();
+			const pending = runtime.wait(id, { signal: controller.signal });
+			controller.abort();
+			const outcome = await pending;
+			expect(outcome.status).toBe("timeout");
+
+			settleChild(proc, "late completion after abort");
+			await tick(60);
+
+			expect(events).toHaveLength(1);
+			expect(events[0]).toMatchObject({ kind: "completed" });
+		} finally {
+			await runtime.shutdown();
+			cleanup();
+		}
+	});
+});
+
+describe("regressions: transient provider errors", () => {
+	test("F2: error followed by successful retry settles completed, not failed", async () => {
+		const { harness, runtime, events, cleanup } = makeRuntime();
+		try {
+			const { id, proc } = await spawnRunning(runtime, harness);
+			// attempt 1 fails
+			proc.writeToStdout({
+				type: "message_end",
+				message: { role: "assistant", stopReason: "error", errorMessage: "503 overloaded" },
+			});
+			// pi retries: new low-level run, retry reported, then success
+			proc.writeToStdout({ type: "auto_retry_start", attempt: 1, maxAttempts: 3 });
+			proc.writeToStdout({ type: "auto_retry_end", success: true, attempt: 2 });
+			proc.writeToStdout({
+				type: "message_end",
+				message: { role: "assistant", stopReason: "stop", errorMessage: undefined },
+			});
+			settleChild(proc, "recovered answer");
+			await tick(80);
+
+			expect(runtime.inspect(id)[0].state).toBe("completed");
+			expect(events).toHaveLength(1);
+			expect(events[0]).toMatchObject({ kind: "completed" });
+			const result = await runtime.result(id);
+			expect(result!.status).toBe("completed");
+			expect(result!.failureReason).toBeUndefined();
+		} finally {
+			await runtime.shutdown();
+			cleanup();
+		}
+	});
+
+	test("F2: retry that never succeeds still fails the run", async () => {
+		const { harness, runtime, events, cleanup } = makeRuntime();
+		try {
+			const { id, proc } = await spawnRunning(runtime, harness);
+			proc.writeToStdout({
+				type: "message_end",
+				message: { role: "assistant", stopReason: "error", errorMessage: "503 overloaded" },
+			});
+			proc.writeToStdout({ type: "auto_retry_end", success: false, attempt: 3, finalError: "529 overloaded: exhausted" });
+			settleChild(proc, "", { agentStart: false });
+			await tick(80);
+
+			expect(runtime.inspect(id)[0].state).toBe("failed");
+			expect(events[0]).toMatchObject({ kind: "failed", agentId: id });
+			expect((events[0] as { reason: string }).reason).toContain("exhausted");
+		} finally {
+			await runtime.shutdown();
+			cleanup();
+		}
+	});
+});
+
+describe("regressions: per-run state resets", () => {
+	test("F4: crash of run #2 after a completed run #1 becomes failed, not stuck running", async () => {
+		const { harness, runtime, events, cleanup } = makeRuntime();
+		try {
+			const { id, proc } = await spawnRunning(runtime, harness);
+			settleChild(proc, "run one done");
+			await tick(60);
+			expect(runtime.inspect(id)[0].state).toBe("completed");
+
+			// run #2 opens (agent_start arrives) and the process is SIGKILLed before settling
+			await runtime.followUp(id, "run two");
+			proc.writeToStdout({ type: "agent_start" });
+			proc.close(null, "SIGKILL");
+			await tick(20);
+
+			const snap = runtime.inspect(id)[0];
+			expect(snap.state).toBe("failed");
+			expect(snap.alive).toBe(false);
+			const last = events[events.length - 1];
+			expect(last).toMatchObject({ kind: "failed", agentId: id });
+		} finally {
+			await runtime.shutdown();
+			cleanup();
+		}
+	});
+
+	test("F4: a failed run does not poison a successful rerun", async () => {
+		const { harness, runtime, events, cleanup } = makeRuntime();
+		try {
+			const { id, proc } = await spawnRunning(runtime, harness);
+			proc.writeToStdout({
+				type: "message_end",
+				message: { role: "assistant", stopReason: "error", errorMessage: "boom attempt 1" },
+			});
+			settleChild(proc, "", { agentStart: false });
+			await tick(60);
+			expect(runtime.inspect(id)[0].state).toBe("failed");
+
+			await runtime.followUp(id, "try again");
+			settleChild(proc, "recovered on run two");
+			await tick(80);
+
+			expect(runtime.inspect(id)[0].state).toBe("completed");
+			const completions = events.filter((e) => e.kind === "completed");
+			expect(completions).toHaveLength(1);
+			const result = await runtime.result(id);
+			expect(result!.status).toBe("completed");
+			expect(result!.failureReason).toBeUndefined();
+		} finally {
+			await runtime.shutdown();
+			cleanup();
+		}
+	});
+});
+
+describe("regressions: ask_parent dialog lifetime sync", () => {
+	test("F5: ask_parent tool end clears the pending question even without a response", async () => {
+		const { harness, runtime, cleanup } = makeRuntime();
+		try {
+			const { id, proc } = await spawnRunning(runtime, harness);
+			proc.writeToStdout({
+				type: "extension_ui_request", id: "ui-9", method: "input", title: "ask_parent", placeholder: "pick one",
+			});
+			await tick(5);
+			expect(runtime.inspect(id)[0].state).toBe("waiting_input");
+
+			// child-side timeout: pi resolves the dialog locally and the tool
+			// call ends WITHOUT any extension_ui_response
+			proc.writeToStdout({
+				type: "tool_execution_end",
+				toolCallId: "call-1",
+				toolName: "ask_parent",
+				result: { content: [{ type: "text", text: "(no answer)" }] },
+				isError: false,
+			});
+			await tick(5);
+
+			const snap = runtime.inspect(id)[0];
+			expect(snap.state).toBe("running");
+			expect(snap.pendingQuestion).toBeUndefined();
+			await expect(runtime.respond(id, "late answer")).rejects.toThrow(/no pending question/);
+		} finally {
+			await runtime.shutdown();
+			cleanup();
+		}
+	});
+});
+
+describe("regressions: kill-all must not latch the runtime", () => {
+	test("F7: cancelAll keeps the runtime usable for new spawns", async () => {
+		const { harness, runtime, cleanup } = makeRuntime();
+		try {
+			const { proc } = await spawnRunning(runtime, harness, "first");
+			await runtime.cancelAll();
+			expect(proc.closed).toBe(true);
+
+			// a new spawn must work after kill-all
+			const next = await spawnRunning(runtime, harness, "second");
+			expect(next.proc.closed).toBe(false);
+			expect(runtime.inspect(next.id)[0].state).toBe("running");
+		} finally {
+			await runtime.shutdown();
 			cleanup();
 		}
 	});

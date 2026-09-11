@@ -122,18 +122,26 @@ export function createFakeSpawnFactory(): FakeHarness {
 	};
 }
 
-/** Auto-accept the initial prompt like a real pi RPC child. */
+/** Auto-accept the initial prompt like a real pi RPC child and open the run. */
 export function autoAcceptPrompt(proc: FakeRpcProcess, requestId = "spawn-prompt"): void {
 	const timer = setInterval(() => {
 		const prompt = proc.commands.find((c) => c.type === "prompt" && c.id === requestId);
 		if (prompt) {
 			clearInterval(timer);
 			proc.writeToStdout({ id: requestId, type: "response", command: "prompt", success: true });
+			proc.writeToStdout({ type: "agent_start" });
 		}
 	}, 1);
 }
 
-export function settleChild(proc: FakeRpcProcess, finalText: string): void {
+export function settleChild(
+	proc: FakeRpcProcess,
+	finalText: string,
+	opts?: { agentStart?: boolean },
+): void {
+	// Mirror real pi: a run opens with agent_start — unless this settle closes
+	// a run whose retries are already exhausted (no further low-level run).
+	if (opts?.agentStart !== false) proc.writeToStdout({ type: "agent_start" });
 	proc.writeToStdout({ type: "agent_settled" });
 	// Respond to the settle-time fetches as they arrive, consuming each so a
 	// second settle round works too.

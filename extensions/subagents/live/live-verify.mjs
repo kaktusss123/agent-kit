@@ -12,7 +12,8 @@
 import { spawn } from "node:child_process";
 import * as fs from "node:fs";
 
-const PI_BUNDLE = "/Users/vekomarnitskiy/.local/share/fnm/node-versions/v22.21.1/installation/lib/node_modules/@earendil-works/pi-coding-agent/dist/bundle/cli.js";
+// PI_BIN override: path to a pi executable (bin shim or cli.js bundle).
+const PI_BIN = process.env.PI_BIN ?? "pi";
 const DRIVER = new URL("./driver.ts", import.meta.url).pathname;
 const WORKDIR = "/tmp/pi-subagents-live";
 
@@ -25,7 +26,7 @@ const check = (name, ok, detail = "") => {
 	console.log(`${ok ? "PASS" : "FAIL"}  ${name}${detail ? `  — ${detail}` : ""}`);
 };
 
-const main = spawn(process.execPath, [PI_BUNDLE, "--mode", "rpc", "--no-session", "-e", DRIVER], {
+const main = spawn(PI_BIN, ["--mode", "rpc", "--no-session", "-e", DRIVER], {
 	cwd: WORKDIR, stdio: ["pipe", "pipe", "pipe"],
 });
 

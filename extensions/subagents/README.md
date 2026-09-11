@@ -24,8 +24,8 @@ the main process. No daemon, no shared hub.
 The child transcript never enters main context. The model sees only the short
 event message; the full final result, session location, timestamps, token
 usage, and failure reason live in a persisted result file
-(`<childCwd>/.pi/subagents/results/<id>.json`), fetched lazily via
-`subagent op=result`.
+(`$PI_CODING_AGENT_DIR/subagents/results/<id>.json`, default
+`~/.pi/agent/subagents/results/`), fetched lazily via `subagent op=result`.
 
 ## Escalation (`ask_parent`)
 
@@ -47,17 +47,28 @@ tooling.
 
 ## Lifecycle
 
-States: `starting → running ⇄ waiting_input → completed | failed`,
-plus `cancelled`. Process exit before settling maps to `failed` (never a
-stuck `running`). Cancellation sends the pi `abort` RPC, then SIGTERM (pi
-exits cleanly even while blocked in a UI dialog), then SIGKILL after a grace
-period. Main session shutdown kills all owned children.
+States: `starting → running ⇄ waiting_input → completed | failed`, plus
+`cancelled`. Run boundaries come from the child's own `agent_start` /
+`agent_settled` events; run-local state (final text, run error) resets on
+every run, so follow-up reruns start clean and a successful retry after a
+transient provider error settles as `completed`. Process exit before settling
+maps to `failed` (never a stuck `running`). Cancellation sends the pi `abort`
+RPC, then SIGTERM (pi exits cleanly even while blocked in a UI dialog), then
+SIGKILL after a grace period. `session_shutdown` kills all owned children;
+`/subagents kill-all` uses the non-latching `cancelAll`, so new spawns keep
+working afterwards.
+
+## Input delivery
+
+`steer` and `follow_up` both send `prompt` with a `streamingBehavior`, so pi —
+not a controller-side copy of its state machine — atomically decides between
+queueing and starting a run from the session's real state.
 
 ## Known limitations (v1)
 
 - No durable execution across main restarts: if the main process dies, its
   children are cancelled or orphaned; a restarted main cannot reattach.
-- `follow_up` on an idle child is translated into a plain `prompt` in the
-  same session, because pi 0.85.1 queues `follow_up` forever without starting
-  a run when the agent is idle.
 - Events for children of a previous main session are not re-delivered.
+- A `pi.sendMessage` rejection (rare races, e.g. compaction in progress)
+  surfaces only as a pi `extension_error` event; that delivery is then lost
+  (the agent remains queryable via `subagent status` / `result`).

@@ -6,16 +6,23 @@
  * environment (no recursive subagent spawning, no parent extension stack).
  *
  * Event flow (proven against pi 0.85.1):
+ * - child `agent_start` -> authoritative run boundary: reset run-local state
  * - child settles  -> fetch state + final text + stats -> terminal result
  * - child exits before settling -> failed (never a stuck "running")
  * - child extension_ui_request (ask_parent) -> waiting_input; answered via
- *   extension_ui_response, which resumes the very same tool call
+ *   extension_ui_response, which resumes the very same tool call. The
+ *   pending question is cleared when the ask_parent tool call ends, so a
+ *   dialog timeout on the child side cannot desync the controller.
  * - cancel -> RPC abort, then SIGTERM (pi exits cleanly even while blocked in
  *   a UI dialog), then SIGKILL escalation
  *
- * Model-visible events are queued per agent. `wait()` consumes the next event
- * for its agent; events nobody waits on are handed to background listeners
- * (the extension delivers them to the main model at the next safe boundary).
+ * Input delivery (steer / follow_up) always goes through
+ * `prompt` + `streamingBehavior`, letting pi — not a controller-side copy of
+ * its state machine — atomically decide between queueing and a fresh run.
+ *
+ * Model-visible events are consumed by `wait()` first; events nobody waits on
+ * are handed to background listeners (the extension delivers them to the main
+ * model at the next safe boundary).
  */
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -24,7 +31,7 @@ import {
 	resolvePiInvocation,
 	type SpawnFn,
 } from "./rpc-child";
-import { loadResult, resultsDirFor, saveResult, summarizeText } from "./result-store";
+import { defaultResultsDir, loadResult, saveResult, summarizeText } from "./result-store";
 import type {
 	AgentResult,
 	AgentSnapshot,
@@ -42,6 +49,8 @@ export interface ControllerOptions {
 	piCommand?: { command: string; args: string[] };
 	/** Bridge extension file loaded into every child via `-e`. */
 	bridgePath?: string;
+	/** Results directory override (tests); defaults to the pi agent dir. */
+	resultsDir?: string;
 	/** Injected spawn (tests). */
 	spawnFn?: SpawnFn;
 	/** Grace period between SIGTERM and SIGKILL during cancel. */
@@ -59,19 +68,23 @@ interface AgentRecord {
 	thinking?: string;
 	state: AgentState;
 	conn: RpcChildConnection;
-	resultsDir: string;
 	startedAt: number;
 	endedAt?: number;
 	lastActivityAt: number;
 	sessionFile?: string;
 	sessionId?: string;
 	finalText?: string;
+	/** Failure of the current run; cleared by `agent_start` and on success. */
+	runError?: string;
+	/** Process-level failure (spawn, watchdog, unexpected exit). */
 	lastError?: string;
 	tokens?: AgentResult["tokens"];
 	exitCode?: number | null;
 	signal?: string | null;
 	pendingQuestion?: { requestId: string; question: string; askedAt: number };
 	cancelRequested: boolean;
+	/** True between child `agent_start` and the matching `agent_settled`. */
+	runActive: boolean;
 	settledOnce: boolean;
 	waiters: Array<(outcome: WaitOutcome) => void>;
 	spawnWaiters: Array<(ok: boolean) => void>;
@@ -80,17 +93,20 @@ interface AgentRecord {
 }
 
 const ASK_PARENT_TITLE = "ask_parent";
+const ASK_PARENT_TOOL = "ask_parent";
 
 export class LocalSubagentRuntime implements SubagentRuntime {
 	private readonly records = new Map<string, AgentRecord>();
 	private readonly listeners = new Set<(ev: SubagentModelEvent) => void>();
-	private counter = 0;
 	private shutDown = false;
+
+	private static idCounter = 0;
 
 	private readonly piInvocation: { command: string; args: string[] };
 	private readonly bridgePath: string;
 	private readonly spawnFn?: SpawnFn;
 	private readonly defaultCwd: string;
+	private readonly resultsDir: string;
 	private readonly killGraceMs: number;
 	private readonly startTimeoutMs: number;
 
@@ -100,6 +116,7 @@ export class LocalSubagentRuntime implements SubagentRuntime {
 		this.bridgePath =
 			opts.bridgePath ?? path.join(moduleDirname(), "bridge.ts");
 		this.spawnFn = opts.spawnFn;
+		this.resultsDir = opts.resultsDir ?? defaultResultsDir();
 		this.killGraceMs = opts.killGraceMs ?? 3000;
 		this.startTimeoutMs = opts.startTimeoutMs ?? 30000;
 	}
@@ -108,7 +125,7 @@ export class LocalSubagentRuntime implements SubagentRuntime {
 
 	spawn(opts: SpawnOptions): Promise<AgentSnapshot> {
 		if (this.shutDown) return Promise.reject(new Error("runtime is shut down"));
-		const id = `sa-${counterId()}-${Math.random().toString(36).slice(2, 6)}`;
+		const id = `sa-${++LocalSubagentRuntime.idCounter}-${Math.random().toString(36).slice(2, 6)}`;
 		const cwd = path.resolve(this.defaultCwd, opts.cwd ?? ".");
 		const label = opts.label?.trim() || `agent-${id.slice(3, 11)}`;
 
@@ -145,10 +162,10 @@ export class LocalSubagentRuntime implements SubagentRuntime {
 			thinking: opts.thinking,
 			state: "starting",
 			conn,
-			resultsDir: resultsDirFor(cwd),
 			startedAt: Date.now(),
 			lastActivityAt: Date.now(),
 			cancelRequested: false,
+			runActive: false,
 			settledOnce: false,
 			waiters: [],
 			spawnWaiters: [],
@@ -205,6 +222,45 @@ export class LocalSubagentRuntime implements SubagentRuntime {
 			return;
 		}
 
+		// The ask_parent tool call ended: the dialog is resolved one way or
+		// another (answer, cancel, or a pi-side timeout that never sends an
+		// extension_ui_response). Sync the controller so a timed-out child
+		// cannot leave a phantom pending question behind.
+		if (type === "tool_execution_end" && ev.toolName === ASK_PARENT_TOOL) {
+			if (record.pendingQuestion) {
+				record.pendingQuestion = undefined;
+				if (record.state === "waiting_input") record.state = "running";
+			}
+			return;
+		}
+
+		if (type === "agent_start") {
+			// Authoritative run boundary: reset run-local state.
+			record.runActive = true;
+			record.runError = undefined;
+			record.finalText = undefined;
+			record.endedAt = undefined;
+			record.pendingQuestion = undefined;
+			if (!record.cancelRequested && record.state !== "starting") {
+				record.state = "running";
+			}
+			return;
+		}
+
+		if (type === "agent_settled") {
+			record.runActive = false;
+			record.settledOnce = true;
+			record.pendingQuestion = undefined;
+			if (record.cancelRequested) return; // exit path will mark cancelled
+			// Collect state, final text, and stats. Responses correlate by
+			// command, so all three can go out at once.
+			record.settleFetchDone = false;
+			connGetState(record);
+			connGetStats(record);
+			connGetLastText(record);
+			return;
+		}
+
 		if (type === "response") {
 			const cmd = ev.command as string;
 			if (cmd === "prompt" && ev.id === "spawn-prompt") {
@@ -247,31 +303,27 @@ export class LocalSubagentRuntime implements SubagentRuntime {
 			return;
 		}
 
-		if (type === "agent_settled") {
-			record.settledOnce = true;
-			if (record.cancelRequested) return; // exit path will mark cancelled
-			// Collect state, final text, and stats. Responses correlate by
-			// command, so all three can go out at once.
-			record.settleFetchDone = false;
-			connGetState(record);
-			connGetStats(record);
-			connGetLastText(record);
-			return;
-		}
-
 		if (type === "message_end") {
 			const msg = ev.message as
 				| { role?: string; stopReason?: string; errorMessage?: string }
 				| undefined;
-			if (msg?.role === "assistant" && msg.stopReason === "error" && msg.errorMessage) {
-				record.lastError = msg.errorMessage;
+			if (msg?.role === "assistant") {
+				if (msg.stopReason === "error" && msg.errorMessage) {
+					record.runError = msg.errorMessage;
+				} else {
+					// A successful assistant response supersedes any transient
+					// provider error from an earlier retry attempt.
+					record.runError = undefined;
+				}
 			}
 			return;
 		}
 
 		if (type === "auto_retry_end") {
 			if (ev.success === false && typeof ev.finalError === "string") {
-				record.lastError = ev.finalError;
+				record.runError = ev.finalError;
+			} else if (ev.success === true) {
+				record.runError = undefined;
 			}
 		}
 	}
@@ -315,29 +367,29 @@ export class LocalSubagentRuntime implements SubagentRuntime {
 			this.pushEvent(record, { kind: "cancelled", agentId: record.id, label: record.label }, { background: false });
 			return;
 		}
-		if (!record.settledOnce) {
+		if (record.runActive) {
+			// A run was in progress and never settled.
 			this.finishWithFailure(
 				record,
 				`child exited unexpectedly before completing (code ${info.code}, signal ${info.signal})`,
 			);
 			return;
 		}
-		// Settled, then the process ended on its own (normal RPC shutdown is
-		// controller-driven; any self-exit here is only a problem if it carries
-		// a non-zero code — the result was already captured at settle time).
-		if ((info.code ?? 0) !== 0) {
-			record.lastError = record.lastError ?? `child exited with code ${info.code} after completing`;
+		// All runs settled; a self-exit with a non-zero code or a kill signal
+		// is still a process failure worth surfacing.
+		if ((info.code ?? 0) !== 0 || info.signal) {
+			record.lastError = `child exited with code ${info.code} / signal ${info.signal} after completing`;
 			this.finishWithFailure(record, record.lastError);
 		}
 	}
 
-	// Wait for settle-time fetches (state + final text) before emitting results.
+	// Collect settle-time fetches, then decide the run outcome.
 	private completeSettle(record: AgentRecord): void {
 		if (record.settleFetchDone) return;
 		record.settleFetchDone = true;
 		if (record.cancelRequested) return;
-		if (record.lastError) {
-			this.finishWithFailure(record, record.lastError);
+		if (record.runError) {
+			this.finishWithFailure(record, record.runError);
 			return;
 		}
 		record.state = "completed";
@@ -354,7 +406,8 @@ export class LocalSubagentRuntime implements SubagentRuntime {
 	private finishWithFailure(record: AgentRecord, reason: string): void {
 		if (isTerminal(record.state)) return;
 		record.state = "failed";
-		record.lastError = reason;
+		record.lastError = record.lastError ?? reason;
+		record.runError = reason;
 		record.endedAt = Date.now();
 		this.persistResult(record, "failed");
 		this.pushEvent(record, { kind: "failed", agentId: record.id, label: record.label, reason });
@@ -375,7 +428,7 @@ export class LocalSubagentRuntime implements SubagentRuntime {
 			status,
 			finalText: record.finalText,
 			summary: summarizeText(record.finalText),
-			failureReason: status === "failed" ? record.lastError : undefined,
+			failureReason: status === "failed" ? record.runError ?? record.lastError : undefined,
 			sessionFile: record.sessionFile,
 			sessionId: record.sessionId,
 			model: record.model,
@@ -386,7 +439,7 @@ export class LocalSubagentRuntime implements SubagentRuntime {
 			signal: record.signal,
 		};
 		try {
-			saveResult(result, record.resultsDir);
+			saveResult(result, this.resultsDir);
 		} catch {
 			// Persistence is best-effort; the in-memory record still serves results.
 		}
@@ -400,31 +453,26 @@ export class LocalSubagentRuntime implements SubagentRuntime {
 
 	async steer(agentId: string, message: string): Promise<void> {
 		const record = this.mustGet(agentId);
-		if (record.state !== "running") {
-			throw new Error(
-				`agent ${agentId} is ${record.state}, not running — steer needs an active run (use follow_up instead)`,
-			);
-		}
-		this.conn(record).send({ id: `steer-${Date.now()}`, type: "steer", message });
+		this.assertAlive(record, "steer");
+		// `prompt` + `streamingBehavior` lets pi atomically pick queueing vs a
+		// fresh run from the session's real state — no stale local copy.
+		this.conn(record).send({
+			id: `steer-${Date.now()}`, type: "prompt", message, streamingBehavior: "steer",
+		});
 	}
 
 	async followUp(agentId: string, message: string): Promise<void> {
 		const record = this.mustGet(agentId);
-		if (record.state === "waiting_input") {
-			throw new Error(`agent ${agentId} is waiting for input — answer with subagent respond first`);
+		this.assertAlive(record, "follow_up");
+		this.conn(record).send({
+			id: `followup-${Date.now()}`, type: "prompt", message, streamingBehavior: "followUp",
+		});
+	}
+
+	private assertAlive(record: AgentRecord, op: string): void {
+		if (record.conn.exit) {
+			throw new Error(`cannot ${op}: agent ${agentRef(record)} process is not running (state: ${record.state})`);
 		}
-		if (!record.conn.pid || record.conn.exit) {
-			throw new Error(`agent ${agentId} process is not running (state: ${record.state})`);
-		}
-		if (record.state === "running" || record.state === "starting") {
-			this.conn(record).send({ id: `followup-${Date.now()}`, type: "follow_up", message });
-			return;
-		}
-		// pi queues follow_up forever on an idle agent (verified in 0.85.1),
-		// so resuming an idle child is a plain prompt in the same session.
-		record.state = "running";
-		record.endedAt = undefined;
-		this.conn(record).send({ id: `resume-${Date.now()}`, type: "prompt", message });
 	}
 
 	async wait(
@@ -440,7 +488,7 @@ export class LocalSubagentRuntime implements SubagentRuntime {
 			return { status: "completed", summary: summarizeText(record.finalText) };
 		}
 		if (record.state === "failed") {
-			return { status: "failed", reason: record.lastError ?? "agent failed" };
+			return { status: "failed", reason: record.runError ?? record.lastError ?? "agent failed" };
 		}
 		if (record.state === "cancelled") {
 			return { status: "cancelled" };
@@ -448,20 +496,27 @@ export class LocalSubagentRuntime implements SubagentRuntime {
 		const timeoutMs = opts?.timeoutMs ?? 600000;
 		return new Promise<WaitOutcome>((resolve) => {
 			let done = false;
+			// Keep the exact wrapper so cleanup removes the registered entry,
+			// not an unrelated function (a stale waiter would swallow the next
+			// event — see pushEvent).
+			let waiter: ((outcome: WaitOutcome) => void) | undefined;
 			const finish = (outcome: WaitOutcome) => {
 				if (done) return;
 				done = true;
 				clearTimeout(timer);
 				opts?.signal?.removeEventListener("abort", onAbort);
-				const idx = record.waiters.indexOf(resolve);
-				if (idx !== -1) record.waiters.splice(idx, 1);
+				if (waiter) {
+					const idx = record.waiters.indexOf(waiter);
+					if (idx !== -1) record.waiters.splice(idx, 1);
+				}
 				resolve(outcome);
 			};
 			const timer = setTimeout(() => finish({ status: "timeout", state: record.state }), timeoutMs);
 			timer.unref?.();
 			const onAbort = () => finish({ status: "timeout", state: record.state });
 			opts?.signal?.addEventListener("abort", onAbort, { once: true });
-			record.waiters.push((outcome) => finish(outcome));
+			waiter = (outcome) => finish(outcome);
+			record.waiters.push(waiter);
 		});
 	}
 
@@ -469,8 +524,8 @@ export class LocalSubagentRuntime implements SubagentRuntime {
 		const record = this.records.get(agentId);
 		if (!record) {
 			// Unknown in this process (e.g. after a main restart) — try the
-			// persisted file in the current workspace's results dir.
-			return loadResult(agentId, resultsDirFor(this.defaultCwd));
+			// persisted file in the shared results dir.
+			return loadResult(agentId, this.resultsDir);
 		}
 		if (!isTerminal(record.state)) return null; // no final result yet
 		return this.recordToResult(record);
@@ -489,7 +544,7 @@ export class LocalSubagentRuntime implements SubagentRuntime {
 			status,
 			finalText: record.finalText,
 			summary: summarizeText(record.finalText),
-			failureReason: status === "failed" ? record.lastError : undefined,
+			failureReason: status === "failed" ? record.runError ?? record.lastError : undefined,
 			sessionFile: record.sessionFile,
 			sessionId: record.sessionId,
 			model: record.model,
@@ -546,8 +601,8 @@ export class LocalSubagentRuntime implements SubagentRuntime {
 		return () => this.listeners.delete(cb);
 	}
 
-	async shutdown(): Promise<void> {
-		this.shutDown = true;
+	/** Kill all live children without latching the runtime shut. */
+	async cancelAll(): Promise<void> {
 		const live = [...this.records.values()].filter((r) => !r.conn.exit);
 		if (live.length === 0) return;
 		for (const r of live) {
@@ -563,6 +618,12 @@ export class LocalSubagentRuntime implements SubagentRuntime {
 		for (const r of live) {
 			if (!r.conn.exit) this.conn(r).kill("SIGKILL");
 		}
+	}
+
+	/** Kill all live children and latch the runtime shut (main shutdown). */
+	async shutdown(): Promise<void> {
+		this.shutDown = true;
+		await this.cancelAll();
 	}
 
 	// ---------------------------------------------------------------- internal
@@ -612,7 +673,7 @@ export class LocalSubagentRuntime implements SubagentRuntime {
 			sessionFile: record.sessionFile,
 			sessionId: record.sessionId,
 			pendingQuestion: record.pendingQuestion?.question,
-			lastError: record.lastError,
+			lastError: record.lastError ?? record.runError,
 			exitCode: record.exitCode,
 			signal: record.signal,
 		};
@@ -620,6 +681,10 @@ export class LocalSubagentRuntime implements SubagentRuntime {
 }
 
 // -------------------------------------------------------------------- helpers
+
+function agentRef(record: AgentRecord): string {
+	return record.id;
+}
 
 function connGetState(record: AgentRecord): void {
 	record.conn.send({ id: "ctl-state", type: "get_state" });
@@ -650,18 +715,12 @@ function isTerminal(state: AgentState): boolean {
 	return state === "completed" || state === "failed" || state === "cancelled";
 }
 
-let idCounter = 0;
-function counterId(): number {
-	return ++idCounter;
-}
-
 /** Directory of this module (works under jiti and node). */
 function moduleDirname(): string {
 	try {
 		return path.dirname(fileURLToPath(import.meta.url));
 	} catch {
 		// jiti CJS interop fallback
-		// eslint-disable-next-line @typescript-eslint/no-explicit-any
 		return __dirname;
 	}
 }

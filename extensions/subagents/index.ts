@@ -228,7 +228,8 @@ export default function (pi: ExtensionAPI) {
 				return;
 			}
 			if (args.trim() === "kill-all") {
-				await runtime.shutdown();
+				// cancelAll does not latch the runtime: new spawns keep working.
+				await runtime.cancelAll();
 				ctx.ui.notify("All subagents cancelled and terminated.", "warning");
 				return;
 			}

@@ -3,14 +3,15 @@
 import { spawn } from "node:child_process";
 import * as fs from "node:fs";
 
-const PI_BUNDLE = "/Users/vekomarnitskiy/.local/share/fnm/node-versions/v22.21.1/installation/lib/node_modules/@earendil-works/pi-coding-agent/dist/bundle/cli.js";
+// PI_BIN override: path to a pi executable (bin shim or cli.js bundle).
+const PI_BIN = process.env.PI_BIN ?? "pi";
 const EXT = new URL("../index.ts", import.meta.url).pathname;
 const WORKDIR = "/tmp/pi-subagents-model";
 
 fs.rmSync(WORKDIR, { recursive: true, force: true });
 fs.mkdirSync(WORKDIR, { recursive: true });
 
-const main = spawn(process.execPath, [PI_BUNDLE, "--mode", "rpc", "--no-session", "-e", EXT], {
+const main = spawn(PI_BIN, ["--mode", "rpc", "--no-session", "-e", EXT], {
 	cwd: WORKDIR, stdio: ["pipe", "pipe", "pipe"],
 });
 

@@ -1,17 +1,21 @@
 /**
  * Result persistence for subagents.
  *
- * One JSON file per agent under `<childCwd>/.pi/subagents/results/`. Files are
+ * One JSON file per agent under the pi agent dir
+ * (`PI_CODING_AGENT_DIR`, default `~/.pi/agent`) at `subagents/results/`.
+ * Runtime artifacts stay out of the user's working repository. Files are
  * written when an agent reaches a terminal state and read lazily by
  * `subagent result`. The main agent's context never receives this payload
  * automatically.
  */
 import * as fs from "node:fs";
+import * as os from "node:os";
 import * as path from "node:path";
 import type { AgentResult } from "./types";
 
-export function resultsDirFor(childCwd: string): string {
-	return path.join(childCwd, ".pi", "subagents", "results");
+export function defaultResultsDir(): string {
+	const agentDir = process.env.PI_CODING_AGENT_DIR || path.join(os.homedir(), ".pi", "agent");
+	return path.join(agentDir, "subagents", "results");
 }
 
 export function saveResult(result: AgentResult, dir: string): string {
