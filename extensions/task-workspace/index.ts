@@ -37,7 +37,28 @@ import {
   guardManagedBashCommand,
   guardManagedWriteTarget,
 } from "./guard";
-import { signalChildReadiness } from "../subagents/readiness";
+
+/**
+ * Guarded cross-module import of the readiness helper. The two extension
+ * directories are symlinked into ~/.pi/agent/extensions independently, so a
+ * mismatched pair (task-workspace from a newer tree than subagents) must not
+ * break main-session startup. Profiled children always load matched trees
+ * (the controller passes repo-absolute -e paths for both entries), so the
+ * degraded case is a main session where readiness signaling simply never
+ * registers — which is a no-op outside profiled children anyway.
+ */
+function loadSignalChildReadiness():
+  | ((pi: unknown, entryId: string, requiredTools: string[]) => void)
+  | undefined {
+  try {
+    // jiti transpiles to CJS: require resolves relative to this file.
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    return require("../subagents/readiness").signalChildReadiness;
+  } catch {
+    return undefined;
+  }
+}
+const signalChildReadiness = loadSignalChildReadiness();
 
 function respond(result: Record<string, unknown>, details?: unknown): {
   content: { type: "text"; text: string }[];
@@ -272,9 +293,9 @@ export default function (pi: ExtensionAPI): void {
   // ─── Readiness handshake (profiled children only) ────────────────
   // No-op outside RepoOwner children: signalChildReadiness requires the
   // controller-declared PI_SUBAGENT_READINESS contract to include this
-  // entry id. Inside a profiled child it reports the registered tool set
-  // over the extension UI protocol before the task prompt is sent.
-  signalChildReadiness(pi, "task-workspace", [
+  // entry id, and the guarded loader may not even resolve the helper in a
+  // mismatched main-session install.
+  signalChildReadiness?.(pi, "task-workspace", [
     "task_status",
     "ensure_task_repo",
     "checkpoint_commit",
