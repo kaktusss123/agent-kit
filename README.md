@@ -20,6 +20,13 @@ tuning, ported from my oh-my-pi setup.
   visible user message. Ported from oh-my-pi's input-controller shortcut;
   queued as a follow-up while the agent is busy, no-op mid-stream, passthrough
   with images.
+- `extensions/agent-events/` — semantic runtime events observed from pi's
+  lifecycle hooks (no LLM-facing tool) and dispatched through a minimal
+  `AgentEventSink` interface. Ships `WarpCliAgentSink` (Warp CLI Agent
+  Protocol v1 over OSC 777, tmux passthrough included); terminal sinks are
+  gated to the top-level interactive TUI session, so headless/subagent runs
+  never write escape sequences. A future control-plane sink plugs in without
+  touching lifecycle code.
 
 ## Layout
 
