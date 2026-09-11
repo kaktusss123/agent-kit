@@ -4,7 +4,6 @@
  * Under each assistant response: local timestamp (provider request start),
  * prompt→yield Δ across the whole agent run, input (cache writes folded in),
  * output, cache-read tokens, TTFT and tok/s over the full request duration.
- * Under each tool call: execution time.
  *
  * pi's AssistantMessage carries no duration/ttft, so timing lives in
  * `timing.ts` (PerfTracker) and is fed from extension events:
@@ -19,7 +18,7 @@
 
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { Text } from "@earendil-works/pi-tui";
-import { type PerfRow, type ToolUsageRow, formatToolRow, formatUsageRow } from "./format";
+import { type TextUsageRow, formatUsageRow } from "./format";
 import { PerfTracker } from "./timing";
 
 export default function (pi: ExtensionAPI) {
@@ -43,23 +42,14 @@ export default function (pi: ExtensionAPI) {
 		if (row) pi.appendEntry("perf-stats", row);
 	});
 
-	pi.on("tool_execution_start", async (event) => {
-		tracker.onToolStart(event.toolCallId);
-	});
-
-	pi.on("tool_execution_end", async (event) => {
-		const row = tracker.onToolEnd(event.toolCallId, event.toolName);
-		if (row) pi.appendEntry("perf-stats", row);
-	});
-
 	pi.on("agent_settled", async () => {
 		tracker.onAgentSettled();
 	});
 
-	pi.registerEntryRenderer<PerfRow>("perf-stats", (entry, _opts, theme) => {
+	pi.registerEntryRenderer<TextUsageRow>("perf-stats", (entry, _opts, theme) => {
 		const data = entry.data;
 		if (!data) return new Text("", 0, 0);
-		const line = data.kind === "text" ? formatUsageRow(data) : formatToolRow(data);
+		const line = formatUsageRow(data);
 		if (!line) return new Text("", 0, 0);
 		return new Text(`  ${theme.fg("dim", line)}`, 0, 0);
 	});
