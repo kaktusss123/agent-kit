@@ -9,10 +9,11 @@
  * - child `agent_start` -> authoritative run boundary: reset run-local state
  * - child settles  -> fetch state + final text + stats -> terminal result
  * - child exits before settling -> failed (never a stuck "running")
- * - child extension_ui_request (ask_parent) -> waiting_input; answered via
- *   extension_ui_response, which resumes the very same tool call. The
- *   pending question is cleared when the ask_parent tool call ends, so a
- *   dialog timeout on the child side cannot desync the controller.
+ * - child extension_ui_request (the `ask` tool) -> waiting_input; answered
+ *   via extension_ui_response, which resumes the very same tool call. The
+ *   pending question is cleared when the ask tool call ends, so an aborted
+ *   or resolved dialog cannot desync the controller. The structured
+ *   canonical request travels through the request payload losslessly.
  * - cancel -> RPC abort, then SIGTERM (pi exits cleanly even while blocked in
  *   a UI dialog), then SIGKILL escalation
  *
@@ -33,6 +34,8 @@ import {
 } from "./rpc-child";
 import { defaultResultsDir, loadResult, saveResult, summarizeText } from "./result-store";
 import { READINESS_ENV, parseReadinessPayload, type ReadinessPayload } from "./readiness";
+import { ASK_WIRE_TITLE } from "./bridge-ask";
+import { formatAskRequestFlat, parseAskRequest, type AskInput } from "../ask/contract";
 import type {
 	AgentResult,
 	AgentSnapshot,
@@ -42,6 +45,8 @@ import type {
 	SubagentRuntime,
 	WaitOutcome,
 } from "./types";
+
+/** Directory of this module (works under jiti and node). */
 
 export interface ControllerOptions {
 	/** Fallback cwd for children when spawn() has no cwd (main cwd). */
@@ -86,7 +91,7 @@ interface AgentRecord {
 	tokens?: AgentResult["tokens"];
 	exitCode?: number | null;
 	signal?: string | null;
-	pendingQuestion?: { requestId: string; question: string; askedAt: number };
+	pendingQuestion?: { requestId: string; request: AskInput; question: string; askedAt: number };
 	cancelRequested: boolean;
 	/**
 	 * New work was dispatched (prompt + streamingBehavior) while the agent
@@ -116,8 +121,7 @@ interface AgentRecord {
 	readinessTimer?: NodeJS.Timeout;
 }
 
-const ASK_PARENT_TITLE = "ask_parent";
-const ASK_PARENT_TOOL = "ask_parent";
+const ASK_TOOL = "ask";
 
 export class LocalSubagentRuntime implements SubagentRuntime {
 	private readonly records = new Map<string, AgentRecord>();
@@ -320,13 +324,13 @@ export class LocalSubagentRuntime implements SubagentRuntime {
 			this.handleUiRequest(record, ev);
 			return;
 		}
-		// The ask_parent tool call ended: the dialog is resolved one way or
-		// another (answer, cancel, or a pi-side timeout that never sends an
-		// extension_ui_response). Sync the controller so a timed-out child
-		// cannot leave a phantom pending question behind. Workspace-routed
+		// The ask tool call ended: the dialog was resolved one way or
+		// another (answer, user dismiss, or an abort that never sends an
+		// extension_ui_response). Sync the controller so the child cannot
+		// leave a phantom pending question behind. Workspace-routed
 		// children also learn about the resolution (input_resolved), so the
 		// run registry stops reporting a question that is no longer pending.
-		if (type === "tool_execution_end" && ev.toolName === ASK_PARENT_TOOL) {
+		if (type === "tool_execution_end" && ev.toolName === ASK_TOOL) {
 			if (record.pendingQuestion) {
 				record.pendingQuestion = undefined;
 				if (record.state === "waiting_input") record.state = "running";
@@ -440,7 +444,7 @@ export class LocalSubagentRuntime implements SubagentRuntime {
 
 	/**
 	 * Child UI dialogs. With the minimal child environment the dialog sources
-	 * are the base bridge's ask_parent tool (`input`, title "ask_parent") and
+	 * are the base bridge's ask tool (`input`, title "ask") and
 	 * the readiness handshake of profiled children (fire-and-forget `notify`
 	 * carrying the readiness payload, fired from session_start handlers —
 	 * blocking dialogs would deadlock: the child's stdin reader only attaches
@@ -458,17 +462,38 @@ export class LocalSubagentRuntime implements SubagentRuntime {
 		}
 		if (method !== "input") return; // select/confirm/editor are not produced by the bridge
 		const title = ev.title as string;
-		if (title !== ASK_PARENT_TITLE) return;
-		const question = (ev.placeholder as string) ?? "";
+		if (title !== ASK_WIRE_TITLE) return;
+		// The payload is the child's structured canonical ask request; the
+		// controller never flattens it — Main receives the original ids,
+		// options, descriptions, previews, multi, and recommended flags.
+		const request = parseAskRequest(ev.placeholder as string | undefined);
+		if (!request) {
+			// Unparseable payload: not produced by the current bridge. Fail
+			// closed — cancel the dialog so the child tool gets "no answer"
+			// instead of dead-waiting forever.
+			this.conn(record).send({ type: "extension_ui_response", id, cancelled: true });
+			return;
+		}
 		if (record.pendingQuestion) {
 			// A previous question is still open: dismiss the duplicate so the
 			// child tool gets "no answer" instead of dead-waiting forever.
 			this.conn(record).send({ type: "extension_ui_response", id, cancelled: true });
 			return;
 		}
-		record.pendingQuestion = { requestId: id, question, askedAt: Date.now() };
+		record.pendingQuestion = {
+			requestId: id,
+			request,
+			question: formatAskRequestFlat(request),
+			askedAt: Date.now(),
+		};
 		record.state = "waiting_input";
-		this.pushEvent(record, { kind: "needs_input", agentId: record.id, label: record.label, question });
+		this.pushEvent(record, {
+			kind: "needs_input",
+			agentId: record.id,
+			label: record.label,
+			question: record.pendingQuestion.question,
+			request,
+		});
 	}
 
 	/**
@@ -505,6 +530,9 @@ export class LocalSubagentRuntime implements SubagentRuntime {
 		record.signal = info.signal;
 		record.endedAt = Date.now();
 		record.pendingDispatch = false;
+		// A dead child cannot be answered; drop any pending question so
+		// snapshots of terminal agents do not show a stale dialog.
+		record.pendingQuestion = undefined;
 		if (!record.spawnSettled) {
 			record.spawnSettled = true;
 			record.lastError = record.lastError ?? `child exited before accepting the prompt (code ${info.code}, signal ${info.signal})`;
@@ -677,7 +705,12 @@ export class LocalSubagentRuntime implements SubagentRuntime {
 		// not to the work that was just queued.
 		if (!record.pendingDispatch) {
 			if (record.state === "waiting_input") {
-				return { status: "needs_input", question: record.pendingQuestion?.question ?? "(unknown question)" };
+				const pending = record.pendingQuestion;
+				return {
+					status: "needs_input",
+					question: pending?.question ?? "(unknown question)",
+					...(pending ? { request: pending.request } : {}),
+				};
 			}
 			if (record.state === "completed") {
 				return { status: "completed", summary: summarizeText(record.finalText) };
@@ -965,7 +998,7 @@ function eventToOutcome(ev: SubagentModelEvent): WaitOutcome {
 		case "cancelled":
 			return { status: "cancelled" };
 		case "needs_input":
-			return { status: "needs_input", question: ev.question };
+			return { status: "needs_input", question: ev.question, request: ev.request };
 		case "input_resolved":
 			// Workspace-routed only; never reaches the waiter path.
 			return { status: "timeout", state: "running" };

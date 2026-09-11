@@ -35,7 +35,9 @@ import {
 } from "./envelope";
 import { REPORTING_ENTRY_ID } from "./reporting-bridge";
 import { expandPath, git, isLinkedWorktree, realpath } from "../task-workspace/git";
+import { formatNeedsInputBody } from "./delivery";
 import type { AgentResult, AgentSnapshot, SpawnOptions, SubagentModelEvent } from "./types";
+import type { AskInput } from "../ask/contract";
 
 // ============================================================ configuration
 
@@ -89,6 +91,8 @@ interface WorkspaceAgentRun {
 	startedAt: number;
 	state: "running" | "waiting_input" | "settling" | "terminating";
 	question?: string;
+	/** Structured canonical request behind `question` (needs_input only). */
+	request?: AskInput;
 	ladder: number;
 	/** Highest report generation seen from the child; a newer one resets the ladder. */
 	lastSeenGeneration: number;
@@ -106,6 +110,8 @@ export interface DispatchResult {
 	runId?: string;
 	state?: string;
 	question?: string;
+	/** Structured canonical ask request when status is needs_input. */
+	request?: AskInput;
 	deadlineMsLeft?: number;
 	result?: Envelope;
 	summary?: string;
@@ -220,13 +226,14 @@ export function createWorkspaceLayer(
 		if (!run) return;
 		switch (ev.kind) {
 			case "needs_input":
-				// Non-terminal: the child is suspended on ask_parent. A blocking
+				// Non-terminal: the child is suspended on ask. A blocking
 				// dispatch call (if any is still waiting) consumes the question;
 				// otherwise — after the first dispatch returned, or after a
 				// detach — Main must be told, or the run would silently hang
 				// until the deadline. The deadline keeps ticking either way.
 				run.state = "waiting_input";
 				run.question = ev.question;
+				run.request = ev.request;
 				if (run.waiters.length > 0) {
 					resolveWaiters(run, "needs_input");
 				} else {
@@ -234,10 +241,11 @@ export function createWorkspaceLayer(
 				}
 				break;
 			case "input_resolved":
-				// The pending ask_parent was answered (respond) or timed out
-				// child-side: the run is no longer waiting for Main.
+				// The pending ask was answered (respond) or aborted child-side:
+				// the run is no longer waiting for Main.
 				run.state = "running";
 				run.question = undefined;
+				run.request = undefined;
 				break;
 			case "completed":
 				await settle(run, "completed");
@@ -370,9 +378,9 @@ export function createWorkspaceLayer(
 	}
 
 	/**
-	 * RepoOwner suspended on ask_parent with NO blocking dispatch waiter left
-		 * (first dispatch already returned, or Main detached): tell Main, or
-		 * the run would silently hang until the deadline.
+	 * RepoOwner suspended on ask with NO blocking dispatch waiter left
+	 * (first dispatch already returned, or Main detached): tell Main, or
+	 * the run would silently hang until the deadline.
 	 */
 	function notifyNeedsInput(run: WorkspaceAgentRun): void {
 		const lines = [
@@ -380,7 +388,7 @@ export function createWorkspaceLayer(
 			`runId: ${run.runId}`,
 			`agentId: ${run.agentId}`,
 			`workspace: ${run.workspace}`,
-			`question: ${run.question ?? "(unknown)"}`,
+			...formatNeedsInputBody(run.question ?? "(unknown)", run.request),
 			`answer via subagent op=respond id=${run.agentId} answer=<...>; the run resumes under the same deadline`,
 			`details via workspace_agent(run_id: "${run.runId}")`,
 		];
@@ -792,6 +800,7 @@ export function createWorkspaceLayer(
 				status: "needs_input",
 				state: run.state,
 				question: run.question,
+				...(run.request ? { request: run.request } : {}),
 				deadlineMsLeft: Math.max(0, run.deadline - Date.now()),
 			};
 		}
