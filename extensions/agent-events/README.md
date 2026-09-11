@@ -13,11 +13,11 @@ cannot emit status events.
 | Event | Pi source | Notes |
 |---|---|---|
 | `session_started` | `session_start` | re-emitted on `/new`, `/resume`, `/fork` (new session id) |
-| `run_started` | `agent_start` + `before_agent_start` | carries the truncated user query (200 code points) |
+| `run_started` | `agent_start` + `before_agent_start` | carries the truncated user query (200 code points); emitted once per logical run — pi re-emits `agent_start` on retry/compaction continuations, but only the idle → active transition starts a run |
 | `run_completed` | `agent_settled` | last assistant `stopReason` is a normal stop |
 | `run_failed` | `agent_settled` | `stopReason: "error"`; carries `error`/`response` |
 | `run_aborted` | `agent_settled` | `stopReason: "aborted"` (user interrupt) |
-| `attention_required` | `ui_prompt_start` | any blocking `ctx.ui.*` prompt (permission gates, questions) |
+| `attention_required` | `ui_prompt_start` | blocking `ctx.ui.*` prompts while a run is active (permission gates, questions); idle-time dialogs are not agent state and are never forwarded |
 | `attention_resolved` | `ui_prompt_end` | prompt closed |
 
 `agent_settled` (not `agent_end`) is the completion point so Warp never
@@ -67,16 +67,17 @@ failures are swallowed and can never break agent execution.
 
 ## Layout
 
-- `events.ts` — semantic event types, `AgentEventSink`, terminal gate.
+- `events.ts` — semantic event types, `AgentRuntimeEventSink`, terminal gate.
 - `classify.ts` — run outcome classification from `agent_end` messages;
   code-point-safe truncation.
 - `warp.ts` — capability check, OSC 777 framing, tmux passthrough (pure).
 - `warp-sink.ts` — `WarpCliAgentSink`: semantic → Warp mapping + emission.
-- `index.ts` — extension wiring: subscriptions, query tracking, gating.
+- `index.ts` — extension wiring: subscriptions, query tracking, run/attention
+  gating.
 
 ## Adding another sink later
 
-Implement `AgentEventSink { emit(event) }` and subscribe it in `index.ts`
+Implement `AgentRuntimeEventSink { emit(event) }` and subscribe it in `index.ts`
 next to (or instead of) the Warp sink. No protocol code outside `warp*.ts`.
 
 ## Tests

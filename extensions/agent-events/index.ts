@@ -2,10 +2,21 @@
  * agent-events — semantic runtime events for pi.
  *
  * Observes pi's lifecycle hooks and publishes a small terminal-agnostic event
- * model to AgentEventSink consumers. The only sink today is WarpCliAgentSink
- * (Warp CLI Agent Protocol v1 over OSC 777); a future control-plane transport
- * is just another sink. The model never calls anything from the LLM side —
- * lifecycle is observed automatically, there is no telemetry tool.
+ * model to AgentRuntimeEventSink consumers. The only sink today is
+ * WarpCliAgentSink (Warp CLI Agent Protocol v1 over OSC 777); a future
+ * control-plane transport is just another sink. The model never calls anything
+ * from the LLM side — lifecycle is observed automatically, there is no
+ * telemetry tool.
+ *
+ * Run semantics: pi's low-level loop re-emits agent_start on continuations
+ * (auto-retry, compaction retry — runAgentLoopContinue), while agent_settled
+ * fires once per logical run. run_started is therefore gated on the idle →
+ * active transition so one logical run has exactly one start and one end.
+ *
+ * Attention semantics: ui_prompt_start/end covers every blocking extension UI,
+ * including dialogs on an idle agent (commands, editors). Attention is
+ * forwarded only while a run is active, otherwise a resolved idle dialog
+ * would leave the consumer in a stale "working" state.
  *
  * Terminal sink activation invariants:
  * - only the top-level interactive TUI session (mode "tui" + stdout TTY)
@@ -17,7 +28,7 @@
 
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { classifyRunOutcome, truncateCodePoints, type RunOutcome } from "./classify";
-import { shouldCreateTerminalSink, type AgentEvent, type AgentEventSink } from "./events";
+import { shouldCreateTerminalSink, type AgentRuntimeEvent, type AgentRuntimeEventSink } from "./events";
 import { isWarpProtocolAdvertised } from "./warp";
 import { WarpCliAgentSink } from "./warp-sink";
 
@@ -25,11 +36,13 @@ import { WarpCliAgentSink } from "./warp-sink";
 const PLUGIN_VERSION = "0.1.0";
 
 export default function agentEventsExtension(pi: ExtensionAPI): void {
-	let sink: AgentEventSink | undefined;
+	let sink: AgentRuntimeEventSink | undefined;
 	let query: string | undefined;
 	let lastOutcome: RunOutcome | undefined;
+	let runActive = false;
+	let attentionForwarded = false;
 
-	function emit(event: AgentEvent): void {
+	function emit(event: AgentRuntimeEvent): void {
 		if (!sink) return;
 		try {
 			const result = sink.emit(event);
@@ -44,6 +57,8 @@ export default function agentEventsExtension(pi: ExtensionAPI): void {
 		sink = undefined;
 		query = undefined;
 		lastOutcome = undefined;
+		runActive = false;
+		attentionForwarded = false;
 
 		// Re-evaluated on every start: /new, /resume, /fork rebind the session
 		// (new session id), and mode never changes for a process lifetime.
@@ -68,6 +83,10 @@ export default function agentEventsExtension(pi: ExtensionAPI): void {
 	});
 
 	pi.on("agent_start", () => {
+		// Continuations (auto-retry, compaction retry) re-enter the low-level
+		// loop and emit agent_start again; the logical run starts once.
+		if (runActive) return;
+		runActive = true;
 		emit({ type: "run_started", query });
 	});
 
@@ -78,6 +97,8 @@ export default function agentEventsExtension(pi: ExtensionAPI): void {
 	// agent_settled fires only when no auto-retry, auto-compaction retry, or
 	// queued continuation remains, so Warp never flashes a final state mid-run.
 	pi.on("agent_settled", () => {
+		runActive = false;
+		attentionForwarded = false;
 		const outcome = lastOutcome ?? { status: "completed" as const };
 		lastOutcome = undefined;
 		const q = query;
@@ -92,10 +113,16 @@ export default function agentEventsExtension(pi: ExtensionAPI): void {
 	});
 
 	pi.on("ui_prompt_start", (event) => {
+		// Idle-time dialogs (commands, editors on a settled agent) are not agent
+		// state; forwarding them would leave a stale working/blocked status.
+		if (!runActive) return;
+		attentionForwarded = true;
 		emit({ type: "attention_required", kind: event.kind, title: event.title });
 	});
 
 	pi.on("ui_prompt_end", (event) => {
+		if (!attentionForwarded) return;
+		attentionForwarded = false;
 		emit({ type: "attention_resolved", kind: event.kind, title: event.title });
 	});
 
@@ -105,5 +132,7 @@ export default function agentEventsExtension(pi: ExtensionAPI): void {
 		sink = undefined;
 		query = undefined;
 		lastOutcome = undefined;
+		runActive = false;
+		attentionForwarded = false;
 	});
 }

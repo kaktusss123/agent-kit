@@ -7,7 +7,7 @@
  */
 
 import { basename } from "node:path";
-import type { AgentEvent, AgentEventSink } from "./events";
+import type { AgentRuntimeEvent, AgentRuntimeEventSink } from "./events";
 import {
 	buildWarpFrame,
 	finalizeWarpFrame,
@@ -21,7 +21,7 @@ import {
  * Attention set (drives the tmux monitor bell): run outcomes and attention
  * requests, mirroring OMP's treatment of stop/stop_failure/permission/question.
  */
-export function toWarpEvent(event: AgentEvent): { payload: WarpEventPayload; attention: boolean } {
+export function toWarpEvent(event: AgentRuntimeEvent): { payload: WarpEventPayload; attention: boolean } {
 	switch (event.type) {
 		case "session_started":
 			return { payload: { event: "session_start" }, attention: false };
@@ -67,7 +67,7 @@ export interface WarpCliAgentSinkOptions {
 	env?: Record<string, string | undefined>;
 }
 
-export class WarpCliAgentSink implements AgentEventSink {
+export class WarpCliAgentSink implements AgentRuntimeEventSink {
 	private readonly envelope: Omit<WarpEnvelope, "cwd" | "project"> & { getCwd: () => string };
 	private readonly write: (data: string) => void;
 	private readonly tmux: boolean;
@@ -82,7 +82,7 @@ export class WarpCliAgentSink implements AgentEventSink {
 		this.tmux = isInsideTmux(options.env);
 	}
 
-	emit(event: AgentEvent): void {
+	emit(event: AgentRuntimeEvent): void {
 		try {
 			const { payload, attention } = toWarpEvent(event);
 			const cwd = this.envelope.getCwd();

@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { shouldCreateTerminalSink, type AgentEvent } from "./events";
+import { shouldCreateTerminalSink, type AgentRuntimeEvent } from "./events";
 import { toWarpEvent, WarpCliAgentSink } from "./warp-sink";
 import {
 	buildWarpFrame,
@@ -240,6 +240,6 @@ describe("WarpCliAgentSink", () => {
 			},
 			env: {},
 		});
-		expect(() => sink.emit({ type: "run_started" } as AgentEvent)).not.toThrow();
+		expect(() => sink.emit({ type: "run_started" } as AgentRuntimeEvent)).not.toThrow();
 	});
 });

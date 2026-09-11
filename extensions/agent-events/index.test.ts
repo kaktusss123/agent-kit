@@ -142,15 +142,48 @@ describe("agent-events extension lifecycle", () => {
 		}
 	});
 
-	test("ui prompts map to attention_required/attention_resolved", () => {
+	test("ui prompts during a run map to attention_required/attention_resolved", () => {
 		const h = harness();
 		try {
 			h.pi.emit({ type: "session_start", reason: "startup" }, tuiContext());
+			h.pi.emit({ type: "before_agent_start", prompt: "q" }, {});
+			h.pi.emit({ type: "agent_start" }, {});
 			h.pi.emit({ type: "ui_prompt_start", reason: "ui_prompt", kind: "confirm", title: "Allow rm?" }, {});
 			h.pi.emit({ type: "ui_prompt_end", reason: "ui_prompt", kind: "confirm", title: "Allow rm?" }, {});
 
-			expect(events(h.written)[1]).toMatchObject({ event: "question_asked", summary: "Allow rm?" });
-			expect(events(h.written)[2]).toMatchObject({ event: "permission_replied" });
+			expect(events(h.written)[1]).toMatchObject({ event: "prompt_submit" });
+			expect(events(h.written)[2]).toMatchObject({ event: "question_asked", summary: "Allow rm?" });
+			expect(events(h.written)[3]).toMatchObject({ event: "permission_replied" });
+		} finally {
+			h.restore();
+		}
+	});
+
+	test("idle ui prompts (no active run) never reach the sink", () => {
+		const h = harness();
+		try {
+			h.pi.emit({ type: "session_start", reason: "startup" }, tuiContext());
+			h.pi.emit({ type: "ui_prompt_start", reason: "ui_prompt", kind: "select", title: "Pick one" }, {});
+			h.pi.emit({ type: "ui_prompt_end", reason: "ui_prompt", kind: "select", title: "Pick one" }, {});
+			expect(events(h.written)).toHaveLength(1); // session_start only
+		} finally {
+			h.restore();
+		}
+	});
+
+	test("attention resolved after settle does not emit permission_replied", () => {
+		const h = harness();
+		try {
+			h.pi.emit({ type: "session_start", reason: "startup" }, tuiContext());
+			h.pi.emit({ type: "before_agent_start", prompt: "q" }, {});
+			h.pi.emit({ type: "agent_start" }, {});
+			h.pi.emit({ type: "ui_prompt_start", reason: "ui_prompt", kind: "confirm" }, {});
+			h.pi.emit({ type: "agent_end", messages: [assistant({ text: "done" })] }, {});
+			h.pi.emit({ type: "agent_settled" }, {});
+			h.pi.emit({ type: "ui_prompt_end", reason: "ui_prompt", kind: "confirm" }, {});
+
+			const names = events(h.written).map((e) => e.event);
+			expect(names).toEqual(["session_start", "prompt_submit", "question_asked", "stop"]);
 		} finally {
 			h.restore();
 		}
@@ -189,6 +222,52 @@ describe("agent-events extension lifecycle", () => {
 			h.pi.emit({ type: "agent_start" }, {});
 			h.pi.emit({ type: "agent_settled" }, {});
 			expect(h.written).toEqual([]);
+		} finally {
+			h.restore();
+		}
+	});
+
+	test("retry continuation (second agent_start) does not restart the logical run", () => {
+		const h = harness();
+		try {
+			h.pi.emit({ type: "session_start", reason: "startup" }, tuiContext());
+			h.pi.emit({ type: "before_agent_start", prompt: "q" }, {});
+			h.pi.emit({ type: "agent_start" }, {});
+			h.pi.emit(
+				{ type: "agent_end", messages: [assistant({ stopReason: "error", errorMessage: "overloaded" })] },
+				{},
+			);
+			// Auto-retry continuation re-enters the low-level loop.
+			h.pi.emit({ type: "agent_start" }, {});
+			h.pi.emit({ type: "agent_end", messages: [assistant({ text: "recovered" })] }, {});
+			h.pi.emit({ type: "agent_settled" }, {});
+
+			const names = events(h.written).map((e) => e.event);
+			expect(names).toEqual(["session_start", "prompt_submit", "stop"]);
+			expect(events(h.written)[2]).toMatchObject({ query: "q", response: "recovered" });
+		} finally {
+			h.restore();
+		}
+	});
+
+	test("each new logical run after settle gets its own run_started", () => {
+		const h = harness();
+		try {
+			h.pi.emit({ type: "session_start", reason: "startup" }, tuiContext());
+			for (const prompt of ["first", "second"]) {
+				h.pi.emit({ type: "before_agent_start", prompt }, {});
+				h.pi.emit({ type: "agent_start" }, {});
+				h.pi.emit({ type: "agent_end", messages: [assistant({ text: `ok: ${prompt}` })] }, {});
+				h.pi.emit({ type: "agent_settled" }, {});
+			}
+			const names = events(h.written).map((e) => e.event);
+			expect(names).toEqual([
+				"session_start",
+				"prompt_submit",
+				"stop",
+				"prompt_submit",
+				"stop",
+			]);
 		} finally {
 			h.restore();
 		}
