@@ -15,7 +15,7 @@ import * as path from "node:path";
 import { LocalSubagentRuntime } from "../controller";
 import { createWorkspaceLayer } from "../workspace-agent";
 
-const LIVE_DIR = "/tmp/pi-workspace-live";
+const LIVE_DIR = process.env.PI_WDRV_LIVE_DIR ?? "/tmp/pi-workspace-live";
 const LOG = path.join(LIVE_DIR, "driver-log.json");
 
 interface LogShape {
