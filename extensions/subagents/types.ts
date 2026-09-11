@@ -120,6 +120,8 @@ export interface SubagentRuntime {
 	inspect(agentId?: string): AgentSnapshot[];
 	/** Subscribe to model-visible events; returns an unsubscribe function. */
 	onEvent(cb: (ev: SubagentModelEvent) => void): () => void;
-	/** Kill all live children; used on main session shutdown. */
+	/** Kill all live children without latching the runtime shut. */
+	cancelAll(): Promise<void>;
+	/** Kill all live children and latch the runtime shut (main shutdown). */
 	shutdown(): Promise<void>;
 }

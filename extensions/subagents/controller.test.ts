@@ -8,12 +8,13 @@ import {
 	autoAcceptPrompt,
 	createFakeSpawnFactory,
 	type FakeRpcProcess,
-	settleChild,
+	settleRun,
+	startRun,
 } from "./fake-rpc";
 import { loadResult } from "./result-store";
 import type { SubagentModelEvent } from "./types";
 
-function makeRuntime(opts?: { killGraceMs?: number }) {
+function makeRuntime(opts?: { killGraceMs?: number; dispatchTimeoutMs?: number }) {
 	const harness = createFakeSpawnFactory();
 	const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "subagents-test-"));
 	const events: SubagentModelEvent[] = [];
@@ -25,6 +26,7 @@ function makeRuntime(opts?: { killGraceMs?: number }) {
 		spawnFn: harness.spawnFn,
 		killGraceMs: opts?.killGraceMs ?? 50,
 		startTimeoutMs: 2000,
+		dispatchTimeoutMs: opts?.dispatchTimeoutMs ?? 2000,
 	});
 	runtime.onEvent((ev) => events.push(ev));
 	const cleanup = () => fs.rmSync(tmp, { recursive: true, force: true });
@@ -89,7 +91,7 @@ describe("LocalSubagentRuntime settle flow", () => {
 		const { harness, runtime, events, tmp, cleanup } = makeRuntime();
 		try {
 			const { id, proc } = await spawnRunning(runtime, harness);
-			settleChild(proc, "All checks pass, 2 issues found");
+			settleRun(proc, "All checks pass, 2 issues found");
 			await tick(60);
 
 			expect(events).toHaveLength(1);
@@ -141,7 +143,7 @@ describe("LocalSubagentRuntime settle flow", () => {
 				type: "message_end",
 				message: { role: "assistant", stopReason: "error", errorMessage: "provider exploded" },
 			});
-			settleChild(proc, "partial text", { agentStart: false });
+			settleRun(proc, "partial text");
 			await tick(60);
 			const snap = runtime.inspect(id)[0];
 			expect(snap.state).toBe("failed");
@@ -165,8 +167,8 @@ describe("LocalSubagentRuntime races", () => {
 			autoAcceptPrompt(harness.spawned[1]);
 			const [s1, s2] = await Promise.all([p1, p2]);
 			// settle both in the same tick
-			settleChild(harness.spawned[0], "result-A");
-			settleChild(harness.spawned[1], "result-B");
+			settleRun(harness.spawned[0], "result-A");
+			settleRun(harness.spawned[1], "result-B");
 			await tick(80);
 			expect(events).toHaveLength(2);
 			const ids = new Set(events.map((e) => e.agentId));
@@ -185,7 +187,7 @@ describe("LocalSubagentRuntime wait", () => {
 		try {
 			const { id, proc } = await spawnRunning(runtime, harness);
 			const pending = runtime.wait(id);
-			settleChild(proc, "done via wait");
+			settleRun(proc, "done via wait");
 			const outcome = await pending;
 			expect(outcome).toMatchObject({ status: "completed" });
 			await tick(30);
@@ -201,7 +203,7 @@ describe("LocalSubagentRuntime wait", () => {
 		const { harness, runtime, events, cleanup } = makeRuntime();
 		try {
 			const { id, proc } = await spawnRunning(runtime, harness);
-			settleChild(proc, "already done");
+			settleRun(proc, "already done");
 			await tick(60);
 			expect(events).toHaveLength(1); // delivered in background
 			const outcome = await runtime.wait(id);
@@ -317,7 +319,7 @@ describe("LocalSubagentRuntime steer / followUp", () => {
 		const { harness, runtime, cleanup } = makeRuntime();
 		try {
 			const { id, proc } = await spawnRunning(runtime, harness);
-			settleChild(proc, "done");
+			settleRun(proc, "done");
 			await tick(60);
 			// No controller-side guess: pi decides queue vs fresh run.
 			await runtime.steer(id, "wake up with this");
@@ -346,14 +348,15 @@ describe("LocalSubagentRuntime steer / followUp", () => {
 		const { harness, runtime, events, cleanup } = makeRuntime();
 		try {
 			const { id, proc } = await spawnRunning(runtime, harness);
-			settleChild(proc, "first run done");
+			settleRun(proc, "first run done");
 			await tick(60);
 			await runtime.followUp(id, "now continue");
 			const cmd = proc.commands.find((c) => c.type === "prompt" && c.streamingBehavior === "followUp");
 			expect(cmd).toMatchObject({ message: "now continue" });
 
 			// pi starts the queued follow-up as a new run (agent_start), then settles
-			settleChild(proc, "second run done");
+			startRun(proc);
+			settleRun(proc, "second run done");
 			await tick(80);
 			expect(runtime.inspect(id)[0].state).toBe("completed");
 			const completions = events.filter((e) => e.kind === "completed");
@@ -459,7 +462,7 @@ describe("regressions: wait must not swallow later completion", () => {
 			expect(outcome.status).toBe("timeout");
 
 			// child completes after the wait gave up
-			settleChild(proc, "late completion");
+			settleRun(proc, "late completion");
 			await tick(60);
 
 			expect(events).toHaveLength(1);
@@ -480,7 +483,7 @@ describe("regressions: wait must not swallow later completion", () => {
 			const outcome = await pending;
 			expect(outcome.status).toBe("timeout");
 
-			settleChild(proc, "late completion after abort");
+			settleRun(proc, "late completion after abort");
 			await tick(60);
 
 			expect(events).toHaveLength(1);
@@ -509,7 +512,7 @@ describe("regressions: transient provider errors", () => {
 				type: "message_end",
 				message: { role: "assistant", stopReason: "stop", errorMessage: undefined },
 			});
-			settleChild(proc, "recovered answer");
+			settleRun(proc, "recovered answer");
 			await tick(80);
 
 			expect(runtime.inspect(id)[0].state).toBe("completed");
@@ -533,7 +536,7 @@ describe("regressions: transient provider errors", () => {
 				message: { role: "assistant", stopReason: "error", errorMessage: "503 overloaded" },
 			});
 			proc.writeToStdout({ type: "auto_retry_end", success: false, attempt: 3, finalError: "529 overloaded: exhausted" });
-			settleChild(proc, "", { agentStart: false });
+			settleRun(proc, "");
 			await tick(80);
 
 			expect(runtime.inspect(id)[0].state).toBe("failed");
@@ -551,7 +554,7 @@ describe("regressions: per-run state resets", () => {
 		const { harness, runtime, events, cleanup } = makeRuntime();
 		try {
 			const { id, proc } = await spawnRunning(runtime, harness);
-			settleChild(proc, "run one done");
+			settleRun(proc, "run one done");
 			await tick(60);
 			expect(runtime.inspect(id)[0].state).toBe("completed");
 
@@ -580,12 +583,13 @@ describe("regressions: per-run state resets", () => {
 				type: "message_end",
 				message: { role: "assistant", stopReason: "error", errorMessage: "boom attempt 1" },
 			});
-			settleChild(proc, "", { agentStart: false });
+			settleRun(proc, "");
 			await tick(60);
 			expect(runtime.inspect(id)[0].state).toBe("failed");
 
 			await runtime.followUp(id, "try again");
-			settleChild(proc, "recovered on run two");
+			startRun(proc); // pi opens run #2; agent_start resets run-local state
+			settleRun(proc, "recovered on run two");
 			await tick(80);
 
 			expect(runtime.inspect(id)[0].state).toBe("completed");
@@ -646,6 +650,119 @@ describe("regressions: kill-all must not latch the runtime", () => {
 			const next = await spawnRunning(runtime, harness, "second");
 			expect(next.proc.closed).toBe(false);
 			expect(runtime.inspect(next.id)[0].state).toBe("running");
+		} finally {
+			await runtime.shutdown();
+			cleanup();
+		}
+	});
+});
+
+
+describe("regressions: stale terminal result vs pending dispatch", () => {
+	test("F9: follow_up over completed hides the old result until the new run starts", async () => {
+		const { harness, runtime, events, cleanup } = makeRuntime();
+		try {
+			const { id, proc } = await spawnRunning(runtime, harness);
+			settleRun(proc, "A");
+			await tick(60);
+			expect(runtime.inspect(id)[0].state).toBe("completed");
+
+			await runtime.followUp(id, "do B");
+
+			// no agent_start yet: the old completion must not leak through
+			const early = await runtime.wait(id, { timeoutMs: 40 });
+			expect(early.status).toBe("timeout");
+			expect(await runtime.result(id)).toBeNull();
+
+			// the new run actually starts and settles
+			startRun(proc);
+			settleRun(proc, "B");
+			const outcome = await runtime.wait(id, { timeoutMs: 5000 });
+			expect(outcome).toMatchObject({ status: "completed" });
+			expect((outcome as { summary: string }).summary).toBe("B");
+			const result = await runtime.result(id);
+			expect(result!.finalText).toBe("B");
+
+			// exactly one background completion exists — run #1's "A"; "B" was
+			// consumed by the wait() above, not duplicated
+			const completions = events.filter((e) => e.kind === "completed");
+			expect(completions).toHaveLength(1);
+			expect((completions[0] as { summary: string }).summary).toBe("A");
+		} finally {
+			await runtime.shutdown();
+			cleanup();
+		}
+	});
+
+	test("F9: a rejected preflight clears the stale mark and surfaces the error", async () => {
+		const { harness, runtime, cleanup } = makeRuntime({ dispatchTimeoutMs: 500 });
+		try {
+			const { id, proc } = await spawnRunning(runtime, harness);
+			settleRun(proc, "A");
+			await tick(60);
+
+			// make pi reject the dispatch
+			proc.autoRespondPrompts = false;
+			const pending = runtime.followUp(id, "do B");
+			await tick(20);
+			const cmd = proc.commands.find((c) => c.type === "prompt" && c.streamingBehavior === "followUp");
+			proc.writeToStdout({
+				id: cmd!.id, type: "response", command: "prompt", success: false, error: "no model",
+			});
+			await expect(pending).rejects.toThrow(/pi rejected the followUp/);
+
+			// the previous terminal result is visible again
+			expect(runtime.inspect(id)[0].state).toBe("completed");
+			const result = await runtime.result(id);
+			expect(result!.finalText).toBe("A");
+		} finally {
+			await runtime.shutdown();
+			cleanup();
+		}
+	});
+
+	test("F9: an unacknowledged dispatch times out without corrupting state", async () => {
+		const { harness, runtime, cleanup } = makeRuntime({ dispatchTimeoutMs: 80 });
+		try {
+			const { id, proc } = await spawnRunning(runtime, harness);
+			settleRun(proc, "A");
+			await tick(60);
+
+			proc.autoRespondPrompts = false;
+			await expect(runtime.followUp(id, "do B")).rejects.toThrow(/did not acknowledge/);
+
+			expect(runtime.inspect(id)[0].state).toBe("completed");
+			expect((await runtime.result(id))!.finalText).toBe("A");
+		} finally {
+			await runtime.shutdown();
+			cleanup();
+		}
+	});
+});
+
+describe("regressions: error separation", () => {
+	test("F11: a provider failure of run #1 does not linger as process error after run #2", async () => {
+		const { harness, runtime, cleanup } = makeRuntime();
+		try {
+			const { id, proc } = await spawnRunning(runtime, harness);
+			proc.writeToStdout({
+				type: "message_end",
+				message: { role: "assistant", stopReason: "error", errorMessage: "boom attempt 1" },
+			});
+			settleRun(proc, "");
+			await tick(60);
+			expect(runtime.inspect(id)[0].lastError).toBe("boom attempt 1");
+
+			await runtime.followUp(id, "try again");
+			startRun(proc);
+			settleRun(proc, "recovered");
+			await tick(80);
+
+			const snap = runtime.inspect(id)[0];
+			expect(snap.state).toBe("completed");
+			expect(snap.lastError).toBeUndefined();
+			const result = await runtime.result(id);
+			expect(result!.failureReason).toBeUndefined();
 		} finally {
 			await runtime.shutdown();
 			cleanup();

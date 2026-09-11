@@ -57,6 +57,8 @@ export interface ControllerOptions {
 	killGraceMs?: number;
 	/** Max time to wait for the initial prompt to be accepted. */
 	startTimeoutMs?: number;
+	/** Max time to wait for a dispatch (steer/follow_up) preflight response. */
+	dispatchTimeoutMs?: number;
 }
 
 interface AgentRecord {
@@ -83,11 +85,19 @@ interface AgentRecord {
 	signal?: string | null;
 	pendingQuestion?: { requestId: string; question: string; askedAt: number };
 	cancelRequested: boolean;
+	/**
+	 * New work was dispatched (prompt + streamingBehavior) while the agent
+	 * was in a terminal state. Until the child's `agent_start` proves the new
+	 * run actually began, wait()/result() must not present the previous
+	 * terminal result as the outcome of the pending work.
+	 */
+	pendingDispatch: boolean;
 	/** True between child `agent_start` and the matching `agent_settled`. */
 	runActive: boolean;
 	settledOnce: boolean;
 	waiters: Array<(outcome: WaitOutcome) => void>;
 	spawnWaiters: Array<(ok: boolean) => void>;
+	dispatchWaiters: Map<string, (ev: Record<string, unknown>) => void>;
 	spawnSettled: boolean;
 	settleFetchDone: boolean;
 }
@@ -109,6 +119,7 @@ export class LocalSubagentRuntime implements SubagentRuntime {
 	private readonly resultsDir: string;
 	private readonly killGraceMs: number;
 	private readonly startTimeoutMs: number;
+	private readonly dispatchTimeoutMs: number;
 
 	constructor(opts: ControllerOptions) {
 		this.defaultCwd = opts.defaultCwd;
@@ -119,6 +130,7 @@ export class LocalSubagentRuntime implements SubagentRuntime {
 		this.resultsDir = opts.resultsDir ?? defaultResultsDir();
 		this.killGraceMs = opts.killGraceMs ?? 3000;
 		this.startTimeoutMs = opts.startTimeoutMs ?? 30000;
+		this.dispatchTimeoutMs = opts.dispatchTimeoutMs ?? 10000;
 	}
 
 	// ------------------------------------------------------------------ spawn
@@ -165,10 +177,12 @@ export class LocalSubagentRuntime implements SubagentRuntime {
 			startedAt: Date.now(),
 			lastActivityAt: Date.now(),
 			cancelRequested: false,
+			pendingDispatch: false,
 			runActive: false,
 			settledOnce: false,
 			waiters: [],
 			spawnWaiters: [],
+			dispatchWaiters: new Map(),
 			spawnSettled: false,
 			settleFetchDone: false,
 		};
@@ -241,6 +255,7 @@ export class LocalSubagentRuntime implements SubagentRuntime {
 			record.finalText = undefined;
 			record.endedAt = undefined;
 			record.pendingQuestion = undefined;
+			record.pendingDispatch = false;
 			if (!record.cancelRequested && record.state !== "starting") {
 				record.state = "running";
 			}
@@ -262,6 +277,12 @@ export class LocalSubagentRuntime implements SubagentRuntime {
 		}
 
 		if (type === "response") {
+			const dispatchWaiter = record.dispatchWaiters.get(ev.id as string);
+			if (dispatchWaiter) {
+				record.dispatchWaiters.delete(ev.id as string);
+				dispatchWaiter(ev);
+				return;
+			}
 			const cmd = ev.command as string;
 			if (cmd === "prompt" && ev.id === "spawn-prompt") {
 				if (!record.spawnSettled) {
@@ -355,6 +376,7 @@ export class LocalSubagentRuntime implements SubagentRuntime {
 		record.exitCode = info.code;
 		record.signal = info.signal;
 		record.endedAt = Date.now();
+		record.pendingDispatch = false;
 		if (!record.spawnSettled) {
 			record.spawnSettled = true;
 			record.lastError = record.lastError ?? `child exited before accepting the prompt (code ${info.code}, signal ${info.signal})`;
@@ -369,10 +391,9 @@ export class LocalSubagentRuntime implements SubagentRuntime {
 		}
 		if (record.runActive) {
 			// A run was in progress and never settled.
-			this.finishWithFailure(
-				record,
-				`child exited unexpectedly before completing (code ${info.code}, signal ${info.signal})`,
-			);
+			const reason = `child exited unexpectedly before completing (code ${info.code}, signal ${info.signal})`;
+			record.lastError = reason;
+			this.finishWithFailure(record, reason);
 			return;
 		}
 		// All runs settled; a self-exit with a non-zero code or a kill signal
@@ -406,7 +427,6 @@ export class LocalSubagentRuntime implements SubagentRuntime {
 	private finishWithFailure(record: AgentRecord, reason: string): void {
 		if (isTerminal(record.state)) return;
 		record.state = "failed";
-		record.lastError = record.lastError ?? reason;
 		record.runError = reason;
 		record.endedAt = Date.now();
 		this.persistResult(record, "failed");
@@ -452,21 +472,50 @@ export class LocalSubagentRuntime implements SubagentRuntime {
 	}
 
 	async steer(agentId: string, message: string): Promise<void> {
-		const record = this.mustGet(agentId);
-		this.assertAlive(record, "steer");
-		// `prompt` + `streamingBehavior` lets pi atomically pick queueing vs a
-		// fresh run from the session's real state — no stale local copy.
-		this.conn(record).send({
-			id: `steer-${Date.now()}`, type: "prompt", message, streamingBehavior: "steer",
-		});
+		await this.dispatchInput(this.mustGet(agentId), "steer", message);
 	}
 
 	async followUp(agentId: string, message: string): Promise<void> {
-		const record = this.mustGet(agentId);
-		this.assertAlive(record, "follow_up");
-		this.conn(record).send({
-			id: `followup-${Date.now()}`, type: "prompt", message, streamingBehavior: "followUp",
-		});
+		await this.dispatchInput(this.mustGet(agentId), "followUp", message);
+	}
+
+	/**
+	 * Deliver new input via `prompt` + `streamingBehavior`: pi atomically
+	 * picks queueing vs a fresh run from the session's real state — no stale
+	 * local copy.
+	 *
+	 * When the agent sits in a terminal state, the dispatch marks the old
+	 * result stale (`pendingDispatch`) until the child's `agent_start` proves
+	 * the new run began; wait()/result() must not hand back the previous
+	 * completion as the outcome of the pending work. A rejected preflight
+	 * clears the mark and surfaces the error to the caller.
+	 */
+	private async dispatchInput(
+		record: AgentRecord,
+		behavior: "steer" | "followUp",
+		message: string,
+	): Promise<void> {
+		this.assertAlive(record, behavior === "steer" ? "steer" : "follow_up");
+		const overTerminal = isTerminal(record.state);
+		if (overTerminal) record.pendingDispatch = true;
+		const id = `dispatch-${++LocalSubagentRuntime.idCounter}`;
+		try {
+			const resp = await new Promise<Record<string, unknown>>((resolve, reject) => {
+				const timer = setTimeout(() => {
+					record.dispatchWaiters.delete(id);
+					reject(new Error(`pi did not acknowledge the ${behavior} dispatch in time`));
+				}, this.dispatchTimeoutMs);
+				timer.unref?.();
+				record.dispatchWaiters.set(id, resolve);
+				this.conn(record).send({ id, type: "prompt", message, streamingBehavior: behavior });
+			});
+			if (resp.success !== true) {
+				throw new Error(`pi rejected the ${behavior}: ${String(resp.error ?? "unknown")}`);
+			}
+		} catch (err) {
+			if (overTerminal) record.pendingDispatch = false;
+			throw err;
+		}
 	}
 
 	private assertAlive(record: AgentRecord, op: string): void {
@@ -480,18 +529,22 @@ export class LocalSubagentRuntime implements SubagentRuntime {
 		opts?: { timeoutMs?: number; signal?: AbortSignal },
 	): Promise<WaitOutcome> {
 		const record = this.mustGet(agentId);
-		// Already meaningful: resolve from current state.
-		if (record.state === "waiting_input") {
-			return { status: "needs_input", question: record.pendingQuestion?.question ?? "(unknown question)" };
-		}
-		if (record.state === "completed") {
-			return { status: "completed", summary: summarizeText(record.finalText) };
-		}
-		if (record.state === "failed") {
-			return { status: "failed", reason: record.runError ?? record.lastError ?? "agent failed" };
-		}
-		if (record.state === "cancelled") {
-			return { status: "cancelled" };
+		// Already meaningful: resolve from current state. A pending dispatch
+		// invalidates the terminal result — it belongs to the previous run,
+		// not to the work that was just queued.
+		if (!record.pendingDispatch) {
+			if (record.state === "waiting_input") {
+				return { status: "needs_input", question: record.pendingQuestion?.question ?? "(unknown question)" };
+			}
+			if (record.state === "completed") {
+				return { status: "completed", summary: summarizeText(record.finalText) };
+			}
+			if (record.state === "failed") {
+				return { status: "failed", reason: record.runError ?? record.lastError ?? "agent failed" };
+			}
+			if (record.state === "cancelled") {
+				return { status: "cancelled" };
+			}
 		}
 		const timeoutMs = opts?.timeoutMs ?? 600000;
 		return new Promise<WaitOutcome>((resolve) => {
@@ -527,7 +580,7 @@ export class LocalSubagentRuntime implements SubagentRuntime {
 			// persisted file in the shared results dir.
 			return loadResult(agentId, this.resultsDir);
 		}
-		if (!isTerminal(record.state)) return null; // no final result yet
+		if (!isTerminal(record.state) || record.pendingDispatch) return null; // no final result yet
 		return this.recordToResult(record);
 	}
 

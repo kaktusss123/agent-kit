@@ -34,6 +34,12 @@ export class FakeRpcProcess implements ChildProcessLike {
 	/** When true, SIGTERM is ignored (SIGKILL escalation testing). */
 	ignoreSigterm = false;
 
+	/**
+	 * Respond success to any `prompt` command carrying a `streamingBehavior`
+	 * (steer/follow_up dispatches), like a real pi preflight.
+	 */
+	autoRespondPrompts = true;
+
 	private readonly events = new EventEmitter();
 	private reader!: JsonlReader;
 
@@ -43,6 +49,21 @@ export class FakeRpcProcess implements ChildProcessLike {
 			const cmd = JSON.parse(line) as Record<string, unknown>;
 			this.commands.push(cmd);
 			this.events.emit("command", cmd);
+			if (
+				this.autoRespondPrompts &&
+				cmd.type === "prompt" &&
+				typeof cmd.streamingBehavior === "string"
+			) {
+				const response = {
+					id: cmd.id,
+					type: "response",
+					command: "prompt",
+					success: true,
+				};
+				queueMicrotask(() => {
+					if (!this.closed) this.writeToStdout(response);
+				});
+			}
 		});
 		this.stdout = {
 			on: (_event, cb) => {
@@ -134,14 +155,13 @@ export function autoAcceptPrompt(proc: FakeRpcProcess, requestId = "spawn-prompt
 	}, 1);
 }
 
-export function settleChild(
-	proc: FakeRpcProcess,
-	finalText: string,
-	opts?: { agentStart?: boolean },
-): void {
-	// Mirror real pi: a run opens with agent_start — unless this settle closes
-	// a run whose retries are already exhausted (no further low-level run).
-	if (opts?.agentStart !== false) proc.writeToStdout({ type: "agent_start" });
+/** Open a new low-level run, like pi's agent_start. */
+export function startRun(proc: FakeRpcProcess): void {
+	proc.writeToStdout({ type: "agent_start" });
+}
+
+/** Close the current run with a final assistant text. */
+export function settleRun(proc: FakeRpcProcess, finalText: string): void {
 	proc.writeToStdout({ type: "agent_settled" });
 	// Respond to the settle-time fetches as they arrive, consuming each so a
 	// second settle round works too.
