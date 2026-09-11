@@ -21,6 +21,12 @@ tuning, ported from my oh-my-pi setup.
   visible user message. Ported from oh-my-pi's input-controller shortcut;
   queued as a follow-up while the agent is busy, no-op mid-stream, passthrough
   with images.
+- `extensions/subagents/` — native subagent runtime: each subagent is an
+  independent `pi --mode rpc` process with its own session, owned by the main
+  process. One compact `subagent` tool (spawn/status/steer/follow_up/wait/
+  result/respond/cancel), async-first, background completion/escalation
+  delivery at safe turn boundaries, child transcripts never enter main context.
+  See `extensions/subagents/README.md`.
 
 ## Layout
 

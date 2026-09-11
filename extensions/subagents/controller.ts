@@ -1,0 +1,779 @@
+/**
+ * LocalSubagentRuntime — the local-process implementation of SubagentRuntime.
+ *
+ * Each agent is an independent pi process in `--mode rpc` running with
+ * `--no-extensions -e <bridge>` so children get a minimal, controlled
+ * environment (no recursive subagent spawning, no parent extension stack).
+ *
+ * Event flow (proven against pi 0.85.1):
+ * - child `agent_start` -> authoritative run boundary: reset run-local state
+ * - child settles  -> fetch state + final text + stats -> terminal result
+ * - child exits before settling -> failed (never a stuck "running")
+ * - child extension_ui_request (ask_parent) -> waiting_input; answered via
+ *   extension_ui_response, which resumes the very same tool call. The
+ *   pending question is cleared when the ask_parent tool call ends, so a
+ *   dialog timeout on the child side cannot desync the controller.
+ * - cancel -> RPC abort, then SIGTERM (pi exits cleanly even while blocked in
+ *   a UI dialog), then SIGKILL escalation
+ *
+ * Input delivery (steer / follow_up) always goes through
+ * `prompt` + `streamingBehavior`, letting pi — not a controller-side copy of
+ * its state machine — atomically decide between queueing and a fresh run.
+ *
+ * Model-visible events are consumed by `wait()` first; events nobody waits on
+ * are handed to background listeners (the extension delivers them to the main
+ * model at the next safe boundary).
+ */
+import * as path from "node:path";
+import { fileURLToPath } from "node:url";
+import {
+	RpcChildConnection,
+	resolvePiInvocation,
+	type SpawnFn,
+} from "./rpc-child";
+import { defaultResultsDir, loadResult, saveResult, summarizeText } from "./result-store";
+import type {
+	AgentResult,
+	AgentSnapshot,
+	AgentState,
+	SpawnOptions,
+	SubagentModelEvent,
+	SubagentRuntime,
+	WaitOutcome,
+} from "./types";
+
+export interface ControllerOptions {
+	/** Fallback cwd for children when spawn() has no cwd (main cwd). */
+	defaultCwd: string;
+	/** pi entry override for tests; defaults to resolved runtime invocation. */
+	piCommand?: { command: string; args: string[] };
+	/** Bridge extension file loaded into every child via `-e`. */
+	bridgePath?: string;
+	/** Results directory override (tests); defaults to the pi agent dir. */
+	resultsDir?: string;
+	/** Injected spawn (tests). */
+	spawnFn?: SpawnFn;
+	/** Grace period between SIGTERM and SIGKILL during cancel. */
+	killGraceMs?: number;
+	/** Max time to wait for the initial prompt to be accepted. */
+	startTimeoutMs?: number;
+	/** Max time to wait for a dispatch (steer/follow_up) preflight response. */
+	dispatchTimeoutMs?: number;
+}
+
+interface AgentRecord {
+	id: string;
+	label: string;
+	task: string;
+	cwd: string;
+	model?: string;
+	thinking?: string;
+	state: AgentState;
+	conn: RpcChildConnection;
+	startedAt: number;
+	endedAt?: number;
+	lastActivityAt: number;
+	sessionFile?: string;
+	sessionId?: string;
+	finalText?: string;
+	/** Failure of the current run; cleared by `agent_start` and on success. */
+	runError?: string;
+	/** Process-level failure (spawn, watchdog, unexpected exit). */
+	lastError?: string;
+	tokens?: AgentResult["tokens"];
+	exitCode?: number | null;
+	signal?: string | null;
+	pendingQuestion?: { requestId: string; question: string; askedAt: number };
+	cancelRequested: boolean;
+	/**
+	 * New work was dispatched (prompt + streamingBehavior) while the agent
+	 * was in a terminal state. Until the child's `agent_start` proves the new
+	 * run actually began, wait()/result() must not present the previous
+	 * terminal result as the outcome of the pending work.
+	 */
+	pendingDispatch: boolean;
+	/** True between child `agent_start` and the matching `agent_settled`. */
+	runActive: boolean;
+	settledOnce: boolean;
+	waiters: Array<(outcome: WaitOutcome) => void>;
+	spawnWaiters: Array<(ok: boolean) => void>;
+	dispatchWaiters: Map<string, (ev: Record<string, unknown>) => void>;
+	spawnSettled: boolean;
+	settleFetchDone: boolean;
+}
+
+const ASK_PARENT_TITLE = "ask_parent";
+const ASK_PARENT_TOOL = "ask_parent";
+
+export class LocalSubagentRuntime implements SubagentRuntime {
+	private readonly records = new Map<string, AgentRecord>();
+	private readonly listeners = new Set<(ev: SubagentModelEvent) => void>();
+	private shutDown = false;
+
+	private static idCounter = 0;
+
+	private readonly piInvocation: { command: string; args: string[] };
+	private readonly bridgePath: string;
+	private readonly spawnFn?: SpawnFn;
+	private readonly defaultCwd: string;
+	private readonly resultsDir: string;
+	private readonly killGraceMs: number;
+	private readonly startTimeoutMs: number;
+	private readonly dispatchTimeoutMs: number;
+
+	constructor(opts: ControllerOptions) {
+		this.defaultCwd = opts.defaultCwd;
+		this.piInvocation = opts.piCommand ?? resolvePiInvocation();
+		this.bridgePath =
+			opts.bridgePath ?? path.join(moduleDirname(), "bridge.ts");
+		this.spawnFn = opts.spawnFn;
+		this.resultsDir = opts.resultsDir ?? defaultResultsDir();
+		this.killGraceMs = opts.killGraceMs ?? 3000;
+		this.startTimeoutMs = opts.startTimeoutMs ?? 30000;
+		this.dispatchTimeoutMs = opts.dispatchTimeoutMs ?? 10000;
+	}
+
+	// ------------------------------------------------------------------ spawn
+
+	spawn(opts: SpawnOptions): Promise<AgentSnapshot> {
+		if (this.shutDown) return Promise.reject(new Error("runtime is shut down"));
+		const id = `sa-${++LocalSubagentRuntime.idCounter}-${Math.random().toString(36).slice(2, 6)}`;
+		const cwd = path.resolve(this.defaultCwd, opts.cwd ?? ".");
+		const label = opts.label?.trim() || `agent-${id.slice(3, 11)}`;
+
+		const args = [
+			...this.piInvocation.args,
+			"--mode", "rpc",
+			"--no-extensions",
+			"-e", this.bridgePath,
+			"--name", `subagent:${label}`,
+		];
+		if (opts.model) args.push("--model", opts.model);
+		if (opts.thinking) args.push("--thinking", opts.thinking);
+
+		const env: NodeJS.ProcessEnv = {
+			...process.env,
+			PI_SUBAGENT_ID: id,
+			PI_SUBAGENT_LABEL: label,
+		};
+
+		const conn = new RpcChildConnection({
+			command: this.piInvocation.command,
+			args,
+			cwd,
+			env,
+			spawnFn: this.spawnFn,
+		});
+
+		const record: AgentRecord = {
+			id,
+			label,
+			task: opts.task,
+			cwd,
+			model: opts.model,
+			thinking: opts.thinking,
+			state: "starting",
+			conn,
+			startedAt: Date.now(),
+			lastActivityAt: Date.now(),
+			cancelRequested: false,
+			pendingDispatch: false,
+			runActive: false,
+			settledOnce: false,
+			waiters: [],
+			spawnWaiters: [],
+			dispatchWaiters: new Map(),
+			spawnSettled: false,
+			settleFetchDone: false,
+		};
+		this.records.set(id, record);
+
+		conn.onLine = (line) => this.handleChildLine(record, line);
+		conn.onStderr = () => {
+			record.lastActivityAt = Date.now();
+		};
+		conn.onError = (err) => {
+			record.lastError = `spawn error: ${err.message}`;
+			this.finishWithFailure(record, `spawn error: ${err.message}`);
+		};
+		conn.onExit = (info) => this.handleChildExit(record, info);
+
+		conn.send({ id: "spawn-prompt", type: "prompt", message: opts.task });
+
+		const startTimer = setTimeout(() => {
+			if (!record.spawnSettled) {
+				record.lastError = "child did not accept the initial prompt in time";
+				this.finishWithFailure(record, record.lastError);
+				conn.kill("SIGKILL");
+			}
+		}, this.startTimeoutMs);
+		// Let the event loop die with the process instead of keeping it alive.
+		startTimer.unref?.();
+
+		return new Promise<AgentSnapshot>((resolve, reject) => {
+			record.spawnWaiters.push((ok) => {
+				clearTimeout(startTimer);
+				if (ok) resolve(this.snapshot(record));
+				else reject(new Error(record.lastError ?? "child failed to start"));
+			});
+		});
+	}
+
+	// ------------------------------------------------------- child RPC plumbing
+
+	private handleChildLine(record: AgentRecord, line: string): void {
+		let ev: Record<string, unknown>;
+		try {
+			ev = JSON.parse(line);
+		} catch {
+			return; // not protocol JSON — ignore
+		}
+		record.lastActivityAt = Date.now();
+		const type = ev.type as string;
+
+		if (type === "extension_ui_request") {
+			this.handleUiRequest(record, ev);
+			return;
+		}
+
+		// The ask_parent tool call ended: the dialog is resolved one way or
+		// another (answer, cancel, or a pi-side timeout that never sends an
+		// extension_ui_response). Sync the controller so a timed-out child
+		// cannot leave a phantom pending question behind.
+		if (type === "tool_execution_end" && ev.toolName === ASK_PARENT_TOOL) {
+			if (record.pendingQuestion) {
+				record.pendingQuestion = undefined;
+				if (record.state === "waiting_input") record.state = "running";
+			}
+			return;
+		}
+
+		if (type === "agent_start") {
+			// Authoritative run boundary: reset run-local state.
+			record.runActive = true;
+			record.runError = undefined;
+			record.finalText = undefined;
+			record.endedAt = undefined;
+			record.pendingQuestion = undefined;
+			record.pendingDispatch = false;
+			if (!record.cancelRequested && record.state !== "starting") {
+				record.state = "running";
+			}
+			return;
+		}
+
+		if (type === "agent_settled") {
+			record.runActive = false;
+			record.settledOnce = true;
+			record.pendingQuestion = undefined;
+			if (record.cancelRequested) return; // exit path will mark cancelled
+			// Collect state, final text, and stats. Responses correlate by
+			// command, so all three can go out at once.
+			record.settleFetchDone = false;
+			connGetState(record);
+			connGetStats(record);
+			connGetLastText(record);
+			return;
+		}
+
+		if (type === "response") {
+			const dispatchWaiter = record.dispatchWaiters.get(ev.id as string);
+			if (dispatchWaiter) {
+				record.dispatchWaiters.delete(ev.id as string);
+				dispatchWaiter(ev);
+				return;
+			}
+			const cmd = ev.command as string;
+			if (cmd === "prompt" && ev.id === "spawn-prompt") {
+				if (!record.spawnSettled) {
+					record.spawnSettled = true;
+					record.state = "running";
+					for (const w of record.spawnWaiters.splice(0)) w(ev.success === true);
+					if (ev.success !== true) {
+						record.lastError = `initial prompt rejected: ${String(ev.error ?? "unknown")}`;
+						this.finishWithFailure(record, record.lastError);
+					}
+				}
+				return;
+			}
+			if (cmd === "get_state" && ev.success === true) {
+				const data = ev.data as { sessionFile?: string; sessionId?: string } | undefined;
+				record.sessionFile = data?.sessionFile ?? record.sessionFile;
+				record.sessionId = data?.sessionId ?? record.sessionId;
+				return;
+			}
+			if (cmd === "get_last_assistant_text" && ev.success === true) {
+				record.finalText = (ev.data as { text?: string } | undefined)?.text ?? "";
+				this.completeSettle(record);
+				return;
+			}
+			if (cmd === "get_session_stats" && ev.success === true) {
+				const data = ev.data as
+					| { tokens?: { input?: number; output?: number; total?: number }; cost?: number }
+					| undefined;
+				if (data?.tokens) {
+					record.tokens = {
+						input: data.tokens.input ?? 0,
+						output: data.tokens.output ?? 0,
+						total: data.tokens.total ?? 0,
+						cost: data.cost,
+					};
+				}
+				return;
+			}
+			return;
+		}
+
+		if (type === "message_end") {
+			const msg = ev.message as
+				| { role?: string; stopReason?: string; errorMessage?: string }
+				| undefined;
+			if (msg?.role === "assistant") {
+				if (msg.stopReason === "error" && msg.errorMessage) {
+					record.runError = msg.errorMessage;
+				} else {
+					// A successful assistant response supersedes any transient
+					// provider error from an earlier retry attempt.
+					record.runError = undefined;
+				}
+			}
+			return;
+		}
+
+		if (type === "auto_retry_end") {
+			if (ev.success === false && typeof ev.finalError === "string") {
+				record.runError = ev.finalError;
+			} else if (ev.success === true) {
+				record.runError = undefined;
+			}
+		}
+	}
+
+	/**
+	 * Child UI dialogs. With the minimal child environment the only dialog
+	 * source is the bridge's ask_parent tool (`input`, title "ask_parent").
+	 * Fire-and-forget requests (notify, setWidget, ...) are ignored.
+	 */
+	private handleUiRequest(record: AgentRecord, ev: Record<string, unknown>): void {
+		const method = ev.method as string;
+		if (method !== "input") return; // select/confirm/editor are not produced by the bridge
+		const title = ev.title as string;
+		const id = ev.id as string;
+		if (title !== ASK_PARENT_TITLE || !id) return;
+		const question = (ev.placeholder as string) ?? "";
+		if (record.pendingQuestion) {
+			// A previous question is still open: dismiss the duplicate so the
+			// child tool gets "no answer" instead of dead-waiting forever.
+			this.conn(record).send({ type: "extension_ui_response", id, cancelled: true });
+			return;
+		}
+		record.pendingQuestion = { requestId: id, question, askedAt: Date.now() };
+		record.state = "waiting_input";
+		this.pushEvent(record, { kind: "needs_input", agentId: record.id, label: record.label, question });
+	}
+
+	private handleChildExit(record: AgentRecord, info: { code: number | null; signal: string | null }): void {
+		record.exitCode = info.code;
+		record.signal = info.signal;
+		record.endedAt = Date.now();
+		record.pendingDispatch = false;
+		if (!record.spawnSettled) {
+			record.spawnSettled = true;
+			record.lastError = record.lastError ?? `child exited before accepting the prompt (code ${info.code}, signal ${info.signal})`;
+			for (const w of record.spawnWaiters.splice(0)) w(false);
+			this.finishWithFailure(record, record.lastError);
+			return;
+		}
+		if (record.cancelRequested) {
+			this.markTerminal(record, "cancelled");
+			this.pushEvent(record, { kind: "cancelled", agentId: record.id, label: record.label }, { background: false });
+			return;
+		}
+		if (record.runActive) {
+			// A run was in progress and never settled.
+			const reason = `child exited unexpectedly before completing (code ${info.code}, signal ${info.signal})`;
+			record.lastError = reason;
+			this.finishWithFailure(record, reason);
+			return;
+		}
+		// All runs settled; a self-exit with a non-zero code or a kill signal
+		// is still a process failure worth surfacing.
+		if ((info.code ?? 0) !== 0 || info.signal) {
+			record.lastError = `child exited with code ${info.code} / signal ${info.signal} after completing`;
+			this.finishWithFailure(record, record.lastError);
+		}
+	}
+
+	// Collect settle-time fetches, then decide the run outcome.
+	private completeSettle(record: AgentRecord): void {
+		if (record.settleFetchDone) return;
+		record.settleFetchDone = true;
+		if (record.cancelRequested) return;
+		if (record.runError) {
+			this.finishWithFailure(record, record.runError);
+			return;
+		}
+		record.state = "completed";
+		record.endedAt = Date.now();
+		this.persistResult(record, "completed");
+		this.pushEvent(record, {
+			kind: "completed",
+			agentId: record.id,
+			label: record.label,
+			summary: summarizeText(record.finalText),
+		});
+	}
+
+	private finishWithFailure(record: AgentRecord, reason: string): void {
+		if (isTerminal(record.state)) return;
+		record.state = "failed";
+		record.runError = reason;
+		record.endedAt = Date.now();
+		this.persistResult(record, "failed");
+		this.pushEvent(record, { kind: "failed", agentId: record.id, label: record.label, reason });
+	}
+
+	private markTerminal(record: AgentRecord, state: "cancelled"): void {
+		record.state = state;
+		record.endedAt = record.endedAt ?? Date.now();
+		this.persistResult(record, state);
+	}
+
+	private persistResult(record: AgentRecord, status: AgentResult["status"]): void {
+		const result: AgentResult = {
+			id: record.id,
+			label: record.label,
+			task: record.task,
+			cwd: record.cwd,
+			status,
+			finalText: record.finalText,
+			summary: summarizeText(record.finalText),
+			failureReason: status === "failed" ? record.runError ?? record.lastError : undefined,
+			sessionFile: record.sessionFile,
+			sessionId: record.sessionId,
+			model: record.model,
+			startedAt: record.startedAt,
+			endedAt: record.endedAt,
+			tokens: record.tokens,
+			exitCode: record.exitCode,
+			signal: record.signal,
+		};
+		try {
+			saveResult(result, this.resultsDir);
+		} catch {
+			// Persistence is best-effort; the in-memory record still serves results.
+		}
+	}
+
+	// -------------------------------------------------------------- operations
+
+	private conn(record: AgentRecord): RpcChildConnection {
+		return record.conn;
+	}
+
+	async steer(agentId: string, message: string): Promise<void> {
+		await this.dispatchInput(this.mustGet(agentId), "steer", message);
+	}
+
+	async followUp(agentId: string, message: string): Promise<void> {
+		await this.dispatchInput(this.mustGet(agentId), "followUp", message);
+	}
+
+	/**
+	 * Deliver new input via `prompt` + `streamingBehavior`: pi atomically
+	 * picks queueing vs a fresh run from the session's real state — no stale
+	 * local copy.
+	 *
+	 * When the agent sits in a terminal state, the dispatch marks the old
+	 * result stale (`pendingDispatch`) until the child's `agent_start` proves
+	 * the new run began; wait()/result() must not hand back the previous
+	 * completion as the outcome of the pending work. A rejected preflight
+	 * clears the mark and surfaces the error to the caller.
+	 */
+	private async dispatchInput(
+		record: AgentRecord,
+		behavior: "steer" | "followUp",
+		message: string,
+	): Promise<void> {
+		this.assertAlive(record, behavior === "steer" ? "steer" : "follow_up");
+		const overTerminal = isTerminal(record.state);
+		if (overTerminal) record.pendingDispatch = true;
+		const id = `dispatch-${++LocalSubagentRuntime.idCounter}`;
+		try {
+			const resp = await new Promise<Record<string, unknown>>((resolve, reject) => {
+				const timer = setTimeout(() => {
+					record.dispatchWaiters.delete(id);
+					reject(new Error(`pi did not acknowledge the ${behavior} dispatch in time`));
+				}, this.dispatchTimeoutMs);
+				timer.unref?.();
+				record.dispatchWaiters.set(id, resolve);
+				this.conn(record).send({ id, type: "prompt", message, streamingBehavior: behavior });
+			});
+			if (resp.success !== true) {
+				throw new Error(`pi rejected the ${behavior}: ${String(resp.error ?? "unknown")}`);
+			}
+		} catch (err) {
+			if (overTerminal) record.pendingDispatch = false;
+			throw err;
+		}
+	}
+
+	private assertAlive(record: AgentRecord, op: string): void {
+		if (record.conn.exit) {
+			throw new Error(`cannot ${op}: agent ${agentRef(record)} process is not running (state: ${record.state})`);
+		}
+	}
+
+	async wait(
+		agentId: string,
+		opts?: { timeoutMs?: number; signal?: AbortSignal },
+	): Promise<WaitOutcome> {
+		const record = this.mustGet(agentId);
+		// Already meaningful: resolve from current state. A pending dispatch
+		// invalidates the terminal result — it belongs to the previous run,
+		// not to the work that was just queued.
+		if (!record.pendingDispatch) {
+			if (record.state === "waiting_input") {
+				return { status: "needs_input", question: record.pendingQuestion?.question ?? "(unknown question)" };
+			}
+			if (record.state === "completed") {
+				return { status: "completed", summary: summarizeText(record.finalText) };
+			}
+			if (record.state === "failed") {
+				return { status: "failed", reason: record.runError ?? record.lastError ?? "agent failed" };
+			}
+			if (record.state === "cancelled") {
+				return { status: "cancelled" };
+			}
+		}
+		const timeoutMs = opts?.timeoutMs ?? 600000;
+		return new Promise<WaitOutcome>((resolve) => {
+			let done = false;
+			// Keep the exact wrapper so cleanup removes the registered entry,
+			// not an unrelated function (a stale waiter would swallow the next
+			// event — see pushEvent).
+			let waiter: ((outcome: WaitOutcome) => void) | undefined;
+			const finish = (outcome: WaitOutcome) => {
+				if (done) return;
+				done = true;
+				clearTimeout(timer);
+				opts?.signal?.removeEventListener("abort", onAbort);
+				if (waiter) {
+					const idx = record.waiters.indexOf(waiter);
+					if (idx !== -1) record.waiters.splice(idx, 1);
+				}
+				resolve(outcome);
+			};
+			const timer = setTimeout(() => finish({ status: "timeout", state: record.state }), timeoutMs);
+			timer.unref?.();
+			const onAbort = () => finish({ status: "timeout", state: record.state });
+			opts?.signal?.addEventListener("abort", onAbort, { once: true });
+			waiter = (outcome) => finish(outcome);
+			record.waiters.push(waiter);
+		});
+	}
+
+	async result(agentId: string): Promise<AgentResult | null> {
+		const record = this.records.get(agentId);
+		if (!record) {
+			// Unknown in this process (e.g. after a main restart) — try the
+			// persisted file in the shared results dir.
+			return loadResult(agentId, this.resultsDir);
+		}
+		if (!isTerminal(record.state) || record.pendingDispatch) return null; // no final result yet
+		return this.recordToResult(record);
+	}
+
+	private recordToResult(record: AgentRecord): AgentResult {
+		const status: AgentResult["status"] =
+			record.state === "completed" ? "completed"
+			: record.state === "cancelled" ? "cancelled"
+			: "failed";
+		return {
+			id: record.id,
+			label: record.label,
+			task: record.task,
+			cwd: record.cwd,
+			status,
+			finalText: record.finalText,
+			summary: summarizeText(record.finalText),
+			failureReason: status === "failed" ? record.runError ?? record.lastError : undefined,
+			sessionFile: record.sessionFile,
+			sessionId: record.sessionId,
+			model: record.model,
+			startedAt: record.startedAt,
+			endedAt: record.endedAt,
+			tokens: record.tokens,
+			exitCode: record.exitCode,
+			signal: record.signal,
+		};
+	}
+
+	async respond(agentId: string, answer: string): Promise<void> {
+		const record = this.mustGet(agentId);
+		if (record.conn.exit) {
+			throw new Error(`agent ${agentId} process has exited (state: ${record.state})`);
+		}
+		const q = record.pendingQuestion;
+		if (!q) throw new Error(`agent ${agentId} has no pending question`);
+		record.pendingQuestion = undefined;
+		record.state = "running";
+		this.conn(record).send({ type: "extension_ui_response", id: q.requestId, value: answer });
+	}
+
+	async cancel(agentId: string): Promise<void> {
+		const record = this.mustGet(agentId);
+		if (record.conn.exit) {
+			if (!isTerminal(record.state)) this.markTerminal(record, "cancelled");
+			return;
+		}
+		record.cancelRequested = true;
+		// pi abort: ends the current run with stopReason "aborted"; the session
+		// stays valid. Harmless when the child is idle or blocked in a dialog.
+		// SIGTERM follows immediately: pi exits cleanly (exit code 143) even
+		// while blocked inside an extension UI dialog.
+		this.conn(record).send({ type: "abort" });
+		this.conn(record).kill("SIGTERM");
+		const escalated = await Promise.race([
+			record.conn.waitForExit().then(() => false),
+			new Promise<true>((resolve) => setTimeout(() => resolve(true), this.killGraceMs)),
+		]);
+		if (escalated && !record.conn.exit) {
+			this.conn(record).kill("SIGKILL");
+			await record.conn.waitForExit();
+		}
+	}
+
+	inspect(agentId?: string): AgentSnapshot[] {
+		const records = agentId ? [this.records.get(agentId)].filter(Boolean) as AgentRecord[] : [...this.records.values()];
+		return records.map((r) => this.snapshot(r));
+	}
+
+	onEvent(cb: (ev: SubagentModelEvent) => void): () => void {
+		this.listeners.add(cb);
+		return () => this.listeners.delete(cb);
+	}
+
+	/** Kill all live children without latching the runtime shut. */
+	async cancelAll(): Promise<void> {
+		const live = [...this.records.values()].filter((r) => !r.conn.exit);
+		if (live.length === 0) return;
+		for (const r of live) {
+			r.cancelRequested = true;
+			this.conn(r).send({ type: "abort" });
+			this.conn(r).kill("SIGTERM");
+		}
+		const exits = live.map((r) => r.conn.waitForExit());
+		await Promise.race([
+			Promise.all(exits),
+			new Promise((resolve) => setTimeout(resolve, this.killGraceMs)),
+		]);
+		for (const r of live) {
+			if (!r.conn.exit) this.conn(r).kill("SIGKILL");
+		}
+	}
+
+	/** Kill all live children and latch the runtime shut (main shutdown). */
+	async shutdown(): Promise<void> {
+		this.shutDown = true;
+		await this.cancelAll();
+	}
+
+	// ---------------------------------------------------------------- internal
+
+	private pushEvent(record: AgentRecord, ev: SubagentModelEvent, opts?: { background?: boolean }): void {
+		// A waiter gets it first (consumed); otherwise it goes to background
+		// delivery. `background: false` events (cancel confirmations) resolve
+		// waiters only — the cancelling side already learned the outcome
+		// synchronously, and a duplicate steer message would just burn a turn.
+		if (record.waiters.length > 0) {
+			const waiter = record.waiters.shift()!;
+			waiter(eventToOutcome(ev));
+			// Other waiters (parallel tool calls) also get a copy.
+			for (const w of record.waiters.splice(0)) w(eventToOutcome(ev));
+			return;
+		}
+		if (opts?.background === false) return;
+		for (const cb of this.listeners) {
+			try {
+				cb(ev);
+			} catch {
+				// listener errors must not break the runtime
+			}
+		}
+	}
+
+	private mustGet(agentId: string): AgentRecord {
+		const record = this.records.get(agentId);
+		if (!record) throw new Error(`unknown agent id: ${agentId}`);
+		return record;
+	}
+
+	private snapshot(record: AgentRecord): AgentSnapshot {
+		return {
+			id: record.id,
+			label: record.label,
+			state: record.state,
+			task: record.task,
+			cwd: record.cwd,
+			model: record.model,
+			alive: !record.conn.exit,
+			pid: record.conn.pid,
+			startedAt: record.startedAt,
+			endedAt: record.endedAt,
+			lastActivityAt: record.lastActivityAt,
+			elapsedMs: (record.endedAt ?? Date.now()) - record.startedAt,
+			sessionFile: record.sessionFile,
+			sessionId: record.sessionId,
+			pendingQuestion: record.pendingQuestion?.question,
+			lastError: record.lastError ?? record.runError,
+			exitCode: record.exitCode,
+			signal: record.signal,
+		};
+	}
+}
+
+// -------------------------------------------------------------------- helpers
+
+function agentRef(record: AgentRecord): string {
+	return record.id;
+}
+
+function connGetState(record: AgentRecord): void {
+	record.conn.send({ id: "ctl-state", type: "get_state" });
+}
+
+function connGetStats(record: AgentRecord): void {
+	record.conn.send({ id: "ctl-stats", type: "get_session_stats" });
+}
+
+function connGetLastText(record: AgentRecord): void {
+	record.conn.send({ id: "ctl-last-text", type: "get_last_assistant_text" });
+}
+
+function eventToOutcome(ev: SubagentModelEvent): WaitOutcome {
+	switch (ev.kind) {
+		case "completed":
+			return { status: "completed", summary: ev.summary };
+		case "failed":
+			return { status: "failed", reason: ev.reason };
+		case "cancelled":
+			return { status: "cancelled" };
+		case "needs_input":
+			return { status: "needs_input", question: ev.question };
+	}
+}
+
+function isTerminal(state: AgentState): boolean {
+	return state === "completed" || state === "failed" || state === "cancelled";
+}
+
+/** Directory of this module (works under jiti and node). */
+function moduleDirname(): string {
+	try {
+		return path.dirname(fileURLToPath(import.meta.url));
+	} catch {
+		// jiti CJS interop fallback
+		return __dirname;
+	}
+}
