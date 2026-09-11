@@ -6,12 +6,15 @@
  * session_start/shutdown) and must not carry transport-specific fields.
  * Sinks translate these events into their own wire protocols (Warp OSC 777
  * today, a future control-plane transport tomorrow).
+ *
+ * Named Runtime* to stay unambiguous next to pi-agent-core's low-level
+ * AgentEvent / AgentEventSink loop contract.
  */
 
 /** Kinds of blocking user-facing UI prompts pi reports via ui_prompt_*. */
 export type UIPromptKind = "select" | "confirm" | "input" | "editor" | "custom";
 
-export type AgentEvent =
+export type AgentRuntimeEvent =
 	| { type: "session_started"; sessionId: string }
 	| { type: "run_started"; query?: string }
 	| { type: "run_completed"; query?: string; response?: string }
@@ -24,8 +27,8 @@ export type AgentEvent =
  * A consumer of semantic agent events. Sinks must be cheap and best-effort:
  * delivery guarantees, retries, and acknowledgements are out of scope.
  */
-export interface AgentEventSink {
-	emit(event: AgentEvent): void | Promise<void>;
+export interface AgentRuntimeEventSink {
+	emit(event: AgentRuntimeEvent): void | Promise<void>;
 }
 
 /**
