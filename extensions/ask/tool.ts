@@ -165,6 +165,41 @@ function askError(message: string): AskToolResult {
 
 // ============================================================ RPC fallback
 
+/**
+ * RPC hosts select by display STRING, so two rows rendering the same string
+ * would silently resolve the user's pick to the first of them (e.g. option
+ * "Restart" with recommended badge vs a literal option "Restart
+ * (Recommended)", or "foo — bar" vs label "foo" + description "bar").
+ * Disambiguate the rendered strings: the first occurrence keeps its display,
+ * every later duplicate gets an increasing " [n]" suffix, skipped when that
+ * exact string already exists. Positional mapping to the rows is untouched,
+ * and answers keep using the raw option labels.
+ */
+export function disambiguateDisplayLabels(labels: string[]): string[] {
+	const counts = new Map<string, number>();
+	for (const label of labels) counts.set(label, (counts.get(label) ?? 0) + 1);
+	if (counts.size === labels.length) return labels; // fast path: already unique
+
+	const used = new Set(labels);
+	const occurrence = new Map<string, number>();
+	return labels.map((label) => {
+		if ((counts.get(label) ?? 0) === 1) return label;
+		const k = (occurrence.get(label) ?? 0) + 1;
+		occurrence.set(label, k);
+		if (k === 1) return label; // the first occurrence of each duplicated label keeps its display
+		// later occurrences get a suffix mirroring their occurrence number,
+		// bumped further when that exact string already exists
+		let n = k;
+		let candidate = `${label} [${n}]`;
+		while (used.has(candidate)) {
+			n += 1;
+			candidate = `${label} [${n}]`;
+		}
+		used.add(candidate);
+		return candidate;
+	});
+}
+
 const OTHER_MARKER = "__ask_other__";
 const DONE_MARKER = "__ask_done__";
 const CHAT_MARKER = "__ask_chat__";
@@ -262,10 +297,12 @@ async function askOneFallback(
 	while (true) {
 		const answer = answers[questionIndex];
 		const rows = fallbackRows(question, answer);
-		const options = rows.map((row) => {
-			const description = row.description ? ` — ${row.description}` : "";
-			return `${row.label}${description}`;
-		});
+		const options = disambiguateDisplayLabels(
+			rows.map((row) => {
+				const description = row.description ? ` — ${row.description}` : "";
+				return `${row.label}${description}`;
+			}),
+		);
 		const choice = await ui.select(question.question, options, { signal });
 		if (choice === undefined) return "cancelled";
 		const index = options.indexOf(choice);

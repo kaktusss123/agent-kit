@@ -280,6 +280,65 @@ describe("rpcFallbackAsk", () => {
 		});
 	});
 
+	test("recommended badge collision resolves the picked row, not the first lookalike (F6)", async () => {
+		const q = {
+			id: "r",
+			question: "Restart?",
+			options: [{ label: "Restart" }, { label: "Restart (Recommended)" }],
+			recommended: 0,
+		};
+		const { ui, calls } = scriptedUi([
+			{ expect: { kind: "select" }, reply: "Restart (Recommended) [2]" }, // the SECOND row
+			{ expect: { kind: "select" }, reply: "Submit answers" },
+		]);
+		const outcome = await rpcFallbackAsk(ui, [q], undefined);
+		// display strings were disambiguated
+		const select = calls.find((c) => c.kind === "select")!;
+		expect(new Set(select.options).size).toBe(select.options.length);
+		expect(select.options).toContain("Restart (Recommended)");
+		expect(select.options).toContain("Restart (Recommended) [2]");
+		// and the user's pick maps back to the raw label of the SECOND option
+		expect(outcome).toEqual({
+			kind: "answers",
+			results: [
+				{
+					id: "r",
+					question: "Restart?",
+					options: ["Restart", "Restart (Recommended)"],
+					multi: false,
+					selectedOptions: ["Restart (Recommended)"],
+				},
+			],
+		});
+	});
+
+	test("description gluing collision resolves the picked row (F6)", async () => {
+		const q = {
+			id: "g",
+			question: "Which?",
+			options: [{ label: "foo — bar" }, { label: "foo", description: "bar" }],
+		};
+		const { ui, calls } = scriptedUi([
+			{ expect: { kind: "select" }, reply: "foo — bar [2]" }, // the SECOND row
+			{ expect: { kind: "select" }, reply: "Submit answers" },
+		]);
+		const outcome = await rpcFallbackAsk(ui, [q], undefined);
+		const select = calls.find((c) => c.kind === "select")!;
+		expect(new Set(select.options).size).toBe(select.options.length);
+		expect(outcome).toEqual({
+			kind: "answers",
+			results: [
+				{
+					id: "g",
+					question: "Which?",
+					options: ["foo — bar", "foo"],
+					multi: false,
+					selectedOptions: ["foo"],
+				},
+			],
+		});
+	});
+
 	test("chat is available in the fallback", async () => {
 		const { ui } = scriptedUi([{ expect: { kind: "select" }, reply: "Chat about this" }]);
 		const outcome = await rpcFallbackAsk(ui, oneQuestion, undefined);
