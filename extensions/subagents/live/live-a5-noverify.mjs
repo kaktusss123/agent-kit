@@ -29,7 +29,7 @@ const WS = path.join(TASK_ROOT, "a5-ws");
 execSync(`git -C "${seed}" worktree add -b feat/a5 "${WS}" main`);
 const BEFORE = execSync(`git -C "${WS}" rev-parse HEAD`).toString().trim();
 
-const main = spawn(PI_BIN, ["--mode", "rpc", "--no-session", "-e", DRIVER], {
+const main = spawn(PI_BIN, ["--mode", "rpc", "--no-extensions", "--no-session", "-e", DRIVER], {
 	cwd: LIVE,
 	env: { ...process.env, OMP_TASK_ROOT: TASK_ROOT, PI_WDRV_LIVE_DIR: LIVE },
 	stdio: ["pipe", "pipe", "pipe"],

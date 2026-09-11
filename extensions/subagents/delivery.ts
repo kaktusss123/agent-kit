@@ -29,6 +29,9 @@ export function formatModelEvent(ev: SubagentModelEvent): string {
 				`question: ${ev.question}`,
 				`answer with subagent op=respond id=${ev.agentId} answer=<...>; the agent is suspended until then`,
 			].join("\n");
+		case "input_resolved":
+			// Workspace-routed only; never reaches generic delivery.
+			return "";
 	}
 }
 

@@ -35,8 +35,7 @@ import {
 } from "./envelope";
 import { REPORTING_ENTRY_ID } from "./reporting-bridge";
 import { expandPath, git, isLinkedWorktree, realpath } from "../task-workspace/git";
-import type { LocalSubagentRuntime } from "./controller";
-import type { AgentSnapshot, SubagentModelEvent } from "./types";
+import type { AgentResult, AgentSnapshot, SpawnOptions, SubagentModelEvent } from "./types";
 
 // ============================================================ configuration
 
@@ -61,7 +60,17 @@ const DEFAULT_TIMEOUT_MS = 600000;
 
 // ================================================================ run model
 
-export type ExternalStatus = "done" | "partial" | "blocked" | "unsupported" | "needs_input" | "error";
+export type ExternalStatus =
+	| "done"
+	| "partial"
+	| "blocked"
+	| "unsupported"
+	| "needs_input"
+	| "error"
+	| "running";
+
+/** Query-only status for a run that has not reached a terminal outcome. */
+export type InProgressStatus = "running";
 
 interface TerminalOutcome {
 	status: "done" | "partial" | "blocked";
@@ -78,9 +87,11 @@ interface WorkspaceAgentRun {
 	task: string;
 	deadline: number;
 	startedAt: number;
-	state: "running" | "waiting_input" | "settling";
+	state: "running" | "waiting_input" | "settling" | "terminating";
 	question?: string;
 	ladder: number;
+	/** Highest report generation seen from the child; a newer one resets the ladder. */
+	lastSeenGeneration: number;
 	terminal?: TerminalOutcome;
 	deadlineFired: boolean;
 	deadlineTimer?: NodeJS.Timeout;
@@ -137,6 +148,25 @@ export function managedAgentOpPolicy(op: string): { allowed: boolean; reason?: s
 export interface DispatchContext {
 	model?: { provider: string; id: string };
 	thinkingLevel?: string;
+	cwd?: string;
+}
+
+/**
+ * Runtime subset the workspace layer needs. LocalSubagentRuntime satisfies
+ * this structurally; the interface keeps the runtime swappable in tests and
+ * documents that the layer never creates controllers itself (SPEC D1).
+ */
+export interface WorkspaceAgentRuntime {
+	spawn(opts: SpawnOptions): Promise<AgentSnapshot>;
+	followUp(agentId: string, message: string): Promise<void>;
+	respond(agentId: string, answer: string): Promise<void>;
+	cancel(agentId: string): Promise<void>;
+	retire(agentId: string): Promise<void>;
+	inspect(agentId?: string): AgentSnapshot[];
+	result(agentId: string): Promise<AgentResult | null>;
+	onWorkspaceEvent(cb: (ev: SubagentModelEvent) => void): () => void;
+	isWorkspaceRouted(agentId: string): boolean;
+	getResultsDir(): string;
 }
 
 // ==================================================================== layer
@@ -148,25 +178,40 @@ export interface WorkspaceLayerOptions {
 
 export function createWorkspaceLayer(
 	pi: ExtensionAPI,
-	runtime: LocalSubagentRuntime,
+	getRuntime: (ctxCwd: string | undefined) => WorkspaceAgentRuntime,
 	opts?: WorkspaceLayerOptions,
 ): WorkspaceLayer {
 	const runsByRunId = new Map<string, WorkspaceAgentRun>();
 	const runsByAgentId = new Map<string, WorkspaceAgentRun>();
 	let runCounter = 0;
 
+	// The runtime is created lazily by the host (F1: the workspace_agent tool
+	// is registered eagerly here, before any subagent tool call), but children
+	// can only exist after the layer acquired the runtime. Once acquired, bind
+	// it and subscribe the single event-ownership handler exactly once.
+	let boundRt: WorkspaceAgentRuntime | undefined;
+	const R = (ctxCwd: string | undefined): WorkspaceAgentRuntime => {
+		const rt = getRuntime(ctxCwd);
+		if (rt !== boundRt) {
+			boundRt = rt;
+			rt.onWorkspaceEvent((ev) => {
+				try {
+					void handleEvent(ev);
+				} catch {
+					// settlement must never crash the runtime event path
+				}
+			});
+		}
+		return rt;
+	};
+
 	const taskRoot = realpath(process.env.OMP_TASK_ROOT ?? path.join(os.homedir(), ".omp", "tasks"));
 
-	// Single event-ownership surface: RepoOwner lifecycle events arrive here
-	// and nowhere else (the controller routes them away from the generic
-	// policy, and wait() is locked for workspace children).
-	runtime.onWorkspaceEvent((ev) => {
-		try {
-			void handleEvent(ev);
-		} catch {
-			// settlement must never crash the runtime event path
-		}
-	});
+	/** The bound runtime (events and settlement only run after a dispatch bound it). */
+	const rt = (): WorkspaceAgentRuntime => {
+		if (!boundRt) return R(undefined);
+		return boundRt;
+	};
 
 	// ---------------------------------------------------------------- events
 
@@ -175,11 +220,24 @@ export function createWorkspaceLayer(
 		if (!run) return;
 		switch (ev.kind) {
 			case "needs_input":
-				// Non-terminal: the child is suspended on ask_parent. The
-				// blocking dispatch call returns; deadline keeps ticking.
+				// Non-terminal: the child is suspended on ask_parent. A blocking
+				// dispatch call (if any is still waiting) consumes the question;
+				// otherwise — after the first dispatch returned, or after a
+				// detach — Main must be told, or the run would silently hang
+				// until the deadline. The deadline keeps ticking either way.
 				run.state = "waiting_input";
 				run.question = ev.question;
-				resolveWaiters(run, "needs_input");
+				if (run.waiters.length > 0) {
+					resolveWaiters(run, "needs_input");
+				} else {
+					notifyNeedsInput(run);
+				}
+				break;
+			case "input_resolved":
+				// The pending ask_parent was answered (respond) or timed out
+				// child-side: the run is no longer waiting for Main.
+				run.state = "running";
+				run.question = undefined;
 				break;
 			case "completed":
 				await settle(run, "completed");
@@ -189,7 +247,8 @@ export function createWorkspaceLayer(
 				break;
 			case "cancelled":
 				// Semantic cancel: deadline (already handled by its own path)
-				// or explicit cancel by Main.
+				// or explicit cancel by Main. The child is already dead when
+				// this arrives.
 				if (run.terminal || run.deadlineFired) return;
 				finish(run, {
 					status: "blocked",
@@ -197,7 +256,6 @@ export function createWorkspaceLayer(
 					lastOutput: await lastOutput(run.agentId),
 					childMayHaveMutatedRepo: true,
 				});
-				retire(run);
 				break;
 		}
 	}
@@ -208,14 +266,23 @@ export function createWorkspaceLayer(
 		if (run.terminal || run.state === "settling") return;
 		run.state = "settling";
 		const record = readEnvelopeRecord(run.agentId);
+		// A newer report generation means the child reported again: the ladder
+		// resets BEFORE the stale/fresh classification (fresh report → new
+		// ladder budget, even if a later tool call already invalidated it).
+		if (record && record.generation > run.lastSeenGeneration) {
+			run.lastSeenGeneration = record.generation;
+			run.ladder = 0;
+		}
 		if (record && !record.stale) {
 			// Trusted fresh envelope: the product outcome, delivered as done.
+			// Terminal lifecycle first (F4): the completion is published only
+			// after the settled child is actually gone.
+			await retireChild(run);
 			finish(run, {
 				status: "done",
 				result: record.envelope,
 				childMayHaveMutatedRepo: false,
 			});
-			retire(run);
 			return;
 		}
 		const deadlinePassed = Date.now() >= run.deadline;
@@ -225,16 +292,16 @@ export function createWorkspaceLayer(
 			run.ladder += 1;
 			run.state = "running";
 			try {
-				await runtime.followUp(run.agentId, ladderMessage(run.ladder));
+				await rt().followUp(run.agentId, ladderMessage(run.ladder));
 			} catch {
 				if (!run.terminal && !run.deadlineFired) {
+					await retireChild(run);
 					finish(run, {
 						status: "blocked",
 						reason: "report_ladder_delivery_failed",
 						lastOutput: await lastOutput(run.agentId),
 						childMayHaveMutatedRepo: true,
 					});
-					retire(run);
 				}
 			}
 			return;
@@ -242,6 +309,7 @@ export function createWorkspaceLayer(
 		const last = await lastOutput(run.agentId);
 		if (childOutcome === "completed") {
 			if (deadlinePassed) {
+				await retireChild(run);
 				finish(run, {
 					status: "partial",
 					reason: "deadline",
@@ -249,6 +317,7 @@ export function createWorkspaceLayer(
 					childMayHaveMutatedRepo: true,
 				});
 			} else {
+				await retireChild(run);
 				finish(run, {
 					status: "blocked",
 					reason: "no_valid_report",
@@ -256,17 +325,16 @@ export function createWorkspaceLayer(
 					childMayHaveMutatedRepo: true,
 				});
 			}
-			retire(run);
 			return;
 		}
 		// Child run failed without a fresh envelope: no trusted outcome exists.
+		await retireChild(run);
 		finish(run, {
 			status: "blocked",
 			reason: childOutcome === "failed" ? "child_failed" : "child_cancelled",
 			lastOutput: last,
 			childMayHaveMutatedRepo: true,
 		});
-		retire(run);
 	}
 
 	function ladderMessage(step: number): string {
@@ -291,12 +359,43 @@ export function createWorkspaceLayer(
 		notifyCompleted(run);
 	}
 
-	function retire(run: WorkspaceAgentRun): void {
-		// Terminal lifecycle: kill the settled child, keep the record (the
-		// runtime preserves the terminal state; no cancelled marking).
-		void runtime.retire(run.agentId).catch(() => {
+	/**
+	 * RepoOwner suspended on ask_parent with NO blocking dispatch waiter left
+		 * (first dispatch already returned, or Main detached): tell Main, or
+		 * the run would silently hang until the deadline.
+	 */
+	function notifyNeedsInput(run: WorkspaceAgentRun): void {
+		const lines = [
+			`[workspace_agent needs_input]`,
+			`runId: ${run.runId}`,
+			`agentId: ${run.agentId}`,
+			`workspace: ${run.workspace}`,
+			`question: ${run.question ?? "(unknown)"}`,
+			`answer via subagent op=respond id=${run.agentId} answer=<...>; the run resumes under the same deadline`,
+			`details via workspace_agent(run_id: "${run.runId}")`,
+		];
+		try {
+			pi.sendMessage(
+				{
+					customType: "workspace-agent-event",
+					content: lines.join("\n"),
+					display: true,
+					details: { runId: run.runId, agentId: run.agentId, kind: "needs_input" },
+				},
+				{ deliverAs: "steer", triggerTurn: true },
+			);
+		} catch {
+			// Query-mode remains the recovery path if delivery fails.
+		}
+	}
+
+	/** Terminal lifecycle: kill the settled child, keep the terminal record. */
+	async function retireChild(run: WorkspaceAgentRun): Promise<void> {
+		try {
+			await rt().retire(run.agentId);
+		} catch {
 			// already dead — the record stays as settled
-		});
+		}
 	}
 
 	function notifyCompleted(run: WorkspaceAgentRun): void {
@@ -340,22 +439,26 @@ export function createWorkspaceLayer(
 		run.deadlineTimer = setTimeout(() => {
 			if (run.terminal || run.deadlineFired) return;
 			run.deadlineFired = true;
-			finish(run, {
-				status: "partial",
-				reason: "deadline",
-				lastOutput: undefined, // resolved post-cancel for the record
-				childMayHaveMutatedRepo: true,
-			});
-			// Semantic cancel — the real cancel, never retire: the child did
-			// not settle into a trusted outcome.
-			void runtime
-				.cancel(run.agentId)
-				.then(async () => {
-					if (run.terminal && !run.terminal.lastOutput) {
-						run.terminal.lastOutput = await lastOutput(run.agentId);
-					}
-				})
-				.catch(() => {});
+			// Publish the terminal outcome only AFTER the child actually
+			// stopped (F4): Main must not start inspection/repair against a
+			// child that is still running. Semantic cancel — the real
+			// cancel, never retire: the child did not settle into a trusted
+			// outcome.
+			run.state = "terminating";
+			void (async () => {
+				try {
+					await rt().cancel(run.agentId);
+				} catch {
+					// cancel escalation is best-effort; the run outcome stands
+				}
+				const last = await lastOutput(run.agentId).catch(() => undefined);
+				finish(run, {
+					status: "partial",
+					reason: "deadline",
+					lastOutput: last,
+					childMayHaveMutatedRepo: true,
+				});
+			})();
 		}, remaining);
 		run.deadlineTimer.unref?.();
 	}
@@ -363,7 +466,7 @@ export function createWorkspaceLayer(
 	// -------------------------------------------------------------- envelope
 
 	function envelopeFilePath(agentId: string): string {
-		return path.join(runtime.getResultsDir(), envelopeFileName(agentId));
+		return path.join(rt().getResultsDir(), envelopeFileName(agentId));
 	}
 
 	function readEnvelopeRecord(agentId: string): EnvelopeRecord | undefined {
@@ -377,10 +480,10 @@ export function createWorkspaceLayer(
 
 	/** Best-effort last visible output of the child (error or final text). */
 	async function lastOutput(agentId: string): Promise<string | undefined> {
-		const snap = runtime.inspect(agentId)[0];
+		const snap = rt().inspect(agentId)[0];
 		if (snap?.lastError) return snap.lastError;
 		try {
-			const res = await runtime.result(agentId);
+			const res = await rt().result(agentId);
 			const text = res?.finalText?.trim();
 			if (text) return text.length > 400 ? `${text.slice(0, 400)}…` : text;
 		} catch {
@@ -472,7 +575,7 @@ export function createWorkspaceLayer(
 			"Run a RepoOwner agent rooted in a managed task worktree. Dispatch-mode: workspace_agent(workspace, task, " +
 			"timeout_ms?) blocks until a terminal outcome (done/partial/blocked) or needs_input; strict validation and " +
 			"readiness happen before dispatch (fail closed), and there is no fallback after dispatch — abort detaches " +
-			"and the run keeps going. Query-mode: workspace_agent(run_id) returns the current state or the terminal " +
+			"and the run keeps going. Query-mode: workspace_agent(run_id) returns the current state (running / needs_input) or the terminal " +
 			"envelope of any run of this session (completion events are notifications, not the only API).",
 		parameters: Type.Object({
 			workspace: Type.Optional(
@@ -499,6 +602,8 @@ export function createWorkspaceLayer(
 			"If a RepoOwner failed, do not re-dispatch blindly: inspect its worktree — after dispatch there is no fallback, the repair path is a new RepoOwner with inspection.",
 		],
 		async execute(_toolCallId, params, signal, _onUpdate, ctx) {
+			// Bind the runtime (lazy in the host) for whichever mode runs.
+			R(ctx.cwd);
 			// Query-mode: durable lookup by runId or agentId.
 			if (params.run_id) {
 				return queryRun(params.run_id);
@@ -553,7 +658,7 @@ export function createWorkspaceLayer(
 		const base = path.basename(realWorkspace);
 		let snap: AgentSnapshot;
 		try {
-			snap = await runtime.spawn({
+			snap = await R(ctx.cwd).spawn({
 				task,
 				label: `owner-${base}`,
 				cwd: realWorkspace,
@@ -590,6 +695,7 @@ export function createWorkspaceLayer(
 			startedAt: Date.now(),
 			state: "running",
 			ladder: 0,
+			lastSeenGeneration: 0,
 			deadlineFired: false,
 			waiters: [],
 		};
@@ -601,6 +707,11 @@ export function createWorkspaceLayer(
 		// keeps going; completion arrives as an event / via query-mode).
 		const waitOutcome = await new Promise<"settled" | "needs_input" | "detached">((resolve) => {
 			const w = (outcome: "settled" | "needs_input" | "detached") => {
+				// Self-remove: a detached/resolved waiter must not linger in the
+				// run's waiter list (it would swallow later needs_input
+				// notifications that Main still has to see).
+				const idx = run.waiters.indexOf(w);
+				if (idx !== -1) run.waiters.splice(idx, 1);
 				cleanup();
 				resolve(outcome);
 			};
@@ -614,7 +725,7 @@ export function createWorkspaceLayer(
 
 		if (waitOutcome === "detached") {
 			return ok({
-				status: run.terminal ? run.terminal.status : "blocked",
+				status: run.terminal ? run.terminal.status : "running",
 				dispatched: true,
 				workspace: realWorkspace,
 				agentId: run.agentId,
@@ -666,12 +777,15 @@ export function createWorkspaceLayer(
 				deadlineMsLeft: Math.max(0, run.deadline - Date.now()),
 			};
 		}
+		// Query-only in-progress status: never returned by the blocking
+		// dispatch (which resolves only on terminal/needs_input), so the
+		// shared orchestration rule "partial/blocked means inspect + repair"
+		// cannot be triggered by a merely running owner.
 		return {
 			...base,
-			status: "blocked",
+			status: "running",
 			state: run.state,
 			deadlineMsLeft: Math.max(0, run.deadline - Date.now()),
-			reason: "run is still in progress (query-mode snapshot)",
 		};
 	}
 

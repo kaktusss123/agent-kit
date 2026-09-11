@@ -83,7 +83,7 @@ function makeLayer(layerOpts?: { profileEntries?: () => string[] }): Harness {
 		dispatchTimeoutMs: 2000,
 		readinessTimeoutMs: 5000,
 	});
-	createWorkspaceLayer(pi, runtime, layerOpts);
+	createWorkspaceLayer(pi, () => runtime, layerOpts);
 
 	return {
 		runtime,
@@ -161,7 +161,11 @@ async function driveToRunning(h: Harness, params: Record<string, unknown>, signa
 	return { pending, proc };
 }
 
-function writeEnvelope(h: Harness, agentId: string, opts?: { stale?: boolean; status?: Envelope["status"] }): void {
+function writeEnvelope(
+	h: Harness,
+	agentId: string,
+	opts?: { stale?: boolean; status?: Envelope["status"]; generation?: number },
+): void {
 	const envelope: Envelope = {
 		status: opts?.status ?? "done",
 		summary: "all good",
@@ -171,7 +175,7 @@ function writeEnvelope(h: Harness, agentId: string, opts?: { stale?: boolean; st
 	};
 	const record = {
 		agentId,
-		generation: 1,
+		generation: opts?.generation ?? 1,
 		stale: opts?.stale ?? false,
 		reportedAt: Date.now(),
 		envelope,
@@ -297,6 +301,42 @@ describe("staleness and report ladder", () => {
 			settleRun(proc, "done after reminder");
 			const res = await pending;
 			expect(res.details).toMatchObject({ status: "done" });
+		} finally {
+			await h.runtime.shutdown();
+			h.cleanup();
+		}
+	});
+
+	test("F6: a newer report generation resets the ladder", async () => {
+		const h = makeLayer();
+		try {
+			const ws = makeWorktree(h.taskRoot, "genreset-ws");
+			const { proc } = await driveToRunning(h, { workspace: ws, task: "t" });
+			const agentId = h.agentId();
+
+			// settle without any report → ladder reminder #1
+			settleRun(proc, "s1");
+			await tick(80);
+			let followUps = proc.commands.filter((c) => c.type === "prompt" && c.streamingBehavior === "followUp");
+			expect(followUps.length).toBe(1);
+			expect(String(followUps[0]!.message)).toContain("1 of 3");
+
+			// child reports (generation 1) but a later tool call invalidates it
+			writeEnvelope(h, agentId, { stale: true, generation: 1 });
+			settleRun(proc, "s2");
+			await tick(80);
+			// ladder was RESET by generation 1: the next reminder is #1 again,
+			// not #2
+			followUps = proc.commands.filter((c) => c.type === "prompt" && c.streamingBehavior === "followUp");
+			expect(followUps.length).toBe(2);
+			expect(String(followUps[1]!.message)).toContain("1 of 3");
+
+			// same generation going stale again does NOT reset: next is #2
+			settleRun(proc, "s3");
+			await tick(80);
+			followUps = proc.commands.filter((c) => c.type === "prompt" && c.streamingBehavior === "followUp");
+			expect(followUps.length).toBe(3);
+			expect(String(followUps[2]!.message)).toContain("2 of 3");
 		} finally {
 			await h.runtime.shutdown();
 			h.cleanup();
@@ -458,11 +498,37 @@ describe("detach and cancel", () => {
 			const { runId, agentId } = res.details as { runId: string; agentId: string };
 			expect(h.runtime.inspect(agentId)[0]!.alive).toBe(true); // NOT cancelled
 
+			// F3: with no blocking waiter left, a new ask_parent must reach
+			// Main as a workspace notification (not vanish).
+			proc.writeToStdout({
+				type: "extension_ui_request",
+				id: "ui-detach",
+				method: "input",
+				title: "ask_parent",
+				placeholder: "Second question while detached?",
+			});
+			await tick(30);
+			const ask = h.messages.find(
+				(m) => m.message.customType === "workspace-agent-event" && String(m.message.content).includes("[workspace_agent needs_input]"),
+			);
+			expect(ask).toBeDefined();
+			expect(String(ask!.message.content)).toContain("Second question while detached?");
+
+			// F3: after respond, input_resolved clears the pending question —
+			// query-mode must stop claiming an answer is still expected.
+			await h.runtime.respond(agentId, "answer");
+			await tick(20);
+			const qAsk = await dispatchCall(h, { run_id: runId });
+			expect(qAsk.details.status).not.toBe("needs_input");
+
 			// the run finishes on its own
 			writeEnvelope(h, agentId);
 			settleRun(proc, "finished while detached");
 			await tick(80);
-			expect(h.messages).toHaveLength(1); // completion notification still arrives
+			const done = h.messages.find(
+				(m) => m.message.customType === "workspace-agent-event" && String(m.message.content).includes("[workspace_agent completed]"),
+			);
+			expect(done).toBeDefined(); // completion notification still arrives
 			const q = await dispatchCall(h, { run_id: runId });
 			expect(q.details).toMatchObject({ status: "done" });
 		} finally {

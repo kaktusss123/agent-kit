@@ -103,7 +103,9 @@ export type SubagentModelEvent =
 	| { kind: "completed"; agentId: string; label: string; summary: string }
 	| { kind: "failed"; agentId: string; label: string; reason: string }
 	| { kind: "cancelled"; agentId: string; label: string }
-	| { kind: "needs_input"; agentId: string; label: string; question: string };
+	| { kind: "needs_input"; agentId: string; label: string; question: string }
+	/** Workspace-routed only: a pending ask_parent was resolved (respond or child-side timeout). */
+	| { kind: "input_resolved"; agentId: string; label: string };
 
 export type WaitOutcome =
 	| { status: "completed"; summary: string }

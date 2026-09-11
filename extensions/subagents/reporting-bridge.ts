@@ -22,7 +22,12 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { EnvelopeSchema } from "./envelope-schema";
-import { envelopeFileName, type Envelope, type EnvelopeRecord } from "./envelope";
+import {
+	envelopeFileName,
+	validateEnvelopeRecord,
+	type Envelope,
+	type EnvelopeRecord,
+} from "./envelope";
 import { signalChildReadiness } from "./readiness";
 
 /** Entry id of this extension in the spawn readiness contract. */
@@ -43,34 +48,57 @@ export default function (pi: ExtensionAPI) {
 		return path.join(agentDir, "subagents", "results");
 	};
 
+	const envelopePath = (): string => path.join(resultsDir(), envelopeFileName(agentId));
+
+	const readRecord = (): EnvelopeRecord | undefined => {
+		try {
+			return validateEnvelopeRecord(JSON.parse(fs.readFileSync(envelopePath(), "utf8")));
+		} catch {
+			return undefined;
+		}
+	};
+
 	const writeRecord = (record: EnvelopeRecord): void => {
-		const dir = resultsDir();
-		fs.mkdirSync(dir, { recursive: true });
-		const file = path.join(dir, envelopeFileName(record.agentId));
+		fs.mkdirSync(resultsDir(), { recursive: true });
+		const file = envelopePath();
 		const tmp = `${file}.tmp`;
 		fs.writeFileSync(tmp, JSON.stringify(record, null, "\t"), "utf8");
 		fs.renameSync(tmp, file);
 	};
 
+	/**
+	 * Mark the current on-disk record stale, preserving its content. Fails
+		 * loudly (throws) so callers can fail closed instead of leaving a stale
+		 * report trusted.
+	 */
+	const staleOnDisk = (): void => {
+		const current = readRecord();
+		if (current && !current.stale) {
+			writeRecord({ ...current, stale: true, reportedAt: current.reportedAt });
+		}
+	};
+
 	// Staleness hook: any tool call other than a fresh report invalidates the
 	// last report (guard and other extension tools included). Runs before the
-	// tool executes, so the envelope is already stale if the call has effects.
+	// tool executes. FAIL CLOSED: if the invalidation cannot be persisted, the
+	// call is blocked — executing it would leave a stale report trusted.
 	pi.on("tool_call", (event) => {
 		if (!reported) return;
 		if (event.toolName === "report_result") return;
-		reported = false;
 		try {
-			writeRecord({
-				agentId,
-				generation,
-				stale: true,
-				reportedAt: Date.now(),
-				envelope: lastEnvelope,
-			});
+			staleOnDisk();
 		} catch {
-			// If the stale flip cannot be written, the last report stays as it
-			// was; settlement reads the file, not this process's memory.
+			// Keep `reported` true so later calls keep retrying the
+			// invalidation instead of silently sailing through.
+			return {
+				block: true,
+				reason:
+					"Blocked: the previous report_result envelope could not be invalidated on disk (persist failed). " +
+					"Call report_result again to re-report, or finish without further tool calls — proceeding would " +
+					"leave a stale report trusted by the main side.",
+			};
 		}
+		reported = false;
 	});
 
 	pi.registerTool({
@@ -89,6 +117,29 @@ export default function (pi: ExtensionAPI) {
 					details: { error: "missing PI_SUBAGENT_ID" },
 					isError: true,
 				};
+			}
+			// Replacement ordering (fail closed): stale the previous on-disk
+			// report BEFORE writing the fresh one. If the fresh write then
+			// fails, the disk holds a stale record — never the previous
+			// trusted report masquerading as current.
+			if (reported) {
+				try {
+					staleOnDisk();
+				} catch (e) {
+					return {
+						content: [
+							{
+								type: "text" as const,
+								text:
+									"Error: could not invalidate the previous report on disk: " +
+									(e instanceof Error ? e.message : String(e)) +
+									". Nothing was replaced; retry report_result.",
+							},
+						],
+						details: { error: "stale-before-replace failed" },
+						isError: true,
+					};
+				}
 			}
 			const record: EnvelopeRecord = {
 				agentId,

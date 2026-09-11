@@ -308,11 +308,16 @@ export class LocalSubagentRuntime implements SubagentRuntime {
 		// The ask_parent tool call ended: the dialog is resolved one way or
 		// another (answer, cancel, or a pi-side timeout that never sends an
 		// extension_ui_response). Sync the controller so a timed-out child
-		// cannot leave a phantom pending question behind.
+		// cannot leave a phantom pending question behind. Workspace-routed
+		// children also learn about the resolution (input_resolved), so the
+		// run registry stops reporting a question that is no longer pending.
 		if (type === "tool_execution_end" && ev.toolName === ASK_PARENT_TOOL) {
 			if (record.pendingQuestion) {
 				record.pendingQuestion = undefined;
 				if (record.state === "waiting_input") record.state = "running";
+				if (record.eventRoute === "workspace") {
+					this.pushEvent(record, { kind: "input_resolved", agentId: record.id, label: record.label });
+				}
 			}
 			return;
 		}
@@ -741,6 +746,9 @@ export class LocalSubagentRuntime implements SubagentRuntime {
 		if (!q) throw new Error(`agent ${agentId} has no pending question`);
 		record.pendingQuestion = undefined;
 		record.state = "running";
+		if (record.eventRoute === "workspace") {
+			this.pushEvent(record, { kind: "input_resolved", agentId: record.id, label: record.label });
+		}
 		this.conn(record).send({ type: "extension_ui_response", id: q.requestId, value: answer });
 	}
 
@@ -943,6 +951,9 @@ function eventToOutcome(ev: SubagentModelEvent): WaitOutcome {
 			return { status: "cancelled" };
 		case "needs_input":
 			return { status: "needs_input", question: ev.question };
+		case "input_resolved":
+			// Workspace-routed only; never reaches the waiter path.
+			return { status: "timeout", state: "running" };
 	}
 }
 

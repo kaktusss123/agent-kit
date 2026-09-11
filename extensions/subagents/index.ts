@@ -69,15 +69,12 @@ const SubagentParams = Type.Object({
 
 export default function (pi: ExtensionAPI) {
 	let runtime: LocalSubagentRuntime | null = null;
-	let workspaceLayer: WorkspaceLayer | null = null;
+	const workspaceLayer: WorkspaceLayer = createWorkspaceLayer(pi, getRuntime);
 
-	function getRuntime(ctxCwd: string): LocalSubagentRuntime {
+	function getRuntime(ctxCwd?: string): LocalSubagentRuntime {
 		if (!runtime) {
-			runtime = new LocalSubagentRuntime({ defaultCwd: ctxCwd });
+			runtime = new LocalSubagentRuntime({ defaultCwd: ctxCwd ?? process.cwd() });
 			attachDelivery(pi, runtime);
-			// Same runtime instance, second policy surface: workspace runs get
-			// their own event ownership, registry, and the workspace_agent tool.
-			workspaceLayer = createWorkspaceLayer(pi, runtime);
 		}
 		return runtime;
 	}

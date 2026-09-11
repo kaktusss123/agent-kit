@@ -54,7 +54,7 @@ export default function (pi: ExtensionAPI) {
 
 	const runtime = new LocalSubagentRuntime({ defaultCwd: LIVE_DIR });
 	runtime.onEvent((ev) => entry("generic-event", { event: { ...ev } }));
-	const layer = createWorkspaceLayer(pi, runtime);
+	const layer = createWorkspaceLayer(pi, () => runtime);
 
 	pi.registerCommand("wdrv-log", {
 		description: "flush driver log marker",

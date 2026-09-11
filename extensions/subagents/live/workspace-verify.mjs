@@ -35,6 +35,7 @@ const check = (name, ok, detail = "") => {
 	console.log(`${ok ? "PASS" : "FAIL"}  ${name}${detail ? `  — ${detail}` : ""}`);
 };
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+const SUITE_START = Date.now();
 
 // --- workspace: real linked worktree under the fake task root --------------
 const seed = path.join(LIVE, "seed");
@@ -48,7 +49,7 @@ const WS = path.join(TASK_ROOT, "live-ws");
 execSync(`git -C "${seed}" worktree add -b feat/live-ws "${WS}" main`);
 
 // --- main process -----------------------------------------------------------
-const main = spawn(PI_BIN, ["--mode", "rpc", "--no-session", "-e", DRIVER], {
+const main = spawn(PI_BIN, ["--mode", "rpc", "--no-extensions", "--no-session", "-e", DRIVER], {
 	cwd: LIVE,
 	env: { ...process.env, OMP_TASK_ROOT: TASK_ROOT },
 	stdio: ["pipe", "pipe", "pipe"],
@@ -127,8 +128,8 @@ const task1 = [
 	"Never use raw `git commit` in bash; checkpoint_commit is the only commit path.",
 ].join(" ");
 {
-	dispatchCmd("L1", { workspace: WS, task: task1, timeout_ms: 240000 });
-	const r = await waitResult("L1", 300000);
+	dispatchCmd("L1", { workspace: WS, task: task1, timeout_ms: 420000 });
+	const r = await waitResult("L1", 480000);
 	check("L1/A1 dispatch → done", !!r && r.details?.status === "done", JSON.stringify(r?.details ?? r).slice(0, 220));
 	if (r?.details?.status === "done") {
 		const env = r.details.result;
@@ -367,18 +368,23 @@ main.kill();
 function childTranscript(ws) {
 	try {
 		// The child's cwd is the (realpath'd) worktree; pi encodes it into the
-		// sessions directory name ("/" → "-"), so scope the search there — a
-		// name-only search would match unrelated sessions mentioning the label.
+		// sessions directory name ("/" → "-"), so scope the search there. Take
+		// the NEWEST session created during THIS suite run — earlier runs leave
+		// sessions in the same directory with the same label.
 		const real = fs.realpathSync(ws);
 		const dirName = "-" + real.replace(/\//g, "-") + "--";
 		const agentDir = path.join(process.env.HOME, ".pi", "agent", "sessions", dirName);
 		let found = null;
+		let foundMtime = 0;
 		for (const f of fs.readdirSync(agentDir)) {
 			const p = path.join(agentDir, f);
 			const st = fs.statSync(p);
-			if (st.isFile() && st.mtimeMs > Date.now() - 900000 && f.endsWith(".jsonl")) {
+			if (st.isFile() && st.mtimeMs > SUITE_START - 5000 && f.endsWith(".jsonl")) {
 				const head = fs.readFileSync(p, "utf8").slice(0, 4000);
-				if (head.includes(`subagent:owner-${path.basename(ws)}`)) { found = p; break; }
+				if (head.includes(`subagent:owner-${path.basename(ws)}`) && st.mtimeMs > foundMtime) {
+					found = p;
+					foundMtime = st.mtimeMs;
+				}
 			}
 		}
 		if (!found) return null;

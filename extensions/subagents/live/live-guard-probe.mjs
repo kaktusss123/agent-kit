@@ -31,7 +31,7 @@ execSync(`git -C "${seed}" commit -qm init`);
 const WS = path.join(TASK_ROOT, "guard-ws");
 execSync(`git -C "${seed}" worktree add -b feat/guard "${WS}" main`);
 
-const main = spawn(PI_BIN, ["--mode", "rpc", "--no-session", "-e", DRIVER], {
+const main = spawn(PI_BIN, ["--mode", "rpc", "--no-extensions", "--no-session", "-e", DRIVER], {
 	cwd: LIVE,
 	env: { ...process.env, OMP_TASK_ROOT: TASK_ROOT, PI_WDRV_LIVE_DIR: LIVE },
 	stdio: ["pipe", "pipe", "pipe"],
