@@ -23,6 +23,8 @@ import { PerfTracker } from "./timing";
 
 export default function (pi: ExtensionAPI) {
 	const tracker = new PerfTracker();
+	/** Row computed at message_end, flushed at turn_end — see the handler below. */
+	let pendingRow: TextUsageRow | undefined;
 
 	pi.on("message_start", async (event) => {
 		if (event.message.role === "user") {
@@ -38,8 +40,20 @@ export default function (pi: ExtensionAPI) {
 
 	pi.on("message_end", async (event) => {
 		if (event.message.role !== "assistant") return;
-		const row = tracker.onAssistantEnd(event.message.usage);
-		if (row) pi.appendEntry("perf-stats", row);
+		pendingRow = tracker.onAssistantEnd(event.message.usage);
+	});
+
+	// The row must be appended at turn_end, not message_end: pi delivers
+	// message_end to extensions BEFORE the TUI listener clears its streaming
+	// component, and entries appended that early are spliced in front of the
+	// message they describe (interactive-mode addCustomEntryToChat). turn_end
+	// fires after the message and its tool results are settled, so the row
+	// lands below the response — including the final one.
+	pi.on("turn_end", async () => {
+		if (!pendingRow) return;
+		const row = pendingRow;
+		pendingRow = undefined;
+		pi.appendEntry("perf-stats", row);
 	});
 
 	pi.on("agent_settled", async () => {
