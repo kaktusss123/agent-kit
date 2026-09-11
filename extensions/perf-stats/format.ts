@@ -9,6 +9,12 @@
 /** Below this the rate is nonsense (cached/instant responses yield absurd tok/s). */
 export const MIN_DURATION_MS = 100;
 
+/** Nerd-font floppy glyph (nf-fa-floppy_o, U+F0C7) prefixing cache-read tokens. */
+export const CACHE_READ_ICON = "\uF0C7";
+
+/** Nerd-font clock glyph (nf-fa-clock_o, U+F017) prefixing TTFT. */
+export const TTFT_ICON = "\uF017";
+
 export interface TextUsageRow {
 	kind: "text";
 	/** Wall-clock time the response request started (ms since epoch). */
@@ -85,10 +91,10 @@ export function formatUsageRow(row: TextUsageRow): string {
 	parts.push(`⤵ ${formatTokens(row.input + row.cacheWrite)}`);
 	parts.push(`⤴ ${formatTokens(row.output)}`);
 	if (row.cacheRead > 0) {
-		parts.push(`💾 ${formatTokens(row.cacheRead)}`);
+		parts.push(`${CACHE_READ_ICON} ${formatTokens(row.cacheRead)}`);
 	}
 	if (row.ttftMs !== undefined && row.ttftMs > 0) {
-		parts.push(`⏱ ${(row.ttftMs / 1000).toFixed(1)}s`);
+		parts.push(`${TTFT_ICON} ${(row.ttftMs / 1000).toFixed(1)}s`);
 	}
 	const tps = tokensPerSecond(row.output, row.durationMs);
 	if (tps !== undefined) {

@@ -1,12 +1,14 @@
 import { describe, expect, test } from "bun:test";
 import {
 	type TextUsageRow,
+	CACHE_READ_ICON,
 	formatDuration,
 	formatToolRow,
 	formatTokens,
 	formatUsageRow,
 	formatUsageTimestamp,
 	tokensPerSecond,
+	TTFT_ICON,
 } from "./format";
 
 /** Local-time fixture so the timestamp contract is TZ-independent. */
@@ -43,13 +45,15 @@ describe("formatUsageRow", () => {
 	});
 
 	test("cacheRead segment appears only when non-zero", () => {
-		expect(formatUsageRow(row())).not.toContain("💾");
-		expect(formatUsageRow(row({ cacheRead: 45_678 }))).toContain(`💾 ${formatTokens(45_678)}`);
+		expect(formatUsageRow(row())).not.toContain(CACHE_READ_ICON);
+		expect(formatUsageRow(row({ cacheRead: 45_678 }))).toContain(
+			`${CACHE_READ_ICON} ${formatTokens(45_678)}`,
+		);
 	});
 
 	test("TTFT segment appears only when measured", () => {
-		expect(formatUsageRow(row())).not.toContain("⏱");
-		expect(formatUsageRow(row({ ttftMs: 1234 }))).toContain("⏱ 1.2s");
+		expect(formatUsageRow(row())).not.toContain(TTFT_ICON);
+		expect(formatUsageRow(row({ ttftMs: 1234 }))).toContain(`${TTFT_ICON} 1.2s`);
 	});
 
 	test("turn delta renders when anchored, omitted when not", () => {
