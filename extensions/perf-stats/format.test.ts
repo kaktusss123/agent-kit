@@ -8,6 +8,7 @@ import {
 	formatUsageRow,
 	formatUsageTimestamp,
 	tokensPerSecond,
+	TTFT_ICON,
 } from "./format";
 
 /** Local-time fixture so the timestamp contract is TZ-independent. */
@@ -51,8 +52,8 @@ describe("formatUsageRow", () => {
 	});
 
 	test("TTFT segment appears only when measured", () => {
-		expect(formatUsageRow(row())).not.toContain("⏱");
-		expect(formatUsageRow(row({ ttftMs: 1234 }))).toContain("⏱ 1.2s");
+		expect(formatUsageRow(row())).not.toContain(TTFT_ICON);
+		expect(formatUsageRow(row({ ttftMs: 1234 }))).toContain(`${TTFT_ICON} 1.2s`);
 	});
 
 	test("turn delta renders when anchored, omitted when not", () => {
