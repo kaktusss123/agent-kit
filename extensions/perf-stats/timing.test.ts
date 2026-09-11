@@ -59,18 +59,14 @@ describe("turn delta anchor", () => {
 		tracker.onAssistantStart(peek());
 		advance(500);
 		const first = tracker.onAssistantEnd(usage); // assistant -> tools
-		advance(200);
-		tracker.onToolStart("t1");
-		tracker.onToolEnd("t1", "bash");
-
-		advance(300);
+		advance(200); // tool execution gap
 		tracker.onAssistantStart(peek());
-		advance(500);
+		advance(300);
 		const second = tracker.onAssistantEnd(usage); // final response
 
 		expect(first?.turnElapsedMs).toBe(1500);
 		expect(second?.turnElapsedMs).toBe(peek() - runStart); // still anchored at the prompt
-		expect(second?.turnElapsedMs).toBe(2500);
+		expect(second?.turnElapsedMs).toBe(2000);
 	});
 
 	test("steering user message mid-run does not reset the anchor", () => {
@@ -119,22 +115,10 @@ describe("row lifecycle", () => {
 		expect(row).toBeUndefined();
 	});
 
-	test("tool rows measure start to end per toolCallId", () => {
-		const { tracker, advance } = makeTracker();
-		tracker.onToolStart("a");
-		advance(1200);
-		tracker.onToolStart("b");
-		advance(300);
-		expect(tracker.onToolEnd("a", "bash")?.execTimeMs).toBe(1500);
-		expect(tracker.onToolEnd("b", "read")?.execTimeMs).toBe(300);
-		expect(tracker.onToolEnd("unknown", "x")).toBeUndefined();
-	});
-
 	test("events before any assistant start are ignored", () => {
 		const { tracker } = makeTracker();
 		tracker.onStreamEvent("text_delta");
 		expect(tracker.onAssistantEnd(usage)).toBeUndefined();
-		expect(tracker.onToolEnd("none", "x")).toBeUndefined();
 	});
 
 	test("replay epsilon is below live first-token latency but above same-tick replay", () => {
