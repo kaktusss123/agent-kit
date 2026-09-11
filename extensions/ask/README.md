@@ -11,7 +11,10 @@ oh-my-pi's `ask` (reference contract) and shared by every role:
   extension UI dialogs (select/input per question plus a review step).
   Without any interactive UI (print/json/headless) the tool fails closed —
   it returns an explicit unavailable error and never pretends someone
-  answered.
+  answered. Dismissing the question (Esc) aborts the agent turn (OMP
+  parity) — `ask` is called only when the missing answer is material, so a
+  dismissal is a cancellation, not a license to continue on uncertainty;
+  `Chat about this` remains a normal outcome.
 - **Subagents** never load this extension. The subagents bridge registers the
   same `ask` (same name, same schema, same role-neutral description — proven
   by parity tests); the structured request travels to the controller, which

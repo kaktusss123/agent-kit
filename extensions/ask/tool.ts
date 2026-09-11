@@ -18,6 +18,7 @@ import {
 	type AskInput,
 	type AskOutcome,
 	type AskQuestion,
+	findReservedOptionLabel,
 	formatAskOutcomeText,
 } from "./contract";
 import { AskSchema } from "./ask-schema";
@@ -91,6 +92,15 @@ export function buildAskTool(backend: AskBackend): AskToolDefinition {
 			if (!params.questions || params.questions.length === 0) {
 				return askError("questions must not be empty");
 			}
+			// OMP reserved-label invariant, applied identically on the child
+			// side (bridge-ask.ts): a model option colliding with a runtime
+			// control would render duplicate rows and resolve wrong actions.
+			const reserved = findReservedOptionLabel(params as AskInput);
+			if (reserved) {
+				return askError(
+					`option label "${reserved}" collides with a runtime-added control; use a different label`,
+				);
+			}
 			let outcome: AskOutcome | { unavailable: string };
 			try {
 				outcome = await backend(params as AskInput, signal, ctx);
@@ -99,6 +109,21 @@ export function buildAskTool(backend: AskBackend): AskToolDefinition {
 			}
 			if ("unavailable" in outcome) {
 				return askError(outcome.unavailable);
+			}
+			// OMP parity: dismissing the question is a workflow cancellation --
+			// the missing answer was material, so the turn stops instead of
+			// continuing on uncertainty. "Chat about this" stays a normal
+			// outcome handled above.
+			if (outcome.kind === "cancelled") {
+				const maybeAbort = (ctx as { abort?: () => void } | undefined)?.abort;
+				if (typeof maybeAbort === "function") maybeAbort.call(ctx);
+				return {
+					content: [
+						{ type: "text", text: "Error: ask was cancelled by the user; the current turn is aborted" },
+					],
+					details: { cancelled: true },
+					isError: true,
+				};
 			}
 			return {
 				content: [{ type: "text", text: formatAskOutcomeText(outcome) }],
@@ -144,13 +169,12 @@ const OTHER_MARKER = "__ask_other__";
 const DONE_MARKER = "__ask_done__";
 const CHAT_MARKER = "__ask_chat__";
 
-const RECOMMENDED_SUFFIX = " (Recommended)";
-
-function stripRecommended(label: string): string {
-	return label.endsWith(RECOMMENDED_SUFFIX) ? label.slice(0, -RECOMMENDED_SUFFIX.length) : label;
-}
-
 interface FallbackRow extends DialogRow {
+	/**
+	 * Identity used to resolve a picked display string back to an action:
+	 * raw option label for "option" rows (answers must never see the display
+	 * "(Recommended)" suffix), sentinel values for runtime controls.
+	 */
 	marker: string;
 }
 
@@ -160,10 +184,9 @@ function fallbackRows(question: AskQuestion, answer: QuestionAnswer | undefined)
 	return rows.map((row) => {
 		let marker: string;
 		if (row.kind === "option") {
-			const option = question.options[row.optionIndex!]!;
-			marker = option.label;
+			marker = question.options[row.optionIndex!]!.label;
 			if (question.multi) {
-				row.label = (selected.has(option.label) ? "☑ " : "☐ ") + row.label;
+				row.label = (selected.has(marker) ? "☑ " : "☐ ") + row.label;
 			}
 		} else if (row.kind === "other") {
 			marker = OTHER_MARKER;
@@ -187,10 +210,14 @@ export async function rpcFallbackAsk(
 	questions: AskQuestion[],
 	signal: AbortSignal | undefined,
 ): Promise<AskOutcome> {
-	const answers: Record<string, QuestionAnswer> = {};
+	// Answers by question position: duplicate ids must not share one record.
+	const answers: Array<QuestionAnswer | undefined> = [];
+	const writeAnswer = (index: number, answer: QuestionAnswer) => {
+		answers[index] = answer;
+	};
 	for (let i = 0; i < questions.length; i++) {
 		const question = questions[i]!;
-		const result = await askOneFallback(ui, question, answers, signal);
+		const result = await askOneFallback(ui, i, question, answers, writeAnswer, signal);
 		if (result === "cancelled") return { kind: "cancelled" };
 		if (result === "chat") return { kind: "chat" };
 	}
@@ -216,7 +243,7 @@ export async function rpcFallbackAsk(
 		if (choice === "Chat about this") return { kind: "chat" };
 		// Revise from the beginning; existing answers are preserved.
 		for (let i = 0; i < questions.length; i++) {
-			const result = await askOneFallback(ui, questions[i]!, answers, signal);
+			const result = await askOneFallback(ui, i, questions[i]!, answers, writeAnswer, signal);
 			if (result === "cancelled") return { kind: "cancelled" };
 			if (result === "chat") return { kind: "chat" };
 		}
@@ -225,13 +252,15 @@ export async function rpcFallbackAsk(
 
 async function askOneFallback(
 	ui: FallbackUi,
+	questionIndex: number,
 	question: AskQuestion,
-	answers: Record<string, QuestionAnswer>,
+	answers: ReadonlyArray<QuestionAnswer | undefined>,
+	writeAnswer: (index: number, answer: QuestionAnswer) => void,
 	signal: AbortSignal | undefined,
 ): Promise<"answered" | "cancelled" | "chat"> {
 	let unknownAnswers = 0;
 	while (true) {
-		const answer = answers[question.id];
+		const answer = answers[questionIndex];
 		const rows = fallbackRows(question, answer);
 		const options = rows.map((row) => {
 			const description = row.description ? ` — ${row.description}` : "";
@@ -254,21 +283,26 @@ async function askOneFallback(
 			if (text === undefined) continue;
 			const trimmed = text.trim();
 			if (trimmed.length === 0) continue;
-			answers[question.id] = { selectedOptions: [], customInput: text.trimEnd() };
+			// OMP parity: a custom answer complements multi-select checkboxes
+			// but replaces a single selection.
+			writeAnswer(questionIndex, {
+				selectedOptions: question.multi ? (answer?.selectedOptions ?? []) : [],
+				customInput: text.trimEnd(),
+			});
 			return "answered";
 		}
 		if (row.marker === DONE_MARKER) return "answered";
-		// Option row.
-		const label = stripRecommended(row.marker);
+		// Option row: the marker is the raw option label (never a display
+		// suffix), taken by index.
+		const label = row.marker;
 		if (question.multi) {
-			const selected = answer?.selectedOptions ?? [];
-			const current = new Set(selected);
+			const current = new Set(answer?.selectedOptions ?? []);
 			if (current.has(label)) current.delete(label);
 			else current.add(label);
-			answers[question.id] = { selectedOptions: [...current] };
+			writeAnswer(questionIndex, { selectedOptions: [...current] });
 			continue; // re-open so the user can check more or pick Done
 		}
-		answers[question.id] = { selectedOptions: [label] };
+		writeAnswer(questionIndex, { selectedOptions: [label] });
 		return "answered";
 	}
 }

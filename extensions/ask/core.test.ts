@@ -53,7 +53,7 @@ describe("single-select flow", () => {
 		const state = initialState(questions);
 		expect(state.cursor).toBe(1); // recommended row
 		activateRow(state, questions);
-		expect(state.answers.base).toEqual({ selectedOptions: ["develop"] });
+		expect(state.answers[0]).toEqual({ selectedOptions: ["develop"] });
 		expect(state.index).toBe(1);
 	});
 
@@ -64,7 +64,7 @@ describe("single-select flow", () => {
 		activateRow(state, questions);
 		expect(state.mode).toBe("other");
 		submitOther(state, questions, "  use main  ");
-		expect(state.answers.base).toEqual({ selectedOptions: [], customInput: "  use main  " });
+		expect(state.answers[0]).toEqual({ selectedOptions: [], customInput: "  use main  " });
 		expect(state.index).toBe(1);
 	});
 
@@ -73,7 +73,7 @@ describe("single-select flow", () => {
 		state.mode = "other";
 		submitOther(state, questions, "   ");
 		expect(state.mode).toBe("question");
-		expect(state.answers.base).toBeUndefined();
+		expect(state.answers[0]).toBeUndefined();
 	});
 });
 
@@ -81,20 +81,20 @@ describe("multi-select flow", () => {
 	test("activate toggles without advancing; Done advances", () => {
 		const state = initialState(questions);
 		// first question answered via Other to focus on multi behavior
-		state.answers.base = { selectedOptions: ["main"], customInput: undefined };
+		state.answers[0] = { selectedOptions: ["main"], customInput: undefined };
 		advance(state, questions);
 		expect(currentQuestion(state, questions)?.id).toBe("scopes");
 
 		activateRow(state, questions); // toggle api on
-		expect(state.answers.scopes?.selectedOptions).toEqual(["api"]);
+		expect(state.answers[1]?.selectedOptions).toEqual(["api"]);
 		expect(state.index).toBe(1);
 
 		moveCursor(state, questions, 1);
 		activateRow(state, questions); // toggle ui on
-		expect(state.answers.scopes?.selectedOptions).toEqual(["api", "ui"]);
+		expect(state.answers[1]?.selectedOptions).toEqual(["api", "ui"]);
 
 		activateRow(state, questions); // toggle ui off again
-		expect(state.answers.scopes?.selectedOptions).toEqual(["api"]);
+		expect(state.answers[1]?.selectedOptions).toEqual(["api"]);
 
 		const rows = rowsFor(state, questions);
 		state.cursor = rows.findIndex((r) => r.kind === "done");
@@ -104,7 +104,7 @@ describe("multi-select flow", () => {
 
 	test("multi rows reflect checkmarks in labels", () => {
 		const state = initialState(questions);
-		state.answers.base = { selectedOptions: ["main"] };
+		state.answers[0] = { selectedOptions: ["main"] };
 		advance(state, questions);
 		activateRow(state, questions); // check api
 		const labels = rowsFor(state, questions).map((r) => r.label);
@@ -167,8 +167,78 @@ describe("navigation and review", () => {
 		});
 	});
 
+	test("duplicate question ids keep independent answers (F4)", () => {
+		const dupes: AskQuestion[] = [
+			{ id: "same", question: "First?", options: [{ label: "a" }, { label: "b" }] },
+			{ id: "same", question: "Second?", options: [{ label: "a" }, { label: "b" }] },
+		];
+		const state = initialState(dupes);
+		activateRow(state, dupes); // answer first question
+		expect(state.answers[0]!.selectedOptions).toEqual(["a"]);
+		expect(state.answers[1]).toBeUndefined();
+		activateRow(state, dupes); // answer second question
+		expect(state.answers[0]!.selectedOptions).toEqual(["a"]);
+		expect(state.answers[1]!.selectedOptions).toEqual(["a"]);
+		expect(new Set(toResults(dupes, state.answers).map((r) => r.selectedOptions[0]))).toEqual(new Set(["a", "a"]));
+		// both positions answered independently (a shared record would flip both)
+		state.answers[1]!.selectedOptions = ["b"];
+		expect(state.answers[0]!.selectedOptions).toEqual(["a"]);
+	});
+
+	test("fractional and out-of-range recommended are ignored entirely (F5)", () => {
+		const fractional: AskQuestion = {
+			id: "f",
+			question: "Q?",
+			options: [{ label: "a" }, { label: "b" }],
+			recommended: 1.5,
+		};
+		const oor: AskQuestion = {
+			id: "o",
+			question: "Q?",
+			options: [{ label: "a" }, { label: "b" }],
+			recommended: 99,
+		};
+		expect(initialState([fractional]).cursor).toBe(0);
+		expect(initialState([oor]).cursor).toBe(0);
+		// no runtime control row is ever auto-highlighted
+		expect(rowsFor(initialState([oor]), [oor])[0]!.label).toBe("a");
+	});
+
+	test("a genuine ' (Recommended)' label suffix is preserved in answers (F5)", () => {
+		const tricky: AskQuestion = {
+			id: "t",
+			question: "Q?",
+			options: [{ label: "Restart (Recommended)" }, { label: "Stay" }],
+			recommended: 1,
+		};
+		const state = initialState([tricky]);
+		activateRow(state, [tricky]); // cursor at recommended row 1
+		expect(state.answers[0]!.selectedOptions).toEqual(["Stay"]);
+		// the display row of the tricky option keeps the suffix, its answer would too
+		expect(buildRows(tricky)[0]!.label).toBe("Restart (Recommended)");
+	});
+
+	test("multi + Other keeps checkbox selections (OMP parity)", () => {
+		const multiQ: AskQuestion = {
+			id: "m",
+			question: "Q?",
+			options: [{ label: "api" }, { label: "ui" }],
+			multi: true,
+		};
+		const state = initialState([multiQ]);
+		activateRow(state, [multiQ]); // check api
+		const rows = buildRows(multiQ);
+		state.cursor = rows.findIndex((r) => r.kind === "other");
+		activateRow(state, [multiQ]); // Other -> input mode
+		submitOther(state, [multiQ], "also web");
+		expect(state.answers[0]).toEqual({
+			selectedOptions: ["api"],
+			customInput: "also web",
+		});
+	});
+
 	test("toResults tolerates unanswered questions", () => {
-		const results = toResults(questions, {});
+		const results = toResults(questions, []);
 		expect(results[0]!.selectedOptions).toEqual([]);
 		expect(results[1]!.multi).toBe(true);
 	});

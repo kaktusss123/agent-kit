@@ -138,6 +138,22 @@ export function parseAskRequest(raw: string | undefined): AskInput | undefined {
 	}
 }
 
+/**
+ * OMP reserved-label invariant: the runtime adds its own "Other", "Chat
+ * about this", and "Next →" rows, so a model-supplied option with one of
+ * those labels would collide with a runtime control (duplicate rows, wrong
+ * action resolved). Returns the first offending label, if any. Applied
+ * identically to Main and child executions.
+ */
+export function findReservedOptionLabel(request: AskInput): string | undefined {
+	for (const question of request.questions) {
+		for (const option of question.options) {
+			if (RESERVED_OPTION_LABELS.has(option.label)) return option.label;
+		}
+	}
+	return undefined;
+}
+
 // ================================================================ formatting
 
 /** Compact one-line rendering for status views and snapshots. */
@@ -172,13 +188,17 @@ function formatQuestionResult(result: AskQuestionResult): string {
 /**
  * Human-readable answer text returned to the calling model (OMP-compatible
  * shape): single question flattened, multiple questions one per line.
+ *
+ * Note: a user-dismissed ask is NOT formatted here — Main-side execute
+ * aborts the turn instead (OMP parity); this branch only keeps the mapper
+ * total.
  */
 export function formatAskOutcomeText(outcome: AskOutcome): string {
 	switch (outcome.kind) {
 		case "chat":
 			return "User chose to chat about this instead of answering. Discuss the topic with them; the question was not resolved.";
 		case "cancelled":
-			return "User dismissed the question without answering. Do not treat this as a selection; continue and state the remaining uncertainty.";
+			return "User dismissed the question without answering.";
 		case "answers": {
 			if (outcome.results.length === 1) {
 				const r = outcome.results[0]!;

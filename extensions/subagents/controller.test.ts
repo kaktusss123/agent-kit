@@ -804,6 +804,52 @@ describe("delivery formatting", () => {
 		expect(ni).toContain("already established");
 		expect(ni).toContain('"id": "port"');
 		expect(ni).toContain("8080");
+
+		// Structural check (F1): the fence must open and close, and the
+		// resolution instruction must sit AFTER the closing fence — otherwise
+		// it drowns inside the JSON block.
+		const lines = ni.split("\n");
+		const reqIdx = lines.indexOf("request:");
+		const open = lines[reqIdx + 1]!;
+		expect(open.startsWith("```")).toBe(true);
+		expect(open.endsWith("json")).toBe(true);
+		const ticks = open.slice(0, -4);
+		const closeIdx = lines.findIndex((l, i) => i > reqIdx + 1 && l === ticks);
+		expect(closeIdx).toBeGreaterThan(reqIdx + 1);
+		const instrIdx = lines.findIndex((l) => l.includes("already established"));
+		expect(instrIdx).toBeGreaterThan(closeIdx);
+		expect(lines[lines.length - 1]!).toContain("op=respond");
+	});
+
+	test("needs_input delivery escapes ``` payloads with a longer fence (F1)", () => {
+		const text = formatModelEvent({
+			kind: "needs_input",
+			agentId: "sa-3",
+			label: "w",
+			question: "Which snippet?",
+			request: {
+				questions: [
+					{
+						id: "snip",
+						question: "Which snippet?",
+						options: [{ label: "a", preview: "```js\nconst x = 1;\n```" }],
+					},
+				],
+			},
+		});
+		const lines = text.split("\n");
+		const reqIdx = lines.indexOf("request:");
+		const open = lines[reqIdx + 1]!;
+		// the payload itself contains ```, so the opening fence must be longer
+		expect(open).toBe("````json");
+		// exactly one closing fence of the same length, after the payload
+		const closes = lines.map((l, i) => (l === "````" ? i : -1)).filter((i) => i > reqIdx);
+		expect(closes).toHaveLength(1);
+		expect(closes[0]!).toBeGreaterThan(reqIdx + 1);
+		// the instruction is outside the block, and nothing follows it unstructured
+		const instrIdx = lines.findIndex((l) => l.includes("already established"));
+		expect(instrIdx).toBeGreaterThan(closes[0]!);
+		expect(lines[lines.length - 1]!).toContain("op=respond");
 	});
 
 	test("result formatting never includes more than the result itself", () => {

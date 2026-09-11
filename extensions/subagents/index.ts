@@ -24,7 +24,12 @@ import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { StringEnum } from "@earendil-works/pi-ai";
 import { Type } from "typebox";
 import { LocalSubagentRuntime } from "./controller";
-import { formatResult, formatStatusList, RESOLVE_INSTRUCTION } from "./delivery";
+import {
+	formatAskRequestBlock,
+	formatResult,
+	formatStatusList,
+	RESOLVE_INSTRUCTION,
+} from "./delivery";
 import { createWorkspaceLayer, managedAgentOpPolicy, type WorkspaceLayer } from "./workspace-agent";
 import type { SubagentRuntime } from "./types";
 import { attachDelivery } from "./wiring";
@@ -182,14 +187,7 @@ export default function (pi: ExtensionAPI) {
 								return ok(
 									[
 										`Subagent ${params.id} asks: ${outcome.question}`,
-										...(outcome.request
-											? [
-													"request:",
-													"```json",
-													JSON.stringify(outcome.request, null, 2),
-													"```",
-												]
-											: []),
+										...(outcome.request ? formatAskRequestBlock(outcome.request) : []),
 										RESOLVE_INSTRUCTION,
 										`Answer via op=respond id=${params.id} answer=<...>.`,
 									].join("\n"),

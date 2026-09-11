@@ -28,15 +28,22 @@ export const RESOLVE_INSTRUCTION =
 export function formatNeedsInputBody(question: string, request: AskInput | undefined): string[] {
 	const lines = [`question: ${question}`];
 	if (request && request.questions.length > 0) {
-		const json = formatAskRequestJson(request);
-		// A payload containing ``` would break a ```json fence; use a longer
-		// fence when needed (CommonMark: a fence is closed only by a run of at
-		// least its own length).
-		const fence = json.includes("```") ? "````json" : "```json";
-		lines.push("request:", fence, json, fence.slice(3));
+		lines.push(...formatAskRequestBlock(request));
 	}
 	lines.push(RESOLVE_INSTRUCTION);
 	return lines;
+}
+
+/**
+ * The structured request as a fenced json block. A payload containing ```
+ * would close a ```-fence early, so a longer fence is used when needed
+ * (CommonMark: the closing fence must be at least as long as the opening
+ * one). Shared by the background delivery and the `subagent wait` result.
+ */
+export function formatAskRequestBlock(request: AskInput): string[] {
+	const json = formatAskRequestJson(request);
+	const ticks = json.includes("```") ? "````" : "```";
+	return ["request:", `${ticks}json`, json, ticks];
 }
 
 export function formatModelEvent(ev: SubagentModelEvent): string {

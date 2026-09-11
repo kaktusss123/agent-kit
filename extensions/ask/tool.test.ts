@@ -19,6 +19,32 @@ describe("ask tool parity across roles", () => {
 		expect(main.executionMode).toBe("sequential");
 	});
 
+	test("child guard rejects reserved labels before the transport hop (F3)", async () => {
+		const child = buildChildAskTool();
+		let uiCalled = false;
+		const result = await child.execute(
+			"t",
+			{
+				questions: [
+					{ id: "q", question: "Q?", options: [{ label: "fine" }, { label: "Chat about this" }] },
+				],
+			},
+			undefined,
+			undefined,
+			{
+				ui: {
+					input() {
+						uiCalled = true;
+						return Promise.resolve(undefined);
+					},
+				},
+			},
+		);
+		expect(result.isError).toBe(true);
+		expect(result.content[0]!.text).toContain("Chat about this");
+		expect(uiCalled).toBe(false);
+	});
+
 	test("child tool never mentions parents or routing (I4)", () => {
 		const child = buildChildAskTool();
 		const serialized = JSON.stringify({ d: child.description, g: child.promptGuidelines });
@@ -56,14 +82,28 @@ describe("buildAskTool", () => {
 		expect((result.details as { results: unknown[] }).results).toHaveLength(2);
 	});
 
-	test("chat redirect and cancellation are explicit outcomes", async () => {
+	test("chat redirect is a normal outcome", async () => {
 		const tool = buildAskTool(async () => ({ kind: "chat" as const }));
 		const result = await tool.execute("t", { questions: [{ id: "q", question: "Q?", options: [{ label: "a" }] }] }, undefined, undefined, undefined);
 		expect(result.details).toMatchObject({ chatRedirect: true });
+		expect(result.isError).toBeUndefined();
+	});
 
+	test("user dismissal aborts the turn via ctx.abort (F2, OMP parity)", async () => {
+		let aborts = 0;
+		const ctx = { abort: () => void (aborts += 1) };
 		const cancelled = buildAskTool(async () => ({ kind: "cancelled" as const }));
-		const result2 = await cancelled.execute("t", { questions: [{ id: "q", question: "Q?", options: [{ label: "a" }] }] }, undefined, undefined, undefined);
-		expect(result2.details).toMatchObject({ cancelled: true });
+		const result = await cancelled.execute(
+			"t",
+			{ questions: [{ id: "q", question: "Q?", options: [{ label: "a" }] }] },
+			undefined,
+			undefined,
+			ctx,
+		);
+		expect(aborts).toBe(1);
+		expect(result.isError).toBe(true);
+		expect(result.content[0]!.text).toContain("cancelled by the user");
+		expect(result.details).toMatchObject({ cancelled: true });
 	});
 
 	test("fail closed: unavailable backend returns an explicit error (A12)", async () => {
@@ -71,6 +111,28 @@ describe("buildAskTool", () => {
 		const result = await tool.execute("t", { questions: [{ id: "q", question: "Q?", options: [{ label: "a" }] }] }, undefined, undefined, undefined);
 		expect(result.isError).toBe(true);
 		expect(result.content[0]!.text).toContain("no interactive UI");
+	});
+
+	test("reserved option labels fail the call before any backend runs (F3)", async () => {
+		let backendRuns = 0;
+		const tool = buildAskTool(async () => {
+			backendRuns += 1;
+			return { kind: "cancelled" as const };
+		});
+		const result = await tool.execute(
+			"t",
+			{
+				questions: [
+					{ id: "q", question: "Q?", options: [{ label: "Other (type your own)" }, { label: "b" }] },
+				],
+			},
+			undefined,
+			undefined,
+			undefined,
+		);
+		expect(result.isError).toBe(true);
+		expect(result.content[0]!.text).toContain("Other (type your own)");
+		expect(backendRuns).toBe(0);
 	});
 
 	test("empty questions guard", async () => {
@@ -165,6 +227,56 @@ describe("rpcFallbackAsk", () => {
 		expect(outcome).toEqual({
 			kind: "answers",
 			results: [{ id: "s", question: "Scopes?", options: ["api", "ui"], multi: true, selectedOptions: ["api"] }],
+		});
+	});
+
+	test("multi + Other keeps checkbox selections (OMP parity)", async () => {
+		const q = { id: "s", question: "Scopes?", options: [{ label: "api" }, { label: "ui" }], multi: true };
+		const { ui } = scriptedUi([
+			{ expect: { kind: "select" }, reply: "☐ api" }, // toggle on -> re-open
+			{ expect: { kind: "select" }, reply: "Other (type your own)" },
+			{ expect: { kind: "input" }, reply: "also web" },
+			{ expect: { kind: "select" }, reply: "Submit answers" },
+		]);
+		const outcome = await rpcFallbackAsk(ui, [q], undefined);
+		expect(outcome).toEqual({
+			kind: "answers",
+			results: [
+				{
+					id: "s",
+					question: "Scopes?",
+					options: ["api", "ui"],
+					multi: true,
+					selectedOptions: ["api"],
+					customInput: "also web",
+				},
+			],
+		});
+	});
+
+	test("recommended display suffix never leaks into answers (F5)", async () => {
+		const q = {
+			id: "r",
+			question: "Restart?",
+			options: [{ label: "Restart (Recommended)" }, { label: "Stay" }],
+			recommended: 0,
+		};
+		const { ui } = scriptedUi([
+			{ expect: { kind: "select" }, reply: "Restart (Recommended)" },
+			{ expect: { kind: "select" }, reply: "Submit answers" },
+		]);
+		const outcome = await rpcFallbackAsk(ui, [q], undefined);
+		expect(outcome).toEqual({
+			kind: "answers",
+			results: [
+				{
+					id: "r",
+					question: "Restart?",
+					options: ["Restart (Recommended)", "Stay"],
+					multi: false,
+					selectedOptions: ["Restart (Recommended)"],
+				},
+			],
 		});
 	});
 

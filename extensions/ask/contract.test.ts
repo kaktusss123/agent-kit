@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { AskSchema } from "./ask-schema";
+import { findReservedOptionLabel } from "./contract";
 import {
 	ASK_TOOL_DESCRIPTION,
 	ASK_TOOL_GUIDELINES,
@@ -80,7 +81,11 @@ describe("formatting", () => {
 
 	test("outcome text mirrors the OMP shapes", () => {
 		expect(formatAskOutcomeText({ kind: "chat" })).toContain("chat about this");
-		expect(formatAskOutcomeText({ kind: "cancelled" })).toContain("dismissed");
+		// neutral text: the execute layer aborts the turn on cancellation, so
+		// this text must not license continuing on uncertainty
+		const cancelled = formatAskOutcomeText({ kind: "cancelled" });
+		expect(cancelled).toContain("dismissed");
+		expect(cancelled).not.toMatch(/continue|uncertainty/i);
 		expect(
 			formatAskOutcomeText({
 				kind: "answers",
@@ -138,6 +143,28 @@ describe("schema/validator drift guard", () => {
 			recommended: 0,
 		};
 		expect(validateAskInput({ questions: [full] })).toBeDefined();
+	});
+});
+
+describe("findReservedOptionLabel (OMP reserved labels)", () => {
+	test("flags runtime control labels", () => {
+		const request: AskInput = {
+			questions: [
+				{
+					id: "q",
+					question: "Q?",
+					options: [{ label: "Chat about this" }, { label: "fine" }],
+				},
+			],
+		};
+		expect(findReservedOptionLabel(request)).toBe("Chat about this");
+	});
+
+	test("clean requests pass", () => {
+		const request: AskInput = {
+			questions: [{ id: "q", question: "Q?", options: [{ label: "a" }, { label: "b" }] }],
+		};
+		expect(findReservedOptionLabel(request)).toBeUndefined();
 	});
 });
 

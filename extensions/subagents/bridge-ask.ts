@@ -15,7 +15,12 @@
  * and unit tests can exercise it with a fake ui.
  */
 import type { Static } from "typebox";
-import { ASK_TOOL_DESCRIPTION, ASK_TOOL_GUIDELINES, type AskInput } from "../ask/contract";
+import {
+	ASK_TOOL_DESCRIPTION,
+	ASK_TOOL_GUIDELINES,
+	type AskInput,
+	findReservedOptionLabel,
+} from "../ask/contract";
 import { AskSchema } from "../ask/ask-schema";
 
 /** Wire title of the child UI dialog; the controller keys on it. */
@@ -60,6 +65,21 @@ export function buildChildAskTool(): ChildAskToolDefinition {
 		// tool batch so concurrent asks cannot interleave their requests.
 		executionMode: "sequential",
 		async execute(_toolCallId, params, signal, _onUpdate, ctx) {
+			// OMP reserved-label invariant, identical to the Main-side guard:
+			// fail the call instead of hopping the reserved label to the UI.
+			const reserved = findReservedOptionLabel(params as AskInput);
+			if (reserved) {
+				return {
+					content: [
+						{
+							type: "text",
+							text: `Error: option label "${reserved}" collides with a runtime-added control; use a different label`,
+						},
+					],
+					details: { error: "reserved option label" },
+					isError: true,
+				};
+			}
 			const request: AskInput = params as Static<typeof AskSchema>;
 			// In RPC mode this emits an extension_ui_request (method "input",
 			// title "ask") carrying the structured request as the payload, and
