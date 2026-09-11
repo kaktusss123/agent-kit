@@ -25,6 +25,27 @@ export interface SpawnOptions {
 	model?: string;
 	/** Thinking level for the child, passed as `--thinking`. */
 	thinking?: string;
+	/**
+	 * Extra extension entry files loaded into THIS child only (repeated
+	 * `-e` flags), in addition to the shared base bridge. Strictly per-spawn:
+	 * generic children get none, so their environment is unchanged.
+	 */
+	additionalExtensions?: string[];
+	/**
+	 * Readiness contract for the additional extensions: entry id -> tool names
+	 * the entry must report as registered. When set, the child's initial task
+	 * prompt is sent only after every listed entry confirmed readiness over
+	 * the extension UI protocol; otherwise the spawn fails with the child
+	 * killed and the task never reaching the model.
+	 */
+	readinessEntries?: Record<string, string[]>;
+	/**
+	 * Route this child's lifecycle events to the workspace layer instead of
+	 * the generic subagent policy. Workspace-owned children get no generic
+	 * `[subagent ...]` deliveries and are excluded from wait() (their event
+	 * owner is the workspace run registry).
+	 */
+	eventRoute?: "workspace";
 }
 
 export interface PendingQuestion {

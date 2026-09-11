@@ -160,6 +160,27 @@ export function startRun(proc: FakeRpcProcess): void {
 	proc.writeToStdout({ type: "agent_start" });
 }
 
+/** Emit a readiness handshake notify (protocol per readiness.ts). */
+export function confirmReadiness(
+	proc: FakeRpcProcess,
+	entry: string,
+	opts?: { ok?: boolean; tools?: string[]; missing?: string[]; protocol?: string },
+): void {
+	proc.writeToStdout({
+		type: "extension_ui_request",
+		id: `ui-rd-${Math.random().toString(36).slice(2, 8)}`,
+		method: "notify",
+		notifyType: "info",
+		message: JSON.stringify({
+			protocol: opts?.protocol ?? "pi-subagents-readiness",
+			entry,
+			ok: opts?.ok ?? true,
+			tools: opts?.tools ?? [],
+			missing: opts?.missing ?? [],
+		}),
+	});
+}
+
 /** Close the current run with a final assistant text. */
 export function settleRun(proc: FakeRpcProcess, finalText: string): void {
 	proc.writeToStdout({ type: "agent_settled" });

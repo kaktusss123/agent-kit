@@ -37,6 +37,7 @@ import {
   guardManagedBashCommand,
   guardManagedWriteTarget,
 } from "./guard";
+import { signalChildReadiness } from "../subagents/readiness";
 
 function respond(result: Record<string, unknown>, details?: unknown): {
   content: { type: "text"; text: string }[];
@@ -267,4 +268,16 @@ export default function (pi: ExtensionAPI): void {
       taskRoot: TASK_ROOT,
     });
   });
+
+  // ─── Readiness handshake (profiled children only) ────────────────
+  // No-op outside RepoOwner children: signalChildReadiness requires the
+  // controller-declared PI_SUBAGENT_READINESS contract to include this
+  // entry id. Inside a profiled child it reports the registered tool set
+  // over the extension UI protocol before the task prompt is sent.
+  signalChildReadiness(pi, "task-workspace", [
+    "task_status",
+    "ensure_task_repo",
+    "checkpoint_commit",
+    "remove_task_lane",
+  ]);
 }

@@ -23,6 +23,7 @@ import { StringEnum } from "@earendil-works/pi-ai";
 import { Type } from "typebox";
 import { LocalSubagentRuntime } from "./controller";
 import { formatResult, formatStatusList } from "./delivery";
+import { createWorkspaceLayer, type WorkspaceLayer } from "./workspace-agent";
 import type { SubagentRuntime } from "./types";
 import { attachDelivery } from "./wiring";
 
@@ -67,12 +68,16 @@ const SubagentParams = Type.Object({
 // =============================================================================
 
 export default function (pi: ExtensionAPI) {
-	let runtime: SubagentRuntime | null = null;
+	let runtime: LocalSubagentRuntime | null = null;
+	let workspaceLayer: WorkspaceLayer | null = null;
 
-	function getRuntime(ctxCwd: string): SubagentRuntime {
+	function getRuntime(ctxCwd: string): LocalSubagentRuntime {
 		if (!runtime) {
 			runtime = new LocalSubagentRuntime({ defaultCwd: ctxCwd });
 			attachDelivery(pi, runtime);
+			// Same runtime instance, second policy surface: workspace runs get
+			// their own event ownership, registry, and the workspace_agent tool.
+			workspaceLayer = createWorkspaceLayer(pi, runtime);
 		}
 		return runtime;
 	}
@@ -111,6 +116,21 @@ export default function (pi: ExtensionAPI) {
 		async execute(_toolCallId, params, signal, _onUpdate, ctx) {
 			const rt = getRuntime(ctx.cwd);
 			const op = params.op;
+			// Cross-tool allow-list for RepoOwner children: their lifecycle
+			// events belong to the workspace layer, so wait would steal the one
+			// lifecycle event, and steer/follow_up would bypass the run's
+			// deadline and task contract. respond/cancel/status/result remain
+			// the Main-facing surface.
+			if (params.id && (op === "wait" || op === "steer" || op === "follow_up")) {
+				if (workspaceLayer?.isManagedAgent(params.id)) {
+					return err(
+						`${op} is not allowed for workspace_agent runs (agent ${params.id} is workspace-owned): ` +
+						(op === "wait"
+							? "its lifecycle events belong to the workspace registry — use workspace_agent(run_id) query-mode"
+							: "steering would bypass the run's deadline and task contract"),
+					);
+				}
+			}
 			try {
 				switch (op) {
 					case "spawn": {

@@ -32,6 +32,7 @@ import {
 	type SpawnFn,
 } from "./rpc-child";
 import { defaultResultsDir, loadResult, saveResult, summarizeText } from "./result-store";
+import { READINESS_ENV, parseReadinessPayload, type ReadinessPayload } from "./readiness";
 import type {
 	AgentResult,
 	AgentSnapshot,
@@ -59,6 +60,8 @@ export interface ControllerOptions {
 	startTimeoutMs?: number;
 	/** Max time to wait for a dispatch (steer/follow_up) preflight response. */
 	dispatchTimeoutMs?: number;
+	/** Max time to wait for the readiness handshake of profiled children. */
+	readinessTimeoutMs?: number;
 }
 
 interface AgentRecord {
@@ -100,6 +103,17 @@ interface AgentRecord {
 	dispatchWaiters: Map<string, (ev: Record<string, unknown>) => void>;
 	spawnSettled: boolean;
 	settleFetchDone: boolean;
+	/** Lifecycle events route to the workspace layer, not the generic policy. */
+	eventRoute?: "workspace";
+	/** Terminal retire requested: kill the process, keep the terminal record. */
+	retireRequested: boolean;
+	/** Readiness contract: entry id -> required tool names (handshake pending). */
+	readinessExpected: Map<string, string[]>;
+	/** Entry ids that confirmed readiness. */
+	readinessConfirmed: Set<string>;
+	readinessDone: boolean;
+	acceptTimer?: NodeJS.Timeout;
+	readinessTimer?: NodeJS.Timeout;
 }
 
 const ASK_PARENT_TITLE = "ask_parent";
@@ -120,6 +134,8 @@ export class LocalSubagentRuntime implements SubagentRuntime {
 	private readonly killGraceMs: number;
 	private readonly startTimeoutMs: number;
 	private readonly dispatchTimeoutMs: number;
+	private readonly readinessTimeoutMs: number;
+	private readonly workspaceListeners = new Set<(ev: SubagentModelEvent) => void>();
 
 	constructor(opts: ControllerOptions) {
 		this.defaultCwd = opts.defaultCwd;
@@ -131,6 +147,7 @@ export class LocalSubagentRuntime implements SubagentRuntime {
 		this.killGraceMs = opts.killGraceMs ?? 3000;
 		this.startTimeoutMs = opts.startTimeoutMs ?? 30000;
 		this.dispatchTimeoutMs = opts.dispatchTimeoutMs ?? 10000;
+		this.readinessTimeoutMs = opts.readinessTimeoutMs ?? 15000;
 	}
 
 	// ------------------------------------------------------------------ spawn
@@ -146,8 +163,14 @@ export class LocalSubagentRuntime implements SubagentRuntime {
 			"--mode", "rpc",
 			"--no-extensions",
 			"-e", this.bridgePath,
-			"--name", `subagent:${label}`,
 		];
+		// Per-spawn profile: extra extension entries are loaded into this child
+		// only (`-e` is repeatable; `--no-extensions` keeps CLI paths). Generic
+		// children (no additionalExtensions) are byte-identical to before.
+		for (const ext of opts.additionalExtensions ?? []) {
+			args.push("-e", ext);
+		}
+		args.push("--name", `subagent:${label}`);
 		if (opts.model) args.push("--model", opts.model);
 		if (opts.thinking) args.push("--thinking", opts.thinking);
 
@@ -155,7 +178,12 @@ export class LocalSubagentRuntime implements SubagentRuntime {
 			...process.env,
 			PI_SUBAGENT_ID: id,
 			PI_SUBAGENT_LABEL: label,
+			PI_SUBAGENT_RESULTS_DIR: this.resultsDir,
 		};
+		const readinessEntries = opts.readinessEntries ?? {};
+		if (Object.keys(readinessEntries).length > 0) {
+			env[READINESS_ENV] = Object.keys(readinessEntries).join(",");
+		}
 
 		const conn = new RpcChildConnection({
 			command: this.piInvocation.command,
@@ -185,6 +213,11 @@ export class LocalSubagentRuntime implements SubagentRuntime {
 			dispatchWaiters: new Map(),
 			spawnSettled: false,
 			settleFetchDone: false,
+			eventRoute: opts.eventRoute,
+			retireRequested: false,
+			readinessExpected: new Map(Object.entries(readinessEntries)),
+			readinessConfirmed: new Set(),
+			readinessDone: false,
 		};
 		this.records.set(id, record);
 
@@ -198,21 +231,23 @@ export class LocalSubagentRuntime implements SubagentRuntime {
 		};
 		conn.onExit = (info) => this.handleChildExit(record, info);
 
-		conn.send({ id: "spawn-prompt", type: "prompt", message: opts.task });
-
-		const startTimer = setTimeout(() => {
-			if (!record.spawnSettled) {
-				record.lastError = "child did not accept the initial prompt in time";
-				this.finishWithFailure(record, record.lastError);
-				conn.kill("SIGKILL");
-			}
-		}, this.startTimeoutMs);
-		// Let the event loop die with the process instead of keeping it alive.
-		startTimer.unref?.();
+		if (record.readinessExpected.size > 0) {
+			// Fail-closed dispatch: the task prompt is withheld until every
+			// profiled extension confirmed initialization over the readiness
+			// handshake, so a broken/missing extension can never reach the model.
+			record.readinessTimer = setTimeout(() => {
+				if (record.readinessDone || record.spawnSettled) return;
+				this.failSpawn(record, "readiness handshake did not complete in time", "SIGKILL");
+			}, this.readinessTimeoutMs);
+			record.readinessTimer.unref?.();
+		} else {
+			this.sendInitialPrompt(record);
+		}
 
 		return new Promise<AgentSnapshot>((resolve, reject) => {
 			record.spawnWaiters.push((ok) => {
-				clearTimeout(startTimer);
+				this.clearSpawnTimers(record);
+				record.readinessDone = true;
 				if (ok) resolve(this.snapshot(record));
 				else reject(new Error(record.lastError ?? "child failed to start"));
 			});
@@ -220,6 +255,41 @@ export class LocalSubagentRuntime implements SubagentRuntime {
 	}
 
 	// ------------------------------------------------------- child RPC plumbing
+
+	/** Arm the acceptance timer and send the initial task prompt. */
+	private sendInitialPrompt(record: AgentRecord): void {
+		if (record.spawnSettled || record.conn.exit) return;
+		record.acceptTimer = setTimeout(() => {
+			if (!record.spawnSettled) {
+				record.lastError = "child did not accept the initial prompt in time";
+				this.finishWithFailure(record, record.lastError);
+				this.conn(record).kill("SIGKILL");
+			}
+		}, this.startTimeoutMs);
+		record.acceptTimer.unref?.();
+		this.conn(record).send({ id: "spawn-prompt", type: "prompt", message: record.task });
+	}
+
+	private clearSpawnTimers(record: AgentRecord): void {
+		if (record.acceptTimer) clearTimeout(record.acceptTimer);
+		if (record.readinessTimer) clearTimeout(record.readinessTimer);
+	}
+
+	/**
+	 * Fail a spawn before dispatch: mark the spawn settled with failure,
+	 * surface the terminal failure, and kill the child. The task prompt has
+	 * not been sent (dispatched stays false).
+	 */
+	private failSpawn(record: AgentRecord, reason: string, signal?: string): void {
+		if (record.spawnSettled) return;
+		record.readinessDone = true;
+		this.clearSpawnTimers(record);
+		record.spawnSettled = true;
+		record.lastError = reason;
+		for (const w of record.spawnWaiters.splice(0)) w(false);
+		this.finishWithFailure(record, reason);
+		if (signal && !record.conn.exit) this.conn(record).kill(signal);
+	}
 
 	private handleChildLine(record: AgentRecord, line: string): void {
 		let ev: Record<string, unknown>;
@@ -235,7 +305,6 @@ export class LocalSubagentRuntime implements SubagentRuntime {
 			this.handleUiRequest(record, ev);
 			return;
 		}
-
 		// The ask_parent tool call ended: the dialog is resolved one way or
 		// another (answer, cancel, or a pi-side timeout that never sends an
 		// extension_ui_response). Sync the controller so a timed-out child
@@ -350,16 +419,26 @@ export class LocalSubagentRuntime implements SubagentRuntime {
 	}
 
 	/**
-	 * Child UI dialogs. With the minimal child environment the only dialog
-	 * source is the bridge's ask_parent tool (`input`, title "ask_parent").
-	 * Fire-and-forget requests (notify, setWidget, ...) are ignored.
+	 * Child UI dialogs. With the minimal child environment the dialog sources
+	 * are the base bridge's ask_parent tool (`input`, title "ask_parent") and
+	 * the readiness handshake of profiled children (fire-and-forget `notify`
+	 * carrying the readiness payload, fired from session_start handlers —
+	 * blocking dialogs would deadlock: the child's stdin reader only attaches
+	 * after rebindSession completes). Fire-and-forget requests other than
+	 * readiness notifies are ignored.
 	 */
 	private handleUiRequest(record: AgentRecord, ev: Record<string, unknown>): void {
 		const method = ev.method as string;
+		const id = ev.id as string;
+		if (!id) return;
+		if (method === "notify") {
+			const payload = parseReadinessPayload(ev.message as string | undefined);
+			if (payload) this.confirmReadiness(record, payload);
+			return; // generic notifies are not dialogs
+		}
 		if (method !== "input") return; // select/confirm/editor are not produced by the bridge
 		const title = ev.title as string;
-		const id = ev.id as string;
-		if (title !== ASK_PARENT_TITLE || !id) return;
+		if (title !== ASK_PARENT_TITLE) return;
 		const question = (ev.placeholder as string) ?? "";
 		if (record.pendingQuestion) {
 			// A previous question is still open: dismiss the duplicate so the
@@ -370,6 +449,35 @@ export class LocalSubagentRuntime implements SubagentRuntime {
 		record.pendingQuestion = { requestId: id, question, askedAt: Date.now() };
 		record.state = "waiting_input";
 		this.pushEvent(record, { kind: "needs_input", agentId: record.id, label: record.label, question });
+	}
+
+	/**
+	 * Readiness confirmation (profiled children only): a session_start handler
+	 * in an additional extension reported its identity and the tool set it
+	 * registered. Unknown entry → ignore; ok:false or missing required tools
+	 * → spawn fails with the child killed and the task prompt never sent
+	 * (dispatched:false, fail closed). All expected entries confirmed → the
+	 * task prompt is sent (dispatch point follows its acceptance).
+	 */
+	private confirmReadiness(record: AgentRecord, payload: ReadinessPayload): void {
+		if (record.readinessDone || record.spawnSettled) return;
+		const entry = payload.entry;
+		if (!record.readinessExpected.has(entry)) return; // not a profiled entry; ignore
+		const required = record.readinessExpected.get(entry)!;
+		const missing = required.filter((t) => !payload.tools.includes(t));
+		if (payload.ok !== true || missing.length > 0) {
+			const detail = payload.ok !== true
+				? `entry "${entry}" reported failed initialization`
+				: `entry "${entry}" is missing required tools: ${missing.join(", ")}`;
+			this.failSpawn(record, `readiness handshake failed: ${detail}`, "SIGKILL");
+			return;
+		}
+		record.readinessConfirmed.add(entry);
+		if (record.readinessConfirmed.size === record.readinessExpected.size) {
+			record.readinessDone = true;
+			if (record.readinessTimer) clearTimeout(record.readinessTimer);
+			this.sendInitialPrompt(record);
+		}
 	}
 
 	private handleChildExit(record: AgentRecord, info: { code: number | null; signal: string | null }): void {
@@ -387,6 +495,12 @@ export class LocalSubagentRuntime implements SubagentRuntime {
 		if (record.cancelRequested) {
 			this.markTerminal(record, "cancelled");
 			this.pushEvent(record, { kind: "cancelled", agentId: record.id, label: record.label }, { background: false });
+			return;
+		}
+		if (record.retireRequested) {
+			// Terminal retire: the process is killed after a settled terminal
+			// outcome. The record keeps its terminal state and result — retire
+			// never turns a completed/failed record into cancelled.
 			return;
 		}
 		if (record.runActive) {
@@ -529,6 +643,15 @@ export class LocalSubagentRuntime implements SubagentRuntime {
 		opts?: { timeoutMs?: number; signal?: AbortSignal },
 	): Promise<WaitOutcome> {
 		const record = this.mustGet(agentId);
+		if (record.eventRoute === "workspace") {
+			// Event ownership: wait() consumes the one lifecycle event; for a
+			// workspace child that event belongs to the run registry. The
+			// subagent tool rejects wait for workspace children; the runtime
+			// enforces the same rule here (defense in depth).
+			throw new Error(
+				`agent ${agentId} is workspace-owned; use workspace_agent query-mode instead of subagent wait`,
+			);
+		}
 		// Already meaningful: resolve from current state. A pending dispatch
 		// invalidates the terminal result — it belongs to the previous run,
 		// not to the work that was just queued.
@@ -644,14 +767,60 @@ export class LocalSubagentRuntime implements SubagentRuntime {
 		}
 	}
 
+	/**
+	 * Internal-only terminal termination (not exposed as a model-facing op):
+	 * kill an already-settled child while PRESERVING its terminal record —
+	 * state stays whatever settlement made it (e.g. completed) and the
+	 * persisted result is untouched. Unlike cancel(), no cancelled status is
+	 * written and no cancelled event is emitted.
+	 */
+	async retire(agentId: string): Promise<void> {
+		const record = this.mustGet(agentId);
+		if (record.conn.exit) return;
+		record.retireRequested = true;
+		// Abort is harmless for a settled child and covers the rare case of a
+		// ladder follow-up having just started a new run.
+		this.conn(record).send({ type: "abort" });
+		this.conn(record).kill("SIGTERM");
+		const escalated = await Promise.race([
+			record.conn.waitForExit().then(() => false),
+			new Promise<true>((resolve) => setTimeout(() => resolve(true), this.killGraceMs)),
+		]);
+		if (escalated && !record.conn.exit) {
+			this.conn(record).kill("SIGKILL");
+			await record.conn.waitForExit();
+		}
+	}
+
 	inspect(agentId?: string): AgentSnapshot[] {
 		const records = agentId ? [this.records.get(agentId)].filter(Boolean) as AgentRecord[] : [...this.records.values()];
 		return records.map((r) => this.snapshot(r));
 	}
 
+	/** Results dir used for persisted results and envelope records (shared with children via env). */
+	getResultsDir(): string {
+		return this.resultsDir;
+	}
+
 	onEvent(cb: (ev: SubagentModelEvent) => void): () => void {
 		this.listeners.add(cb);
 		return () => this.listeners.delete(cb);
+	}
+
+	/**
+	 * Subscribe to lifecycle events of workspace-routed children (event
+	 * ownership: every child has exactly one event owner — workspace children
+	 * belong to the workspace run registry, generic children to the policy
+	 * above). Events here never reach generic listeners or waiters.
+	 */
+	onWorkspaceEvent(cb: (ev: SubagentModelEvent) => void): () => void {
+		this.workspaceListeners.add(cb);
+		return () => this.workspaceListeners.delete(cb);
+	}
+
+	/** True when this agent's lifecycle events are owned by the workspace layer. */
+	isWorkspaceRouted(agentId: string): boolean {
+		return this.records.get(agentId)?.eventRoute === "workspace";
 	}
 
 	/** Kill all live children without latching the runtime shut. */
@@ -682,6 +851,19 @@ export class LocalSubagentRuntime implements SubagentRuntime {
 	// ---------------------------------------------------------------- internal
 
 	private pushEvent(record: AgentRecord, ev: SubagentModelEvent, opts?: { background?: boolean }): void {
+		// Event router: a workspace-routed child's lifecycle events belong to
+		// the workspace run registry — waiters and generic listeners never see
+		// them (the terminal surface is [workspace_agent completed]).
+		if (record.eventRoute === "workspace") {
+			for (const cb of this.workspaceListeners) {
+				try {
+					cb(ev);
+				} catch {
+					// listener errors must not break the runtime
+				}
+			}
+			return;
+		}
 		// A waiter gets it first (consumed); otherwise it goes to background
 		// delivery. `background: false` events (cancel confirmations) resolve
 		// waiters only — the cancelling side already learned the outcome
