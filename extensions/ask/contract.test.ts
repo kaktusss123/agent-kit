@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+import { AskSchema } from "./ask-schema";
 import {
 	ASK_TOOL_DESCRIPTION,
 	ASK_TOOL_GUIDELINES,
@@ -104,6 +105,39 @@ describe("formatting", () => {
 				],
 			}),
 		).toBe("User answers:\nq1: \"custom note\"\nq2: (no answer)");
+	});
+});
+
+describe("schema/validator drift guard", () => {
+	test("typebox schema fields match what validateAskInput enforces", () => {
+		const qSchema = (AskSchema.properties.questions as {
+			items: { properties: Record<string, unknown>; required?: string[] };
+		}).items;
+		expect(Object.keys(qSchema.properties).sort()).toEqual([
+			"header",
+			"id",
+			"multi",
+			"options",
+			"question",
+			"recommended",
+		]);
+		expect([...(qSchema.required ?? [])].sort()).toEqual(["id", "options", "question"]);
+		const oSchema = (
+			qSchema.properties.options as { items: { properties: Record<string, unknown>; required?: string[] } }
+		).items;
+		expect(Object.keys(oSchema.properties).sort()).toEqual(["description", "label", "preview"]);
+		expect([...(oSchema.required ?? [])]).toEqual(["label"]);
+
+		// a payload shaped exactly like the schema validates
+		const full = {
+			id: "x",
+			question: "q",
+			header: "h",
+			options: [{ label: "l", description: "d", preview: "p" }],
+			multi: true,
+			recommended: 0,
+		};
+		expect(validateAskInput({ questions: [full] })).toBeDefined();
 	});
 });
 

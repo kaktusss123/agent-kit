@@ -501,7 +501,7 @@ describe("detach and cancel", () => {
 			const { runId, agentId } = res.details as { runId: string; agentId: string };
 			expect(h.runtime.inspect(agentId)[0]!.alive).toBe(true); // NOT cancelled
 
-			// F3: with no blocking waiter left, a new ask_parent must reach
+			// F3: with no blocking waiter left, a new ask must reach
 			// Main as a workspace notification (not vanish).
 			proc.writeToStdout({
 				type: "extension_ui_request",

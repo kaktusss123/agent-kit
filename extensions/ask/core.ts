@@ -90,7 +90,7 @@ function initialCursor(question: AskQuestion | undefined): number {
 	if (!question) return 0;
 	if (question.recommended !== undefined && question.recommended >= 0) {
 		const max = buildRows(question).length - 1;
-		return Math.min(question.recommended, max);
+		return Math.min(Math.floor(question.recommended), max);
 	}
 	return 0;
 }

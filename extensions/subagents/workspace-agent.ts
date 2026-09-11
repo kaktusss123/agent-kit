@@ -379,8 +379,8 @@ export function createWorkspaceLayer(
 
 	/**
 	 * RepoOwner suspended on ask with NO blocking dispatch waiter left
-		 * (first dispatch already returned, or Main detached): tell Main, or
-		 * the run would silently hang until the deadline.
+	 * (first dispatch already returned, or Main detached): tell Main, or
+	 * the run would silently hang until the deadline.
 	 */
 	function notifyNeedsInput(run: WorkspaceAgentRun): void {
 		const lines = [

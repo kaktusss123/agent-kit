@@ -174,6 +174,17 @@ describe("rpcFallbackAsk", () => {
 		expect(outcome).toEqual({ kind: "chat" });
 	});
 
+	test("a client returning unknown strings never selects anything and stops after 3", async () => {
+		const { ui, calls } = scriptedUi([
+			{ expect: { kind: "select" }, reply: "garbage-1" },
+			{ expect: { kind: "select" }, reply: "garbage-2" },
+			{ expect: { kind: "select" }, reply: "garbage-3" },
+		]);
+		const outcome = await rpcFallbackAsk(ui, oneQuestion, undefined);
+		expect(outcome).toEqual({ kind: "cancelled" });
+		expect(calls).toHaveLength(3);
+	});
+
 	test("dismissed dialog is a cancellation, never a selection", async () => {
 		const { ui } = scriptedUi([{ expect: { kind: "select" }, reply: undefined }]);
 		const outcome = await rpcFallbackAsk(ui, oneQuestion, undefined);

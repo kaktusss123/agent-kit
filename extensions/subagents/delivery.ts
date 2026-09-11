@@ -28,7 +28,12 @@ export const RESOLVE_INSTRUCTION =
 export function formatNeedsInputBody(question: string, request: AskInput | undefined): string[] {
 	const lines = [`question: ${question}`];
 	if (request && request.questions.length > 0) {
-		lines.push("request:", "```json", formatAskRequestJson(request), "```");
+		const json = formatAskRequestJson(request);
+		// A payload containing ``` would break a ```json fence; use a longer
+		// fence when needed (CommonMark: a fence is closed only by a run of at
+		// least its own length).
+		const fence = json.includes("```") ? "````json" : "```json";
+		lines.push("request:", fence, json, fence.slice(3));
 	}
 	lines.push(RESOLVE_INSTRUCTION);
 	return lines;

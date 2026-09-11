@@ -530,6 +530,9 @@ export class LocalSubagentRuntime implements SubagentRuntime {
 		record.signal = info.signal;
 		record.endedAt = Date.now();
 		record.pendingDispatch = false;
+		// A dead child cannot be answered; drop any pending question so
+		// snapshots of terminal agents do not show a stale dialog.
+		record.pendingQuestion = undefined;
 		if (!record.spawnSettled) {
 			record.spawnSettled = true;
 			record.lastError = record.lastError ?? `child exited before accepting the prompt (code ${info.code}, signal ${info.signal})`;

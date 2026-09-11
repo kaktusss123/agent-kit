@@ -229,6 +229,7 @@ async function askOneFallback(
 	answers: Record<string, QuestionAnswer>,
 	signal: AbortSignal | undefined,
 ): Promise<"answered" | "cancelled" | "chat"> {
+	let unknownAnswers = 0;
 	while (true) {
 		const answer = answers[question.id];
 		const rows = fallbackRows(question, answer);
@@ -240,7 +241,13 @@ async function askOneFallback(
 		if (choice === undefined) return "cancelled";
 		const index = options.indexOf(choice);
 		const row = rows[index];
-		if (!row) continue;
+		if (!row) {
+			// A hostile/broken client returning unknown strings must not get an
+			// infinite dialog loop; and it must never select anything either.
+			if (++unknownAnswers >= 3) return "cancelled";
+			continue;
+		}
+		unknownAnswers = 0;
 		if (row.marker === CHAT_MARKER) return "chat";
 		if (row.marker === OTHER_MARKER) {
 			const text = await ui.input(question.question, undefined, { signal });

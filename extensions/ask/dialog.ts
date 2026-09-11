@@ -16,6 +16,7 @@ import {
 	Input,
 	Key,
 	Markdown,
+	type MarkdownTheme,
 	matchesKey,
 	type SelectItem,
 	SelectList,
@@ -41,6 +42,11 @@ import {
 
 export type AskDialogResult = AskOutcome | undefined;
 
+/** Injectable markdown theme: production reads pi's initialized theme. */
+export interface AskDialogOptions {
+	markdownTheme?: () => MarkdownTheme;
+}
+
 export class AskDialog implements Component {
 	private readonly questions: AskQuestion[];
 	private readonly theme: Theme;
@@ -52,15 +58,22 @@ export class AskDialog implements Component {
 	private questionMd?: Markdown;
 	private previewMd?: Markdown;
 	private previewText?: string;
+	private readonly markdownTheme?: () => MarkdownTheme;
 	/** Injected by the wiring so key handling can trigger re-renders. */
 	tuiRef?: TUI;
 	/** Focusable passthrough so the hardware cursor lands on the Input row. */
 	focused = false;
 
-	constructor(questions: AskQuestion[], theme: Theme, done: (result: AskDialogResult) => void) {
+	constructor(
+		questions: AskQuestion[],
+		theme: Theme,
+		done: (result: AskDialogResult) => void,
+		options?: AskDialogOptions,
+	) {
 		this.questions = questions;
 		this.theme = theme;
 		this.done = done;
+		this.markdownTheme = options?.markdownTheme;
 		this.state = initialState(questions);
 		this.selectList = new SelectList([], 10, {
 			selectedPrefix: (t) => theme.fg("accent", t),
@@ -226,16 +239,20 @@ export class AskDialog implements Component {
 
 	private questionLines(width: number, question: string): string[] {
 		if (!this.questionMd) {
-			this.questionMd = new Markdown(question, 1, 0, getMarkdownTheme());
+			this.questionMd = new Markdown(question, 1, 0, this.mdTheme());
 		} else {
 			this.questionMd.setText(question);
 		}
 		return this.questionMd.render(Math.max(8, width - 2));
 	}
 
+	private mdTheme(): MarkdownTheme {
+		return this.markdownTheme ? this.markdownTheme() : getMarkdownTheme();
+	}
+
 	private previewLines(width: number, preview: string): string[] {
 		if (!this.previewMd || this.previewText !== preview) {
-			this.previewMd = new Markdown(preview, 0, 0, getMarkdownTheme());
+			this.previewMd = new Markdown(preview, 0, 0, this.mdTheme());
 			this.previewText = preview;
 		}
 		const inner = Math.max(8, width - 6);
