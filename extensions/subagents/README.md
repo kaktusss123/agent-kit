@@ -72,3 +72,49 @@ queueing and starting a run from the session's real state.
 - A `pi.sendMessage` rejection (rare races, e.g. compaction in progress)
   surfaces only as a pi `extension_error` event; that delivery is then lost
   (the agent remains queryable via `subagent status` / `result`).
+
+## Workspace layer (`workspace_agent`) — RepoOwner contract
+
+`workspace_agent(workspace, task, timeout_ms?)` runs a RepoOwner: a child
+rooted in a managed task worktree with a strict protocol around the shared
+subagent runtime.
+
+- **Per-spawn profile**: RepoOwner children load the task-workspace entry and
+  a reporting bridge in addition to the base bridge (`SpawnOptions.
+  additionalExtensions`). Generic children are byte-identical to before.
+- **Readiness handshake**: before the task prompt is sent, each profile entry
+  confirms initialization from its `session_start` handler (fire-and-forget
+  notify carrying the registered tool set; blocking dialogs would deadlock —
+  the child's stdin reader attaches only after `rebindSession`). The
+  controller validates entry ids, `ok`, and required tools; failures kill the
+  child with the task never reaching a model (fail closed, `dispatched:false`).
+- **Dispatch point**: readiness + RPC acceptance of the initial prompt.
+  Everything before is `dispatched:false`; after it there is no fallback —
+  abort detaches (the run continues), repair is a new RepoOwner.
+- **Event ownership**: RepoOwner lifecycle events route to the workspace run
+  registry only — no generic `[subagent ...]` deliveries, and `wait()` is
+  locked. The `subagent` tool on RepoOwner children allows only
+  `status / result / respond / cancel`; `wait / steer / follow_up` are
+  rejected with an explanation.
+- **Envelope**: the child reports its product outcome via `report_result`
+  (typebox-validated, atomic file handoff). Any later tool call invalidates
+  the report — settlement accepts only fresh envelopes, so "finish by
+  reporting" is mechanical.
+- **Deadline and ladder**: the deadline covers the whole run including report
+  recovery. Settlement without a fresh envelope triggers up to 3 follow-ups;
+  ladder exhausted before the deadline → `blocked`, deadline first →
+  `partial` + `child_may_have_mutated_repo`. Deadline and explicit Main
+  cancel use the real `cancel` (semantic cancellation).
+- **Terminal lifecycle**: terminal outcomes `retire()` the child — kill the
+  settled process while preserving the terminal record (never `cancelled`).
+  Completion is announced as `[workspace_agent completed]`; the result stays
+  queryable via `workspace_agent(run_id)` for the rest of the session.
+- **Model pinning**: the child runs with the main session's resolved model
+  and thinking level; without a model the dispatch is refused (`blocked`).
+
+Live verification: `node live/workspace-verify.mjs` (spawns a real main pi
+process and real children on the default model; 28 checks covering the
+acceptance scenarios A1–A3b, A5–A9, A11–A14).
+
+Dev note: `bun test` needs `typebox` resolvable from the repo tree —
+`ln -s <pi-package>/node_modules/typebox node_modules/typebox` (gitignored).

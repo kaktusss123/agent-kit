@@ -47,7 +47,7 @@ function captureTool(pi: {
 	return box;
 }
 
-function makeLayer(): Harness {
+function makeLayer(layerOpts?: { profileEntries?: () => string[] }): Harness {
 	const harness = createFakeSpawnFactory();
 	const base = fs.mkdtempSync(path.join(os.tmpdir(), "wsagent-test-"));
 	const tmp = path.join(base, "results");
@@ -83,7 +83,7 @@ function makeLayer(): Harness {
 		dispatchTimeoutMs: 2000,
 		readinessTimeoutMs: 5000,
 	});
-	createWorkspaceLayer(pi, runtime);
+	createWorkspaceLayer(pi, runtime, layerOpts);
 
 	return {
 		runtime,
@@ -491,6 +491,40 @@ describe("detach and cancel", () => {
 			expect(proc.closed).toBe(true);
 		} finally {
 			await h.runtime.shutdown();
+			h.cleanup();
+		}
+	});
+});
+
+describe("startup failure classification (A2c)", () => {
+	test("child dying before acceptance (e.g. extension load failure) → unsupported, dispatched:false", async () => {
+		const h = makeLayer();
+		try {
+			const ws = makeWorktree(h.taskRoot, "a2c-ws");
+			const pending = dispatchCall(h, { workspace: ws, task: "t" });
+			for (let i = 0; i < 100 && h.harness.spawned.length === 0; i++) await tick(20);
+			// pi exits (code 1) when an extension fails to load: no readiness,
+			// no prompt acceptance — the child just dies.
+			h.lastProc().close(1, null);
+			const res = await pending;
+			expect(res.details).toMatchObject({ status: "unsupported", dispatched: false });
+			expect(h.harness.spawned).toHaveLength(1); // exactly one attempt, no retry
+		} finally {
+			h.cleanup();
+		}
+	});
+});
+
+describe("static preflight (A2b)", () => {
+	test("broken profile entrypoint \u2192 unsupported, dispatched:false, no process", async () => {
+		const h = makeLayer({ profileEntries: () => ["/definitely/missing/profile-entry.ts"] });
+		try {
+			const ws = makeWorktree(h.taskRoot, "a2b-ws");
+			const res = await dispatchCall(h, { workspace: ws, task: "t" });
+			expect(res.details).toMatchObject({ status: "unsupported", dispatched: false });
+			expect(String(res.details.reason)).toContain("missing or unreadable");
+			expect(h.harness.spawned).toHaveLength(0);
+		} finally {
 			h.cleanup();
 		}
 	});

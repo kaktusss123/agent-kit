@@ -141,7 +141,16 @@ export interface DispatchContext {
 
 // ==================================================================== layer
 
-export function createWorkspaceLayer(pi: ExtensionAPI, runtime: LocalSubagentRuntime): WorkspaceLayer {
+export interface WorkspaceLayerOptions {
+	/** Override the profile entrypoint paths (tests: point at missing files). */
+	profileEntries?: () => string[];
+}
+
+export function createWorkspaceLayer(
+	pi: ExtensionAPI,
+	runtime: LocalSubagentRuntime,
+	opts?: WorkspaceLayerOptions,
+): WorkspaceLayer {
 	const runsByRunId = new Map<string, WorkspaceAgentRun>();
 	const runsByAgentId = new Map<string, WorkspaceAgentRun>();
 	let runCounter = 0;
@@ -447,6 +456,7 @@ export function createWorkspaceLayer(pi: ExtensionAPI, runtime: LocalSubagentRun
 	}
 
 	function profileEntries(): string[] {
+		if (opts?.profileEntries) return opts.profileEntries();
 		return [
 			path.join(moduleDirname(), "..", "task-workspace", "index.ts"),
 			path.join(moduleDirname(), "reporting-bridge.ts"),
@@ -555,8 +565,19 @@ export function createWorkspaceLayer(pi: ExtensionAPI, runtime: LocalSubagentRun
 			});
 		} catch (e) {
 			const message = e instanceof Error ? e.message : String(e);
-			const kind: "unsupported" | "error" = message.includes("readiness handshake") ? "unsupported" : "error";
-			return fail(kind, workspace, message);
+			// Pre-dispatch startup failures are classified (SPEC A2c/A10): a
+			// broken/missing extension, a dead child, or a rejected/timed-out
+			// prompt all mean "this profile cannot run here" → unsupported, the
+			// Main-side fallback signal. Only genuinely unclassified wrapper
+			// failures surface as error.
+			const startupFailure =
+				message.includes("readiness handshake") ||
+				message.includes("exited before accepting") ||
+				message.includes("spawn error") ||
+				message.includes("did not accept the initial prompt") ||
+				message.includes("initial prompt rejected") ||
+				message.includes("child failed to start");
+			return fail(startupFailure ? "unsupported" : "error", workspace, message);
 		}
 
 		const runId = `wr-${++runCounter}-${Math.random().toString(36).slice(2, 6)}`;
