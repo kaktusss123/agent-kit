@@ -16,6 +16,11 @@ tuning, ported from my oh-my-pi setup.
   hosted web search, reusing pi's `/login openai-codex` OAuth credential (no
   separate auth). Forced hosted tool, SSE parsing, citations/source
   deduplication, typed failures, compact model-facing output.
+- `extensions/continue-shortcut/` — `.`/`c` continue shortcut: submitting a
+  bare dot resumes the agent with a hidden continue directive instead of a
+  visible user message. Ported from oh-my-pi's input-controller shortcut;
+  queued as a follow-up while the agent is busy, no-op mid-stream, passthrough
+  with images.
 
 ## Layout
 
