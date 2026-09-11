@@ -248,6 +248,46 @@ describe("retire() — terminal termination preserving the record", () => {
 	});
 });
 
+describe("input_resolved routing (F3)", () => {
+	test("respond emits input_resolved to the workspace layer; a second ask_parent emits a fresh needs_input", async () => {
+		const { harness, runtime, events, workspaceEvents, cleanup } = makeRuntime();
+		try {
+			const pending = runtime.spawn({ task: "t", label: "owner-i", eventRoute: "workspace" });
+			await tick(5);
+			const proc = harness.spawned[0];
+			autoAcceptPrompt(proc);
+			const snap = await pending;
+
+			// first question: needs_input routed to the workspace layer only
+			proc.writeToStdout({ type: "extension_ui_request", id: "ui-1", method: "input", title: "ask_parent", placeholder: "q1" });
+			await tick(20);
+			expect(workspaceEvents.some((e) => e.kind === "needs_input" && (e as any).question === "q1")).toBe(true);
+
+			// Main responds: input_resolved clears the pending question
+			await runtime.respond(snap.id, "a1");
+			await tick(20);
+			expect(workspaceEvents.some((e) => e.kind === "input_resolved")).toBe(true);
+			expect(runtime.inspect(snap.id)[0]!.pendingQuestion).toBeUndefined();
+
+			// second question: a fresh needs_input (no dedup, no swallow)
+			proc.writeToStdout({ type: "extension_ui_request", id: "ui-2", method: "input", title: "ask_parent", placeholder: "q2" });
+			await tick(20);
+			expect(workspaceEvents.some((e) => e.kind === "needs_input" && (e as any).question === "q2")).toBe(true);
+
+			// child-side dialog timeout resolves the question: input_resolved again
+			proc.writeToStdout({ type: "tool_execution_end", toolName: "ask_parent", toolCallId: "tc-2" });
+			await tick(20);
+			const resolved = workspaceEvents.filter((e) => e.kind === "input_resolved");
+			expect(resolved.length).toBe(2);
+			expect(runtime.inspect(snap.id)[0]!.state).toBe("running");
+			expect(events).toHaveLength(0); // generic policy still sees nothing
+		} finally {
+			await runtime.shutdown();
+			cleanup();
+		}
+	});
+});
+
 describe("workspace event routing", () => {
 	test("lifecycle events of workspace children reach the workspace layer only; wait() is locked", async () => {
 		const { harness, runtime, events, workspaceEvents, cleanup } = makeRuntime();
