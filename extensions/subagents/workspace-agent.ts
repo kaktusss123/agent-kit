@@ -275,8 +275,18 @@ export function createWorkspaceLayer(
 		}
 		if (record && !record.stale) {
 			// Trusted fresh envelope: the product outcome, delivered as done.
-			// Terminal lifecycle first (F4): the completion is published only
-			// after the settled child is actually gone.
+			// CLAIM the terminal outcome atomically before the (possibly slow)
+			// retire: the deadline must not fire mid-retire and turn the
+			// already-decided done into a cancel/partial. After the claim the
+			// deadline timer is dead; first claimer wins the run outcome.
+			if (run.terminal) return;
+			run.deadlineFired = true;
+			if (run.deadlineTimer) {
+				clearTimeout(run.deadlineTimer);
+				run.deadlineTimer = undefined;
+			}
+			// Terminal lifecycle (F4): the completion is published only after
+			// the settled child is actually gone.
 			await retireChild(run);
 			finish(run, {
 				status: "done",
@@ -560,10 +570,7 @@ export function createWorkspaceLayer(
 
 	function profileEntries(): string[] {
 		if (opts?.profileEntries) return opts.profileEntries();
-		return [
-			path.join(moduleDirname(), "..", "task-workspace", "index.ts"),
-			path.join(moduleDirname(), "reporting-bridge.ts"),
-		];
+		return defaultProfileEntries(moduleDirname());
 	}
 
 	// ----------------------------------------------------------------- tool
@@ -667,9 +674,17 @@ export function createWorkspaceLayer(
 				additionalExtensions: profileEntries(),
 				readinessEntries: PROFILE_READINESS,
 				eventRoute: "workspace",
+				signal,
 			});
 		} catch (e) {
 			const message = e instanceof Error ? e.message : String(e);
+			// SPEC 3.2: an abort before the task prompt was accepted means no
+			// process and no task — blocked, dispatched:false. (If acceptance
+			// won the race, spawn resolved and the signal's ownership moved to
+			// the detach wait below.)
+			if (message.includes("aborted before dispatch")) {
+				return fail("blocked", workspace, message);
+			}
 			// Pre-dispatch startup failures are classified (SPEC A2c/A10): a
 			// broken/missing extension, a dead child, or a rejected/timed-out
 			// prompt all mean "this profile cannot run here" → unsupported, the
@@ -721,6 +736,9 @@ export function createWorkspaceLayer(
 				signal?.removeEventListener("abort", onAbort);
 			}
 			signal?.addEventListener("abort", onAbort, { once: true });
+			// The abort may have fired while spawn was still resolving
+			// (acceptance won the race): detach immediately.
+			if (signal?.aborted) w("detached");
 		});
 
 		if (waitOutcome === "detached") {
@@ -814,6 +832,21 @@ export function createWorkspaceLayer(
 }
 
 // -------------------------------------------------------------------- helpers
+
+/**
+ * Additional-extension load order for the RepoOwner profile. ORDER MATTERS:
+ * the reporting bridge must come BEFORE task-workspace so its tool_call
+ * staleness hook runs first — pi dispatches tool_call handlers in extension
+ * order and stops at the first block, so a blocked call (e.g. the mutation
+ * guard refusing a raw no-verify commit) must already have invalidated the
+ * previous report_result envelope.
+ */
+export function defaultProfileEntries(moduleDir: string): string[] {
+	return [
+		path.join(moduleDir, "reporting-bridge.ts"),
+		path.join(moduleDir, "..", "task-workspace", "index.ts"),
+	];
+}
 
 /** Directory of this module (works under jiti and node). */
 function moduleDirname(): string {

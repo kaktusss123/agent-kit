@@ -20,12 +20,12 @@ const VALID_ENVELOPE = {
 };
 
 interface Harness {
-	tool: { execute: Function };
+	tool: { execute: Function; executionMode?: string };
 	toolCall(toolName: string): { block?: boolean; reason?: string } | undefined;
+	handlers: Record<string, Array<(event: any) => unknown>>;
 	dir: string;
 	file(): string;
 	readRecord(): any;
-	setReported(value: boolean): void;
 	cleanup(): void;
 }
 
@@ -47,6 +47,7 @@ function makeBridge(opts?: { agentId?: string }): Harness {
 
 	const h: Harness = {
 		tool,
+		handlers,
 		toolCall(toolName: string) {
 			let last: any;
 			for (const cb of handlers.tool_call ?? []) last = cb({ toolName });
@@ -169,6 +170,48 @@ describe("reporting bridge staleness (F2)", () => {
 			expect(rec?.stale).toBe(false);
 			expect(rec?.envelope.summary).toBe("second");
 			expect(rec?.generation).toBe(2);
+		} finally {
+			h.cleanup();
+		}
+	});
+
+	test("report_result is sequential (batched mutation completes before the report)", () => {
+		const h = makeBridge();
+		try {
+			expect(h.tool.executionMode).toBe("sequential");
+		} finally {
+			h.cleanup();
+		}
+	});
+
+	test("staleness hook runs BEFORE a later blocking handler (extension order contract)", async () => {
+		// pi dispatches tool_call handlers in extension registration order and
+		// stops at the first block. Profile order puts the reporting bridge
+		// first, so a BLOCKED call (the mutation guard refusing a raw
+		// no-verify commit) must already have invalidated the previous
+		// envelope. Simulate pi's dispatch loop: handlers in registration
+		// order, stop at the first block.
+		const h = makeBridge();
+		try {
+			await report(h, "before blocked call");
+			expect(h.readRecord()?.stale).toBe(false);
+
+			// a guard-like handler registered AFTER the bridge blocks bash
+			h.handlers.tool_call.push((event: any) =>
+				event.toolName === "bash" ? { block: true, reason: "Blocked by mutation guard" } : undefined,
+			);
+
+			let blocked = false;
+			for (const cb of h.handlers.tool_call) {
+				const verdict = cb({ toolName: "bash" }) as { block?: boolean } | undefined;
+				if (verdict?.block) {
+					blocked = true;
+					break;
+				}
+			}
+			expect(blocked).toBe(true);
+			// despite the block, the bridge's earlier hook already invalidated
+			expect(h.readRecord()?.stale).toBe(true);
 		} finally {
 			h.cleanup();
 		}

@@ -46,6 +46,13 @@ export interface SpawnOptions {
 	 * owner is the workspace run registry).
 	 */
 	eventRoute?: "workspace";
+	/**
+	 * Abort honored until the initial task prompt is RPC-accepted: an abort
+	 * before acceptance kills the child and fails the spawn (dispatched:
+	 * false). After acceptance the signal is ignored here — ownership moves
+	 * to the caller (abort = detach).
+	 */
+	signal?: AbortSignal;
 }
 
 export interface PendingQuestion {

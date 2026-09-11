@@ -19,7 +19,7 @@ import {
 	settleRun,
 } from "./fake-rpc";
 import { envelopeFileName, type Envelope } from "./envelope";
-import { createWorkspaceLayer, managedAgentOpPolicy } from "./workspace-agent";
+import { createWorkspaceLayer, defaultProfileEntries, managedAgentOpPolicy } from "./workspace-agent";
 
 const tick = (ms = 30) => new Promise((r) => setTimeout(r, ms));
 
@@ -47,7 +47,7 @@ function captureTool(pi: {
 	return box;
 }
 
-function makeLayer(layerOpts?: { profileEntries?: () => string[] }): Harness {
+function makeLayer(layerOpts?: { profileEntries?: () => string[]; killGraceMs?: number }): Harness {
 	const harness = createFakeSpawnFactory();
 	const base = fs.mkdtempSync(path.join(os.tmpdir(), "wsagent-test-"));
 	const tmp = path.join(base, "results");
@@ -78,7 +78,7 @@ function makeLayer(layerOpts?: { profileEntries?: () => string[] }): Harness {
 		piCommand: { command: "node", args: ["/fake/pi-cli.js"] },
 		bridgePath: "/fake/bridge.ts",
 		spawnFn: harness.spawnFn,
-		killGraceMs: 50,
+		killGraceMs: layerOpts?.killGraceMs ?? 50,
 		startTimeoutMs: 2000,
 		dispatchTimeoutMs: 2000,
 		readinessTimeoutMs: 5000,
@@ -590,6 +590,97 @@ describe("static preflight (A2b)", () => {
 			expect(res.details).toMatchObject({ status: "unsupported", dispatched: false });
 			expect(String(res.details.reason)).toContain("missing or unreadable");
 			expect(h.harness.spawned).toHaveLength(0);
+		} finally {
+			h.cleanup();
+		}
+	});
+});
+
+describe("N1 profile order and sequential report", () => {
+	test("reporting bridge loads BEFORE task-workspace (staleness hook survives blocked calls)", () => {
+		const entries = defaultProfileEntries("/ext");
+		expect(entries[0]).toContain("reporting-bridge.ts");
+		expect(entries[1]).toContain(path.join("task-workspace", "index.ts"));
+	});
+});
+
+describe("N2 deadline vs retire race", () => {
+	test("deadline firing during retire cannot turn a decided done into cancel/partial", async () => {
+		// killGraceMs 900 makes retire() hang ~0.9s (fake ignores SIGTERM);
+		// the deadline (1500ms after registration) lands inside that window.
+		const h = makeLayer({ killGraceMs: 900 });
+		try {
+			const ws = makeWorktree(h.taskRoot, "race-ws");
+			const pending = dispatchCall(h, { workspace: ws, task: "t", timeout_ms: 1500 });
+			for (let i = 0; i < 100 && h.harness.spawned.length === 0; i++) await tick(20);
+			const proc = h.lastProc();
+			proc.ignoreSigterm = true;
+			confirmReadiness(proc, "task-workspace", {
+				tools: ["task_status", "ensure_task_repo", "checkpoint_commit", "remove_task_lane"],
+			});
+			confirmReadiness(proc, "workspace-reporting", { tools: ["report_result"] });
+			autoAcceptPrompt(proc);
+			await tick(30);
+			const agentId = h.agentId();
+
+			// settle with a fresh envelope shortly BEFORE the deadline; retire
+			// then crosses it.
+			await tick(700);
+			writeEnvelope(h, agentId, { generation: 1 });
+			settleRun(proc, "settled in time");
+
+			const res = await pending;
+			expect(res.details).toMatchObject({
+				status: "done",
+				reason: undefined,
+				child_may_have_mutated_repo: false,
+			});
+			// the runtime record must agree with the workspace outcome: the
+			// controller keeps `completed` (retire won the exit, cancel never
+			// claimed it).
+			expect(h.runtime.inspect(agentId)[0]!.state).toBe("completed");
+			// exactly one completion notification, no partial/cancel noise
+			const completions = h.messages.filter(
+				(m) => m.message.customType === "workspace-agent-event" && String(m.message.content).includes("status: done"),
+			);
+			expect(completions.length).toBe(1);
+		} finally {
+			await h.runtime.shutdown();
+			h.cleanup();
+		}
+	});
+});
+
+describe("N3 pre-dispatch abort", () => {
+	test("abort before execute → blocked, dispatched:false, no process", async () => {
+		const h = makeLayer();
+		try {
+			const ws = makeWorktree(h.taskRoot, "abort0-ws");
+			const ac = new AbortController();
+			ac.abort();
+			const res = await dispatchCall(h, { workspace: ws, task: "t" }, ac.signal);
+			expect(res.details).toMatchObject({ status: "blocked", dispatched: false });
+			expect(String(res.details.reason)).toContain("aborted before dispatch");
+			expect(h.harness.spawned).toHaveLength(0);
+		} finally {
+			h.cleanup();
+		}
+	});
+
+	test("abort during readiness → child killed, task never sent, blocked dispatched:false", async () => {
+		const h = makeLayer();
+		try {
+			const ws = makeWorktree(h.taskRoot, "abort-ws");
+			const ac = new AbortController();
+			const pending = dispatchCall(h, { workspace: ws, task: "t" }, ac.signal);
+			for (let i = 0; i < 100 && h.harness.spawned.length === 0; i++) await tick(20);
+			const proc = h.lastProc();
+			ac.abort(); // BEFORE any readiness confirmation: prompt not sent yet
+			const res = await pending;
+			expect(res.details).toMatchObject({ status: "blocked", dispatched: false });
+			expect(String(res.details.reason)).toContain("aborted before dispatch");
+			expect(proc.commands.find((c) => c.type === "prompt" && c.id === "spawn-prompt")).toBeUndefined();
+			expect(proc.signalsReceived).toContain("SIGKILL");
 		} finally {
 			h.cleanup();
 		}

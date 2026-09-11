@@ -104,6 +104,12 @@ export default function (pi: ExtensionAPI) {
 	pi.registerTool({
 		name: "report_result",
 		label: "Report Result",
+		// Sequential execution: if the model batches [mutation, report_result]
+		// in one assistant message, the mutation must complete BEFORE the
+		// report is written, or the envelope would describe pre-mutation
+		// state while already marked fresh. One sequential tool in a batch
+		// makes pi run the whole batch sequentially.
+		executionMode: "sequential",
 		description:
 			"Report your final structured outcome for this workspace task. Call exactly once, as your LAST action, " +
 			"after all verification is done. Any tool call after reporting invalidates the report, so report only " +

@@ -154,6 +154,9 @@ export class LocalSubagentRuntime implements SubagentRuntime {
 
 	spawn(opts: SpawnOptions): Promise<AgentSnapshot> {
 		if (this.shutDown) return Promise.reject(new Error("runtime is shut down"));
+		if (opts.signal?.aborted) {
+			return Promise.reject(new Error("aborted before dispatch"));
+		}
 		const id = `sa-${++LocalSubagentRuntime.idCounter}-${Math.random().toString(36).slice(2, 6)}`;
 		const cwd = path.resolve(this.defaultCwd, opts.cwd ?? ".");
 		const label = opts.label?.trim() || `agent-${id.slice(3, 11)}`;
@@ -231,6 +234,17 @@ export class LocalSubagentRuntime implements SubagentRuntime {
 		};
 		conn.onExit = (info) => this.handleChildExit(record, info);
 
+		// Pre-dispatch abort (N3): until the initial task prompt is RPC-
+		// accepted, an abort kills the child and fails the spawn. After
+		// acceptance the handler is inert (spawnSettled guard) — ownership of
+		// the signal moves to the caller (abort = detach).
+		const onSpawnAbort = () => {
+			if (!record.spawnSettled) {
+				this.failSpawn(record, "aborted before dispatch", "SIGKILL");
+			}
+		};
+		opts.signal?.addEventListener("abort", onSpawnAbort, { once: true });
+
 		if (record.readinessExpected.size > 0) {
 			// Fail-closed dispatch: the task prompt is withheld until every
 			// profiled extension confirmed initialization over the readiness
@@ -247,6 +261,7 @@ export class LocalSubagentRuntime implements SubagentRuntime {
 		return new Promise<AgentSnapshot>((resolve, reject) => {
 			record.spawnWaiters.push((ok) => {
 				this.clearSpawnTimers(record);
+				opts.signal?.removeEventListener("abort", onSpawnAbort);
 				record.readinessDone = true;
 				if (ok) resolve(this.snapshot(record));
 				else reject(new Error(record.lastError ?? "child failed to start"));
