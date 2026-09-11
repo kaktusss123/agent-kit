@@ -136,7 +136,7 @@ const task1 = [
 		const spawnedEv = l.events.find((e) => e.kind === "spawned" && e.resultKey === "L1");
 		check("L1/A8 model pinned to main model", !!spawnedEv && spawnedEv.model === modelPattern, `child=${spawnedEv?.model}`);
 
-		const tr = childTranscript("owner-live-ws");
+		const tr = childTranscript(WS);
 		check("L1 transcript: checkpoint_commit used", !!tr && tr.checkpointCalls >= 1, `calls=${tr?.checkpointCalls} session=${tr?.session ? "found" : "missing"}`);
 		check("L1/A5 transcript: zero raw `git commit` and zero --no-verify", !!tr && tr.rawBashCommit === 0 && tr.noVerify === 0, `raw=${tr?.rawBashCommit} noVerify=${tr?.noVerify}`);
 
@@ -347,23 +347,23 @@ const task1 = [
 // ----------------------------------------------------------------------------
 main.kill();
 
-function childTranscript(sessionNamePart) {
+function childTranscript(ws) {
 	try {
-		const agentDir = path.join(process.env.HOME, ".pi", "agent", "sessions");
+		// The child's cwd is the (realpath'd) worktree; pi encodes it into the
+		// sessions directory name ("/" → "-"), so scope the search there — a
+		// name-only search would match unrelated sessions mentioning the label.
+		const real = fs.realpathSync(ws);
+		const dirName = "-" + real.replace(/\//g, "-") + "--";
+		const agentDir = path.join(process.env.HOME, ".pi", "agent", "sessions", dirName);
 		let found = null;
-		const walk = (dir) => {
-			if (found) return;
-			for (const f of fs.readdirSync(dir)) {
-				const p = path.join(dir, f);
-				const st = fs.statSync(p);
-				if (st.isDirectory()) walk(p);
-				else if (st.mtimeMs > Date.now() - 900000 && f.endsWith(".jsonl")) {
-					const head = fs.readFileSync(p, "utf8").slice(0, 4000);
-					if (head.includes(`subagent:${sessionNamePart}`)) { found = p; return; }
-				}
+		for (const f of fs.readdirSync(agentDir)) {
+			const p = path.join(agentDir, f);
+			const st = fs.statSync(p);
+			if (st.isFile() && st.mtimeMs > Date.now() - 900000 && f.endsWith(".jsonl")) {
+				const head = fs.readFileSync(p, "utf8").slice(0, 4000);
+				if (head.includes(`subagent:owner-${path.basename(ws)}`)) { found = p; break; }
 			}
-		};
-		walk(agentDir);
+		}
 		if (!found) return null;
 		const transcript = fs.readFileSync(found, "utf8");
 		return {
