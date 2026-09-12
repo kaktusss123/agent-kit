@@ -7,7 +7,10 @@
  * Surfaces:
  * - `subagent` tool (LLM): one compact tool — spawn / status / steer /
  *   follow_up / wait / result / respond / cancel. `spawn` is async by
- *   default; blocking is modeled as spawn + wait.
+ *   default; blocking is modeled as spawn + wait. Spawn picks the child's
+ *   model by CLASS (modelClass: cheap | default | smart); the concrete
+ *   model + thinking are resolved through the model-classes resolver
+ *   (../model-classes/core) before the child process starts.
  * - Background delivery: completed / failed / needs_input events reach the
  *   main model through pi.sendMessage with deliverAs:"steer" + triggerTurn,
  *   which pi 0.85.1 delivers at the next safe turn boundary when busy and as
@@ -23,6 +26,8 @@
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { StringEnum } from "@earendil-works/pi-ai";
 import { Type } from "typebox";
+import { createExactModelMatcher, resolveModelClass, type ModelClassEnv } from "../model-classes/core";
+import { loadModelClasses, modelClassesPath, type ModelPair, type ThinkingLevel } from "../model-classes/store";
 import { LocalSubagentRuntime } from "./controller";
 import {
 	formatAskRequestBlock,
@@ -49,6 +54,9 @@ const CONFIG = {
 // Tool schema
 // =============================================================================
 
+/** Model-facing spawn model selection: a class, never a concrete model. */
+type SpawnModelClass = "cheap" | "default" | "smart";
+
 const SubagentParams = Type.Object({
 	op: StringEnum(["spawn", "status", "steer", "follow_up", "wait", "result", "respond", "cancel"] as const, {
 		description: "Operation to perform on subagents",
@@ -57,10 +65,10 @@ const SubagentParams = Type.Object({
 	id: Type.Optional(Type.String({ description: "target agent id (omit for status to list all)" })),
 	label: Type.Optional(Type.String({ description: "spawn: short name for the agent" })),
 	cwd: Type.Optional(Type.String({ description: "spawn: working directory for the child (default: main cwd)" })),
-	model: Type.Optional(Type.String({ description: "spawn: model pattern like provider/model (default: pi default)" })),
-	thinking: Type.Optional(
-		StringEnum(["off", "minimal", "low", "medium", "high", "xhigh", "max"] as const, {
-			description: "spawn: thinking level for the child",
+	modelClass: Type.Optional(
+		StringEnum(["cheap", "default", "smart"] as const, {
+			description:
+				'spawn: model class for the child (default: "default" = current main model + thinking; "cheap"/"smart" = saved classes, configure via /model-class <class> set)',
 		}),
 	),
 	message: Type.Optional(Type.String({ description: "steer/follow_up: message for the child agent" })),
@@ -134,12 +142,15 @@ export default function (pi: ExtensionAPI) {
 				switch (op) {
 					case "spawn": {
 						if (!params.task) return err("spawn requires `task`");
+						// Resolve the class BEFORE spawning: an unconfigured class or
+						// a model that is gone fails the op without starting a child.
+						const pair = resolveSpawnPair(params.modelClass ?? "default", ctx, pi.getThinkingLevel());
 						const snap = await rt.spawn({
 							task: params.task,
 							label: params.label,
 							cwd: params.cwd,
-							model: params.model,
-							thinking: params.thinking,
+							model: pair.model,
+							thinking: pair.thinking,
 						});
 						return ok(
 							[
@@ -263,6 +274,34 @@ export default function (pi: ExtensionAPI) {
 }
 
 // -------------------------------------------------------------------- helpers
+
+/** Structural view of the tool ctx needed for spawn-time class resolution. */
+interface SpawnModelCtx {
+	model?: { provider: string; id: string } | undefined;
+	modelRegistry: { getAll(): import("../model-classes/core").ModelLike[] };
+}
+
+/**
+ * Resolve a spawn modelClass to the concrete pair the child needs. This is
+ * the LLM/orchestration → runtime boundary (SPEC): the model picks a class,
+ * the resolver (shared with /model-class) produces concrete model +
+ * thinking, and only then is the child process started. An unconfigured
+ * class or a model that is no longer available throws here, so no child is
+ * spawned and there is no fallback (fail closed).
+ */
+function resolveSpawnPair(ref: SpawnModelClass, ctx: SpawnModelCtx, currentThinking: ThinkingLevel): ModelPair {
+	const stored = loadModelClasses(modelClassesPath());
+	const env: ModelClassEnv = {
+		currentPair: () =>
+			ctx.model
+				? { model: `${ctx.model.provider}/${ctx.model.id}`, thinking: currentThinking }
+				: null,
+		findModel: createExactModelMatcher(ctx.modelRegistry.getAll()),
+	};
+	const resolved = resolveModelClass(ref, stored, env);
+	if (!resolved.ok) throw new Error(resolved.error);
+	return resolved.pair;
+}
 
 function requireId(params: { id?: string }): void {
 	if (!params.id) throw new Error("this op requires `id` (see op=status for ids)");

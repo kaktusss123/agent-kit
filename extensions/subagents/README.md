@@ -47,7 +47,12 @@ cancel/deadline/shutdown), never as an instruction to guess.
 
 `pi --mode rpc --no-extensions -e bridge.ts` — no parent extension stack, no
 recursive spawning by construction. Normal skills/context files stay on.
-Optional per-spawn `model`, `thinking`, `cwd`, `label`. Child sessions are
+Per-spawn `cwd`, `label`, and `modelClass` (`cheap | default | smart`,
+default `default`; resolved to concrete model + thinking by the
+model-classes resolver before the process starts — see
+`../model-classes/README.md`). The internal runtime boundary
+(`SpawnOptions`) still carries concrete `model`/`thinking` because the child
+needs literal CLI flags. Child sessions are
 ordinary pi sessions named `subagent:<label>`, inspectable with standard
 tooling.
 
