@@ -1,8 +1,11 @@
 # task-workspace
 
 Deterministic task-workspace runtime for pi: manages git worktrees for
-multi-repo task isolation. Branch = task identity; workspace root =
-`~/.omp/tasks/<branch_flat>/` (override with `OMP_TASK_ROOT`). All state lives
+multi-repo task isolation. Branch = task identity; the workspace root is
+resolved by the shared, harness-agnostic policy in `task-root.ts`:
+`AGENT_TASK_ROOT` first, then the legacy `OMP_TASK_ROOT` alias, then the
+historical default `~/.omp/tasks`. The same task identity resolves to the
+same filesystem location for every harness. All state lives
 in git (branches + worktrees); no manifest files.
 
 ## Surfaces
@@ -28,10 +31,12 @@ in git (branches + worktrees); no manifest files.
 ## Layout
 
 `index.ts` is the host binding (ExtensionAPI tool registration, TypeBox
-schemas, task-root policy, result `details`); the sibling modules (`flows.ts`,
-`git.ts`, `guard.ts`, `types.ts`) are a host-independent core that receives its
-task root explicitly and returns plain domain results. `core-isolation.test.ts`
-proves the core imports and runs with no host context.
+schemas, result `details`); `task-root.ts` is the shared harness-agnostic
+task-root policy (`AGENT_TASK_ROOT` → legacy `OMP_TASK_ROOT` → default); the
+remaining sibling modules (`flows.ts`, `git.ts`, `guard.ts`, `types.ts`) are a
+host-independent core that receives its task root explicitly and returns plain
+domain results. `core-isolation.test.ts` proves the core imports and runs
+with no host context.
 
 This directory is also loaded as an additional extension entry into
 `workspace_agent` RepoOwner children (see `extensions/subagents/`), which is

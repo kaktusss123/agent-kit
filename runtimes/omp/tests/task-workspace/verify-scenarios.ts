@@ -15,7 +15,7 @@ const FIXTURE = process.env.TW_FIXTURE_ROOT ?? "/var/tmp/omp-taskws";
 const EXTENSIONS_DIR =
 	process.env.TW_EXTENSIONS_DIR ??
 	path.join(import.meta.dir, "..", "..", "dot_omp", "private_agent", "extensions");
-process.env.OMP_TASK_ROOT = `${FIXTURE}/tasks`;
+process.env.AGENT_TASK_ROOT = `${FIXTURE}/tasks`;
 const RUN_MARKER = `${FIXTURE}/.tw-run-complete`;
 if (await fs.stat(RUN_MARKER).then(() => true).catch(() => false)) {
 	console.error("Fixture already consumed — re-run build-fixture.sh before this suite.");

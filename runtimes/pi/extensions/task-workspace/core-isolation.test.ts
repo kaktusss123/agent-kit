@@ -15,6 +15,7 @@ describe("task-workspace core host independence", () => {
     const gitCore = await import("./git");
     const guardCore = await import("./guard");
     const flowsCore = await import("./flows");
+    const taskRootCore = await import("./task-root");
 
     expect(typeof gitCore.classifyPath).toBe("function");
     expect(typeof gitCore.scanTaskWorkspaces).toBe("function");
@@ -22,6 +23,7 @@ describe("task-workspace core host independence", () => {
     expect(typeof guardCore.guardManagedWriteTarget).toBe("function");
     expect(typeof flowsCore.ensureTaskRepo).toBe("function");
     expect(typeof flowsCore.checkpointCommit).toBe("function");
+    expect(typeof taskRootCore.resolveTaskRoot).toBe("function");
 
     // Pure classification works with no host wiring at all.
     expect(guardCore.parseGitInvocations("git status")[0]?.mutating).toBe(false);
@@ -32,6 +34,13 @@ describe("task-workspace core host independence", () => {
   });
 
   test("core sources never reference the pi SDK, host plumbing, or task-root policy", () => {
+    // task-root.ts is the single deliberate exception: it IS the task-root
+    // policy owned by the task subsystem (AGENT_TASK_ROOT → legacy
+    // OMP_TASK_ROOT → default), so reading the environment is its job. It
+    // must still stay harness-free: no pi SDK imports and no host plumbing.
+    const hostPlumbing =
+      /\bExtensionAPI\b|\bExtensionContext\b|registerTool|\btypebox\b|\bpi\.on\b|\bctx\.cwd\b/;
+    const taskRootPolicy = /OMP_TASK_ROOT|\.omp|process\.env/;
     for (const file of readdirSync(CORE_DIR).filter(
       (f) => f.endsWith(".ts") && !f.endsWith(".test.ts") && f !== "index.ts",
     )) {
@@ -41,8 +50,13 @@ describe("task-workspace core host independence", () => {
         `${file} must not import the pi SDK`,
       ).toBe(false);
       expect(
-        /\bExtensionAPI\b|\bExtensionContext\b|registerTool|\btypebox\b|\bpi\.on\b|\bctx\.cwd\b|OMP_TASK_ROOT|\.omp|process\.env/.test(src),
-        `${file} must not reference host plumbing or host task-root configuration`,
+        hostPlumbing.test(src),
+        `${file} must not reference host plumbing`,
+      ).toBe(false);
+      if (file === "task-root.ts") continue;
+      expect(
+        taskRootPolicy.test(src),
+        `${file} must not reference host task-root configuration`,
       ).toBe(false);
     }
   });

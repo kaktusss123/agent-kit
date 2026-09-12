@@ -50,7 +50,7 @@
 
 # Git task discipline
 
-* Never create task-generated changes in the primary checkout; task work belongs in the managed task worktree (`~/.omp/tasks/...`).
+* Never create task-generated changes in the primary checkout; task work belongs in the managed task worktree under the resolved task root (generic `AGENT_TASK_ROOT`; historical default `~/.omp/tasks`).
 * Before task mutation, establish a task branch and managed worktree through the task-workspace runtime.
 * Never invent a ticket; derive task branches only from explicit user identity or an existing matching task.
 * A ticket is not mandatory by default. When neither ticket nor branch is provided, ask whether the user authorizes ticketless work; do not block or emit `missing_ticket` before that answer. After explicit approval, use ticketless branch and commit naming.

@@ -1,5 +1,5 @@
 import { execFileSync } from "node:child_process";
-import { realpathSync } from "node:fs";
+import { mkdirSync, realpathSync } from "node:fs";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
@@ -35,14 +35,38 @@ function isBlocked(result: unknown): boolean {
   return Boolean((result as GuardResult)?.block);
 }
 
+/** Fixture base OUTSIDE the temporary-path allowance. The mutation guard
+ *  unconditionally allows targets under /tmp (temporary allow), so fixture
+ *  repos under os.tmpdir() would never classify as primary checkouts on
+ *  Linux — the guard would allow everything. The agent-kit state-home
+ *  convention (XDG_STATE_HOME/agent-kit) keeps fixtures machine-local and
+ *  off the temporary path on every platform. */
+function guardFixtureBase(): string {
+  const stateHome = process.env.XDG_STATE_HOME ?? join(homedir(), ".local", "state");
+  const base = join(stateHome, "agent-kit", "guard-test");
+  mkdirSync(base, { recursive: true });
+  return base;
+}
+
 /** Fixture: primary repo with one managed worktree under the task root, so
- *  guard verdicts that need a managed-worktree hint can be observed. */
+ *  guard verdicts that need a managed-worktree hint can be observed.
+ *
+ *  The task root is fully isolated: created under the fixture base and
+ *  pinned via the generic AGENT_TASK_ROOT for the duration of the run
+ *  (legacy OMP_TASK_ROOT is cleared so an ambient value cannot interfere).
+ *  The binding under test resolves the same root at registration time —
+ *  the fixture never touches the real user task root, whatever it is. */
 async function withGuardFixture(
   run: (primaryRoot: string, worktreeRoot: string) => Promise<void>,
 ): Promise<void> {
-  const taskRoot = realpathSync(process.env.OMP_TASK_ROOT ?? join(homedir(), ".omp", "tasks"));
-  const fixtureRoot = await mkdtemp(join(taskRoot, "guard-regression-"));
-  const primaryRoot = await mkdtemp(join(tmpdir(), "guard-primary-"));
+  const fixtureBase = guardFixtureBase();
+  const taskRoot = realpathSync(await mkdtemp(join(fixtureBase, "root-")));
+  const previousGeneric = process.env.AGENT_TASK_ROOT;
+  const previousLegacy = process.env.OMP_TASK_ROOT;
+  process.env.AGENT_TASK_ROOT = taskRoot;
+  delete process.env.OMP_TASK_ROOT;
+  const fixtureRoot = join(taskRoot, "guard-regression");
+  const primaryRoot = await mkdtemp(join(fixtureBase, "primary-"));
   const worktreeRoot = join(fixtureRoot, "worktree");
 
   try {
@@ -62,7 +86,11 @@ async function withGuardFixture(
       // Cleanup below still removes the temporary fixture.
     }
     await rm(primaryRoot, { recursive: true, force: true });
-    await rm(fixtureRoot, { recursive: true, force: true });
+    await rm(taskRoot, { recursive: true, force: true });
+    if (previousGeneric === undefined) delete process.env.AGENT_TASK_ROOT;
+    else process.env.AGENT_TASK_ROOT = previousGeneric;
+    if (previousLegacy === undefined) delete process.env.OMP_TASK_ROOT;
+    else process.env.OMP_TASK_ROOT = previousLegacy;
   }
 }
 

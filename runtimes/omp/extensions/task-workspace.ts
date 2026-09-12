@@ -2,7 +2,9 @@
  * task-workspace — OMP binding for the deterministic task-workspace runtime.
  *
  * Manages git worktrees for multi-repo task isolation.
- * Branch = task identity. Workspace root = ~/.omp/tasks/<branch_flat>/.
+ * Branch = task identity. Workspace root = the shared task root resolved by
+ * ./task-workspace/task-root (AGENT_TASK_ROOT, then the legacy OMP_TASK_ROOT
+ * alias, then the historical ~/.omp/tasks default) + /<branch_flat>/.
  * All state lives in git (branches + worktrees); no manifest files.
  *
  * Residual limitation (accepted by design): flattening a branch name into the
@@ -11,17 +13,16 @@
  * a real collision manually if one ever materializes.
  *
  * This file owns everything OMP-specific: ExtensionAPI tool registration,
- * TypeBox schemas, session-cwd translation, the task-root policy
- * (OMP_TASK_ROOT env override, default ~/.omp/tasks), and the OMP tool-result
+ * TypeBox schemas, session-cwd translation, and the OMP tool-result
  * representation (content JSON plus the structured `details` attachment).
- * The deterministic mechanics live in ./task-workspace/ — a host-independent
- * core that receives its task root explicitly and returns plain domain
- * results.
+ * The task root itself is not OMP-owned: it is resolved once per
+ * registration by the harness-agnostic shared resolver in
+ * ./task-workspace/task-root. The deterministic mechanics live in
+ * ./task-workspace/ — a host-independent core that receives its task root
+ * explicitly and returns plain domain results.
  */
 import type { ExtensionAPI } from "@oh-my-pi/pi-coding-agent";
-import { homedir } from "node:os";
-import { join } from "node:path";
-import { realpath } from "./task-workspace/git";
+import { resolveTaskRoot } from "./task-workspace/task-root";
 import {
   checkpointCommit,
   ensureTaskRepo,
@@ -91,11 +92,13 @@ function detailsFor(tool: string, result: Record<string, unknown>): unknown {
 }
 
 export default function (pi: ExtensionAPI): void {
-  // OMP task-root policy: OMP_TASK_ROOT overrides the default ~/.omp/tasks.
-  // Resolved once per registration (production registers at startup, so the
-  // effective behavior equals module-load resolution); the core receives it
+  // Shared task-root policy, owned by the task subsystem (see
+  // ./task-workspace/task-root): AGENT_TASK_ROOT, then the legacy
+  // OMP_TASK_ROOT alias, then the historical default. Resolved once per
+  // registration (production registers at startup, so the effective
+  // behavior equals module-load resolution); the core receives it
   // explicitly and never reads the environment itself.
-  const TASK_ROOT = realpath(process.env.OMP_TASK_ROOT ?? join(homedir(), ".omp", "tasks"));
+  const TASK_ROOT = resolveTaskRoot();
 
   const tb = pi.typebox.Type;
   // ─── task_status ─────────────────────────────────────────────────────

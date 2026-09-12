@@ -35,6 +35,7 @@ import {
 } from "./envelope";
 import { REPORTING_ENTRY_ID } from "./reporting-bridge";
 import { expandPath, git, isLinkedWorktree, realpath } from "../task-workspace/git";
+import { resolveTaskRoot } from "../task-workspace/task-root";
 import { formatNeedsInputBody } from "./delivery";
 import type { AgentResult, AgentSnapshot, SpawnOptions, SubagentModelEvent } from "./types";
 import type { AskInput } from "../ask/contract";
@@ -211,7 +212,11 @@ export function createWorkspaceLayer(
 		return rt;
 	};
 
-	const taskRoot = realpath(process.env.OMP_TASK_ROOT ?? path.join(os.homedir(), ".omp", "tasks"));
+	// Shared, harness-agnostic task-root policy lives in the task subsystem
+	// (../task-workspace/task-root): AGENT_TASK_ROOT, then the legacy
+	// OMP_TASK_ROOT alias, then the historical default. This layer never
+	// computes a filesystem layout itself.
+	const taskRoot = resolveTaskRoot();
 
 	/** The bound runtime (events and settlement only run after a dispatch bound it). */
 	const rt = (): WorkspaceAgentRuntime => {

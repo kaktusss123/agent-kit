@@ -37,7 +37,7 @@ const EXTENSIONS_DIR =
 const OMP_SRC =
 	process.env.TW_OMP_SRC ??
 	"/Users/vekomarnitskiy/projects/devtools/oh-my-pi/packages/coding-agent/src";
-process.env.OMP_TASK_ROOT = `${FIXTURE}/smoke-tasks`;
+process.env.AGENT_TASK_ROOT = `${FIXTURE}/smoke-tasks`;
 
 const SDK = await import(`${OMP_SRC}/index.ts`);
 const omptype = await import(
