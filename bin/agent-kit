@@ -34,7 +34,12 @@ set -euo pipefail
 
 # --- locate the repository --------------------------------------------------
 
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
+# Resolve symlinks first: agent-kit is typically on PATH as a symlink into a
+# checkout (e.g. ~/.local/bin/agent-kit). SCRIPT_DIR must be the REAL script
+# directory — otherwise repository detection falls back outside the repo, the
+# desired-entity set resolves empty, and a mere `install` run would prune
+# every managed link.
+SCRIPT_DIR="$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")" && pwd -P)"
 REPO="$(git -C "$SCRIPT_DIR" rev-parse --show-toplevel 2>/dev/null || printf '%s/..' "$SCRIPT_DIR")"
 REPO="$(cd "$REPO" && pwd -P)"
 # Tests (and sandboxes) can point the installer at a different checkout:
