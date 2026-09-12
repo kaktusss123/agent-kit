@@ -83,6 +83,7 @@ new_test() { # <name>
 	CURRENT="$1"
 	FAIL_AT_START=$FAIL
 	SANDBOX="$(mktemp -d "${TMPDIR:-/tmp}/agent-kit-test.XXXXXX")"
+	SANDBOX="$(cd "$SANDBOX" && pwd -P)"   # canonical: macOS /tmp is /private/tmp
 	export HOME="$SANDBOX/home"
 	mkdir -p "$HOME"
 	unset XDG_STATE_HOME PI_AGENT_DIR OMP_AGENT_DIR OPENCODE_CONFIG_DIR 2>/dev/null || true
@@ -118,13 +119,15 @@ use_path() { # <bin-dir or "empty">
 make_kit() { # <checkout-dir>
 	local d="$1"
 	mkdir -p "$d/bin" \
-		"$d/shared/skills/alpha" "$d/shared/skills/beta" \
+		"$d/shared/skills/alpha" "$d/shared/skills/beta" "$d/shared/skills/marked" \
 		"$d/runtimes/pi/skills/pi-only" "$d/runtimes/pi/extensions/todo" \
 		"$d/runtimes/omp/extensions" "$d/runtimes/omp/managed-skills/verify" \
 		"$d/runtimes/opencode/skills/oc-only" "$d/runtimes/opencode/agents/primary" \
 		"$d/runtimes/opencode/plugins"
 	cp "$INSTALLER" "$d/bin/agent-kit"
 	echo "# alpha" > "$d/shared/skills/alpha/SKILL.md"
+	echo "# marked" > "$d/shared/skills/marked/SKILL.md"
+	printf 'pi omp\n' > "$d/shared/skills/marked/runtimes"
 	echo "# beta" > "$d/shared/skills/beta/SKILL.md"
 	echo "# pi-only" > "$d/runtimes/pi/skills/pi-only/SKILL.md"
 	echo "export const x = 1" > "$d/runtimes/pi/extensions/todo/index.ts"
@@ -205,20 +208,23 @@ run_install pi omp opencode
 	# pi: shared + runtime-specific skills, dirs and plain-file extensions
 	assert_link "$HOME/.pi/agent/skills/alpha" "$SANDBOX/kit/shared/skills/alpha" "shared skill"
 	assert_link "$HOME/.pi/agent/skills/pi-only" "$SANDBOX/kit/runtimes/pi/skills/pi-only" "runtime skill"
+	assert_link "$HOME/.pi/agent/skills/marked" "$SANDBOX/kit/shared/skills/marked" "pi+omp-only shared skill"
 	assert_link "$HOME/.pi/agent/extensions/todo" "$SANDBOX/kit/runtimes/pi/extensions/todo" "extension dir"
 	assert_link "$HOME/.pi/agent/extensions/foot.ts" "$SANDBOX/kit/runtimes/pi/extensions/foot.ts" "extension file"
 	# omp: root file, extension, managed skill
 	assert_link "$HOME/.omp/agent/RULES.md" "$SANDBOX/kit/runtimes/omp/RULES.md" "omp root file"
 	assert_link "$HOME/.omp/agent/extensions/ompx.ts" "$SANDBOX/kit/runtimes/omp/extensions/ompx.ts" "omp extension"
 	assert_link "$HOME/.omp/agent/managed-skills/verify" "$SANDBOX/kit/runtimes/omp/managed-skills/verify" "omp managed skill"
+	assert_link "$HOME/.omp/agent/skills/marked" "$SANDBOX/kit/shared/skills/marked" "marker admits omp"
 	# opencode: skills, file-level agents, plugins
 	assert_link "$HOME/.config/opencode/skills/alpha" "$SANDBOX/kit/shared/skills/alpha" "opencode shared skill"
 	assert_link "$HOME/.config/opencode/skills/oc-only" "$SANDBOX/kit/runtimes/opencode/skills/oc-only" "opencode skill"
+	assert_no_file "$HOME/.config/opencode/skills/marked" "marker excludes opencode"
 	assert_link "$HOME/.config/opencode/agents/primary/general.md" "$SANDBOX/kit/runtimes/opencode/agents/primary/general.md" "opencode agent file"
 	assert_link "$HOME/.config/opencode/plugins/rtk.ts" "$SANDBOX/kit/runtimes/opencode/plugins/rtk.ts" "opencode plugin"
 	# ownership recorded for all three runtimes
-	assert_eq "$(state_lines pi)" 5 "pi state entries"
-	assert_eq "$(state_lines omp)" 5 "omp state entries"
+	assert_eq "$(state_lines pi)" 6 "pi state entries"
+	assert_eq "$(state_lines omp)" 6 "omp state entries"
 	assert_eq "$(state_lines opencode)" 5 "opencode state entries"
 pass
 
@@ -263,8 +269,8 @@ run_install pi omp
 	assert_no_file "$HOME/.pi/agent/skills/beta" "beta pruned"
 	assert_link "$HOME/.omp/agent/RULES.md" "$SANDBOX/kit/runtimes/omp/RULES.md" "omp still on kit1"
 	assert_file "$SANDBOX/kit/shared/skills/beta/SKILL.md" "old checkout files untouched"
-	assert_eq "$(state_lines pi)" 5 "pi state tracks kit2 set"
-	assert_eq "$(state_lines omp)" 5 "omp state unchanged"
+	assert_eq "$(state_lines pi)" 6 "pi state tracks kit2 set"
+	assert_eq "$(state_lines omp)" 6 "omp state unchanged"
 pass
 
 # ==============================================================================
@@ -342,7 +348,7 @@ run_install pi
 	assert_eq "$RC" 0 "reconcile install"
 	assert_no_file "$HOME/.pi/agent/skills/beta" "removed item link deleted"
 	assert_link "$HOME/.pi/agent/skills/alpha" "$SANDBOX/kit/shared/skills/alpha" "other links intact"
-	assert_eq "$(state_lines pi)" 4 "state entry cleaned"
+	assert_eq "$(state_lines pi)" 5 "state entry cleaned"
 pass
 
 # ==============================================================================
@@ -383,7 +389,7 @@ run_uninstall pi
 	assert_link "$HOME/.pi/agent/skills/external" "$SANDBOX/outside/real-skill" "foreign link kept"
 	assert_link "$HOME/.omp/agent/RULES.md" "$SANDBOX/kit/runtimes/omp/RULES.md" "omp untouched"
 	assert_eq "$(state_lines pi)" 0 "pi state cleaned"
-	assert_eq "$(state_lines omp)" 5 "omp state kept"
+	assert_eq "$(state_lines omp)" 6 "omp state kept"
 run_uninstall
 	assert_eq "$(state_lines omp)" 0 "default uninstall covers all runtimes"
 pass
@@ -460,6 +466,68 @@ run_install pi
 	case "$OUT" in
 	*"duplicate desired destinations"*) : ;;
 	*) fail "should name the configuration error" ;;
+	esac
+pass
+
+# ==============================================================================
+# T15: poisoned traversal state must not authorize deleting a path outside
+# the runtime root (state says ../../victim -> recorded source)
+
+new_test "T15 poisoned traversal state"
+use_path empty
+make_kit "$SANDBOX/kit"
+fresh_install_env "$SANDBOX/kit"
+outside_skill
+	mkdir -p "$SANDBOX/outside/target"
+	echo victim-skill > "$SANDBOX/outside/target/SKILL.md"
+run_install pi
+	assert_eq "$RC" 0 "base install"
+	ln -s "$SANDBOX/outside/target" "$HOME/victim"
+	printf 'pi\t../../victim\t%s\n' "$SANDBOX/outside/target" > "$STATE"
+run_uninstall pi
+	assert_eq "$RC" 0 "uninstall survives poisoned state"
+	assert_link "$HOME/victim" "$SANDBOX/outside/target" "symlink outside the runtime root survives"
+	case "$OUT" in
+	*"ignoring invalid state line"*) : ;;
+	*) fail "traversal state line must be dropped with a warning" ;;
+	esac
+	awk -F '\t' '$2 == "../../victim"' "$STATE" 2>/dev/null | grep -q . && fail "traversal entry must not persist"
+run_install pi
+	assert_eq "$RC" 0 "install survives poisoned state"
+	assert_link "$HOME/victim" "$SANDBOX/outside/target" "victim still intact after install"
+	assert_link "$HOME/.pi/agent/skills/alpha" "$SANDBOX/kit/shared/skills/alpha" "real links rebuilt normally"
+pass
+
+# ==============================================================================
+# T16: install bootstraps ~/.local/bin/agent-kit and repoints it on
+# checkout switch; a real file at the launcher path is left alone
+
+new_test "T16 command bootstrap"
+use_path empty
+make_kit "$SANDBOX/kit"
+fresh_install_env "$SANDBOX/kit"
+run_install pi
+	assert_eq "$RC" 0 "base install"
+	assert_link "$HOME/.local/bin/agent-kit" "$SANDBOX/kit/bin/agent-kit" "launcher points at this checkout"
+	OUT="$(env -u AGENT_KIT_ROOT -u PI_AGENT_DIR "$HOME/.local/bin/agent-kit" status 2>&1)"
+	RC=$?
+	assert_eq "$RC" 0 "bootstrapped launcher resolves its checkout without env overrides"
+	case "$OUT" in
+	*"wants 6 entity"*) : ;;
+	*) fail "launcher status should see the checkout entities, got: $OUT" ;;
+	esac
+	make_kit "$SANDBOX/kit2"
+	AGENT_KIT_ROOT="$SANDBOX/kit2" run_install pi
+	assert_eq "$RC" 0 "install from kit2"
+	assert_link "$HOME/.local/bin/agent-kit" "$SANDBOX/kit2/bin/agent-kit" "launcher repointed to kit2"
+	rm "$HOME/.local/bin/agent-kit"
+	echo custom-script > "$HOME/.local/bin/agent-kit"
+	AGENT_KIT_ROOT="$SANDBOX/kit" run_install pi
+	assert_eq "$RC" 0 "real launcher file is a warning, not a failure"
+	assert_eq "$(cat "$HOME/.local/bin/agent-kit")" "custom-script" "user launcher file untouched"
+	case "$OUT" in
+	*"command bootstrap skipped"*) : ;;
+	*) fail "should warn about skipping the bootstrap" ;;
 	esac
 pass
 

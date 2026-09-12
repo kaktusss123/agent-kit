@@ -34,12 +34,22 @@ set -euo pipefail
 
 # --- locate the repository --------------------------------------------------
 
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
+# Resolve this script through symlinks: the bootstrapped ~/.local/bin/agent-kit
+# must find the checkout it points at, not the directory holding the symlink.
+SELF="${BASH_SOURCE[0]}"
+while [ -L "$SELF" ]; do
+	_link="$(readlink "$SELF")"
+	case "$_link" in
+	/*) SELF="$_link" ;;
+	*)  SELF="$(dirname "$SELF")/$_link" ;;
+	esac
+done
+SCRIPT="$(cd "$(dirname "$SELF")" && pwd -P)/$(basename "$SELF")"
+SCRIPT_DIR="$(dirname "$SCRIPT")"
 REPO="$(git -C "$SCRIPT_DIR" rev-parse --show-toplevel 2>/dev/null || printf '%s/..' "$SCRIPT_DIR")"
 REPO="$(cd "$REPO" && pwd -P)"
 # Tests (and sandboxes) can point the installer at a different checkout:
 REPO="${AGENT_KIT_ROOT:-$REPO}"
-[ -d "$REPO" ] || die "repository root not found: $REPO"
 
 STATE_HOME="${XDG_STATE_HOME:-$HOME/.local/state}"
 STATE_FILE="$STATE_HOME/agent-kit/links.tsv"
@@ -69,6 +79,25 @@ runtime_root() {
 }
 
 have_binary() { command -v "$1" >/dev/null 2>&1; }
+
+[ -d "$REPO" ] || die "repository root not found: $REPO"
+
+LAUNCHER="$HOME/.local/bin/agent-kit"
+
+is_safe_rel() { # <path> — usable as a destination relative to a runtime root
+	case "$1" in
+	""|/*|*..*) return 1 ;;
+	esac
+	return 0
+}
+
+is_safe_source() { # <path> — absolute, no traversal
+	case "$1" in
+	/*) case "$1" in *..*) return 1 ;; esac
+		return 0 ;;
+	esac
+	return 1
+}
 
 line_count() { # stdin -> number of non-empty lines
 	local n=0 line
@@ -107,16 +136,36 @@ emit_tree() { # <source-dir> <dest-rel-dir> — every file, recursive, same layo
 	done < <(find "$src" -type f | sort)
 }
 
+emit_shared_skills() { # <runtime> — shared skills, filtered by per-skill `runtimes` marker
+	local rt="$1" src="$REPO/shared/skills" e w ok
+	[ -d "$src" ] || return 0
+	for e in "$src"/*; do
+		[ -e "$e" ] || continue
+		if [ -f "$e/runtimes" ]; then
+			# Marker convention: a skill usable only by some runtimes lists them
+			# (space- or newline-separated); absent marker means every runtime.
+			ok=0
+			while IFS= read -r w || [ -n "$w" ]; do
+				for w in $w; do
+					[ "$w" = "$rt" ] && ok=1
+				done
+			done < "$e/runtimes"
+			[ "$ok" = 1 ] || continue
+		fi
+		printf 'skills/%s%s%s\n' "$(basename "$e")" "$TAB" "$e"
+	done
+}
+
 entities_for() { # <runtime> — desired entities of one runtime
 	case "$1" in
 	pi)
-		emit_top "$REPO/shared/skills"           "skills"
+		emit_shared_skills "$1"
 		emit_top "$REPO/runtimes/pi/skills"      "skills"
 		emit_top "$REPO/runtimes/pi/extensions"  "extensions"
 		emit_top "$REPO/runtimes/pi/prompts"     "prompts"
 		;;
 	omp)
-		emit_top "$REPO/shared/skills"            "skills"
+		emit_shared_skills "$1"
 		emit_top "$REPO/runtimes/omp/skills"      "skills"
 		emit_top "$REPO/runtimes/omp/extensions"  "extensions"
 		emit_top "$REPO/runtimes/omp/prompts"     "prompts"
@@ -127,7 +176,7 @@ entities_for() { # <runtime> — desired entities of one runtime
 		emit_file "$REPO/runtimes/omp/WATCHDOG.md"    "WATCHDOG.md"
 		;;
 	opencode)
-		emit_top "$REPO/shared/skills"            "skills"
+		emit_shared_skills "$1"
 		emit_top "$REPO/runtimes/opencode/skills" "skills"
 		emit_top "$REPO/runtimes/opencode/tool"   "tool"
 		emit_top "$REPO/runtimes/opencode/commands" "commands"
@@ -155,9 +204,7 @@ EOF
 }
 
 validate_entity() { # <dest-rel> <source-abs>
-	case "$1" in
-	""|/*|*..*) die "unsafe destination path: '$1'" ;;
-	esac
+	is_safe_rel "$1" || die "unsafe destination path: '$1'"
 	case "$2" in
 	"$REPO"/*) : ;;
 	*) die "source outside the repository: '$2'" ;;
@@ -167,11 +214,14 @@ validate_entity() { # <dest-rel> <source-abs>
 # --- state handling ------------------------------------------------------------
 #
 # State is one line per managed link:  <runtime>TAB<dest-rel>TAB<source>
-# Lines that do not parse are dropped with a warning: corrupt state can
-# never widen what agent-kit is allowed to touch, only shrink it.
+# Every line is fully validated BEFORE it can influence any filesystem
+# decision: exactly three fields, a safe relative destination (no traversal,
+# stays under the runtime root) and an absolute source. Invalid lines are
+# dropped with a warning: corrupt state can never widen what agent-kit is
+# allowed to touch, only shrink it.
 
 state_load() { # <runtime> — sets STATE_KEEP (other runtimes), STATE_OWN (this one)
-	local runtime="$1" line r rest
+	local runtime="$1" line r rest rel src
 	STATE_KEEP=""
 	STATE_OWN=""
 	[ -f "$STATE_FILE" ] || return 0
@@ -179,16 +229,21 @@ state_load() { # <runtime> — sets STATE_KEEP (other runtimes), STATE_OWN (this
 		[ -n "$line" ] || continue
 		r="${line%%"$TAB"*}"
 		rest="${line#*"$TAB"}"
-		if [ "$rest" = "$line" ] || [ "$r" = "$line" ]; then
+		if [ "$rest" = "$line" ]; then
 			warn "ignoring corrupt state line: $line"
 			continue
 		fi
+		rel="${rest%%"$TAB"*}"
+		src="${rest#*"$TAB"}"
+		if [ "$rel" = "$rest" ] || case "$src" in *"$TAB"*) true ;; *) false ;; esac || \
+		   ! is_runtime "$r" || ! is_safe_rel "$rel" || ! is_safe_source "$src"; then
+			warn "ignoring invalid state line: $line"
+			continue
+		fi
 		if [ "$r" = "$runtime" ]; then
-			STATE_OWN="${STATE_OWN}${rest}"$'\n'
-		elif is_runtime "$r"; then
-			STATE_KEEP="${STATE_KEEP}${line}"$'\n'
+			STATE_OWN="${STATE_OWN}${rel}${TAB}${src}"$'\n'
 		else
-			warn "ignoring state line for unknown runtime: $line"
+			STATE_KEEP="${STATE_KEEP}${line}"$'\n'
 		fi
 	done < "$STATE_FILE"
 }
@@ -407,6 +462,25 @@ EOF
 
 # --- commands ----------------------------------------------------------------------
 
+bootstrap_self() { # point ~/.local/bin/agent-kit at this checkout's launcher
+	local cur target="$REPO/bin/agent-kit"
+	[ -f "$target" ] || { warn "no launcher at $target; command bootstrap skipped"; return 0; }
+	mkdir -p "$(dirname "$LAUNCHER")"
+	if [ -L "$LAUNCHER" ]; then
+		cur="$(readlink "$LAUNCHER")"
+		if [ "$cur" != "$target" ]; then
+			ln -sfn "$target" "$LAUNCHER"
+			msg "  command $LAUNCHER"
+			msg "            was: $cur"
+		fi
+	elif [ -e "$LAUNCHER" ]; then
+		warn "$LAUNCHER exists and is not a symlink; command bootstrap skipped"
+	else
+		ln -s "$target" "$LAUNCHER"
+		msg "  command $LAUNCHER -> $target"
+	fi
+}
+
 detect_runtimes() {
 	local r
 	for r in $RUNTIMES; do
@@ -467,6 +541,7 @@ cmd_install() {
 		fi
 		reconcile_runtime "$r" || rc=1
 	done
+	bootstrap_self
 	return "$rc"
 }
 
@@ -491,7 +566,13 @@ cmd_status() {
 	for r in $RUNTIMES; do
 		status_runtime "$r"
 	done
-	msg ""
+	if [ -L "$LAUNCHER" ]; then
+		msg ""
+		msg "command: $LAUNCHER -> $(readlink "$LAUNCHER")"
+	else
+		msg ""
+		msg "command: not bootstrapped ($LAUNCHER)"
+	fi
 	msg "state file: $STATE_FILE"
 }
 
