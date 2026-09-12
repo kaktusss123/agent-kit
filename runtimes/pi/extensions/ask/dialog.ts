@@ -3,7 +3,7 @@
  * primitives (SelectList/Input/Markdown) — the pi port of the OMP ask-dialog
  * workflow: per-question lists, arrow navigation with preserved answers,
  * single/multi-select, recommended hints, descriptions, previews, free-form
- * "Other", a review screen, and "Chat about this".
+ * response input, a review screen, and "Chat about this".
  *
  * This module is presentation only: all behavior lives in core.ts, and the
  * tool wiring lives in tool.ts. Not unit-tested (needs a terminal); the
@@ -121,7 +121,9 @@ export class AskDialog implements Component {
 
 	private onRowActivated(item: SelectItem): void {
 		this.state.cursor = Number(item.value);
+		const wasQuestionMode = this.state.mode === "question";
 		activateRow(this.state, this.questions);
+		if (wasQuestionMode && this.state.mode === "other") this.input.setValue("");
 		this.afterMutation();
 	}
 
