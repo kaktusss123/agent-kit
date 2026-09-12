@@ -59,17 +59,37 @@ export interface WarpEnvelope {
 	pluginVersion: string;
 }
 
+/**
+ * vte's OSC parser (warpdotdev/vte @ 4b399c8, src/lib.rs) splits the OSC string
+ * on every literal `;` byte and records at most MAX_OSC_PARAMS = 16 parameters;
+ * everything past the cap is dropped. Warp's OSC 777 handler reassembles the
+ * body from params[3..] ("777", "notify", sentinel take three), so a JSON body
+ * containing >= 13 semicolons gets truncated mid-string and Warp's
+ * serde_json::from_str silently discards the whole event — the tab then stays
+ * "in progress" until the next successful prompt_submit.
+ *
+ * `;` is not a structural JSON character, so every `;` in the serialized text
+ * sits inside a string literal, and `\u003b` is a valid JSON escape that
+ * decodes back to `;`. Escaping therefore makes the frame lossless for both
+ * the param splitter and serde.
+ */
+function escapeOscParamSplitter(json: string): string {
+	return json.replaceAll(";", "\\u003b");
+}
+
 /** Build the raw OSC 777 frame (no tmux wrapping, no attention bell). */
 export function buildWarpFrame(payload: WarpEventPayload, envelope: WarpEnvelope): string {
-	const body = JSON.stringify({
-		...payload,
-		v: WARP_PROTOCOL_VERSION,
-		agent: WARP_AGENT_ID,
-		session_id: envelope.sessionId,
-		cwd: envelope.cwd,
-		project: envelope.project,
-		plugin_version: envelope.pluginVersion,
-	});
+	const body = escapeOscParamSplitter(
+		JSON.stringify({
+			...payload,
+			v: WARP_PROTOCOL_VERSION,
+			agent: WARP_AGENT_ID,
+			session_id: envelope.sessionId,
+			cwd: envelope.cwd,
+			project: envelope.project,
+			plugin_version: envelope.pluginVersion,
+		}),
+	);
 	return `\x1b]777;notify;${WARP_SENTINEL};${body}\x07`;
 }
 

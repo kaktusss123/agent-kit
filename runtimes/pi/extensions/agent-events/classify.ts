@@ -55,10 +55,15 @@ export function classifyRunOutcome(messages: readonly unknown[]): RunOutcome {
 			return {
 				status: "failed",
 				error: message.errorMessage,
-				response: text.length > 0 ? text : message.errorMessage,
+				response:
+				text.length > 0
+					? truncateCodePoints(text)
+					: message.errorMessage === undefined
+						? undefined
+						: truncateCodePoints(message.errorMessage),
 			};
 		}
-		return { status: "completed", response: text.length > 0 ? text : undefined };
+		return { status: "completed", response: text.length > 0 ? truncateCodePoints(text) : undefined };
 	}
 	return { status: "completed" };
 }

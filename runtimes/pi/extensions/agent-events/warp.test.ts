@@ -85,6 +85,19 @@ describe("Warp wire format", () => {
 		expect(frame.endsWith("\x07")).toBe(true);
 	});
 
+	test("escapes semicolons so vte's 16-parameter OSC cap cannot truncate the body", () => {
+		// Warp's vte splits the OSC string on every `;` byte and keeps at most
+		// 16 params; 3 are taken by "777;notify;warp://cli-agent", so a body with
+		// >= 13 semicolons used to be truncated mid-JSON and silently dropped.
+		const response = Array.from({ length: 40 }, (_, i) => `item ${i}; detail`).join(" ");
+		const frame = buildWarpFrame({ event: "stop", query: "q; with; semis", response }, ENVELOPE);
+		const body = frame.slice("\x1b]777;notify;warp://cli-agent;".length, -1);
+		expect(body).not.toContain(";");
+		const parsed = JSON.parse(body) as { query: string; response: string };
+		expect(parsed.query).toBe("q; with; semis");
+		expect(parsed.response).toBe(response);
+	});
+
 	test("direct terminal frames are never double-belled", () => {
 		const frame = buildWarpFrame({ event: "stop" }, ENVELOPE);
 		expect(finalizeWarpFrame(frame, { tmux: false, attention: true })).toBe(frame);

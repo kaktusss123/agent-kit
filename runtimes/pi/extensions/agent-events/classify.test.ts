@@ -48,6 +48,19 @@ describe("classifyRunOutcome", () => {
 		expect(outcome).toEqual({ status: "completed", response: "done" });
 	});
 
+	test("truncates long responses to the preview budget", () => {
+		const outcome = classifyRunOutcome([assistant({ text: "x".repeat(500) })]);
+		expect(outcome).toEqual({ status: "completed", response: `${"x".repeat(200)}…` });
+	});
+
+	test("truncates long errorMessage fallbacks", () => {
+		const outcome = classifyRunOutcome([
+			assistant({ stopReason: "error", errorMessage: "e".repeat(500) }),
+		]);
+		expect(outcome.status).toBe("failed");
+		expect(outcome.response).toBe(`${"e".repeat(200)}…`);
+	});
+
 	test("no assistant message classifies as completed without response", () => {
 		expect(classifyRunOutcome([{ role: "user", content: "hi" }])).toEqual({ status: "completed" });
 		expect(classifyRunOutcome([])).toEqual({ status: "completed" });
