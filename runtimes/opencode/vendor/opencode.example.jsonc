@@ -1,0 +1,109 @@
+{
+  "$schema": "https://opencode.ai/config.json",
+  "default_agent": "General",
+  "permission": {
+    "bash": {
+      "*": "allow",
+      "git push*": "ask",
+      "rtk git push*": "ask"
+    },
+    "task": {
+      "*": "deny"
+    },
+    "skill": {
+      "*": "allow"
+    }
+  },
+  "provider": {
+    "cloudru": {
+      "npm": "@ai-sdk/openai-compatible",
+      "name": "Cloud.ru Foundation Models",
+      "options": {
+        "baseURL": "https://foundation-models.api.cloud.ru/v1",
+        "apiKey": "{env:CLOUDRU_API_KEY}"
+      },
+      "models": {
+        "moonshotai/Kimi-K2.6": {
+          "name": "Kimi-k2.6",
+          "limit": { "context": 262000, "output": 20000 }
+        },
+        "MiniMaxAI/MiniMax-M3": {
+          "name": "MiniMax-M3",
+          "limit": { "context": 524000, "output": 20000 }
+        },
+        "Qwen/Qwen3.5-397B-A17B": {
+          "name": "Qwen3.5-397B",
+          "limit": { "context": 256000, "output": 20000 }
+        },
+        "Qwen/Qwen3-Coder-Next": {
+          "name": "Qwen3-Next",
+          "limit": { "context": 256000, "output": 20000 }
+        },
+        "Qwen/Qwen3.6-35B-A3B": {
+          "name": "Qwen3.6-35B",
+          "limit": { "context": 2656000, "output": 20000 }
+        },
+        "deepseek-ai/DeepSeek-V4-Pro": {
+          "name": "DeepSeek-V4-Pro",
+          "limit": { "context": 1048000, "output": 20000 }
+        }
+      }
+    }
+  },
+  "agent": {
+    "explore": { "disable": true },
+    "build": { "disable": true },
+    "plan": { "disable": true },
+
+    "project-init-runner": { "model": "{env:OC_MODEL_PROTOCOL}" },
+
+    "repo-scout": {
+      "hidden": true,
+      "model": "{env:OC_MODEL_RESEARCH}",
+      "permission": { "task": "deny" }
+    },
+    "designer": {
+      "hidden": true,
+      "model": "{env:OC_MODEL_DESIGN}",
+      "permission": { "task": "deny" }
+    },
+    "implementer": {
+      "hidden": true,
+      "model": "{env:OC_MODEL_CODE}",
+      "permission": { "task": "deny" }
+    },
+    "reviewer": {
+      "hidden": true,
+      "model": "{env:OC_MODEL_REVIEW}",
+      "permission": { "task": "deny" }
+    },
+    "security-reviewer": {
+      "hidden": true,
+      "model": "{env:OC_MODEL_SECURITY}",
+      "permission": { "task": "deny" }
+    },
+    "committer": {
+      "hidden": true,
+      "model": "{env:OC_MODEL_PROTOCOL}",
+      "permission": { "task": "deny" }
+    },
+
+    "dev-orchestrator": { "model": "{env:OC_MODEL_CONTROL}" },
+    "spec-analyst": { "model": "{env:OC_MODEL_ANALYSIS}" },
+    "General": { "model": "{env:OC_MODEL_CODE}" },
+
+    "tester": { "model": "{env:OC_MODEL_TEST}" },
+    "test-planner": {
+      "model": "{env:OC_MODEL_TEST}",
+      "permission": { "task": "deny" }
+    },
+    "test-writer": {
+      "model": "{env:OC_MODEL_TEST}",
+      "permission": { "task": "deny" }
+    },
+    "test-reviewer": {
+      "model": "{env:OC_MODEL_TEST}",
+      "permission": { "task": "deny" }
+    }
+  }
+}

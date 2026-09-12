@@ -1,0 +1,16 @@
+{
+  "schema_version": 1,
+  "project_name": "PROJECT_NAME",
+  "source_root": "ABSOLUTE_SOURCE_ROOT",
+  "wiki_root": "ABSOLUTE_PROJECT_ROOT/wiki",
+  "state_root": "ABSOLUTE_PROJECT_ROOT/.state",
+  "include_globs": [
+    "**/*.md"
+  ],
+  "exclude_globs": [
+    "**/.obsidian/**",
+    "**/.git/**",
+    "**/.trash/**",
+    "**/node_modules/**"
+  ]
+}
