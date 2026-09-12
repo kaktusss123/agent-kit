@@ -122,7 +122,8 @@ make_kit() { # <checkout-dir>
 		"$d/shared/skills/alpha" "$d/shared/skills/beta" "$d/shared/skills/marked" \
 		"$d/runtimes/pi/skills/pi-only" "$d/runtimes/pi/extensions/todo" \
 		"$d/runtimes/omp/extensions" "$d/runtimes/omp/managed-skills/verify" \
-		"$d/runtimes/opencode/skills/oc-only" "$d/runtimes/opencode/agents/primary" \
+		"$d/runtimes/opencode/skills/oc-only" "$d/runtimes/opencode/skills/git-commit" \
+		"$d/runtimes/opencode/agents/primary" \
 		"$d/runtimes/opencode/plugins"
 	cp "$INSTALLER" "$d/bin/agent-kit"
 	echo "# alpha" > "$d/shared/skills/alpha/SKILL.md"
@@ -136,6 +137,7 @@ make_kit() { # <checkout-dir>
 	echo "export const o = 1" > "$d/runtimes/omp/extensions/ompx.ts"
 	echo "# managed" > "$d/runtimes/omp/managed-skills/verify/SKILL.md"
 	echo "# oc-only" > "$d/runtimes/opencode/skills/oc-only/SKILL.md"
+	echo "# opencode git-commit" > "$d/runtimes/opencode/skills/git-commit/SKILL.md"
 	echo "general agent" > "$d/runtimes/opencode/agents/primary/general.md"
 	echo "export const plugin = 1" > "$d/runtimes/opencode/plugins/rtk.ts"
 }
@@ -219,13 +221,14 @@ run_install pi omp opencode
 	# opencode: skills, file-level agents, plugins
 	assert_link "$HOME/.config/opencode/skills/alpha" "$SANDBOX/kit/shared/skills/alpha" "opencode shared skill"
 	assert_link "$HOME/.config/opencode/skills/oc-only" "$SANDBOX/kit/runtimes/opencode/skills/oc-only" "opencode skill"
+	assert_link "$HOME/.config/opencode/skills/git-commit" "$SANDBOX/kit/runtimes/opencode/skills/git-commit" "opencode colocated git-commit"
 	assert_no_file "$HOME/.config/opencode/skills/marked" "marker excludes opencode"
 	assert_link "$HOME/.config/opencode/agents/primary/general.md" "$SANDBOX/kit/runtimes/opencode/agents/primary/general.md" "opencode agent file"
 	assert_link "$HOME/.config/opencode/plugins/rtk.ts" "$SANDBOX/kit/runtimes/opencode/plugins/rtk.ts" "opencode plugin"
 	# ownership recorded for all three runtimes
 	assert_eq "$(state_lines pi)" 6 "pi state entries"
 	assert_eq "$(state_lines omp)" 6 "omp state entries"
-	assert_eq "$(state_lines opencode)" 5 "opencode state entries"
+	assert_eq "$(state_lines opencode)" 6 "opencode state entries"
 pass
 
 # ==============================================================================
@@ -529,6 +532,44 @@ run_install pi
 	*"command bootstrap skipped"*) : ;;
 	*) fail "should warn about skipping the bootstrap" ;;
 	esac
+pass
+
+# ==============================================================================
+# T17: the launcher is owned via its own record; foreign symlinks at
+# ~/.local/bin/agent-kit are never touched
+
+new_test "T17 launcher ownership"
+use_path empty
+make_kit "$SANDBOX/kit"
+fresh_install_env "$SANDBOX/kit"
+outside_skill
+	mkdir -p "$HOME/.local/bin" "$SANDBOX/outside"
+	printf '#!/bin/sh\nexit 0\n' > "$SANDBOX/outside/other-command"
+	chmod +x "$SANDBOX/outside/other-command"
+	# a) foreign symlink: untouched, not adopted
+	ln -s "$SANDBOX/outside/other-command" "$HOME/.local/bin/agent-kit"
+run_install pi
+	assert_eq "$RC" 0 "install succeeds"
+	assert_link "$HOME/.local/bin/agent-kit" "$SANDBOX/outside/other-command" "foreign launcher untouched"
+	case "$OUT" in
+	*"not managed by agent-kit; command bootstrap skipped"*) : ;;
+	*) fail "foreign launcher should be reported" ;;
+	esac
+	[ -f "$HOME/.local/state/agent-kit/command.tsv" ] && \
+		grep -q . "$HOME/.local/state/agent-kit/command.tsv" && fail "foreign launcher must not be owned"
+	rm "$HOME/.local/bin/agent-kit"
+	# b) identical symlink is adopted into ownership without changes
+	ln -s "$SANDBOX/kit/bin/agent-kit" "$HOME/.local/bin/agent-kit"
+run_install pi
+	assert_eq "$RC" 0 "install succeeds"
+	assert_link "$HOME/.local/bin/agent-kit" "$SANDBOX/kit/bin/agent-kit" "identical launcher unchanged"
+	grep -Fq "$HOME/.local/bin/agent-kit" "$HOME/.local/state/agent-kit/command.tsv" || fail "adopted launcher must be recorded"
+	# c) owned then manually redirected: released, never overwritten
+	ln -sfn "$SANDBOX/outside/other-command" "$HOME/.local/bin/agent-kit"
+run_install pi
+	assert_eq "$RC" 0 "install succeeds"
+	assert_link "$HOME/.local/bin/agent-kit" "$SANDBOX/outside/other-command" "redirected launcher untouched"
+	grep -Fq "$HOME/.local/bin/agent-kit" "$HOME/.local/state/agent-kit/command.tsv" && fail "ownership must be released"
 pass
 
 # ==============================================================================

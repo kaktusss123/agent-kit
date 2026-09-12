@@ -53,6 +53,7 @@ REPO="${AGENT_KIT_ROOT:-$REPO}"
 
 STATE_HOME="${XDG_STATE_HOME:-$HOME/.local/state}"
 STATE_FILE="$STATE_HOME/agent-kit/links.tsv"
+CMD_STATE_FILE="$STATE_HOME/agent-kit/command.tsv"
 
 TAB="$(printf '\t')"
 RUNTIMES="pi omp opencode"
@@ -462,21 +463,63 @@ EOF
 
 # --- commands ----------------------------------------------------------------------
 
-bootstrap_self() { # point ~/.local/bin/agent-kit at this checkout's launcher
+command_state_load() { # sets CMD_DST / CMD_SRC — ownership record for the launcher
+	local line dst src
+	CMD_DST=""
+	CMD_SRC=""
+	[ -f "$CMD_STATE_FILE" ] || return 0
+	while IFS= read -r line || [ -n "$line" ]; do
+		[ -n "$line" ] || continue
+		dst="${line%%"$TAB"*}"
+		src="${line#*"$TAB"}"
+		if [ "$src" = "$line" ] || case "$src" in *"$TAB"*) true ;; *) false ;; esac || \
+		   ! is_safe_source "$dst" || ! is_safe_source "$src"; then
+			warn "ignoring invalid command state line: $line"
+			continue
+		fi
+		CMD_DST="$dst"
+		CMD_SRC="$src"
+	done < "$CMD_STATE_FILE"
+}
+
+command_state_save() { # <dest> <src>; no arguments clears the record
+	mkdir -p "$(dirname "$CMD_STATE_FILE")"
+	if [ $# -eq 2 ]; then
+		printf '%s%s%s\n' "$1" "$TAB" "$2" > "$CMD_STATE_FILE.tmp"
+	else
+		: > "$CMD_STATE_FILE.tmp"
+	fi
+	mv "$CMD_STATE_FILE.tmp" "$CMD_STATE_FILE"
+}
+
+bootstrap_self() { # own ~/.local/bin/agent-kit via its own ownership record
 	local cur target="$REPO/bin/agent-kit"
 	[ -f "$target" ] || { warn "no launcher at $target; command bootstrap skipped"; return 0; }
+	command_state_load
 	mkdir -p "$(dirname "$LAUNCHER")"
 	if [ -L "$LAUNCHER" ]; then
 		cur="$(readlink "$LAUNCHER")"
-		if [ "$cur" != "$target" ]; then
+		if [ "$cur" = "$target" ]; then
+			# Already correct: adopt it into ownership without touching it.
+			[ "$CMD_DST" = "$LAUNCHER" ] && [ "$CMD_SRC" = "$target" ] || \
+				command_state_save "$LAUNCHER" "$target"
+		elif [ "$CMD_DST" = "$LAUNCHER" ] && [ "$cur" = "$CMD_SRC" ]; then
+			# Ours, recorded, still where agent-kit left it — safe to repoint.
 			ln -sfn "$target" "$LAUNCHER"
+			command_state_save "$LAUNCHER" "$target"
 			msg "  command $LAUNCHER"
 			msg "            was: $cur"
+		else
+			# Foreign symlink, or ours that someone redirected: never touched.
+			[ "$CMD_DST" = "$LAUNCHER" ] && command_state_save
+			warn "$LAUNCHER -> $cur is not managed by agent-kit; command bootstrap skipped"
 		fi
 	elif [ -e "$LAUNCHER" ]; then
+		[ "$CMD_DST" = "$LAUNCHER" ] && command_state_save
 		warn "$LAUNCHER exists and is not a symlink; command bootstrap skipped"
 	else
 		ln -s "$target" "$LAUNCHER"
+		command_state_save "$LAUNCHER" "$target"
 		msg "  command $LAUNCHER -> $target"
 	fi
 }
@@ -566,11 +609,13 @@ cmd_status() {
 	for r in $RUNTIMES; do
 		status_runtime "$r"
 	done
-	if [ -L "$LAUNCHER" ]; then
-		msg ""
+	command_state_load
+	msg ""
+	if [ -L "$LAUNCHER" ] && [ "$CMD_DST" = "$LAUNCHER" ]; then
 		msg "command: $LAUNCHER -> $(readlink "$LAUNCHER")"
+	elif [ -e "$LAUNCHER" ] || [ -L "$LAUNCHER" ]; then
+		msg "command: $LAUNCHER (present, not managed by agent-kit)"
 	else
-		msg ""
 		msg "command: not bootstrapped ($LAUNCHER)"
 	fi
 	msg "state file: $STATE_FILE"

@@ -28,11 +28,15 @@ tests/installer/run.sh         тесты ownership-семантики инст�
 
 `shared/skills/*` означает «можно ставить в каждый поддерживаемый
 skill-runtime». Если скилл зависит от рантайма, которого у части рантаймов
-нет (например, `git-task` и `git-commit` завязаны на task-workspace runtime,
-которого нет в OpenCode), в каталоге скилла создаётся файл `runtimes` со
-списком имён через пробел (`pi omp`) — скилл ставится только в
-перечисленные. Нет файла — ставится везде. Это единственное исключение из
-правила «раскладка и есть desired state».
+нет, в каталоге скилла создаётся файл `runtimes` со списком имён через
+пробел (`pi omp`) — скилл ставится только в перечисленные. Нет файла —
+ставится везде. Это единственное исключение из правила «раскладка и есть
+desired state». Сейчас так помечены `git-task` и `git-commit`: оба
+завязаны на task-workspace runtime (`ensure_task_repo`,
+`checkpoint_commit`, `workspace_agent`), которого нет в OpenCode; для
+OpenCode своя colocated-версия коммит-скилла лежит в
+`runtimes/opencode/skills/git-commit`. Если когда-нибудь появится
+по-настоящему portable commit skill — объединим, а пока colocate first.
 
 Runtime-конфиги (`config.yml`, `mcp.json`, `opencode.json`, model-profiles)
 в link/reconcile-модель не входят: machine-local и генерируемое рантаймом
@@ -58,8 +62,11 @@ agent-kit status               # состояние ссылок по ранта
   `~/.local/bin/agent-kit -> <этот checkout>/bin/agent-kit` (используемый
   checkout подменяется при установке из worktree). После первого
   `./bin/agent-kit install` команда доступна как просто `agent-kit`.
-  `uninstall` команду не снимает; если на её месте реальный файл — warning,
-  ничего не перезаписывается.
+  Лаунчер владеется отдельной ownership-записью (`command.tsv` рядом со
+  state) по тем же правилам, что и остальные ссылки: чужой symlink или
+  реальный файл на этом пути — warning без перезаписи, вручную
+  перенаправленный свой — освобождается без удаления. `uninstall` команду
+  не снимает.
 - Повторный `install` — reconcile: повторный запуск из того же checkout'а
   ничего не меняет; запуск из другого checkout'а/worktree переносит ссылки
   agent-kit на него (предыдущий checkout не модифицируется). Так удобно
