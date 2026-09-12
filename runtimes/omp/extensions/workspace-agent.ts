@@ -45,6 +45,7 @@ import { basename, join, resolve } from "node:path";
 import { homedir } from "node:os";
 import { existsSync, readFileSync, realpathSync } from "node:fs";
 import { readFile } from "node:fs/promises";
+import { resolveTaskRoot } from "./task-workspace/task-root";
 
 // ─── Workspace helpers (same semantics as task-workspace.ts) ────────────
 
@@ -52,13 +53,18 @@ function realpath(p: string): string {
   try {
     return realpathSync(p);
   } catch {
-    // Non-existent paths (e.g. TASK_ROOT before its first workspace on a
-    // fresh install) stay unresolved instead of throwing out of module init.
+    // Non-existent paths stay unresolved instead of throwing mid-session.
+    // (The task root itself is resolved by the shared resolver, which has
+    // its own non-throwing walk-up realpath for pre-first-task roots.)
     return p;
   }
 }
 
-const TASK_ROOT = realpath(process.env.OMP_TASK_ROOT ?? join(homedir(), ".omp", "tasks"));
+// Shared, harness-agnostic task-root policy lives in the task subsystem
+// (./task-workspace/task-root): AGENT_TASK_ROOT, then the legacy
+// OMP_TASK_ROOT alias, then the historical default. This module never
+// computes a filesystem layout itself.
+const TASK_ROOT = resolveTaskRoot();
 
 function expandPath(p: string, cwd: string): string {
   if (p === "~") return homedir();

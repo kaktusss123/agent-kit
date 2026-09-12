@@ -27,17 +27,22 @@ function fakeSchema(): unknown {
 /**
  * Register the production binding against a disposable task root.
  *
- * The binding resolves its task root at registration time, so the env var is
- * set only around the register call and restored immediately afterwards —
- * correctness never depends on import order or module cache. The real
- * ~/.omp/tasks is neither read as fixture root nor mutated.
+ * The binding resolves its task root at registration time, so the env vars
+ * are set only around the register call and restored immediately afterwards
+ * — correctness never depends on import order or module cache. The generic
+ * AGENT_TASK_ROOT is cleared so this fixture proves the legacy OMP_TASK_ROOT
+ * alias still feeds the binding, and an ambient generic value can never
+ * override the isolated root. The real ~/.omp/tasks is neither read as
+ * fixture root nor mutated.
  */
 async function registerIsolatedBinding(): Promise<{
   tools: Map<string, ToolCall>;
   taskRoot: string;
 }> {
   const taskRoot = realpathSync(await mkdtemp(join(tmpdir(), "tw-details-root-")));
+  const previousGeneric = process.env.AGENT_TASK_ROOT;
   const previous = process.env.OMP_TASK_ROOT;
+  delete process.env.AGENT_TASK_ROOT;
   process.env.OMP_TASK_ROOT = taskRoot;
   try {
     const tools = new Map<string, ToolCall>();
@@ -48,6 +53,38 @@ async function registerIsolatedBinding(): Promise<{
     } as never);
     return { tools, taskRoot };
   } finally {
+    if (previousGeneric === undefined) delete process.env.AGENT_TASK_ROOT;
+    else process.env.AGENT_TASK_ROOT = previousGeneric;
+    if (previous === undefined) delete process.env.OMP_TASK_ROOT;
+    else process.env.OMP_TASK_ROOT = previous;
+  }
+}
+
+/** Register the production binding with BOTH configuration layers set to
+ *  distinct roots — the shared generic root must win at binding level too,
+ *  not only inside the resolver unit tests. */
+async function registerGenericWinsBinding(): Promise<{
+  tools: Map<string, ToolCall>;
+  genericRoot: string;
+  legacyRoot: string;
+}> {
+  const genericRoot = realpathSync(await mkdtemp(join(tmpdir(), "tw-generic-root-")));
+  const legacyRoot = realpathSync(await mkdtemp(join(tmpdir(), "tw-legacy-root-")));
+  const previousGeneric = process.env.AGENT_TASK_ROOT;
+  const previous = process.env.OMP_TASK_ROOT;
+  process.env.AGENT_TASK_ROOT = genericRoot;
+  process.env.OMP_TASK_ROOT = legacyRoot;
+  try {
+    const tools = new Map<string, ToolCall>();
+    registerTaskWorkspace({
+      typebox: { Type: fakeSchema() },
+      registerTool: (t: never) => tools.set((t as { name: string }).name, t as never),
+      on() {},
+    } as never);
+    return { tools, genericRoot, legacyRoot };
+  } finally {
+    if (previousGeneric === undefined) delete process.env.AGENT_TASK_ROOT;
+    else process.env.AGENT_TASK_ROOT = previousGeneric;
     if (previous === undefined) delete process.env.OMP_TASK_ROOT;
     else process.env.OMP_TASK_ROOT = previous;
   }
@@ -115,6 +152,18 @@ async function cleanupFixture(fx: FixtureCleanup): Promise<void> {
 }
 
 describe("OMP binding details attachment (isolated task root)", () => {
+  test("generic AGENT_TASK_ROOT beats legacy OMP_TASK_ROOT at binding level", async () => {
+    const { tools, genericRoot, legacyRoot } = await registerGenericWinsBinding();
+    const res = await tools.get("task_status")!.execute("p", {}, undefined, undefined, {
+      cwd: tmpdir(),
+    });
+    const payload = payloadOf(res);
+    expect(payload.taskRoot).toBe(genericRoot);
+    expect(payload.taskRoot).not.toBe(legacyRoot);
+    await rm(genericRoot, { recursive: true, force: true });
+    await rm(legacyRoot, { recursive: true, force: true });
+  });
+
   test("task_status attaches the whole result as details", async () => {
     const { tools, taskRoot } = await registerIsolatedBinding();
     const res = await tools.get("task_status")!.execute("p", {}, undefined, undefined, {

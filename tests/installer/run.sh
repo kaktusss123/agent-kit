@@ -574,5 +574,31 @@ pass
 
 # ==============================================================================
 
+# ==============================================================================
+# T18: invoking the CLI through an arbitrary symlink must still root at the
+# real checkout (covers non-launcher symlink paths end to end)
+
+new_test "T18 symlinked CLI invocation"
+use_path empty
+make_kit "$SANDBOX/kit"
+mkdir -p "$SANDBOX/cli"
+ln -s "$SANDBOX/kit/bin/agent-kit" "$SANDBOX/cli/agent-kit"
+PI_AGENT_DIR="$HOME/.pi/agent"
+OMP_AGENT_DIR="$HOME/.omp/agent"
+OPENCODE_CONFIG_DIR="$HOME/.config/opencode"
+export PI_AGENT_DIR OMP_AGENT_DIR OPENCODE_CONFIG_DIR
+unset AGENT_KIT_ROOT
+	if OUT="$("$SANDBOX/cli/agent-kit" install pi omp opencode 2>&1)"; then RC=0; else RC=$?; fi
+	[ "$VERBOSE" = 1 ] && printf '%s\n' "$OUT"
+	assert_eq "$RC" 0 "exit code"
+	assert_link "$HOME/.pi/agent/skills/alpha" "$SANDBOX/kit/shared/skills/alpha" "shared skill via symlinked CLI"
+	assert_link "$HOME/.omp/agent/RULES.md" "$SANDBOX/kit/runtimes/omp/RULES.md" "omp root file via symlinked CLI"
+	assert_eq "$(state_lines pi)" 6 "pi state entries"
+	case "$OUT" in
+	*"nothing to install"*) fail "symlinked CLI resolved the wrong repository root and desired nothing" ;;
+	*) : ;;
+	esac
+pass
+
 printf '\n%d passed, %d failed\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]

@@ -4,7 +4,7 @@
 
 ## Task workspace и canonical worktree
 
-Read-only анализ не создаёт task, branch или worktree. Когда начинается `/spec`, `/dev` или явная задача на изменение кода, агент устанавливает task identity и работает через managed workspace под `~/.omp/tasks/...`.
+Read-only анализ не создаёт task, branch или worktree. Когда начинается `/spec`, `/dev` или явная задача на изменение кода, агент устанавливает task identity и работает через managed workspace под resolved task root (задаётся generic-переменной `AGENT_TASK_ROOT`; исторический default — `~/.omp/tasks`).
 
 Если для repository этой task уже существует canonical worktree, он является default continuation target. Secondary lane требует явной дополнительной branch need из запроса пользователя или SPEC/task decision: например backport/forward-port либо одновременно поддерживаемая release/hotfix ветка. Желание отдельно протестировать, сделать deploy, изолировать commit, попробовать другую последовательность, получить чистую ветку или обойти blocked Git operation не является такой потребностью.
 

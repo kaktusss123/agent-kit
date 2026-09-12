@@ -39,7 +39,7 @@ const MOCK_PATH =
 const OMPTYPE_PATH =
 	process.env.TW_OMPTYPE_PATH ??
 	"/Users/vekomarnitskiy/projects/devtools/oh-my-pi/packages/omptype/src/typebox.ts";
-process.env.OMP_TASK_ROOT = `${FIXTURE}/tasks`;
+process.env.AGENT_TASK_ROOT = `${FIXTURE}/tasks`;
 
 if (await fs.stat(`${FIXTURE}/.tw-run-complete`).then(() => true).catch(() => false)) {
 	console.error("Fixture already consumed — re-run build-fixture.sh before this suite.");
