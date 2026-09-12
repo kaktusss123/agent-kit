@@ -62,7 +62,7 @@ describe("AskDialog", () => {
 		expect(lines).toContain("[base]");
 		expect(lines).toContain("Which base?");
 		expect(lines).toContain("main (Recommended)");
-		expect(lines).toContain("Other (type your own)");
+		expect(lines).toContain("Type a response…");
 		expect(lines).toContain("Chat about this");
 	});
 
@@ -84,14 +84,14 @@ describe("AskDialog", () => {
 		expect(outcomes).toEqual([{ kind: "cancelled" }]);
 	});
 
-	test("Other flow captures free-form text via the embedded input", () => {
+	test("Type a response captures free-form text via the embedded input", () => {
 		const { dialog, outcomes } = drive();
 		const enter = RAW.enter;
-		// navigate to the Other row: rows are [main, develop, Other, Chat],
-		// cursor starts at recommended row 0 -> two downs reach Other
+		// navigate to the free-form row: rows are [main, develop, Type a response…, Chat],
+		// cursor starts at recommended row 0 -> two downs reach the free-form action
 		dialog.handleInput(RAW.down);
 		dialog.handleInput(RAW.down);
-		dialog.handleInput(enter); // activate Other -> input mode
+		dialog.handleInput(enter); // activate Type a response…
 		expect(dialog.render(80).join("\n")).toContain("> ");
 		for (const ch of "use develop") {
 			dialog.handleInput(ch);
@@ -100,6 +100,19 @@ describe("AskDialog", () => {
 		expect(outcomes).toHaveLength(0);
 		// after submit the dialog advanced to question 2
 		expect(dialog.render(80).join("\n")).toContain("[scopes]");
+	});
+
+	test("escape from free-form input returns to the option picker", () => {
+		const { dialog } = drive();
+		dialog.handleInput(RAW.down);
+		dialog.handleInput(RAW.down);
+		dialog.handleInput(RAW.enter); // activate Type a response…
+		expect(dialog.render(80).join("\n")).toContain("> ");
+		dialog.handleInput(RAW.escape);
+		const lines = dialog.render(80).join("\n");
+		expect(lines).toContain("Which base?");
+		expect(lines).toContain("Type a response…");
+		expect(lines).not.toContain("enter submit · esc back");
 	});
 
 	test("multi select: space-free toggling via enter, review, submit", () => {

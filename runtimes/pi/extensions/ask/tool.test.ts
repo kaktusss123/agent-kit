@@ -123,7 +123,7 @@ describe("buildAskTool", () => {
 			"t",
 			{
 				questions: [
-					{ id: "q", question: "Q?", options: [{ label: "Other (type your own)" }, { label: "b" }] },
+					{ id: "q", question: "Q?", options: [{ label: "Type a response…" }, { label: "b" }] },
 				],
 			},
 			undefined,
@@ -131,7 +131,7 @@ describe("buildAskTool", () => {
 			undefined,
 		);
 		expect(result.isError).toBe(true);
-		expect(result.content[0]!.text).toContain("Other (type your own)");
+		expect(result.content[0]!.text).toContain("Type a response…");
 		expect(backendRuns).toBe(0);
 	});
 
@@ -200,9 +200,9 @@ describe("rpcFallbackAsk", () => {
 		expect(left()).toHaveLength(0);
 	});
 
-	test("Other captures free-form input", async () => {
+	test("Type a response captures free-form input", async () => {
 		const { ui } = scriptedUi([
-			{ expect: { kind: "select" }, reply: "Other (type your own)" },
+			{ expect: { kind: "select" }, reply: "Type a response…" },
 			{ expect: { kind: "input", title: "Which db?" }, reply: "postgres 17" },
 			{ expect: { kind: "select" }, reply: "Submit answers" },
 		]);
@@ -230,11 +230,11 @@ describe("rpcFallbackAsk", () => {
 		});
 	});
 
-	test("multi + Other keeps checkbox selections (OMP parity)", async () => {
+	test("multi + Type a response keeps checkbox selections (OMP parity)", async () => {
 		const q = { id: "s", question: "Scopes?", options: [{ label: "api" }, { label: "ui" }], multi: true };
 		const { ui } = scriptedUi([
 			{ expect: { kind: "select" }, reply: "☐ api" }, // toggle on -> re-open
-			{ expect: { kind: "select" }, reply: "Other (type your own)" },
+			{ expect: { kind: "select" }, reply: "Type a response…" },
 			{ expect: { kind: "input" }, reply: "also web" },
 			{ expect: { kind: "select" }, reply: "Submit answers" },
 		]);

@@ -223,7 +223,7 @@ export function activateRow(state: DialogState, questions: AskQuestion[]): void 
 	}
 }
 
-/** Submit the free-form "Other" answer for the current question. */
+/** Submit the free-form response answer for the current question. */
 export function submitOther(state: DialogState, questions: AskQuestion[], text: string): void {
 	if (state.mode !== "other") return;
 	const question = currentQuestion(state, questions);

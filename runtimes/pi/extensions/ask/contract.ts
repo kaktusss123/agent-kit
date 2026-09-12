@@ -56,7 +56,7 @@ export type AskOutcome =
 
 // ============================================================ reserved labels
 
-export const OTHER_OPTION_LABEL = "Other (type your own)";
+export const OTHER_OPTION_LABEL = "Type a response…";
 export const CHAT_OPTION_LABEL = "Chat about this";
 export const NEXT_OPTION_LABEL = "Next →";
 
@@ -74,7 +74,7 @@ export const ASK_TOOL_DESCRIPTION = [
 	"Request missing information or a decision when it cannot be safely determined from the available context.",
 	"Use it only when the missing answer materially affects how to proceed.",
 	"Group related questions when practical and provide concise, distinct options with useful tradeoff descriptions.",
-	"The runtime automatically adds a free-form 'Other' option — never include it yourself.",
+	"The runtime automatically adds a free-form response action — never include it yourself.",
 ].join(" ");
 
 /** Role-neutral guideline bullets appended to the system prompt while active. */

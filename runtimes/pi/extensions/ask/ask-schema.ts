@@ -27,7 +27,7 @@ export const AskQuestionSchema = Type.Object({
 		Type.String({ description: "Optional short display chip used by multi-question UIs" }),
 	),
 	options: Type.Array(AskOptionSchema, {
-		description: "Available options (the runtime adds free-form 'Other' automatically)",
+		description: "Available options (the runtime adds a free-form response action automatically)",
 	}),
 	multi: Type.Optional(Type.Boolean({ description: "Allow selecting multiple options" })),
 	recommended: Type.Optional(
