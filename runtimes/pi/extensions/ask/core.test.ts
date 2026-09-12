@@ -57,7 +57,7 @@ describe("single-select flow", () => {
 		expect(state.index).toBe(1);
 	});
 
-	test("Other captures free-form text and clears the selection", () => {
+	test("Type a response captures free-form text and clears the selection", () => {
 		const state = initialState(questions);
 		const rows = rowsFor(state, questions);
 		state.cursor = rows.findIndex((r) => r.kind === "other");
@@ -68,7 +68,7 @@ describe("single-select flow", () => {
 		expect(state.index).toBe(1);
 	});
 
-	test("empty Other returns to the question without answering", () => {
+	test("empty free-form response returns to the question without answering", () => {
 		const state = initialState(questions);
 		state.mode = "other";
 		submitOther(state, questions, "   ");
@@ -218,7 +218,7 @@ describe("navigation and review", () => {
 		expect(buildRows(tricky)[0]!.label).toBe("Restart (Recommended)");
 	});
 
-	test("multi + Other keeps checkbox selections (OMP parity)", () => {
+	test("multi + Type a response keeps checkbox selections (OMP parity)", () => {
 		const multiQ: AskQuestion = {
 			id: "m",
 			question: "Q?",

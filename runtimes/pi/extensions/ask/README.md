@@ -5,8 +5,8 @@ oh-my-pi's `ask` (reference contract) and shared by every role:
 
 - **Interactive main** registers this extension: the model calls `ask` with
   OMP-style structured questions; the user answers through a rich TUI dialog
-  (overlay; tabs/navigation, single/multi-select, recommended hints, option
-  descriptions and previews, free-form `Other`, a review screen, and
+  (editor replacement; tabs/navigation, single/multi-select, recommended hints, option
+  descriptions and previews, free-form `Type a response…`, a review screen, and
   `Chat about this`). On RPC-mode mains it degrades to the standard pi
   extension UI dialogs (select/input per question plus a review step).
   Without any interactive UI (print/json/headless) the tool fails closed —
@@ -28,7 +28,7 @@ oh-my-pi's `ask` (reference contract) and shared by every role:
 - `ask-schema.ts` — the typebox twin of the schema used by tool registration.
 - `core.ts` — pure dialog state machine: rows, selection, navigation, review,
   results.
-- `dialog.ts` — rich TUI overlay component on pi-tui primitives.
+- `dialog.ts` — rich TUI editor-replacement component on pi-tui primitives.
 - `tool.ts` — pi-free tool builder; the environment seam is the injected
   `AskBackend` (rich dialog / RPC fallback / fail-closed).
 - `index.ts` — extension entry wiring the backend per execute context.

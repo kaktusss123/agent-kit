@@ -3,7 +3,7 @@
  * sessions (extensions/ask). One tool, one contract (contract.ts), three
  * delivery backends chosen at execute time:
  *
- * - TUI mode: the rich custom dialog (dialog.ts) as an overlay;
+ * - TUI mode: the rich custom dialog (dialog.ts) replacing the editor surface;
  * - RPC mode (no custom UI surface): per-question select/input fallback;
  * - no interactive UI (print/json/headless): fail closed — an explicit
  *   unavailable error, never a pretended answer (SPEC A12).
@@ -159,9 +159,6 @@ async function richDialogAsk(
 				dialog.focused = value;
 			},
 		} as never;
-	}, {
-		overlay: true,
-		overlayOptions: { width: "70%", minWidth: 52, maxHeight: "80%", anchor: "center" },
 	});
 	if (result === undefined) {
 		// Dismissed because the run was aborted — the caller (pi) discards this
