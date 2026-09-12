@@ -12,7 +12,7 @@ runtimes/pi/                   pi: extensions/, skills/, prompts/
 runtimes/omp/                  OMP: extensions/, skills/, prompts/,
                                managed-skills/, docs/, RULES.md, ...
 runtimes/opencode/             OpenCode: skills/, agents/, commands/,
-                               plugins/, tool/, AGENTS.md
+                               plugins/, AGENTS.md
 bin/agent-kit                  инсталлер (install / uninstall / status)
 tests/installer/run.sh         тесты ownership-семантики инсталлера
 ```
@@ -42,6 +42,10 @@ Runtime-конфиги (`config.yml`, `mcp.json`, `opencode.json`, model-profile
 в link/reconcile-модель не входят: machine-local и генерируемое рантаймом
 владеть из репозитория нельзя. `runtimes/omp/config.yml` и `mcp.json` лежат
 в репозитории как portable-справочные копии, но не устанавливаются.
+OpenCode читает и `opencode.json`, и `opencode.jsonc` в одной конфиг-дире:
+файлы мержатся, и при конфликте ключей побеждает `jsonc`. Держите все
+настройки в одном файле, иначе правки одного могут молча перебиваться
+другим.
 
 ## Install
 
@@ -77,6 +81,15 @@ agent-kit status               # состояние ссылок по ранта
 Необязательные overrides корней: `PI_AGENT_DIR` (`~/.pi/agent`),
 `OMP_AGENT_DIR` (`~/.omp/agent`), `OPENCODE_CONFIG_DIR`
 (`~/.config/opencode`), `AGENT_KIT_ROOT` (используется тестами).
+
+OpenCode-специфика после первого `install`:
+
+- плагины (`runtimes/opencode/plugins/*.ts`) импортируют `@opencode-ai/plugin`:
+  в конфиг-дире нужен `package.json` с этой зависимостью и разовый
+  `npm install --prefix ~/.config/opencode` — без node_modules плагины
+  не загрузятся;
+- плагин `rtk.ts` требует `rtk` >= 0.23.0 в PATH: без бинаря он печатает
+  warning и отключается, остальной конфиг работает как обычно.
 
 ## Ownership model
 
