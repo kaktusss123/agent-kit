@@ -155,9 +155,26 @@ check("O6b dispatch carries stable ids matching the observed updates",
 const updates = result?.updates ?? [];
 check("O5 update count bounded (modest cadence, not spam)", updates.length > 0 && updates.length <= 40,
 	`updates=${updates.length}`);
-check("O6c updates stop after settlement (last update precedes the result)",
-	updates.length > 0 && updates[updates.length - 1].at <= Date.now() && sawUpdateBeforeSettle,
-	`last=${updates.at(-1)?.at}`);
+
+// O6c: updates must STOP after settlement. Count the logged progress events,
+// wait longer than one normal refresh interval (3 s default), then recount:
+// neither a new event nor a grown count is acceptable.
+{
+	const progressEvents = () => (tryLog()?.events ?? []).filter((e) => e.kind === "progress" && e.resultKey === "OBS1");
+	const resultAt = (tryLog()?.events ?? [])
+		.filter((e) => e.kind === "dispatch-result" && e.resultKey === "OBS1")
+		.at(-1)?.at;
+	const countAtSettle = progressEvents().length;
+	check("O6c.1 settled update count observed", countAtSettle > 0, `count=${countAtSettle}`);
+	await sleep(10000); // > one refresh interval
+	const after = progressEvents();
+	const late = after.filter((e) => e.at > (resultAt ?? Infinity));
+	check(
+		"O6c.2 updates stop after settlement (counted, waited, recounted)",
+		late.length === 0 && after.length === countAtSettle,
+		`count ${countAtSettle} -> ${after.length}, late events: ${late.length}`,
+	);
+}
 
 // sample one real update for the report
 if (updates.length > 0) {

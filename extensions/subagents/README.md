@@ -142,8 +142,10 @@ subagent runtime.
   `report recovery n/3` while the ladder is active), elapsed time and
   deadline left, pid, model/thinking, the child's session id, and the
   child's authoritative tool activity: `tool_execution_start` opens the
-  current tool (name + conservatively bounded argument preview:
-  command/path/pattern/query — never full argument blobs, never output),
+  current tool (name + a conservatively bounded argument preview from a
+  tool-aware policy: bash/powershell → command, read/edit/write → path,
+  grep/find → pattern, web_search → query; unknown tools get NO summary and
+  `url` is never surfaced — never full argument blobs, never output),
   `tool_execution_end` moves it into a hard-capped recent list (4 entries).
   Session identity is fetched with a single `get_state` right after prompt
   acceptance, so it is visible while the child runs, not only after

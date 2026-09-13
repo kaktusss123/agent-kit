@@ -20,35 +20,39 @@ import type { ToolActivity } from "./types";
 import { formatDuration } from "./delivery";
 
 /**
- * Argument keys this module may surface, in priority order. Everything not
- * listed is omitted from the live view — a missing preview is preferred over
- * a leaked secret or an unbounded blob.
+ * Tool-aware argument exposure policy: tool name -> the argument keys that
+ * may be surfaced, in priority order. Tools not listed here get NO summary —
+ * their arguments are never scanned. `url` is deliberately absent (signed
+ * URLs, embedded tokens); a missing preview is always preferred over leaking
+ * credentials into the operator view.
  */
-const SUMMARY_KEYS = [
-	"command",
-	"pattern",
-	"query",
-	"file_path",
-	"path",
-	"url",
-	"run_id",
-	"op",
-] as const;
+const TOOL_SUMMARY_POLICY: Record<string, readonly string[]> = {
+	bash: ["command"],
+	powershell: ["command"],
+	read: ["path", "file_path"],
+	edit: ["path", "file_path"],
+	write: ["path", "file_path"],
+	grep: ["pattern", "path"],
+	find: ["pattern", "path"],
+	ls: ["path"],
+	web_search: ["query"],
+};
 
 /** Hard cap for a summary line (current view); recent entries get a shorter cap. */
 const SUMMARY_MAX = 72;
 const RECENT_SUMMARY_MAX = 48;
 
 /**
- * Bounded one-line preview of a tool call's arguments. Returns undefined
- * when no allow-listed scalar can be extracted cleanly — never falls back to
- * serializing the input.
+ * Bounded one-line preview of a tool call's arguments, extracted only for
+ * tools with an explicit policy and only from that policy's keys. Unknown
+ * tools and unknown arguments produce no summary — never a serialized blob.
  */
 export function summarizeToolActivity(name: string, args: unknown): string | undefined {
-	void name; // the tool name is carried separately; only args are summarized here
+	const allowed = TOOL_SUMMARY_POLICY[name];
+	if (!allowed) return undefined; // unknown tool: no summary, no scanning
 	if (typeof args !== "object" || args === null) return undefined;
 	const record = args as Record<string, unknown>;
-	for (const key of SUMMARY_KEYS) {
+	for (const key of allowed) {
 		const value = record[key];
 		if (typeof value !== "string") continue;
 		const flat = flattenOneLine(value);
