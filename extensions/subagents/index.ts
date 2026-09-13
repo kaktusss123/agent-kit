@@ -7,7 +7,10 @@
  * Surfaces:
  * - `subagent` tool (LLM): one compact tool — spawn / status / steer /
  *   follow_up / wait / result / respond / cancel. `spawn` is async by
- *   default; blocking is modeled as spawn + wait.
+ *   default; blocking is modeled as spawn + wait. Spawn picks the child's
+ *   model by CLASS (modelClass: cheap | default | smart); the concrete
+ *   model + thinking are resolved through the model-classes resolver
+ *   (../model-classes/core) before the child process starts.
  * - Background delivery: completed / failed / needs_input events reach the
  *   main model through pi.sendMessage with deliverAs:"steer" + triggerTurn,
  *   which pi 0.85.1 delivers at the next safe turn boundary when busy and as
@@ -24,6 +27,7 @@ import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { StringEnum } from "@earendil-works/pi-ai";
 import { Type } from "typebox";
 import { LocalSubagentRuntime } from "./controller";
+import { resolveSpawnPair, type SpawnModelClass } from "./spawn-model";
 import {
 	formatAskRequestBlock,
 	formatResult,
@@ -57,10 +61,10 @@ const SubagentParams = Type.Object({
 	id: Type.Optional(Type.String({ description: "target agent id (omit for status to list all)" })),
 	label: Type.Optional(Type.String({ description: "spawn: short name for the agent" })),
 	cwd: Type.Optional(Type.String({ description: "spawn: working directory for the child (default: main cwd)" })),
-	model: Type.Optional(Type.String({ description: "spawn: model pattern like provider/model (default: pi default)" })),
-	thinking: Type.Optional(
-		StringEnum(["off", "minimal", "low", "medium", "high", "xhigh", "max"] as const, {
-			description: "spawn: thinking level for the child",
+	modelClass: Type.Optional(
+		StringEnum(["cheap", "default", "smart"] as const, {
+			description:
+				'spawn: model class for the child (default: "default" = current main model + thinking; "cheap"/"smart" = saved classes, configure via /model-class <class> set)',
 		}),
 	),
 	message: Type.Optional(Type.String({ description: "steer/follow_up: message for the child agent" })),
@@ -113,6 +117,7 @@ export default function (pi: ExtensionAPI) {
 		promptGuidelines: [
 			"Use subagent op=spawn to delegate self-contained work that does not need your direct involvement, especially parallelizable or exploratory tasks.",
 			"spawn returns immediately; keep working or spawn more agents, then use subagent op=wait to block for a specific child when you need its outcome.",
+			"Model class policy (your explicit choice per spawn, never automatic): omit modelClass or use \"default\" for ordinary delegated work; use \"cheap\" for high-volume scouting, extraction, classification, and broad parallel research where lower cost matters more than maximum reasoning quality; use \"smart\" for critical review, difficult reasoning, and explicit escalation when default is insufficient. Configure cheap/smart via /model-class <class> set.",
 			"When a child reports needs_input, first try to resolve the request from your own conversation and task context — do not ask the user again for information that is already known.",
 			"Only if the answer is unknown, use `ask` with the child's supplied request to get the missing decision, then answer via subagent op=respond (a plain-text answer is enough).",
 		],
@@ -134,12 +139,15 @@ export default function (pi: ExtensionAPI) {
 				switch (op) {
 					case "spawn": {
 						if (!params.task) return err("spawn requires `task`");
+						// Resolve the class BEFORE spawning: an unconfigured class or
+						// a model that is gone fails the op without starting a child.
+						const pair = resolveSpawnPair(params.modelClass ?? "default", ctx, pi.getThinkingLevel());
 						const snap = await rt.spawn({
 							task: params.task,
 							label: params.label,
 							cwd: params.cwd,
-							model: params.model,
-							thinking: params.thinking,
+							model: pair.model,
+							thinking: pair.thinking,
 						});
 						return ok(
 							[
