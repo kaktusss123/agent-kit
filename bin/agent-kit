@@ -138,9 +138,9 @@ validate_entity() { # <dest-rel> <source-abs>
 # All knowledge of retired runtimes is confined to the three functions in
 # this section; nothing outside them may branch on a runtime name.
 
-legacy_roots() { # set the native roots of retired runtimes (cleanup targets only, never install targets)
-	LEGACY_ROOT_A="${OMP_AGENT_DIR:-$HOME/.omp/agent}"
-	LEGACY_ROOT_B="${OPENCODE_CONFIG_DIR:-$HOME/.config/opencode}"
+legacy_roots() { # native roots of retired runtimes (historical constants; cleanup targets only, never install targets)
+	LEGACY_ROOT_A="$HOME/.omp/agent"
+	LEGACY_ROOT_B="$HOME/.config/opencode"
 }
 
 legacy_retire() { # <root> <legacy-runtime-name> <dest-rel> <source>

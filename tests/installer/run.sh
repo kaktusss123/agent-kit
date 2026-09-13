@@ -91,7 +91,7 @@ new_test() { # <name>
 	SANDBOX="$(cd "$SANDBOX" && pwd -P)"   # canonical: macOS /tmp is /private/tmp
 	export HOME="$SANDBOX/home"
 	mkdir -p "$HOME"
-	unset XDG_STATE_HOME PI_AGENT_DIR OMP_AGENT_DIR OPENCODE_CONFIG_DIR AGENT_KIT_ROOT 2>/dev/null || true
+	unset XDG_STATE_HOME PI_AGENT_DIR AGENT_TASK_ROOT AGENT_KIT_ROOT 2>/dev/null || true
 	STATE="$HOME/.local/state/agent-kit/links.tsv"
 	CMD_STATE="$HOME/.local/state/agent-kit/command.tsv"
 	PI_ROOT="$HOME/.pi/agent"
@@ -112,12 +112,15 @@ make_kit() { # <checkout-dir>
 	local d="$1"
 	mkdir -p "$d/bin" \
 		"$d/skills/alpha" "$d/skills/beta" \
-		"$d/extensions/todo"
+		"$d/extensions/todo" \
+		"$d/prompts"
 	cp "$INSTALLER" "$d/bin/agent-kit"
 	echo "# alpha" > "$d/skills/alpha/SKILL.md"
 	echo "# beta" > "$d/skills/beta/SKILL.md"
 	echo "export const x = 1" > "$d/extensions/todo/index.ts"
 	echo "export const f = 1" > "$d/extensions/foot.ts"
+	echo "spec" > "$d/prompts/spec.md"
+	echo "dev" > "$d/prompts/dev.md"
 }
 
 state_entries() { # number of state entries
@@ -142,21 +145,20 @@ outside_skill() { # a real directory outside any checkout
 new_test "T1 fresh install"
 use_path_empty
 make_kit "$SANDBOX/kit"
-mkdir -p "$SANDBOX/kit/prompts"
-echo "hi" > "$SANDBOX/kit/prompts/greet.md"
 run_install
 	assert_eq "$RC" 0 "exit code"
 	assert_link "$PI_ROOT/skills/alpha" "$SANDBOX/kit/skills/alpha" "skill linked"
 	assert_link "$PI_ROOT/skills/beta" "$SANDBOX/kit/skills/beta" "second skill linked"
 	assert_link "$PI_ROOT/extensions/todo" "$SANDBOX/kit/extensions/todo" "extension dir linked"
 	assert_link "$PI_ROOT/extensions/foot.ts" "$SANDBOX/kit/extensions/foot.ts" "extension file linked"
-	assert_link "$PI_ROOT/prompts/greet.md" "$SANDBOX/kit/prompts/greet.md" "prompt linked"
-	assert_eq "$(state_entries)" 5 "state records every entity"
+	assert_link "$PI_ROOT/prompts/spec.md" "$SANDBOX/kit/prompts/spec.md" "spec prompt linked"
+	assert_link "$PI_ROOT/prompts/dev.md" "$SANDBOX/kit/prompts/dev.md" "dev prompt linked"
+	assert_eq "$(state_entries)" 6 "state records every entity"
 	assert_eq "$(legacy_entries)" 0 "state uses the current format"
 	assert_link "$HOME/.local/bin/agent-kit" "$SANDBOX/kit/bin/agent-kit" "launcher bootstrapped"
 	OUT="$(env -u AGENT_KIT_ROOT "$HOME/.local/bin/agent-kit" status 2>&1)"
 	case "$OUT" in
-	*"wants 5 entity"*) : ;;
+	*"wants 6 entity"*) : ;;
 	*) fail "bootstrapped launcher must resolve its own checkout, got: $OUT" ;;
 	esac
 	run_install pi
@@ -166,7 +168,7 @@ run_install
 run_uninstall
 	assert_eq "$RC" 0 "uninstall"
 	assert_no_file "$PI_ROOT/skills/alpha" "skill link removed"
-	assert_no_file "$PI_ROOT/prompts/greet.md" "prompt link removed"
+	assert_no_file "$PI_ROOT/prompts/spec.md" "prompt link removed"
 pass
 
 # ==============================================================================
@@ -194,11 +196,10 @@ pass
 new_test "T3 checkout switch"
 use_path_empty
 make_kit "$SANDBOX/kit"
-mkdir -p "$SANDBOX/kit/prompts"
-echo "hi" > "$SANDBOX/kit/prompts/greet.md"
 run_install
 	assert_eq "$RC" 0 "base install"
-	# second checkout: adds gamma, drops beta and the whole prompts category
+	# second checkout: adds gamma, drops beta; prompts follow the same
+	# ownership model as everything else and are repointed
 	make_kit "$SANDBOX/kit2"
 	rm -rf "$SANDBOX/kit2/skills/beta"
 	mkdir -p "$SANDBOX/kit2/skills/gamma"
@@ -209,10 +210,12 @@ run_install
 	assert_link "$PI_ROOT/skills/alpha" "$SANDBOX/kit2/skills/alpha" "alpha repointed"
 	assert_link "$PI_ROOT/skills/gamma" "$SANDBOX/kit2/skills/gamma" "gamma created from kit2"
 	assert_no_file "$PI_ROOT/skills/beta" "beta pruned"
-	assert_no_file "$PI_ROOT/prompts/greet.md" "dropped category pruned"
+	assert_link "$PI_ROOT/prompts/spec.md" "$SANDBOX/kit2/prompts/spec.md" "spec prompt repointed"
+	assert_link "$PI_ROOT/prompts/dev.md" "$SANDBOX/kit2/prompts/dev.md" "dev prompt repointed"
+	assert_eq "$(cat "$PI_ROOT/prompts/dev.md")" "dev" "prompt content follows the checkout"
 	assert_link "$HOME/.local/bin/agent-kit" "$SANDBOX/kit2/bin/agent-kit" "launcher repointed"
 	assert_file "$SANDBOX/kit/skills/beta/SKILL.md" "old checkout files untouched"
-	assert_eq "$(state_entries)" 4 "state tracks the kit2 set"
+	assert_eq "$(state_entries)" 6 "state tracks the kit2 set"
 pass
 
 # ==============================================================================
@@ -286,7 +289,7 @@ run_install
 	assert_eq "$RC" 0 "reconcile install"
 	assert_no_file "$PI_ROOT/skills/beta" "removed item link deleted"
 	assert_link "$PI_ROOT/skills/alpha" "$SANDBOX/kit/skills/alpha" "other links intact"
-	assert_eq "$(state_entries)" 3 "state entry cleaned"
+	assert_eq "$(state_entries)" 5 "state entry cleaned"
 pass
 
 # ==============================================================================
@@ -530,7 +533,7 @@ run_install
 	*legacy*) fail "migration must be one-time, got: $OUT" ;;
 	*) : ;;
 	esac
-	assert_eq "$(state_entries)" 4 "state stable after migration"
+	assert_eq "$(state_entries)" 6 "state stable after migration"
 pass
 
 # ==============================================================================
