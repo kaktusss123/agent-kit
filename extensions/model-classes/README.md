@@ -66,3 +66,11 @@ starts a child. The runtime boundary below (`SpawnOptions`) keeps concrete
 Resolution shares this extension's storage file; the two extensions are
 separate jiti entries, so sharing happens at the module level, not through
 extension state.
+
+Selection is explicit caller policy (variant A): the calling Main picks the
+class in each `subagent` tool call, guided by the tool's prompt guidelines
+(default = ordinary work, cheap = high-volume low-stakes, smart = critical
+review / escalation). There is deliberately no role→class registry, no
+automatic routing, and no per-task inference anywhere in the runtime — a
+generic subagent can run on any class. A skill that wants a specific class
+simply asks Main to spawn with that `modelClass`.

@@ -50,11 +50,14 @@ recursive spawning by construction. Normal skills/context files stay on.
 Per-spawn `cwd`, `label`, and `modelClass` (`cheap | default | smart`,
 default `default`; resolved to concrete model + thinking by the
 model-classes resolver before the process starts — see
-`../model-classes/README.md`). The internal runtime boundary
-(`SpawnOptions`) still carries concrete `model`/`thinking` because the child
-needs literal CLI flags. Child sessions are
-ordinary pi sessions named `subagent:<label>`, inspectable with standard
-tooling.
+`../model-classes/README.md`). Which class to use is the caller's explicit
+per-spawn choice (Main decides via the tool's prompt guidelines: default =
+ordinary work, cheap = high-volume low-stakes, smart = critical review /
+escalation); the runtime never maps roles to classes or picks a class
+itself. The internal runtime boundary (`SpawnOptions`) still carries
+concrete `model`/`thinking` because the child needs literal CLI flags.
+Child sessions are ordinary pi sessions named `subagent:<label>`, inspectable
+with standard tooling.
 
 ## Lifecycle
 

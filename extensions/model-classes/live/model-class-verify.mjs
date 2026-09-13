@@ -203,7 +203,9 @@ function findEvent(label) {
 // process (session_shutdown cancels all owned children).
 async function runSubagentBoundary() {
 	await promptAndSettle(
-		'Use the subagent tool once right now: op=spawn, modelClass=default, label=mc-default, task="Reply with the single word OK." Then briefly confirm the spawned id.',
+		// Deliberately NO modelClass in this call: the omitted form must spawn
+		// exactly like "default" (on the current Main pair).
+		'Use the subagent tool once right now: op=spawn, label=mc-default, task="Reply with the single word OK." Then briefly confirm the spawned id.',
 	);
 	const defaultSeen = await waitFor(() => findEvent("mc-default")?.text !== undefined, 60000);
 	if (!defaultSeen) console.log(`[warn] mc-default tool call not observed; last: ${lastAssistantText.slice(0, 200)}`);
@@ -292,9 +294,9 @@ try {
 			const defSpawn = events.find((t) => t.label === "mc-default");
 			const smartSpawn = events.find((t) => t.label === "mc-smart");
 			const cheapSpawn = events.find((t) => t.label === "mc-cheap");
-			check("subagent default ran (A10)", !!defSpawn && !defSpawn.isError, JSON.stringify(events.map(({ op, label, isError }) => ({ op, label, isError }))));
+			check("subagent default ran (A10; omitted modelClass = default)", !!defSpawn && !defSpawn.isError, JSON.stringify(events.map(({ op, label, isError }) => ({ op, label, isError }))));
 			check(
-				"modelClass=default spawned on the current Main pair",
+				"omitted modelClass spawned on the current Main pair",
 				!!defSpawn && defSpawn.snapshotModel === ref(modelA),
 				`snapshot.model=${defSpawn?.snapshotModel} expected=${ref(modelA)}`,
 			);

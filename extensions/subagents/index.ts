@@ -117,6 +117,7 @@ export default function (pi: ExtensionAPI) {
 		promptGuidelines: [
 			"Use subagent op=spawn to delegate self-contained work that does not need your direct involvement, especially parallelizable or exploratory tasks.",
 			"spawn returns immediately; keep working or spawn more agents, then use subagent op=wait to block for a specific child when you need its outcome.",
+			"Model class policy (your explicit choice per spawn, never automatic): omit modelClass or use \"default\" for ordinary delegated work; use \"cheap\" for high-volume scouting, extraction, classification, and broad parallel research where lower cost matters more than maximum reasoning quality; use \"smart\" for critical review, difficult reasoning, and explicit escalation when default is insufficient. Configure cheap/smart via /model-class <class> set.",
 			"When a child reports needs_input, first try to resolve the request from your own conversation and task context — do not ask the user again for information that is already known.",
 			"Only if the answer is unknown, use `ask` with the child's supplied request to get the missing decision, then answer via subagent op=respond (a plain-text answer is enough).",
 		],
