@@ -27,12 +27,12 @@ export interface SpawnModelCtx {
 
 /**
  * Resolve a spawn modelClass to the concrete pair the child needs. Storage
- * is read fresh per call and `default` snapshots the caller-provided live
- * session state (current model + thinking read at resolution time, never a
- * startup cache).
+ * is read fresh per call, and only for stored classes: `default` is the
+ * live session pair, so it must resolve even when the saved classes' file
+ * is corrupt — cheap/smart storage can never break the default path.
  */
 export function resolveSpawnPair(ref: SpawnModelClass, ctx: SpawnModelCtx, currentThinking: ThinkingLevel): ModelPair {
-	const stored = loadModelClasses(modelClassesPath());
+	const stored = ref === "default" ? {} : loadModelClasses(modelClassesPath());
 	const env: ModelClassEnv = {
 		currentPair: () =>
 			ctx.model ? { model: `${ctx.model.provider}/${ctx.model.id}`, thinking: currentThinking } : null,

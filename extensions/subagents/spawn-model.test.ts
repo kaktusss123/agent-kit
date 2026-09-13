@@ -31,13 +31,17 @@ const STORED_SMART = { model: "prov-b/openai/gpt-oss-120b", thinking: "xhigh" as
 
 // Storage fixture: a throwaway PI_CODING_AGENT_DIR per case.
 const tempDirs: string[] = [];
-function spawnStorageDir(classes: Record<string, { model: string; thinking: string }>): string {
+function spawnStorageDir(classes: Record<string, { model: string; thinking: string }> | string): string {
 	const dir = fs.mkdtempSync(path.join(os.tmpdir(), "spawn-model-test-"));
 	tempDirs.push(dir);
-	fs.writeFileSync(path.join(dir, "model-classes.json"), JSON.stringify(classes));
+	const payload = typeof classes === "string" ? classes : JSON.stringify(classes);
+	fs.writeFileSync(path.join(dir, "model-classes.json"), payload);
 	return dir;
 }
-function withAgentDir<T>(classes: Record<string, { model: string; thinking: string }>, run: () => T): T {
+function withAgentDir<T>(
+	classes: Record<string, { model: string; thinking: string }> | string,
+	run: () => T,
+): T {
 	const prev = process.env.PI_CODING_AGENT_DIR;
 	process.env.PI_CODING_AGENT_DIR = spawnStorageDir(classes);
 	try {
@@ -49,17 +53,26 @@ function withAgentDir<T>(classes: Record<string, { model: string; thinking: stri
 	}
 }
 
+/** Deliberately corrupt storage payload (F5 regression fixture). */
+const CORRUPT = "{ not json";
+
 describe("resolveSpawnPair — the spawn modelClass boundary", () => {
-	test("default snapshots the current Main model + thinking (A10)", () => {
-		const pair = resolveSpawnPair("default", ctx({ provider: "prov-a", id: "model-a" }, [MAIN_MODEL]), "high");
-		expect(pair).toEqual({ model: "prov-a/model-a", thinking: "high" });
+	test("default snapshots the current Main model + thinking, ignoring storage (A10, F5)", () => {
+		// Hermetic AND regression in one: even a CORRUPT storage file must not
+		// break the default path — default never reads saved classes.
+		withAgentDir(CORRUPT, () => {
+			const pair = resolveSpawnPair("default", ctx({ provider: "prov-a", id: "model-a" }, [MAIN_MODEL]), "high");
+			expect(pair).toEqual({ model: "prov-a/model-a", thinking: "high" });
+		});
 		// Main switched since: the next spawn gets the new state, not a cache.
-		const switched = resolveSpawnPair(
-			"default",
-			ctx({ provider: "prov-b", id: "openai/gpt-oss-120b" }, [SMART_MODEL]),
-			"medium",
-		);
-		expect(switched).toEqual({ model: "prov-b/openai/gpt-oss-120b", thinking: "medium" });
+		withAgentDir(CORRUPT, () => {
+			const switched = resolveSpawnPair(
+				"default",
+				ctx({ provider: "prov-b", id: "openai/gpt-oss-120b" }, [SMART_MODEL]),
+				"medium",
+			);
+			expect(switched).toEqual({ model: "prov-b/openai/gpt-oss-120b", thinking: "medium" });
+		});
 	});
 
 	test("smart resolves the stored pair through the registry (A11)", () => {

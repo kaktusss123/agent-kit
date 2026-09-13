@@ -52,6 +52,8 @@ the normal Pi registry and applies model + thinking together.
 - **Atomic persistence.** `<agent-dir>/model-classes.json` (honors
   `PI_CODING_AGENT_DIR`) is written tmp+rename; a failed write reports an
   error and never claims success. Machine-local file, not part of agent-kit.
+  Concurrent `set` from two Pi sessions is last-writer-wins per whole file
+  (no cross-process locking — deliberate, for a rarely-changed setting).
 
 ## Subagent integration
 
