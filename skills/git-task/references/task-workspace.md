@@ -4,7 +4,7 @@ Deterministic contract of the `task-workspace` Pi extension. Every guarantee bel
 
 ## Environment
 
-- The task-root location is resolved deterministically by the extension (`AGENT_TASK_ROOT` override honored; otherwise the historical default). The model never constructs workspace paths from branch names — call `task_status` and use the reported absolute paths.
+- The task-root location is resolved deterministically by the extension (`AGENT_TASK_ROOT` override honored; otherwise `~/.agent-kit/tasks`). The model never constructs workspace paths from branch names — call `task_status` and use the reported absolute paths.
 
 ## task_status
 

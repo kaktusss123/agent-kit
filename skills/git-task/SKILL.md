@@ -56,19 +56,19 @@ A guard block is a routing failure, not permission to repeat the same mutation t
 
 ## /spec
 
-Establish identity and the initial repository worktree before substantive analysis; analyze the fresh worktree, not the dirty source state. Materialize additional repositories lazily as scope demands. Durable artifacts (`SPEC.md`, `ADR-*.md`, `specs/<repo>.md`) live in the task workspace next to the worktrees; `SPEC.md` is the canonical entrypoint. For multi-repo tasks, `SPEC.md` fixes the cross-repo contract, writable repositories, ownership, dependencies/parallelism, and integration acceptance criteria.
+Main owns discovery and specification: the user conversation, product and design decisions, synthesis of evidence, and the canonical specification. Establish identity and the initial repository worktree before substantive analysis. Once the canonical worktree exists, repository evidence comes from the managed worktree — read files and run inspection commands by its explicit path, or root bounded research subagents there. The session's own cwd never changes; the source checkout is no longer repository evidence for this task. Materialize additional repositories lazily as scope demands.
 
-## /dev, single repo
+Durable artifacts (`SPEC.md`, `ADR-*.md`, `specs/<repo>.md`) live in the task workspace next to the worktrees; `SPEC.md` is the canonical entrypoint. For multi-repo tasks, `SPEC.md` fixes the cross-repo contract, writable repositories, ownership, dependencies/parallelism, and integration acceptance criteria.
 
-Main implements directly in the managed worktree. If the session still sits in the source checkout, hand the user the exact `/move <worktree-path>` instruction and continue in the same session after relocation.
+Research subagents are bounded helpers: one explicit question, one boundary, read-only findings synthesized in Main. They never own decisions or the problem.
 
-## /dev, multi repo
+## /dev
 
-Main is the task-level orchestrator. When the task is known to touch several repositories before meaningful mutation begins, every writable repository gets its own repo owner — Main does not keep one of them for itself because the change looks small or first in the dependency DAG. Run independent owners as parallel dispatches; owners work strictly inside their own worktrees and return contract conflicts to Main instead of resolving them silently.
+Main is the task controller: it owns task intent, user decisions, orchestration, review, and integration. Repository mutation is performed by RepoOwners rooted in managed task worktrees — for one writable repository dispatch exactly one RepoOwner; for several, one per repository. The execution model is the same at any repo count; what scales is the number of owners, not the workflow.
 
-Dependencies are model judgment, not a scheduler: when repos form a DAG, Main dispatches owners in dependency order and treats a contract-fixing checkpoint (implementation + local verification yielded) as the barrier before dependents mutate against it. Workers need not run simultaneously.
+When implementation begins, reuse the existing canonical worktrees and load the task's `SPEC.md` when present. Dispatch owners as parallel calls when repositories are independent, in dependency order otherwise, treating a contract-fixing checkpoint (implementation + local verification yielded) as the barrier before dependents mutate against it. Owners work strictly inside their own worktrees and return contract conflicts to Main instead of resolving them silently. Main does not edit task repositories itself.
 
-Late escalation: Main keeps ownership of the repository it already started; spawn an owner only for the newly discovered repository. If the discovery changes the cross-repo contract or architecture, update the specification before further mutation — no ceremonial restart.
+Late escalation: Main keeps ownership of the repository whose owner already ran; dispatch an owner only for the newly discovered repository. If the discovery changes the cross-repo contract or architecture, update the specification before further mutation — no ceremonial restart.
 
 ## Worker verification reports
 
