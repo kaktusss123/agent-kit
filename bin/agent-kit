@@ -1,34 +1,41 @@
 #!/usr/bin/env bash
 #
-# agent-kit — install shared and per-runtime agent assets into their native
-# runtime locations.
+# agent-kit — install the Pi agent framework assets into ~/.pi/agent.
 #
-# The repository layout IS the desired state:
-#   shared/skills/*            — skills shared by every supporting runtime
-#   runtimes/<rt>/skills/*     — runtime-specific skills
-#   runtimes/<rt>/extensions/* — runtime extensions (dirs and files)
-#   ... (see README.md for the full convention)
+# agent-kit is a personal Pi-first framework. There is exactly one runtime:
 #
-# Entities are symlinked, never copied. Ownership is tracked in a local
-# state file ($XDG_STATE_HOME/agent-kit/links.tsv, one
-# "<runtime>\t<dest-rel>\t<source>" per line). Only paths recorded there —
-# and only while the target still points where agent-kit last linked it —
-# are ever replaced or removed. Everything else in a runtime directory
-# (your own skills, other installers' links, plain files) is left alone and
-# reported as a conflict if the repository wants its place.
+#   skills/*     -> $PI_AGENT_DIR/skills/*
+#   extensions/* -> $PI_AGENT_DIR/extensions/*
+#   prompts/*    -> $PI_AGENT_DIR/prompts/*   (only if the category exists)
+#
+# The repository layout IS the desired state: no manifests, no lists.
+# Entities are symlinked, never copied.
+#
+# Ownership is tracked in a local state file
+# ($XDG_STATE_HOME/agent-kit/links.tsv, one "<dest-rel>\t<source>" per
+# line). Only paths recorded there — and only while the target still
+# points where agent-kit last linked it — are ever replaced or removed.
+# Everything else in the Pi directories (your own skills, other tools'
+# links, plain files) is left alone and reported as a conflict if the
+# repository wants its place.
 #
 # Re-running install from another checkout or worktree repoints the managed
 # links to that checkout — the previous target is never modified.
 #
+# Legacy state: earlier multi-runtime versions of agent-kit recorded
+# "<runtime>\t<dest-rel>\t<source>" rows. The installer migrates own rows
+# to the current format once and, for rows of retired runtimes, removes
+# links whose target is still provably the one agent-kit created (same
+# ownership proof as everything else). Anything manually redirected is
+# released, never deleted. There are no other install targets anymore.
+#
 # Usage:
-#   agent-kit install [runtime...]   # default: every runtime found in PATH
-#   agent-kit uninstall [runtime...] # default: every runtime with owned links
+#   agent-kit install
+#   agent-kit uninstall
 #   agent-kit status
 #
-# Runtime root overrides (optional):
-#   PI_AGENT_DIR          (default ~/.pi/agent)
-#   OMP_AGENT_DIR         (default ~/.omp/agent)
-#   OPENCODE_CONFIG_DIR   (default ~/.config/opencode)
+# Root override: PI_AGENT_DIR (default ~/.pi/agent).
+# AGENT_KIT_ROOT roots the installer at a different checkout (tests).
 
 set -euo pipefail
 
@@ -56,36 +63,17 @@ STATE_FILE="$STATE_HOME/agent-kit/links.tsv"
 CMD_STATE_FILE="$STATE_HOME/agent-kit/command.tsv"
 
 TAB="$(printf '\t')"
-RUNTIMES="pi omp opencode"
-
-# --- tiny helpers ------------------------------------------------------------
+PI_ROOT="${PI_AGENT_DIR:-$HOME/.pi/agent}"
 
 msg()  { printf '%s\n' "$*"; }
 warn() { printf 'warning: %s\n' "$*" >&2; }
 die()  { printf 'error: %s\n' "$*" >&2; exit 2; }
 
-is_runtime() {
-	case "$1" in
-	pi|omp|opencode) return 0 ;;
-	*) return 1 ;;
-	esac
-}
-
-runtime_root() {
-	case "$1" in
-	pi)       printf '%s' "${PI_AGENT_DIR:-$HOME/.pi/agent}" ;;
-	omp)      printf '%s' "${OMP_AGENT_DIR:-$HOME/.omp/agent}" ;;
-	opencode) printf '%s' "${OPENCODE_CONFIG_DIR:-$HOME/.config/opencode}" ;;
-	esac
-}
-
-have_binary() { command -v "$1" >/dev/null 2>&1; }
-
 [ -d "$REPO" ] || die "repository root not found: $REPO"
 
 LAUNCHER="$HOME/.local/bin/agent-kit"
 
-is_safe_rel() { # <path> — usable as a destination relative to a runtime root
+is_safe_rel() { # <path> — usable as a destination relative to the Pi root
 	case "$1" in
 	""|/*|*..*) return 1 ;;
 	esac
@@ -110,17 +98,11 @@ line_count() { # stdin -> number of non-empty lines
 
 # --- entity enumeration -------------------------------------------------------
 #
-# Every adapter prints its desired entities as lines:
-#   <dest-path-relative-to-runtime-root>TAB<absolute-source-path>
-# The installer core knows nothing about individual runtimes beyond these
-# lines; the adapters know nothing about linking or state.
+# The desired state: every top-level entry of each category, linked 1:1
+# by entry name. Categories absent from the repository simply contribute
+# nothing.
 
-emit_file() { # <source-abs> <dest-rel>
-	[ -f "$1" ] || return 0
-	printf '%s%s%s\n' "$2" "$TAB" "$1"
-}
-
-emit_top() { # <source-dir> <dest-rel-dir> — 1:1 by entry name (files and dirs)
+emit_category() { # <repo-dir> <dest-rel-dir>
 	local src="$1" rel="$2" e
 	[ -d "$src" ] || return 0
 	for e in "$src"/*; do
@@ -129,79 +111,10 @@ emit_top() { # <source-dir> <dest-rel-dir> — 1:1 by entry name (files and dirs
 	done
 }
 
-emit_tree() { # <source-dir> <dest-rel-dir> — every file, recursive, same layout
-	local src="$1" rel="$2" f
-	[ -d "$src" ] || return 0
-	while IFS= read -r f; do
-		printf '%s/%s%s%s\n' "$rel" "${f#"$src"/}" "$TAB" "$f"
-	done < <(find "$src" -type f | sort)
-}
-
-emit_shared_skills() { # <runtime> — shared skills, filtered by per-skill `runtimes` marker
-	local rt="$1" src="$REPO/shared/skills" e w ok
-	[ -d "$src" ] || return 0
-	for e in "$src"/*; do
-		[ -e "$e" ] || continue
-		if [ -f "$e/runtimes" ]; then
-			# Marker convention: a skill usable only by some runtimes lists them
-			# (space- or newline-separated); absent marker means every runtime.
-			ok=0
-			while IFS= read -r w || [ -n "$w" ]; do
-				for w in $w; do
-					[ "$w" = "$rt" ] && ok=1
-				done
-			done < "$e/runtimes"
-			[ "$ok" = 1 ] || continue
-		fi
-		printf 'skills/%s%s%s\n' "$(basename "$e")" "$TAB" "$e"
-	done
-}
-
-entities_for() { # <runtime> — desired entities of one runtime
-	case "$1" in
-	pi)
-		emit_shared_skills "$1"
-		emit_top "$REPO/runtimes/pi/skills"      "skills"
-		emit_top "$REPO/runtimes/pi/extensions"  "extensions"
-		emit_top "$REPO/runtimes/pi/prompts"     "prompts"
-		;;
-	omp)
-		emit_shared_skills "$1"
-		emit_top "$REPO/runtimes/omp/skills"      "skills"
-		emit_top "$REPO/runtimes/omp/extensions"  "extensions"
-		emit_top "$REPO/runtimes/omp/prompts"     "prompts"
-		emit_top "$REPO/runtimes/omp/managed-skills" "managed-skills"
-		emit_top "$REPO/runtimes/omp/docs"        "docs"
-		emit_file "$REPO/runtimes/omp/RULES.md"       "RULES.md"
-		emit_file "$REPO/runtimes/omp/PERSONALITY.md" "PERSONALITY.md"
-		emit_file "$REPO/runtimes/omp/WATCHDOG.md"    "WATCHDOG.md"
-		;;
-	opencode)
-		emit_shared_skills "$1"
-		emit_top "$REPO/runtimes/opencode/skills" "skills"
-		emit_top "$REPO/runtimes/opencode/tool"   "tool"
-		emit_top "$REPO/runtimes/opencode/commands" "commands"
-		emit_top "$REPO/runtimes/opencode/plugins"  "plugins"
-		emit_tree "$REPO/runtimes/opencode/agents" "agents"
-		emit_file "$REPO/runtimes/opencode/AGENTS.md" "AGENTS.md"
-		;;
-	esac
-}
-
-# The same destination wanted twice (e.g. one skill in both shared/ and
-# runtimes/<rt>/) is a configuration error — no implicit override semantics.
-check_duplicates() { # stdin: desired entities
-	local dup line
-	dup="$(cut -f1 | sort | uniq -d)"
-	if [ -n "$dup" ]; then
-		printf 'error: duplicate desired destinations (same item in shared and runtime?)\n' >&2
-		while IFS= read -r line; do
-			printf '  %s\n' "$line" >&2
-		done <<EOF
-$dup
-EOF
-		return 1
-	fi
+entities() {
+	emit_category "$REPO/skills"     "skills"
+	emit_category "$REPO/extensions" "extensions"
+	emit_category "$REPO/prompts"    "prompts"
 }
 
 validate_entity() { # <dest-rel> <source-abs>
@@ -212,62 +125,123 @@ validate_entity() { # <dest-rel> <source-abs>
 	esac
 }
 
+# --- legacy state migration -----------------------------------------------------
+#
+# One-time conversion from the multi-runtime state format. Old lines look
+# like "<runtime>\t<dest-rel>\t<source>". Own-runtime rows become
+# current-format rows; rows of retired runtimes are cleaned up under their
+# native roots with the same ownership proof used everywhere else (remove
+# only if the target is still exactly the recorded source), then dropped
+# from state. After the first mutating command the state file contains
+# only current-format lines.
+#
+# All knowledge of retired runtimes is confined to the three functions in
+# this section; nothing outside them may branch on a runtime name.
+
+legacy_roots() { # native roots of retired runtimes (historical constants; cleanup targets only, never install targets)
+	LEGACY_ROOT_A="$HOME/.omp/agent"
+	LEGACY_ROOT_B="$HOME/.config/opencode"
+}
+
+legacy_retire() { # <root> <legacy-runtime-name> <dest-rel> <source>
+	local dst
+	dst="$1/$3"
+	if [ ! -e "$dst" ] && [ ! -L "$dst" ]; then
+		msg "  legacy $2: $3 (target already gone)"
+	elif [ -L "$dst" ] && [ "$(readlink "$dst")" = "$4" ]; then
+		rm "$dst"
+		msg "  legacy $2: removed $3 (no longer an agent-kit target)"
+	else
+		msg "  legacy $2: released $3 (target changed externally, left untouched)"
+	fi
+}
+
+migrate_legacy_state() { # rewrite STATE_FILE to the current format, cleaning up legacy links
+	[ -f "$STATE_FILE" ] || return 0
+	local out="" changed=0 line r rest rel src
+	legacy_roots
+	while IFS= read -r line || [ -n "$line" ]; do
+		[ -n "$line" ] || continue
+		case "$line" in
+		*"$TAB"*"$TAB"*)
+			# Three or more fields: the legacy multi-runtime format.
+			r="${line%%"$TAB"*}"
+			rest="${line#*"$TAB"}"
+			rel="${rest%%"$TAB"*}"
+			src="${rest#*"$TAB"}"
+			case "$src" in *"$TAB"*) warn "ignoring invalid state line: $line"; changed=1; continue ;; esac
+			if ! is_safe_rel "$rel" || ! is_safe_source "$src"; then
+				warn "ignoring invalid state line: $line"
+				changed=1
+				continue
+			fi
+			case "$r" in
+			pi)
+				# Own runtime: keep ownership under the current format.
+				out="${out}${rel}${TAB}${src}"$'\n'
+				changed=1
+				;;
+			omp)
+				legacy_retire "$LEGACY_ROOT_A" "$r" "$rel" "$src"
+				changed=1
+				;;
+			opencode)
+				legacy_retire "$LEGACY_ROOT_B" "$r" "$rel" "$src"
+				changed=1
+				;;
+			*)
+				warn "ignoring state line for unknown legacy runtime: $line"
+				changed=1
+				;;
+			esac
+			;;
+		*)
+			# Current format: keep as-is (validated where it is used).
+			out="${out}${line}"$'\n'
+			;;
+		esac
+	done < "$STATE_FILE"
+	if [ "$changed" -eq 1 ]; then
+		mkdir -p "$(dirname "$STATE_FILE")"
+		printf '%s' "$out" > "$STATE_FILE.tmp"
+		mv "$STATE_FILE.tmp" "$STATE_FILE"
+	fi
+}
+
 # --- state handling ------------------------------------------------------------
 #
-# State is one line per managed link:  <runtime>TAB<dest-rel>TAB<source>
+# State is one line per managed link:  <dest-rel>TAB<source>
 # Every line is fully validated BEFORE it can influence any filesystem
-# decision: exactly three fields, a safe relative destination (no traversal,
-# stays under the runtime root) and an absolute source. Invalid lines are
+# decision: exactly two fields, a safe relative destination (no traversal,
+# stays under the Pi root) and an absolute source. Invalid lines are
 # dropped with a warning: corrupt state can never widen what agent-kit is
 # allowed to touch, only shrink it.
 
-state_load() { # <runtime> — sets STATE_KEEP (other runtimes), STATE_OWN (this one)
-	local runtime="$1" line r rest rel src
-	STATE_KEEP=""
+state_load() { # sets STATE_OWN (this install's owned entries)
+	local line rel src
 	STATE_OWN=""
 	[ -f "$STATE_FILE" ] || return 0
 	while IFS= read -r line || [ -n "$line" ]; do
 		[ -n "$line" ] || continue
-		r="${line%%"$TAB"*}"
-		rest="${line#*"$TAB"}"
-		if [ "$rest" = "$line" ]; then
-			warn "ignoring corrupt state line: $line"
-			continue
-		fi
-		rel="${rest%%"$TAB"*}"
-		src="${rest#*"$TAB"}"
-		if [ "$rel" = "$rest" ] || case "$src" in *"$TAB"*) true ;; *) false ;; esac || \
-		   ! is_runtime "$r" || ! is_safe_rel "$rel" || ! is_safe_source "$src"; then
+		rel="${line%%"$TAB"*}"
+		src="${line#*"$TAB"}"
+		if [ "$src" = "$line" ] || case "$src" in *"$TAB"*) true ;; *) false ;; esac || \
+		   ! is_safe_rel "$rel" || ! is_safe_source "$src"; then
 			warn "ignoring invalid state line: $line"
 			continue
 		fi
-		if [ "$r" = "$runtime" ]; then
-			STATE_OWN="${STATE_OWN}${rel}${TAB}${src}"$'\n'
-		else
-			STATE_KEEP="${STATE_KEEP}${line}"$'\n'
-		fi
+		STATE_OWN="${STATE_OWN}${rel}${TAB}${src}"$'\n'
 	done < "$STATE_FILE"
 }
 
-state_save() { # <runtime> on stdin: own entries as <dest-rel>TAB<source>
-	local runtime="$1" line
+state_save() { # stdin: own entries as <dest-rel>TAB<source>
 	mkdir -p "$(dirname "$STATE_FILE")"
-	{
-		printf '%s' "$STATE_KEEP"
-		while IFS= read -r line || [ -n "$line" ]; do
-			[ -n "$line" ] || continue
-			printf '%s%s%s\n' "$runtime" "$TAB" "$line"
-		done
-	} > "$STATE_FILE.tmp"
+	cat > "$STATE_FILE.tmp"
 	mv "$STATE_FILE.tmp" "$STATE_FILE"
 }
 
-state_mentions() { # <dest-rel> — exact-field check: does this runtime's state contain the path?
+state_mentions() { # <dest-rel> — exact-field check: does the state contain the path?
 	printf '%s' "$STATE_OWN" | awk -F '\t' -v r="$1" '$1 == r { found = 1 } END { exit !found }'
-}
-
-state_source_for() { # <dest-rel> — recorded source for a path (empty if absent)
-	printf '%s' "$STATE_OWN" | awk -F '\t' -v r="$1" '$1 == r { print $2; exit }'
 }
 
 # --- install (reconcile) --------------------------------------------------------
@@ -277,22 +251,15 @@ state_source_for() { # <dest-rel> — recorded source for a path (empty if absen
 # (readlink equals the recorded source). Everything else is reported, never
 # touched.
 
-reconcile_runtime() { # <runtime> — exits 1 if conflicts were found
-	local runtime="$1" root
-	root="$(runtime_root "$runtime")"
-
+reconcile() { # exits 1 if conflicts were found
 	local desired conflicts=0 created=0 updated=0 kept=0 pruned=0
-	desired="$(entities_for "$runtime")"
-	if ! printf '%s\n' "$desired" | check_duplicates; then
-		msg "  $runtime: configuration error — nothing installed"
-		return 1
-	fi
+	desired="$(entities)"
 
-	state_load "$runtime"
+	state_load
 
 	if [ "$(printf '%s\n' "$desired" | line_count)" -eq 0 ] && \
 	   [ "$(printf '%s' "$STATE_OWN" | line_count)" -eq 0 ]; then
-		msg "  $runtime: nothing to install (no entities in this repository)"
+		msg "  nothing to install (no skills/extensions/prompts in this repository)"
 		return 0
 	fi
 
@@ -302,7 +269,7 @@ reconcile_runtime() { # <runtime> — exits 1 if conflicts were found
 		[ -n "$line" ] || continue
 		rel="${line%%"$TAB"*}"
 		src="${line#*"$TAB"}"
-		dst="$root/$rel"
+		dst="$PI_ROOT/$rel"
 		if printf '%s\n' "$desired" | awk -F '\t' -v r="$rel" '$1 == r { found = 1 } END { exit !found }'; then
 			still_desired="${still_desired}${rel}${TAB}${src}"$'\n'   # handled in pass 2
 			continue
@@ -327,7 +294,7 @@ EOF
 		rel="${line%%"$TAB"*}"
 		src="${line#*"$TAB"}"
 		validate_entity "$rel" "$src"
-		dst="$root/$rel"
+		dst="$PI_ROOT/$rel"
 		mkdir -p "$(dirname "$dst")"
 		if [ -L "$dst" ]; then
 			cur="$(readlink "$dst")"
@@ -374,27 +341,26 @@ EOF
 $desired
 EOF
 
-	printf '%s\n' "$final_state" | state_save "$runtime"
+	printf '%s\n' "$final_state" | state_save
 
-	msg "  $runtime: $((created + updated + kept)) entity(ies) — $created created, $updated relinked, $kept up to date; $pruned pruned"
+	msg "  $((created + updated + kept)) entity(ies) — $created created, $updated relinked, $kept up to date; $pruned pruned"
 	if [ "$conflicts" -gt 0 ]; then
-		msg "  $runtime: $conflicts conflict(s) — conflicting targets were not touched"
+		msg "  $conflicts conflict(s) — conflicting targets were not touched"
 		return 1
 	fi
 }
 
 # --- uninstall ------------------------------------------------------------------
 
-uninstall_runtime() { # <runtime>
-	local runtime="$1" root removed=0 released=0 line rel src dst
-	root="$(runtime_root "$runtime")"
-	state_load "$runtime"
+uninstall() {
+	local removed=0 released=0 line rel src dst
+	state_load
 
 	while IFS= read -r line || [ -n "$line" ]; do
 		[ -n "$line" ] || continue
 		rel="${line%%"$TAB"*}"
 		src="${line#*"$TAB"}"
-		dst="$root/$rel"
+		dst="$PI_ROOT/$rel"
 		if [ -L "$dst" ] && [ "$(readlink "$dst")" = "$src" ]; then
 			rm "$dst"
 			msg "  removed  $rel"
@@ -409,36 +375,30 @@ uninstall_runtime() { # <runtime>
 $STATE_OWN
 EOF
 
-	printf '\n' | state_save "$runtime"
+	printf '' | state_save
 
 	if [ "$removed" -eq 0 ] && [ "$released" -eq 0 ]; then
-		msg "  $runtime: no owned links"
+		msg "  no owned links"
 	else
-		msg "  $runtime: removed $removed link(s), released $released (ownership forgotten)"
+		msg "  removed $removed link(s), released $released (ownership forgotten)"
 	fi
 }
 
 # --- status ----------------------------------------------------------------------
 
-status_runtime() { # <runtime>
-	local runtime="$1" root bin_path desired total
-	root="$(runtime_root "$runtime")"
-	if have_binary "$runtime"; then
-		bin_path="$(command -v "$runtime")"
-	else
-		bin_path="not found"
-	fi
-	desired="$(entities_for "$runtime")"
+status() {
+	local desired total
+	desired="$(entities)"
 	total="$(printf '%s\n' "$desired" | line_count)"
 
-	state_load "$runtime"
+	state_load
 	local managed uptodate=0 stale=0 missing=0 foreign=0 line rel src dst cur
 	managed="$(printf '%s' "$STATE_OWN" | line_count)"
 	while IFS= read -r line || [ -n "$line" ]; do
 		[ -n "$line" ] || continue
 		rel="${line%%"$TAB"*}"
 		src="${line#*"$TAB"}"
-		dst="$root/$rel"
+		dst="$PI_ROOT/$rel"
 		if [ -L "$dst" ]; then
 			cur="$(readlink "$dst")"
 			if printf '%s\n' "$desired" | awk -F '\t' -v r="$rel" -v s="$cur" '$1 == r && $2 == s { found = 1 } END { exit !found }'; then
@@ -455,13 +415,24 @@ status_runtime() { # <runtime>
 $STATE_OWN
 EOF
 
-	printf '  %s\n' "$runtime (binary: $bin_path)"
+	printf '  pi root: %s\n' "$PI_ROOT"
 	printf '    repository wants %s entity(ies)\n' "$total"
 	printf '    state: %s managed — %s up to date, %s relink needed, %s missing, %s redirected\n' \
 		"$managed" "$uptodate" "$stale" "$missing" "$foreign"
+
+	command_state_load
+	msg ""
+	if [ -L "$LAUNCHER" ] && [ "$CMD_DST" = "$LAUNCHER" ]; then
+		msg "command: $LAUNCHER -> $(readlink "$LAUNCHER")"
+	elif [ -e "$LAUNCHER" ] || [ -L "$LAUNCHER" ]; then
+		msg "command: $LAUNCHER (present, not managed by agent-kit)"
+	else
+		msg "command: not bootstrapped ($LAUNCHER)"
+	fi
+	msg "state file: $STATE_FILE"
 }
 
-# --- commands ----------------------------------------------------------------------
+# --- launcher ----------------------------------------------------------------------
 
 command_state_load() { # sets CMD_DST / CMD_SRC — ownership record for the launcher
 	local line dst src
@@ -524,125 +495,47 @@ bootstrap_self() { # own ~/.local/bin/agent-kit via its own ownership record
 	fi
 }
 
-detect_runtimes() {
-	local r
-	for r in $RUNTIMES; do
-		have_binary "$r" && printf '%s\n' "$r"
-	done
-	return 0
-}
-
-runtimes_in_state() {
-	[ -f "$STATE_FILE" ] || return 0
-	local r
-	while IFS= read -r r; do
-		is_runtime "$r" && printf '%s\n' "$r"
-	done < <(cut -f1 "$STATE_FILE" | sort -u)
-	return 0
-}
+# --- commands ----------------------------------------------------------------------
 
 cmd_install() {
-	local selected="" r rc=0 detected skipped found
-
-	if [ $# -eq 0 ]; then
-		detected="$(detect_runtimes)"
-		if [ -z "$detected" ]; then
-			die "no supported runtime found in PATH (looked for: $RUNTIMES); install one or pass an explicit name, e.g. 'agent-kit install pi'"
-		fi
-		for r in $detected; do
-			selected="$selected $r"
-		done
-		found="$detected"
-		skipped=""
-		for r in $RUNTIMES; do
-			case "$found" in
-			*"$r"*) : ;;
-			*) skipped="${skipped}  $r$TAB binary not found"$'\n' ;;
-			esac
-		done
-		msg "Detected:"
-		for r in $found; do
-			msg "  $r"
-		done
-		if [ -n "$skipped" ]; then
-			msg ""
-			msg "Skipped:"
-			printf '%s' "$skipped"
-		fi
-		msg ""
-	else
-		for r in "$@"; do
-			is_runtime "$r" || die "unknown runtime '$r' (supported: $RUNTIMES)"
-			selected="$selected $r"
-		done
-	fi
-
-	msg "Installing:"
-	for r in $selected; do
-		if ! have_binary "$r"; then
-			warn "$r: binary not found in PATH — installing anyway (explicit request)"
-		fi
-		reconcile_runtime "$r" || rc=1
-	done
+	msg "Installing (pi root: $PI_ROOT):"
+	migrate_legacy_state
+	local rc=0
+	reconcile || rc=1
 	bootstrap_self
 	return "$rc"
 }
 
 cmd_uninstall() {
-	local r rc=0
-	if [ $# -eq 0 ]; then
-		set -- $(runtimes_in_state)
-		if [ $# -eq 0 ]; then
-			msg "agent-kit owns no links"
-			return 0
-		fi
-	fi
-	for r in "$@"; do
-		is_runtime "$r" || die "unknown runtime '$r' (supported: $RUNTIMES)"
-		uninstall_runtime "$r" || rc=1
-	done
-	return "$rc"
-}
-
-cmd_status() {
-	local r
-	for r in $RUNTIMES; do
-		status_runtime "$r"
-	done
-	command_state_load
-	msg ""
-	if [ -L "$LAUNCHER" ] && [ "$CMD_DST" = "$LAUNCHER" ]; then
-		msg "command: $LAUNCHER -> $(readlink "$LAUNCHER")"
-	elif [ -e "$LAUNCHER" ] || [ -L "$LAUNCHER" ]; then
-		msg "command: $LAUNCHER (present, not managed by agent-kit)"
-	else
-		msg "command: not bootstrapped ($LAUNCHER)"
-	fi
-	msg "state file: $STATE_FILE"
+	migrate_legacy_state
+	uninstall
+	return 0
 }
 
 usage() {
 	cat <<'EOF'
-agent-kit — install shared and per-runtime agent assets
+agent-kit — install the personal Pi agent framework
 
 Usage:
-  agent-kit install [runtime...]    install (default: every runtime found in PATH)
-  agent-kit uninstall [runtime...]  remove owned links (default: all runtimes)
-  agent-kit status                  show link state per runtime
-  agent-kit help                    this text
+  agent-kit install     link skills/, extensions/, prompts/ into ~/.pi/agent
+  agent-kit uninstall   remove owned links from ~/.pi/agent
+  agent-kit status      show link state and launcher ownership
+  agent-kit help        this text
 
-Runtimes: pi, omp, opencode. Installing an explicit runtime works even if
-its binary is not in PATH (warning only). Install is a reconcile operation:
-re-running it from another checkout or worktree repoints agent-kit's own
-links to that checkout. Links and files agent-kit does not own are never
-touched.
+The repository layout is the desired state; entities are symlinked, never
+copied. Install is a reconcile operation: re-running it from another
+checkout or worktree repoints agent-kit's own links to that checkout.
+Links and files agent-kit does not own are never touched. State left by
+older multi-runtime versions of agent-kit is migrated once: links
+agent-kit provably owns are cleaned up or repointed, anything else is
+released.
 EOF
 }
 
 case "${1:-}" in
-install)   shift; cmd_install "$@" ;;
-uninstall) shift; cmd_uninstall "$@" ;;
-status)    shift; cmd_status "$@" ;;
+install)   shift; [ $# -eq 0 ] || die "agent-kit manages a single runtime; '${1:-}' is not a valid argument (see: agent-kit help)"; cmd_install ;;
+uninstall) shift; [ $# -eq 0 ] || die "agent-kit manages a single runtime; '${1:-}' is not a valid argument (see: agent-kit help)"; cmd_uninstall ;;
+status)    shift; [ $# -eq 0 ] || die "status takes no arguments (see: agent-kit help)"; status ;;
 -h|--help|help) usage ;;
 "")        usage ;;
 *)         die "unknown command '$1' (try: install, uninstall, status, help)" ;;

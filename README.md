@@ -1,154 +1,215 @@
 # agent-kit
 
-Единый источник общей agent-инфраструктуры: shared-скиллы, инвариантные
-от рантайма, плюс runtime-specific части для pi, OMP (oh-my-pi) и OpenCode.
-Один обычный git-репозиторий, без vendored-снапшотов и per-repo инсталлеров.
+Мой личный agent framework, ориентированный на **Pi** (pi-coding-agent).
+Один обычный git-репозиторий: canonical skills, deterministic Pi extensions,
+инсталлер с честной моделью владения ссылками.
+
+Это не multi-harness distribution. OMP и OpenCode были промежуточными
+этапами и больше не являются целями этого репозитория: их assets удалены
+из active architecture, а git history сохраняет их прошлое. Port под другой
+harness — это отдельный downstream-проект, который адаптирует canonical
+agent-kit под себя, а не уровень абстракции здесь.
 
 ## Структура
 
 ```
-shared/skills/<name>/          канонические runtime-independent скиллы
-runtimes/pi/                   pi: extensions/, skills/, prompts/
-runtimes/omp/                  OMP: extensions/, skills/, prompts/,
-                               managed-skills/, docs/, RULES.md, ...
-runtimes/opencode/             OpenCode: skills/, agents/, commands/,
-                               plugins/, AGENTS.md
-bin/agent-kit                  инсталлер (install / uninstall / status)
-tests/installer/run.sh         тесты ownership-семантики инсталлера
+skills/<name>/           canonical skill packages:
+                           SKILL.md      — semantic policy и judgment
+                           references/   — operating contracts (могут быть
+                                           Pi-specific, это нормально)
+                           scripts/      — только если skill'у реально нужны
+                                           свои скрипты
+extensions/<name>/       Pi extensions: deterministic runtime mechanics
+prompts/                 тонкие Pi prompt templates — workflow entrypoints
+                           /spec и /dev; связывают существующие skills,
+                           а не дублируют их policy
+bin/agent-kit            инсталлер (install / uninstall / status)
+tests/                   verification:
+                           installer/ — ownership-семантика инсталлера
+                           layout/    — бывшая multi-harness архитектура
+                                        не возвращается
+                           skills/    — валидация skill-пакетов и промптов
 ```
 
-Раскладка репозитория и есть desired state — отдельных манифестов или
-конфигов со списками файлов нет. Runtime-адаптер знает только convention'ы
-своего рантайма (куда класть skills/extensions/...). Правило размещения:
-**colocate first, extract shared second** — в `shared/` попадает только то,
-что реально используется несколькими рантаймами; похожие, но разные
-реализации (например, task-workspace у pi и у OMP) живут рядом в своих
-`runtimes/...`. Один и тот же логический item в `shared/skills/foo` и
-`runtimes/<rt>/skills/foo` — configuration error, инсталлер такое отвергает.
+Категория `scripts/` появляется в корне только тогда, когда в ней есть
+реальный контент; пустые директории ради схемы не создаются.
 
-`shared/skills/*` означает «можно ставить в каждый поддерживаемый
-skill-runtime». Если скилл зависит от рантайма, которого у части рантаймов
-нет, в каталоге скилла создаётся файл `runtimes` со списком имён через
-пробел (`pi omp`) — скилл ставится только в перечисленные. Нет файла —
-ставится везде. Это единственное исключение из правила «раскладка и есть
-desired state». Сейчас так помечены `git-task` и `git-commit`: оба
-завязаны на task-workspace runtime (`ensure_task_repo`,
-`checkpoint_commit`, `workspace_agent`), которого нет в OpenCode; для
-OpenCode своя colocated-версия коммит-скилла лежит в
-`runtimes/opencode/skills/git-commit`. Если когда-нибудь появится
-по-настоящему portable commit skill — объединим, а пока colocate first.
+## Workflow entrypoints
 
-Runtime-конфиги (`config.yml`, `mcp.json`, `opencode.json`, model-profiles)
-в link/reconcile-модель не входят: machine-local и генерируемое рантаймом
-владеть из репозитория нельзя. `runtimes/omp/config.yml` и `mcp.json` лежат
-в репозитории как portable-справочные копии, но не устанавливаются.
-OpenCode читает и `opencode.json`, и `opencode.jsonc` в одной конфиг-дире:
-файлы мержатся, и при конфликте ключей побеждает `jsonc`. Держите все
-настройки в одном файле, иначе правки одного могут молча перебиваться
-другим.
+`/spec` и `/dev` — тонкие Pi prompt templates (`~/.pi/agent/prompts/`):
+
+- **`/spec`** — Main владеет discovery: разговор с пользователем, product
+  и design решения, синтез evidence, canonical `SPEC.md`. Repository
+  analysis — по состоянию managed task worktree (explicit paths или
+  bounded research subagents с `cwd=<worktree>`), не dirty source
+  checkout. cwd Main-сессии не меняется.
+- **`/dev`** — Main — task controller: intent, решения, оркестрация,
+  review, integration. Мутация репозиториев выполняется RepoOwner'ами
+  (`workspace_agent`, по одному на writable repository, укоренёнными в
+  managed worktrees). Owner'ы реализуют и верифицируют внутри своих
+  worktrees; Main ревьюит результат и чинит через fresh owner.
+
+Промпты задают mode и связывают существующие capabilities (`skill://git-task`,
+`skill://implementation`, …); вся policy живет в skills/references.
+
+## Semantic policy vs deterministic mechanics
+
+Разделение сохранено, но это разделение не про portability:
+
+- **SKILL.md** — когда skill применяется, semantic policy, decision rules,
+  требования к результату. То, что решает модель.
+- **references/** — конкретные operating contracts, нужные для исполнения:
+  имена Pi-инструментов, аргументы, meaningful statuses, lifecycle
+  semantics, гарантии extension-кода. Модель не обязана знать реализацию —
+  только observable contract: какая гарантия существует и на что можно
+  положиться.
+
+Skill может быть Pi-specific, может требовать конкретную Pi extension и
+может не иметь смысла без deterministic capability. Правильный вопрос —
+«хорошо ли этот skill работает как часть agent-kit?», а не «можно ли
+скопировать его в произвольный harness?».
+
+Пилоты этого разделения:
+
+- `skills/git-task/` — `SKILL.md` (task policy, identity, base selection,
+  owners, review/repair) + `references/task-workspace.md` (контракт
+  `task_status` / `ensure_task_repo` / `remove_task_lane` и mutation guard)
+  + `references/repo-owners.md` (контракт `workspace_agent`, `needs_input`,
+  terminal lifecycle, repair).
+- `skills/git-commit/` — `SKILL.md` (checkpoint judgment, branch/ticket/
+  message policy, secrets) + `references/checkpoint.md` (контракт
+  `checkpoint_commit`: inputs, statuses, deferred-hook evidence).
+
+Где начинается конкретная Pi-механика, SKILL.md требует reference как
+mandatory: например, перед работой с task workspace — прочитать
+`references/task-workspace.md`.
+
+## Extensions
+
+`extensions/` — обычный Pi extension tree (глобальные расширения Pi живут
+в `~/.pi/agent/extensions/`):
+
+- **task-workspace** — managed task worktrees: `task_status`,
+  `ensure_task_repo`, `remove_task_lane`, `checkpoint_commit` и mutation
+  guard. Ядро (`flows.ts`, `git.ts`, `guard.ts`, `types.ts`) host-independent
+  и тестируется без Pi (`core-isolation.test.ts`); второй real consumer у
+  него отсутствует, поэтому library-уровень не выделяется.
+- **subagents** — subagent runtime и workspace-слой `workspace_agent`
+  (RepoOwner-протокол с readiness handshake, deadline и terminal envelope).
+- **ask** — структурные вопросы модели к пользователю/владельцу сессии.
+- **todo**, **continue-shortcut**, **agent-events**, **web-search**,
+  **perf-stats**, **footer** — task list, shortcut, events/статусы, поиск,
+  производительность, кастомный footer.
+
+`footer.ts` раньше назывался `omp-footer.ts`; имя отражало происхождение
+визуального дизайна, а не назначение — расширение переименовано.
 
 ## Install
 
 ```sh
-agent-kit install              # все рантаймы, найденные в PATH (pi, omp, opencode)
-agent-kit install pi           # явно один рантайм
-agent-kit install pi omp
-agent-kit uninstall [runtime]  # снять ссылки (по умолчанию — все свои)
-agent-kit status               # состояние ссылок по рантаймам
+./bin/agent-kit install      # из checkout'а; после этого доступно как agent-kit
+agent-kit install            # reconcile
+agent-kit status
+agent-kit uninstall
 ```
 
-- `install` без аргументов определяет рантаймы по бинарям и ставит только
-  найденные; остальные показывает как skipped.
-- Явный `install <rt>` работает даже без бинаря в PATH (только warning).
-- Установка — это symlinks из нативных директорий рантайма в этот checkout,
-  никогда копирование. Механизм — деталь инсталлера, не конфигурация.
-- Каждый `install` заодно ставит/обновляет команду
-  `~/.local/bin/agent-kit -> <этот checkout>/bin/agent-kit` (используемый
-  checkout подменяется при установке из worktree). После первого
-  `./bin/agent-kit install` команда доступна как просто `agent-kit`.
-  Лаунчер владеется отдельной ownership-записью (`command.tsv` рядом со
-  state) по тем же правилам, что и остальные ссылки: чужой symlink или
-  реальный файл на этом пути — warning без перезаписи, вручную
-  перенаправленный свой — освобождается без удаления. `uninstall` команду
-  не снимает.
-- Повторный `install` — reconcile: повторный запуск из того же checkout'а
-  ничего не меняет; запуск из другого checkout'а/worktree переносит ссылки
-  agent-kit на него (предыдущий checkout не модифицируется). Так удобно
+Инсталлер обслуживает ровно один runtime — Pi. Аргументов вида
+`install <runtime>`, autodetection бинарей и runtime marker-файлов больше
+нет. Раскладка репозитория и есть desired state:
+
+```
+skills/*     -> ~/.pi/agent/skills/*
+extensions/* -> ~/.pi/agent/extensions/*
+prompts/*    -> ~/.pi/agent/prompts/*   (если категория существует)
+```
+
+Установка — это symlinks из `~/.pi/agent` в этот checkout, никогда
+копирование. Override корня: `PI_AGENT_DIR` (по умолчанию `~/.pi/agent`).
+- Каждый `install` заодно ставит команду
+  `~/.local/bin/agent-kit -> <этот checkout>/bin/agent-kit`. Повторный
+  `install` из другого checkout'а/worktree переносит управляемые ссылки и
+  команду на него (предыдущий checkout не модифицируется) — так удобно
   переключаться между primary checkout'ом и task worktree.
-- Отдельных `--prune` / `--force` / update-команд нет: item, удалённый из
-  репозитория, убирается при следующем `install`.
+- Отдельных `--prune`/`--force` нет: item, удалённый из репозитория,
+  убирается при следующем `install`.
 
-Необязательные overrides корней: `PI_AGENT_DIR` (`~/.pi/agent`),
-`OMP_AGENT_DIR` (`~/.omp/agent`), `OPENCODE_CONFIG_DIR`
-(`~/.config/opencode`), `AGENT_KIT_ROOT` (используется тестами).
-
-OpenCode-специфика после первого `install`:
-
-- плагины (`runtimes/opencode/plugins/*.ts`) импортируют `@opencode-ai/plugin`:
-  в конфиг-дире нужен `package.json` с этой зависимостью и разовый
-  `npm install --prefix ~/.config/opencode` — без node_modules плагины
-  не загрузятся;
-- плагин `rtk.ts` требует `rtk` >= 0.23.0 в PATH: без бинаря он печатает
-  warning и отключается, остальной конфиг работает как обычно.
-
-## Ownership model
+### Ownership model
 
 Состояние — `~/.local/state/agent-kit/links.tsv` (или `$XDG_STATE_HOME`),
-одна строка на ссылку: `runtime`, путь внутри рантайма, source. Инварианты:
+одна строка на ссылку: `<dest-rel>\t<source>`. Инварианты:
 
-1. Управляется только ownership set — то, что записано в state. Чужие файлы
-   и ссылки в директориях рантайма никогда не сканируются и не удаляются.
+1. Управляется только ownership set — то, что записано в state. Содержимое
+   `~/.pi/agent` никогда не сканируется «на предмет всего своего».
 2. Запись в state не даёт права удалить путь. Ссылка снимается/переносится
    только если её текущая цель — в точности та, которую agent-kit записал
    последним `install`. Ссылка, перенаправленная вручную, не трогается:
-   ownership освобождается, а желание занять этот путь сообщается как
-   conflict (без `--force`; решение — вручную разобрать и перезапустить).
+   ownership освобождается, место сообщается как conflict.
 3. Item удалён из репозитория: если ссылка всё ещё наша — снимается; если
-   цель уже отсутствует — просто чистится state; если цель подменили — не
-   трогается, ownership забывается.
+   цель уже отсутствует — чистится state; если цель подменили — не
+   трогается.
 4. Real files, каталоги и чужие symlinks на желаемом пути — conflict,
    молча не перезаписываются никогда.
 5. Corrupt state не может расширить множество допустимых удалений — только
-   сузить. Каждая запись валидируется до любого обращения к файловой
-   системе: ровно три поля, безопасный относительный destination без
-   traversal (путь гарантированно внутри корня рантайма), абсолютный
-   source; мусорные строки отбрасываются с warning'ом.
+   сузить: каждая запись валидируется (ровно два поля, безопасный
+   относительный путь без traversal, абсолютный source), мусор отбрасывается
+   с warning'ом.
+6. `~/.local/bin/agent-kit` подчиняется тем же правилам через отдельную
+   запись (`command.tsv`): чужой real file или symlink не трогается, свой
+   launcher переносится при переключении checkout'а. `uninstall` команду не
+   снимает.
 
-`uninstall` снимает только ссылки, которые agent-kit доказуемо владеет
-(тот же критерий); остальное освобождается без удаления.
+### Legacy ownership state
+
+Версии agent-kit эпохи нескольких runtime'ов писали state в формате
+`<runtime>\t<dest-rel>\t<source>` для pi, omp и opencode. Первый же
+`install` или `uninstall` мигрирует его один раз:
+
+- строки pi переходят в текущий формат без потери владения;
+- строки omp/opencode убираются под их историческими корнями
+  (`~/.omp/agent`, `~/.config/opencode`) с тем же proof: удаляется
+  только ссылка, чья цель всё ещё в точности равна записанной; всё
+  остальное освобождается без удаления.
+
+Это разовая очистка, а не второй install target: никаких omp/opencode
+целей у инсталлера больше нет.
 
 ## Разработка из worktree
 
-`agent-kit install` из worktree переключает управляемые ссылки на этот
-worktree. Ссылки и state — единственное, что меняется; содержимое других
-worktree не затрагивается. `status` показывает, какой checkout сейчас
-активен (up to date / relink needed).
+`agent-kit install` из task worktree переключает управляемые ссылки на этот
+worktree; ссылки и state — единственное, что меняется. `status` показывает,
+какой checkout сейчас активен. Юнит-тесты расширений запускаются из репо
+так: `bun test extensions/<name>`. Разовом linker'ам нужны пакеты pi в
+`node_modules` (gitignored):
+
+```sh
+mkdir -p node_modules/@earendil-works
+ln -s ~/.local/lib/node_modules/@earendil-works/pi-coding-agent/node_modules/typebox node_modules/typebox
+ln -s ~/.local/lib/node_modules/@earendil-works/pi-coding-agent node_modules/@earendil-works/pi-coding-agent
+ln -s ~/.local/lib/node_modules/@earendil-works/pi-coding-agent/node_modules/@earendil-works/pi-ai node_modules/@earendil-works/pi-ai
+ln -s ~/.local/lib/node_modules/@earendil-works/pi-coding-agent/node_modules/@earendil-works/pi-tui node_modules/@earendil-works/pi-tui
+```
 
 ## Тесты
 
 ```sh
-tests/installer/run.sh      # 14 сценариев ownership-семантики, песочница с фейковым $HOME
-tests/installer/run.sh -v   # с выводом инсталлера
+tests/installer/run.sh    # 18 сценариев ownership-семантики и legacy-миграции
+tests/layout/run.sh       # retired-архитектура (shared/, runtimes/, markers,
+                          # runtime-ветки в инсталлере) не возвращается
+tests/skills/run.sh       # SKILL.md, references, skill://-цели, stale-язык
+bun test extensions       # юнит-тесты расширений
 ```
 
-Покрывают: autodetect, явный install без бинаря, первый install, идемпотентность,
-переключение checkout'ов, нетронутость чужих ссылок и real-file конфликтов,
-ручное перенаправление managed-ссылки, prune удалённых items (включая
-подменённую ссылку), scope uninstall, corrupt state, пути с пробелами,
-reject дубликатов. Юнит-тесты расширений лежат рядом с расширениями
-(`bun test runtimes/pi/extensions/<name>`, `bun test runtimes/omp/tests`).
+Сценарии installer-тестов: fresh install, идемпотентность, переключение
+checkout'ов, prune удалённых items (включая подменённую ссылку), нетронутость
+чужих ссылок и real-file конфликтов, corrupt/traversal state, пути с
+пробелами, launcher bootstrap/switch/ownership, legacy-миграция omp/opencode
+state, отказ от runtime-аргументов.
 
 ## Переезд со старой схемы
 
-- pi: ссылки от `pi-tuning/install.sh` agent-kit'у не принадлежат — первый
-  `agent-kit install pi` сообщит по ним conflict; один раз снять старые
-  ссылки (`install.sh` не имеет uninstall, ссылки удаляются вручную) и
-  перезапустить.
-- OMP: пока раскладку `~/.omp/agent` ведёт chezmoi (копии), `agent-kit
-  install omp` будет честно сообщать конфликты на реальных файлах. Перенос
-  OMP на agent-kit — убрать `dot_omp` из chezmoi-менеджмента, удалить
-  скопированное и прогнать `install omp`.
-- OpenCode: модель `vendor/opencode-bundle` + `install-vendored-bundle.sh`
-  заменена прямыми ссылками на `runtimes/opencode/*` и `shared/skills/*`;
-  персональный конфиг (`opencode.json`, model-profiles) остаётся в старом
-  репозитории и не мигрирует.
+- pi-ссылки переключаются на новый checkout обычным `agent-kit install`
+  (relink); расположение `shared/skills/<skill>` больше не используется.
+- omp/opencode-ссылки, созданные старым инсталлером, убираются
+  автоматически при первом `install`/`uninstall` (см. Legacy ownership
+  state). Ссылки, созданные другими инструментами (chezmoi, старые
+  install-скрипты), инсталлер не трогает — их снимает вручную владелец.
