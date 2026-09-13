@@ -33,7 +33,7 @@ import {
 	type SpawnFn,
 } from "./rpc-child";
 import { defaultResultsDir, loadResult, saveResult, summarizeText } from "./result-store";
-import { READINESS_ENV, parseReadinessPayload, type ReadinessPayload } from "./readiness";
+import { parseReadinessPayload, type ReadinessPayload } from "./readiness";
 import { ASK_WIRE_TITLE } from "./bridge-ask";
 import { formatAskRequestFlat, parseAskRequest, type AskInput } from "../ask/contract";
 import type {
@@ -187,10 +187,9 @@ export class LocalSubagentRuntime implements SubagentRuntime {
 			PI_SUBAGENT_LABEL: label,
 			PI_SUBAGENT_RESULTS_DIR: this.resultsDir,
 		};
+		// The readiness contract is not shipped to the child: the subagents-
+		// owned readiness probe imports PROFILE_READINESS directly (readiness.ts).
 		const readinessEntries = opts.readinessEntries ?? {};
-		if (Object.keys(readinessEntries).length > 0) {
-			env[READINESS_ENV] = Object.keys(readinessEntries).join(",");
-		}
 
 		const conn = new RpcChildConnection({
 			command: this.piInvocation.command,

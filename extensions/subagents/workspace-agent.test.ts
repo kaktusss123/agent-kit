@@ -605,10 +605,14 @@ describe("static preflight (A2b)", () => {
 });
 
 describe("N1 profile order and sequential report", () => {
-	test("reporting bridge loads BEFORE task-workspace (staleness hook survives blocked calls)", () => {
+	test("reporting bridge loads BEFORE task-workspace; the readiness probe is the last (observer) entry", () => {
 		const entries = defaultProfileEntries("/ext");
+		expect(entries).toHaveLength(3);
 		expect(entries[0]).toContain("reporting-bridge.ts");
 		expect(entries[1]).toContain(path.join("task-workspace", "index.ts"));
+		// The probe is a subagents-owned file and comes last: its session_start
+		// observer must not perturb the capability entries' tool_call order.
+		expect(entries[2]).toContain("readiness-probe.ts");
 	});
 });
 

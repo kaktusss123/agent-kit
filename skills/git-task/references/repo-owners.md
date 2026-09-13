@@ -10,7 +10,7 @@ Deterministic contract of the `workspace_agent` tool (subagents extension, works
 - `task` — the complete owner assignment: intent, applicable contract artifacts (e.g. SPEC.md), the worker report contract from SKILL.md, and the instruction to change only this repository.
 - The call blocks until a terminal outcome (`done`, `partial`, `blocked`) or `needs_input`.
 
-Dispatch is strict and fail closed: each profile extension entry in the child confirms readiness before the task prompt reaches a model; any refusal kills the child with `dispatched: false` and the task is never sent. After the prompt is accepted there is no automatic fallback — an abort detaches and the run keeps going; repair is a fresh dispatch.
+Dispatch is strict and fail closed: a subagents-owned readiness probe (the last profile entry in the child) confirms initialization from the child's actual session tool set before the task prompt reaches a model; any refusal kills the child with `dispatched: false` and the task is never sent. After the prompt is accepted there is no automatic fallback — an abort detaches and the run keeps going; repair is a fresh dispatch.
 
 `workspace_agent` is the only owner dispatch. If the tool is absent, returns `unsupported`, or fails readiness (`dispatched: false`), report the task blocked/unsupported. Do not substitute a generic `subagent` spawn: without the workspace layer there is no readiness validation, no enforced deadline, and no terminal envelope.
 

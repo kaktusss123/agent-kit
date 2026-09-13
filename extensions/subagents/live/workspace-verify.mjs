@@ -12,6 +12,10 @@
  *  L4 (A14)             explicit Main cancel → blocked cancelled_by_main.
  *  L5 (A9/A12)          generic child regression + allow-list policy.
  *  L6 (A2)              non-worktree dispatch → unsupported, no process.
+ *  L10 (R3.4)           fail-closed profile: missing entry → unsupported + no
+ *                       process; broken capability (registers nothing) →
+ *                       readiness handshake fails, child killed, task never
+ *                       reaches a model.
  */
 import { spawn, execSync } from "node:child_process";
 import * as fs from "node:fs";
@@ -360,6 +364,51 @@ const task1 = [
 			JSON.stringify(r?.details ?? r).slice(0, 140) + ` alive=${alive}`,
 		);
 	}
+}
+
+// ---------------- L10: fail-closed profile (R3.4) ---------------------------
+{
+	// L10a: profile entry file missing → static preflight refuses before any
+	// process exists.
+	const missingEntry = path.join(LIVE, "definitely-missing-entry.ts");
+	runCmd(`/wdrv-profile ${missingEntry}`);
+	dispatchCmd("L10a", { workspace: WS, task: "this task must never reach a model", timeout_ms: 60000 });
+	const r10a = await waitResult("L10a", 30000);
+	const l10a = log();
+	check(
+		"L10a/R3.4 missing profile entry → unsupported, dispatched:false, no process",
+		!!r10a && r10a.details?.status === "unsupported" && r10a.details?.dispatched === false
+			&& !l10a.events.some((e) => e.kind === "spawned" && e.resultKey === "L10a"),
+		JSON.stringify(r10a?.details ?? r10a).slice(0, 160),
+	);
+
+	// L10b: required capability broken (entry loads but registers NOTHING);
+	// the readiness probe is loaded, so the handshake RUNS and reports
+	// ok:false for the missing tools — the child is killed and the task is
+	// never dispatched to a model.
+	const emptyEntry = path.join(LIVE, "empty-entry.ts");
+	fs.writeFileSync(emptyEntry, "export default function () {}\n");
+	const probeEntry = path.join(DIR, "..", "readiness-probe.ts");
+	runCmd(`/wdrv-profile ${emptyEntry},${probeEntry}`);
+	dispatchCmd("L10b", { workspace: WS, task: "this task must never reach a model", timeout_ms: 60000 });
+	const r10b = await waitResult("L10b", 60000);
+	const l10b = log();
+	const spawned10b = l10b.events.find((e) => e.kind === "spawned" && e.resultKey === "L10b");
+	let alive10b = false;
+	if (spawned10b?.pid) {
+		for (let i = 0; i < 20; i++) {
+			try { process.kill(spawned10b.pid, 0); await sleep(250); } catch { alive10b = false; break; }
+			alive10b = true;
+		}
+	}
+	check(
+		"L10b/R3.4 broken capability → readiness fails, unsupported, dispatched:false, child killed",
+		!!r10b && r10b.details?.status === "unsupported" && r10b.details?.dispatched === false
+			&& !!spawned10b && !alive10b,
+		JSON.stringify(r10b?.details ?? r10b).slice(0, 200) + ` killed=${spawned10b ? !alive10b : "n/a"}`,
+	);
+
+	runCmd("/wdrv-profile reset");
 }
 
 // ----------------------------------------------------------------------------

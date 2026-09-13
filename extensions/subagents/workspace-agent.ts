@@ -33,7 +33,7 @@ import {
 	type Envelope,
 	type EnvelopeRecord,
 } from "./envelope";
-import { REPORTING_ENTRY_ID } from "./reporting-bridge";
+import { PROFILE_READINESS } from "./readiness";
 import { expandPath, git, isLinkedWorktree, realpath } from "../task-workspace/git";
 import { resolveTaskRoot } from "../task-workspace/task-root";
 import { formatNeedsInputBody } from "./delivery";
@@ -41,20 +41,6 @@ import type { AgentResult, AgentSnapshot, SpawnOptions, SubagentModelEvent } fro
 import type { AskInput } from "../ask/contract";
 
 // ============================================================ configuration
-
-/** Entry id of the task-workspace extension inside the child profile. */
-const TASK_WORKSPACE_ENTRY_ID = "task-workspace";
-
-/** Tools each profile entry must report as registered (readiness contract). */
-const PROFILE_READINESS: Record<string, string[]> = {
-	[TASK_WORKSPACE_ENTRY_ID]: [
-		"task_status",
-		"ensure_task_repo",
-		"checkpoint_commit",
-		"remove_task_lane",
-	],
-	[REPORTING_ENTRY_ID]: ["report_result"],
-};
 
 /** Report ladder depth: at most this many follow-ups before `blocked`. */
 const LADDER_MAX = 3;
@@ -853,12 +839,16 @@ export function createWorkspaceLayer(
  * staleness hook runs first — pi dispatches tool_call handlers in extension
  * order and stops at the first block, so a blocked call (e.g. the mutation
  * guard refusing a raw no-verify commit) must already have invalidated the
- * previous report_result envelope.
+ * previous report_result envelope. The readiness probe comes LAST as a pure
+ * observer (no tools, no tool_call hooks): its session_start handler fires
+ * after all factories have run anyway, and its position must not perturb the
+ * capability entries' handler order.
  */
 export function defaultProfileEntries(moduleDir: string): string[] {
 	return [
 		path.join(moduleDir, "reporting-bridge.ts"),
 		path.join(moduleDir, "..", "task-workspace", "index.ts"),
+		path.join(moduleDir, "readiness-probe.ts"),
 	];
 }
 

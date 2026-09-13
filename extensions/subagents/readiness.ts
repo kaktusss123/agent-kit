@@ -1,16 +1,16 @@
 /**
  * Readiness handshake protocol shared by the main-side controller and the
- * child-side profiled extensions.
+ * child-side readiness probe.
  *
  * Why: static entrypoint preflight proves files exist, and (since pi exits on
  * extension load errors in RPC mode) a broken import kills the child — but
  * neither proves that the extensions actually INITIALIZED (registered their
- * tools, bound their guards). Profiled children prove it themselves: each
- * additional extension entry opens a `workspace_readiness` dialog from its
- * `session_start` handler reporting the tool set it registered; the
- * controller acks, validates against the spawn's readiness contract, and
- * only then sends the task prompt (fail closed — the task never reaches the
- * model when readiness fails).
+ * tools, bound their guards). Profiled children prove it themselves: the
+ * readiness probe (`readiness-probe.ts`, the last profile entry) reads the
+ * real session tool set once from its `session_start` handler and reports per
+ * contract entry; the controller validates against this contract and only
+ * then sends the task prompt (fail closed — the task never reaches the model
+ * when readiness fails).
  *
  * Transport: the standard RPC extension UI protocol, using fire-and-forget
  * `notify` requests. Blocking dialogs (input) would deadlock: the RPC stdin
@@ -22,14 +22,46 @@
  * exists, and the controller-side readiness timeout stays the enforcer.
  *
  * This module stays free of runtime pi imports so both sides (and bun unit
- * tests) can use it: the child helper receives the ExtensionAPI object.
+ * tests) can use it.
+ *
+ * Module cycle note: the only reason this file imports from
+ * `./reporting-bridge` is the reporting entry id constant; reporting-bridge
+ * no longer imports this module (readiness signaling moved into the probe),
+ * so the dependency is acyclic and the entry id keeps exactly one source of
+ * truth.
  */
+
+import { REPORTING_ENTRY_ID } from "./reporting-bridge";
 
 /** Marker embedded in every readiness notify payload. */
 export const READINESS_PROTOCOL = "pi-subagents-readiness";
 
-/** Env var carrying the comma-separated readiness entry ids this child must confirm. */
-export const READINESS_ENV = "PI_SUBAGENT_READINESS";
+/**
+ * Entry id of the task-workspace extension inside the RepoOwner profile.
+ * Owned here (the controller's profile contract), never by the capability
+ * extension itself.
+ */
+export const TASK_WORKSPACE_ENTRY_ID = "task-workspace";
+
+/**
+ * The RepoOwner readiness contract — the single home for the
+ * entry id -> required tools mapping (SPEC R2).
+ *
+ * The controller declares and validates against it (`SpawnOptions.
+ * readinessEntries` -> `confirmReadiness`); the readiness probe
+ * (`readiness-probe.ts`) imports it and reports per entry from the child's
+ * real session tool set. Capability extensions (task-workspace,
+ * reporting-bridge) declare nothing — they must not know they are profiled.
+ */
+export const PROFILE_READINESS: Record<string, string[]> = {
+	[TASK_WORKSPACE_ENTRY_ID]: [
+		"task_status",
+		"ensure_task_repo",
+		"checkpoint_commit",
+		"remove_task_lane",
+	],
+	[REPORTING_ENTRY_ID]: ["report_result"],
+};
 
 export interface ReadinessPayload {
 	/** Protocol marker, always "pi-subagents-readiness". */
@@ -59,55 +91,4 @@ export function parseReadinessPayload(raw: string | undefined): ReadinessPayload
 	} catch {
 		return undefined;
 	}
-}
-
-/**
- * Child-side readiness signaling. Called by an additional extension entry's
- * factory when it is loaded into a profiled child; a no-op everywhere else
- * (the entry id must be requested via PI_SUBAGENT_READINESS, which the
- * controller sets only for children with a readiness contract — plain extra
- * extensions in non-profiled children never open the dialog).
- */
-export function signalChildReadiness(
-	pi: {
-		on(event: "session_start", handler: (event: unknown, ctx: {
-			ui: {
-				notify(message: string, notifyType?: "info" | "warning" | "error"): void;
-			};
-		}) => unknown): unknown;
-		getAllTools(): Array<{ name: string }>;
-	},
-	entryId: string,
-	requiredTools: string[],
-): void {
-	const requested = (process.env[READINESS_ENV] ?? "")
-		.split(",")
-		.map((s) => s.trim())
-		.filter(Boolean);
-	if (!requested.includes(entryId)) return;
-	pi.on("session_start", (_event, ctx) => {
-		let tools: string[] = [];
-		let listed = true;
-		try {
-			tools = pi.getAllTools().map((t) => t.name);
-		} catch {
-			listed = false;
-		}
-		const missing = requiredTools.filter((t) => !tools.includes(t));
-		const payload: ReadinessPayload = {
-			protocol: READINESS_PROTOCOL,
-			entry: entryId,
-			ok: listed && missing.length === 0,
-			tools,
-			missing,
-		};
-		try {
-			// Fire-and-forget: the request line reaches the controller
-			// immediately (see module docstring — no ack round-trip exists).
-			ctx.ui.notify(JSON.stringify(payload), "info");
-		} catch {
-			// Never let the handshake break child startup; the controller-side
-			// readiness timeout is the enforcement mechanism.
-		}
-	});
 }

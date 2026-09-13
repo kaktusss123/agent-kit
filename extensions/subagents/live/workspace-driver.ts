@@ -12,11 +12,14 @@
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import * as fs from "node:fs";
 import * as path from "node:path";
+import { fileURLToPath } from "node:url";
 import { LocalSubagentRuntime } from "../controller";
-import { createWorkspaceLayer } from "../workspace-agent";
+import { createWorkspaceLayer, defaultProfileEntries } from "../workspace-agent";
 
 const LIVE_DIR = process.env.PI_WDRV_LIVE_DIR ?? "/tmp/pi-workspace-live";
 const LOG = path.join(LIVE_DIR, "driver-log.json");
+/** Directory of the subagents extension (parent of live/). */
+const SUBAGENTS_DIR = path.join(path.dirname(fileURLToPath(import.meta.url)), "..");
 
 interface LogShape {
 	events: Array<{ at: number; kind: string; [k: string]: unknown }>;
@@ -54,7 +57,13 @@ export default function (pi: ExtensionAPI) {
 
 	const runtime = new LocalSubagentRuntime({ defaultCwd: LIVE_DIR });
 	runtime.onEvent((ev) => entry("generic-event", { event: { ...ev } }));
-	const layer = createWorkspaceLayer(pi, () => runtime);
+	// Profile override seam (live fail-closed proof): wdrv-profile replaces the
+	// RepoOwner profile for subsequent dispatches — pointing it at a missing or
+	// broken entry must fail closed before the task reaches a model.
+	let profileOverride: string[] | null = null;
+	const layer = createWorkspaceLayer(pi, () => runtime, {
+		profileEntries: () => profileOverride ?? defaultProfileEntries(SUBAGENTS_DIR),
+	});
 
 	pi.registerCommand("wdrv-log", {
 		description: "flush driver log marker",
@@ -115,6 +124,19 @@ export default function (pi: ExtensionAPI) {
 					entry("dispatch-error", { resultKey, error: String(e) });
 				}
 			})();
+		},
+	});
+
+	// wdrv-profile <comma-separated-paths|reset> — replace the RepoOwner
+	// profile for subsequent dispatches (missing/broken-entry fail-closed proof).
+	pi.registerCommand("wdrv-profile", {
+		description: "profile <comma-separated-paths|reset>",
+		handler: async (args) => {
+			const arg = args.trim();
+			profileOverride =
+				arg === "" || arg === "reset"
+					? null
+					: arg.split(",").map((s) => s.trim()).filter(Boolean);
 		},
 	});
 
