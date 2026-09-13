@@ -103,10 +103,14 @@ subagent runtime.
   tool set once from its `session_start` handler (fire-and-forget notify per
   contract entry; blocking dialogs would deadlock — the child's stdin reader
   attaches only after `rebindSession`). Capability extensions declare
-  nothing about readiness; the contract (`PROFILE_READINESS` in readiness.ts)
-  has a single home inside subagents. The controller validates entry ids,
-  `ok`, and required tools; failures kill the child with the task never
-  reaching a model (fail closed, `dispatched:false`).
+  nothing about readiness; the contract has a single home inside subagents
+  (`PROFILE_READINESS` in readiness.ts is the declared RepoOwner default the
+  workspace layer passes) and travels PER-SPAWN to the child via the
+  `PI_SUBAGENT_READINESS_CONTRACT` env var — the probe reports exactly what
+  its controller declared for this spawn (no/invalid env contract → no
+  handler, fail closed). The controller validates entry ids, `ok`, and
+  required tools; failures kill the child with the task never reaching a
+  model (fail closed, `dispatched:false`).
 - **Dispatch point**: readiness + RPC acceptance of the initial prompt.
   Everything before is `dispatched:false`; after it there is no fallback —
   abort detaches (the run continues), repair is a new RepoOwner.

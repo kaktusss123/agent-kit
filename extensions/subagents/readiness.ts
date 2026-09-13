@@ -21,6 +21,18 @@
  * carries the entry id and the registered tool set) — no ack round-trip
  * exists, and the controller-side readiness timeout stays the enforcer.
  *
+ * Contract transport: the readiness contract is PER-SPAWN, not global. The
+ * controller serializes the spawn's `SpawnOptions.readinessEntries` into the
+ * child env var `READINESS_CONTRACT_ENV` and the probe parses it there — a
+ * missing, unparseable, or wrong-shape contract means the probe registers
+ * nothing and the controller-side readiness timeout fails the spawn (fail
+ * closed; the probe never falls back to any global default). This module
+ * owns the env name, the validating parser, and the protocol types; the
+ * probe importing protocol constants from here stays fine, but the probe
+ * must not read `PROFILE_READINESS` as runtime configuration: any spawn can
+ * declare a different contract, and the child must report exactly what its
+ * controller declared.
+ *
  * This module stays free of runtime pi imports so both sides (and bun unit
  * tests) can use it.
  *
@@ -37,6 +49,14 @@ import { REPORTING_ENTRY_ID } from "./reporting-bridge";
 export const READINESS_PROTOCOL = "pi-subagents-readiness";
 
 /**
+ * Child env var carrying the per-spawn readiness contract (JSON, the exact
+ * `SpawnOptions.readinessEntries` map the controller validated against).
+ * Written by the controller at spawn time; parsed by the readiness probe at
+ * registration. Generic children (no readiness entries) never see it.
+ */
+export const READINESS_CONTRACT_ENV = "PI_SUBAGENT_READINESS_CONTRACT";
+
+/**
  * Entry id of the task-workspace extension inside the RepoOwner profile.
  * Owned here (the controller's profile contract), never by the capability
  * extension itself.
@@ -44,14 +64,18 @@ export const READINESS_PROTOCOL = "pi-subagents-readiness";
 export const TASK_WORKSPACE_ENTRY_ID = "task-workspace";
 
 /**
- * The RepoOwner readiness contract — the single home for the
- * entry id -> required tools mapping (SPEC R2).
+ * The RepoOwner readiness contract — the canonical declared default for the
+ * entry id -> required tools mapping (SPEC R2), owned here (the controller's
+ * profile contract), never by the capability extensions themselves.
  *
- * The controller declares and validates against it (`SpawnOptions.
- * readinessEntries` -> `confirmReadiness`); the readiness probe
- * (`readiness-probe.ts`) imports it and reports per entry from the child's
- * real session tool set. Capability extensions (task-workspace,
- * reporting-bridge) declare nothing — they must not know they are profiled.
+ * `workspace_agent` declares it per spawn (`SpawnOptions.readinessEntries`);
+ * the controller validates the child's reports against that map and ships
+ * the same map to the child via `READINESS_CONTRACT_ENV`. The readiness
+ * probe observes exactly what was declared — it must not import this
+ * constant as runtime configuration (a per-spawn contract may differ, and
+ * the child must not carry global policy). Capability extensions
+ * (task-workspace, reporting-bridge) declare nothing — they must not know
+ * they are profiled.
  */
 export const PROFILE_READINESS: Record<string, string[]> = {
 	[TASK_WORKSPACE_ENTRY_ID]: [
@@ -72,6 +96,29 @@ export interface ReadinessPayload {
 	tools: string[];
 	/** Required tools missing from the registered set. */
 	missing: string[];
+}
+
+/**
+ * Validate a raw per-spawn readiness contract (the JSON body of
+ * `READINESS_CONTRACT_ENV`): a plain object with string keys and values that
+ * are arrays of strings. Missing, unparseable, or wrong-shape input yields
+ * `undefined` so callers can fail closed instead of guessing a contract.
+ */
+export function parseReadinessContract(raw: string | undefined): Record<string, string[]> | undefined {
+	if (!raw) return undefined;
+	let parsed: unknown;
+	try {
+		parsed = JSON.parse(raw);
+	} catch {
+		return undefined;
+	}
+	if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return undefined;
+	const contract: Record<string, string[]> = {};
+	for (const [entry, tools] of Object.entries(parsed as Record<string, unknown>)) {
+		if (!Array.isArray(tools) || tools.some((t) => typeof t !== "string")) return undefined;
+		contract[entry] = tools as string[];
+	}
+	return contract;
 }
 
 export function parseReadinessPayload(raw: string | undefined): ReadinessPayload | undefined {

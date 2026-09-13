@@ -38,6 +38,11 @@ export interface SpawnOptions {
 	 * prompt is sent only after every listed entry confirmed readiness over
 	 * the extension UI protocol; otherwise the spawn fails with the child
 	 * killed and the task never reaching the model.
+	 *
+	 * This map is also the child-side truth: it travels verbatim to THIS
+	 * spawn via the `PI_SUBAGENT_READINESS_CONTRACT` env var, which the
+	 * subagents-owned readiness probe observes (generic children never get
+	 * the env var). The child carries no global readiness policy.
 	 */
 	readinessEntries?: Record<string, string[]>;
 	/**
