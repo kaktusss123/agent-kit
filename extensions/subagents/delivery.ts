@@ -130,7 +130,8 @@ function oneLine(text: string, max = 160): string {
 	return flat.length > max ? `${flat.slice(0, max)}…` : flat;
 }
 
-function formatDuration(ms: number): string {
+/** Compact human duration ("18s", "10m39s", "2h5m") shared by status views. */
+export function formatDuration(ms: number): string {
 	const s = Math.floor(ms / 1000);
 	if (s < 60) return `${s}s`;
 	const m = Math.floor(s / 60);

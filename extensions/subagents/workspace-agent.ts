@@ -36,6 +36,7 @@ import {
 import { PROFILE_READINESS } from "./readiness";
 import { expandPath, git, isLinkedWorktree, realpath } from "../task-workspace/git";
 import { resolveTaskRoot } from "../task-workspace/task-root";
+import { formatRunStatus, type RunStatusView } from "./activity";
 import { formatNeedsInputBody } from "./delivery";
 import type { AgentResult, AgentSnapshot, SpawnOptions, SubagentModelEvent } from "./types";
 import type { AskInput } from "../ask/contract";
@@ -46,6 +47,9 @@ import type { AskInput } from "../ask/contract";
 const LADDER_MAX = 3;
 
 const DEFAULT_TIMEOUT_MS = 600000;
+
+/** Live status refresh cadence: modest — a few seconds, not a spinner. */
+const STATUS_REFRESH_MS = 3000;
 
 // ================================================================ run model
 
@@ -86,6 +90,8 @@ interface WorkspaceAgentRun {
 	terminal?: TerminalOutcome;
 	deadlineFired: boolean;
 	deadlineTimer?: NodeJS.Timeout;
+	/** Live tool-progress refresh loop (operator observability); dead on terminal/needs_input/detach. */
+	statusTimer?: NodeJS.Timeout;
 	waiters: Array<(outcome: "settled" | "needs_input" | "detached") => void>;
 }
 
@@ -145,6 +151,16 @@ export interface DispatchContext {
 }
 
 /**
+ * Pi's tool progress channel: partial, display-only updates rendered in
+ * place on the tool call. Never enters Main's LLM context; calls after the
+ * tool promise settles are ignored by pi.
+ */
+type ToolUpdateCallback = (update: {
+	content: Array<{ type: "text"; text: string }>;
+	details?: unknown;
+}) => void;
+
+/**
  * Runtime subset the workspace layer needs. LocalSubagentRuntime satisfies
  * this structurally; the interface keeps the runtime swappable in tests and
  * documents that the layer never creates controllers itself (SPEC D1).
@@ -167,6 +183,8 @@ export interface WorkspaceAgentRuntime {
 export interface WorkspaceLayerOptions {
 	/** Override the profile entrypoint paths (tests: point at missing files). */
 	profileEntries?: () => string[];
+	/** Live status refresh interval override (tests: fast cadence). */
+	statusRefreshMs?: number;
 }
 
 export function createWorkspaceLayer(
@@ -203,6 +221,7 @@ export function createWorkspaceLayer(
 	// ~/.agent-kit/tasks default. This layer never computes a filesystem
 	// layout itself.
 	const taskRoot = resolveTaskRoot();
+	const statusRefreshMs = opts?.statusRefreshMs ?? STATUS_REFRESH_MS;
 
 	/** The bound runtime (events and settlement only run after a dispatch bound it). */
 	const rt = (): WorkspaceAgentRuntime => {
@@ -443,6 +462,59 @@ export function createWorkspaceLayer(
 
 	// -------------------------------------------------------------- deadline
 
+	/**
+	 * Live operator observability: while Main stays blocked inside this tool
+	 * call, periodically render a truthful snapshot of the run (identity,
+	 * state, elapsed/deadline, session, current + recent child activity) into
+	 * the tool call via Pi's transient onUpdate channel. No context
+	 * propagation — the child transcript stays isolated; this is progress UI.
+	 */
+	function startLiveStatus(run: WorkspaceAgentRun, onUpdate: ToolUpdateCallback | undefined): void {
+		if (!onUpdate) return; // no progress channel (e.g. bare execute callers)
+		emitStatus(run, onUpdate);
+		const timer = setInterval(() => emitStatus(run, onUpdate), statusRefreshMs);
+		timer.unref?.();
+		run.statusTimer = timer;
+	}
+
+	function stopLiveStatus(run: WorkspaceAgentRun): void {
+		if (run.statusTimer) {
+			clearInterval(run.statusTimer);
+			run.statusTimer = undefined;
+		}
+	}
+
+	function emitStatus(run: WorkspaceAgentRun, onUpdate: ToolUpdateCallback): void {
+		try {
+			const snap = rt().inspect(run.agentId)[0];
+			if (!snap) return;
+			onUpdate({ content: [{ type: "text" as const, text: formatRunStatus(buildStatusView(run, snap)) }] });
+		} catch {
+			// Rendering must never break the run.
+		}
+	}
+
+	function buildStatusView(run: WorkspaceAgentRun, snap: AgentSnapshot): RunStatusView {
+		const now = Date.now();
+		return {
+			runId: run.runId,
+			agentId: run.agentId,
+			workspace: run.workspace,
+			state: run.state,
+			...(run.ladder > 0 ? { ladder: { step: run.ladder, max: LADDER_MAX } } : {}),
+			elapsedMs: now - run.startedAt,
+			deadlineMsLeft: Math.max(0, run.deadline - now),
+			pid: snap.pid,
+			model: snap.model,
+			thinking: snap.thinking,
+			sessionId: snap.sessionId,
+			sessionFile: snap.sessionFile,
+			activeTool: snap.activeTool,
+			recentActivity: snap.recentActivity,
+			now,
+		};
+	}
+
 	function armDeadline(run: WorkspaceAgentRun): void {
 		const remaining = Math.max(0, run.deadline - Date.now());
 		run.deadlineTimer = setTimeout(() => {
@@ -607,7 +679,7 @@ export function createWorkspaceLayer(
 			"needs_input suspends the run without finishing it: answer via subagent op=respond (allowed for RepoOwners); the run continues under the same deadline.",
 			"If a RepoOwner failed, do not re-dispatch blindly: inspect its worktree — after dispatch there is no fallback, the repair path is a new RepoOwner with inspection.",
 		],
-		async execute(_toolCallId, params, signal, _onUpdate, ctx) {
+		async execute(_toolCallId, params, signal, onUpdate, ctx) {
 			// Bind the runtime (lazy in the host) for whichever mode runs.
 			R(ctx.cwd);
 			// Query-mode: durable lookup by runId or agentId.
@@ -617,7 +689,7 @@ export function createWorkspaceLayer(
 			if (!params.workspace || !params.task) {
 				return err("dispatch-mode requires `workspace` and `task` (or `run_id` for query-mode)");
 			}
-			return dispatch(params.workspace, params.task, params.timeout_ms, signal, ctx);
+			return dispatch(params.workspace, params.task, params.timeout_ms, signal, onUpdate, ctx);
 		},
 	});
 
@@ -634,6 +706,7 @@ export function createWorkspaceLayer(
 		task: string,
 		timeoutMs: number | undefined,
 		signal: AbortSignal | undefined,
+		onUpdate: ToolUpdateCallback | undefined,
 		ctx: DispatchContext,
 	): Promise<ToolResult> {
 		// Pre-dispatch gate 1: model pinning — no silent defaults.
@@ -716,45 +789,53 @@ export function createWorkspaceLayer(
 		runsByRunId.set(runId, run);
 		runsByAgentId.set(snap.id, run);
 		armDeadline(run);
+		startLiveStatus(run, onUpdate);
 
 		// Blocking wait: terminal or needs_input. Abort = detach (the run
 		// keeps going; completion arrives as an event / via query-mode).
-		const waitOutcome = await new Promise<"settled" | "needs_input" | "detached">((resolve) => {
-			const w = (outcome: "settled" | "needs_input" | "detached") => {
-				// Self-remove: a detached/resolved waiter must not linger in the
-				// run's waiter list (it would swallow later needs_input
-				// notifications that Main still has to see).
-				const idx = run.waiters.indexOf(w);
-				if (idx !== -1) run.waiters.splice(idx, 1);
-				cleanup();
-				resolve(outcome);
-			};
-			run.waiters.push(w);
-			const onAbort = () => w("detached");
-			function cleanup() {
-				signal?.removeEventListener("abort", onAbort);
-			}
-			signal?.addEventListener("abort", onAbort, { once: true });
-			// The abort may have fired while spawn was still resolving
-			// (acceptance won the race): detach immediately.
-			if (signal?.aborted) w("detached");
-		});
-
-		if (waitOutcome === "detached") {
-			return ok({
-				status: run.terminal ? run.terminal.status : "running",
-				dispatched: true,
-				workspace: realWorkspace,
-				agentId: run.agentId,
-				runId,
-				state: run.state,
-				deadlineMsLeft: Math.max(0, run.deadline - Date.now()),
-				...(run.terminal
-					? {}
-					: { reason: "detached by main abort; the run continues under its deadline — completion arrives as [workspace_agent completed] or via workspace_agent(run_id)" }),
+		try {
+			const waitOutcome = await new Promise<"settled" | "needs_input" | "detached">((resolve) => {
+				const w = (outcome: "settled" | "needs_input" | "detached") => {
+					// Self-remove: a detached/resolved waiter must not linger in the
+					// run's waiter list (it would swallow later needs_input
+					// notifications that Main still has to see).
+					const idx = run.waiters.indexOf(w);
+					if (idx !== -1) run.waiters.splice(idx, 1);
+					cleanup();
+					resolve(outcome);
+				};
+				run.waiters.push(w);
+				const onAbort = () => w("detached");
+				function cleanup() {
+					signal?.removeEventListener("abort", onAbort);
+				}
+				signal?.addEventListener("abort", onAbort, { once: true });
+				// The abort may have fired while spawn was still resolving
+				// (acceptance won the race): detach immediately.
+				if (signal?.aborted) w("detached");
 			});
+
+			if (waitOutcome === "detached") {
+				return ok({
+					status: run.terminal ? run.terminal.status : "running",
+					dispatched: true,
+					workspace: realWorkspace,
+					agentId: run.agentId,
+					runId,
+					state: run.state,
+					deadlineMsLeft: Math.max(0, run.deadline - Date.now()),
+					...(run.terminal
+						? {}
+						: { reason: "detached by main abort; the run continues under its deadline — completion arrives as [workspace_agent completed] or via workspace_agent(run_id)" }),
+				});
+			}
+			return ok(runResult(run));
+		} finally {
+			// The progress loop dies on EVERY exit: terminal, needs_input,
+			// detach, and thrown errors. No leaked timers, no updates after the
+			// tool call settled.
+			stopLiveStatus(run);
 		}
-		return ok(runResult(run));
 	}
 
 	// ----------------------------------------------------------------- query

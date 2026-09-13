@@ -43,10 +43,17 @@ import type {
 	SpawnOptions,
 	SubagentModelEvent,
 	SubagentRuntime,
+	ToolActivity,
 	WaitOutcome,
 } from "./types";
+import { summarizeToolActivity } from "./activity";
 
-/** Directory of this module (works under jiti and node). */
+/** Live tool-activity bounds: status telemetry, never a log buffer. */
+const ACTIVE_TOOLS_MAX = 8;
+const RECENT_ACTIVITY_MAX = 4;
+
+/** An active tool entry keeps its RPC correlation id internally. */
+type ActiveToolEntry = ToolActivity & { toolCallId: string };
 
 export interface ControllerOptions {
 	/** Fallback cwd for children when spawn() has no cwd (main cwd). */
@@ -92,6 +99,10 @@ interface AgentRecord {
 	exitCode?: number | null;
 	signal?: string | null;
 	pendingQuestion?: { requestId: string; request: AskInput; question: string; askedAt: number };
+	/** Tools currently executing, keyed by toolCallId (pi may run tools in parallel). */
+	activeTools: Map<string, ActiveToolEntry>;
+	/** Most recently finished tools, oldest first, hard-capped (RECENT_ACTIVITY_MAX). */
+	recentActivity: ToolActivity[];
 	cancelRequested: boolean;
 	/**
 	 * New work was dispatched (prompt + streamingBehavior) while the agent
@@ -215,6 +226,8 @@ export class LocalSubagentRuntime implements SubagentRuntime {
 			conn,
 			startedAt: Date.now(),
 			lastActivityAt: Date.now(),
+			activeTools: new Map(),
+			recentActivity: [],
 			cancelRequested: false,
 			pendingDispatch: false,
 			runActive: false,
@@ -334,8 +347,19 @@ export class LocalSubagentRuntime implements SubagentRuntime {
 		// leave a phantom pending question behind. Workspace-routed
 		// children also learn about the resolution (input_resolved), so the
 		// run registry stops reporting a question that is no longer pending.
-		if (type === "tool_execution_end" && ev.toolName === ASK_TOOL) {
-			if (record.pendingQuestion) {
+		if (type === "tool_execution_start") {
+			this.trackToolStart(record, ev);
+			return;
+		}
+		if (type === "tool_execution_end") {
+			this.trackToolEnd(record, ev);
+			// The ask tool call ended: the dialog was resolved one way or
+			// another (answer, user dismiss, or an abort that never sends an
+			// extension_ui_response). Sync the controller so the child cannot
+			// leave a phantom pending question behind. Workspace-routed
+			// children also learn about the resolution (input_resolved), so the
+			// run registry stops reporting a question that is no longer pending.
+			if (ev.toolName === ASK_TOOL && record.pendingQuestion) {
 				record.pendingQuestion = undefined;
 				if (record.state === "waiting_input") record.state = "running";
 				if (record.eventRoute === "workspace") {
@@ -353,6 +377,8 @@ export class LocalSubagentRuntime implements SubagentRuntime {
 			record.endedAt = undefined;
 			record.pendingQuestion = undefined;
 			record.pendingDispatch = false;
+			record.activeTools.clear();
+			record.recentActivity = [];
 			if (!record.cancelRequested && record.state !== "starting") {
 				record.state = "running";
 			}
@@ -367,7 +393,7 @@ export class LocalSubagentRuntime implements SubagentRuntime {
 			// Collect state, final text, and stats. Responses correlate by
 			// command, so all three can go out at once.
 			record.settleFetchDone = false;
-			connGetState(record);
+			connGetState(record, "ctl-state");
 			connGetStats(record);
 			connGetLastText(record);
 			return;
@@ -385,6 +411,10 @@ export class LocalSubagentRuntime implements SubagentRuntime {
 				if (!record.spawnSettled) {
 					record.spawnSettled = true;
 					record.state = "running";
+					// Session identity is fetched EARLY (single RPC request, no
+					// polling) so the live operator view can show the session id
+					// while the child runs — not only after settlement.
+					if (ev.success === true) connGetState(record, "ctl-state-early");
 					for (const w of record.spawnWaiters.splice(0)) w(ev.success === true);
 					if (ev.success !== true) {
 						record.lastError = `initial prompt rejected: ${String(ev.error ?? "unknown")}`;
@@ -395,8 +425,14 @@ export class LocalSubagentRuntime implements SubagentRuntime {
 			}
 			if (cmd === "get_state" && ev.success === true) {
 				const data = ev.data as { sessionFile?: string; sessionId?: string } | undefined;
-				record.sessionFile = data?.sessionFile ?? record.sessionFile;
 				record.sessionId = data?.sessionId ?? record.sessionId;
+				// sessionFile is only taken from the settle-time fetch: pi creates
+				// the file lazily (on the first persisted assistant message), so an
+				// early path would dangle for children that die before then. Its
+				// presence keeps meaning "a session file exists on disk".
+				if (ev.id !== "ctl-state-early") {
+					record.sessionFile = data?.sessionFile ?? record.sessionFile;
+				}
 				return;
 			}
 			if (cmd === "get_last_assistant_text" && ev.success === true) {
@@ -910,6 +946,47 @@ export class LocalSubagentRuntime implements SubagentRuntime {
 
 	// ---------------------------------------------------------------- internal
 
+	/**
+	 * Authoritative child activity, distilled for the live operator view.
+	 * tool_execution_start (name + conservatively summarized args) opens a
+	 * bounded active window keyed by toolCallId; tool_execution_end closes it
+	 * into the hard-capped recent list. Unmatched or id-less ends are ignored
+	 * rather than guessed.
+	 */
+	private trackToolStart(record: AgentRecord, ev: Record<string, unknown>): void {
+		const name = typeof ev.toolName === "string" && ev.toolName ? ev.toolName : "tool";
+		const toolCallId = typeof ev.toolCallId === "string" && ev.toolCallId
+			? ev.toolCallId
+			: `unmatched-${Date.now()}-${record.activeTools.size}`;
+		if (record.activeTools.size >= ACTIVE_TOOLS_MAX) {
+			const oldest = record.activeTools.keys().next().value;
+			if (oldest !== undefined) record.activeTools.delete(oldest);
+		}
+		record.activeTools.set(toolCallId, {
+			toolCallId,
+			name,
+			summary: summarizeToolActivity(name, ev.args),
+			startedAt: Date.now(),
+		});
+	}
+
+	private trackToolEnd(record: AgentRecord, ev: Record<string, unknown>): void {
+		const toolCallId = typeof ev.toolCallId === "string" ? ev.toolCallId : undefined;
+		if (toolCallId === undefined) return;
+		const ended = record.activeTools.get(toolCallId);
+		if (!ended) return;
+		record.activeTools.delete(toolCallId);
+		record.recentActivity.push({
+			name: ended.name,
+			summary: ended.summary,
+			startedAt: ended.startedAt,
+			endedAt: Date.now(),
+		});
+		if (record.recentActivity.length > RECENT_ACTIVITY_MAX) {
+			record.recentActivity.splice(0, record.recentActivity.length - RECENT_ACTIVITY_MAX);
+		}
+	}
+
 	private pushEvent(record: AgentRecord, ev: SubagentModelEvent, opts?: { background?: boolean }): void {
 		// Event router: a workspace-routed child's lifecycle events belong to
 		// the workspace run registry — waiters and generic listeners never see
@@ -959,6 +1036,7 @@ export class LocalSubagentRuntime implements SubagentRuntime {
 			task: record.task,
 			cwd: record.cwd,
 			model: record.model,
+			thinking: record.thinking,
 			alive: !record.conn.exit,
 			pid: record.conn.pid,
 			startedAt: record.startedAt,
@@ -971,6 +1049,8 @@ export class LocalSubagentRuntime implements SubagentRuntime {
 			lastError: record.lastError ?? record.runError,
 			exitCode: record.exitCode,
 			signal: record.signal,
+			activeTool: newestActiveTool(record),
+			recentActivity: record.recentActivity.map((entry) => ({ ...entry })),
 		};
 	}
 }
@@ -981,8 +1061,8 @@ function agentRef(record: AgentRecord): string {
 	return record.id;
 }
 
-function connGetState(record: AgentRecord): void {
-	record.conn.send({ id: "ctl-state", type: "get_state" });
+function connGetState(record: AgentRecord, id = "ctl-state"): void {
+	record.conn.send({ id, type: "get_state" });
 }
 
 function connGetStats(record: AgentRecord): void {
@@ -1011,6 +1091,14 @@ function eventToOutcome(ev: SubagentModelEvent): WaitOutcome {
 
 function isTerminal(state: AgentState): boolean {
 	return state === "completed" || state === "failed" || state === "cancelled";
+}
+
+/** The newest still-executing tool (Map preserves insertion order), id stripped. */
+function newestActiveTool(record: AgentRecord): ToolActivity | undefined {
+	let newest: ActiveToolEntry | undefined;
+	for (const entry of record.activeTools.values()) newest = entry;
+	if (!newest) return undefined;
+	return { name: newest.name, summary: newest.summary, startedAt: newest.startedAt };
 }
 
 /** Directory of this module (works under jiti and node). */

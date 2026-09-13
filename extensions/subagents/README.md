@@ -134,6 +134,21 @@ subagent runtime.
   queryable via `workspace_agent(run_id)` for the rest of the session.
 - **Model pinning**: the child runs with the main session's resolved model
   and thinking level; without a model the dispatch is refused (`blocked`).
+- **Live operator observability**: while a blocking dispatch waits, the tool
+  call re-renders a compact status view via Pi's transient `onUpdate`
+  channel (display-only — never Main's LLM context, child transcript stays
+  isolated). The view shows run identity (runId/agentId/workspace), run
+  state (`running | waiting_input | settling | terminating`, plus
+  `report recovery n/3` while the ladder is active), elapsed time and
+  deadline left, pid, model/thinking, the child's session id, and the
+  child's authoritative tool activity: `tool_execution_start` opens the
+  current tool (name + conservatively bounded argument preview:
+  command/path/pattern/query — never full argument blobs, never output),
+  `tool_execution_end` moves it into a hard-capped recent list (4 entries).
+  Session identity is fetched with a single `get_state` right after prompt
+  acceptance, so it is visible while the child runs, not only after
+  settlement. The refresh loop ticks every 3 s and is stopped on every exit
+  path: terminal, needs_input, detach, and thrown errors.
 
 Live verification: `node live/workspace-verify.mjs` (spawns a real main pi
 process and real children on the default model; covering the acceptance
