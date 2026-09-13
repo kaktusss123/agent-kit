@@ -71,6 +71,19 @@ export interface PendingQuestion {
 	askedAt: number;
 }
 
+/**
+ * One bounded tool-activity entry distilled from the child's authoritative
+ * `tool_execution_start` / `tool_execution_end` RPC events. `summary` is a
+ * conservatively extracted, aggressively truncated argument preview
+ * (path/command/query) — never a serialized argument blob, never tool output.
+ */
+export interface ToolActivity {
+	name: string;
+	summary?: string;
+	startedAt: number;
+	endedAt?: number;
+}
+
 /** Immutable point-in-time view of an agent. */
 export interface AgentSnapshot {
 	id: string;
@@ -79,6 +92,7 @@ export interface AgentSnapshot {
 	task: string;
 	cwd: string;
 	model?: string;
+	thinking?: string;
 	alive: boolean;
 	pid?: number;
 	startedAt: number;
@@ -91,6 +105,10 @@ export interface AgentSnapshot {
 	lastError?: string;
 	exitCode?: number | null;
 	signal?: string | null;
+	/** Tool currently executing in the child (newest start while several run in parallel). */
+	activeTool?: ToolActivity;
+	/** Most recently finished tools, oldest first, hard-capped (status telemetry, not a log). */
+	recentActivity?: ToolActivity[];
 }
 
 /** Persisted result for one agent run (the "lazy full result"). */

@@ -200,11 +200,11 @@ export function settleRun(proc: FakeRpcProcess, finalText: string): void {
 			clearInterval(timer);
 			return;
 		}
-		const stateCmd = proc.commands.find((c) => c.type === "get_state");
-		const statsCmd = proc.commands.find((c) => c.type === "get_session_stats");
-		const textCmd = proc.commands.find((c) => c.type === "get_last_assistant_text");
-		try {
-			if (stateCmd) {
+		// Drain ALL outstanding state/stats fetches (an early identity fetch may
+		// coexist with the settle-time one), then answer the text fetch last.
+		let stateCmd = proc.commands.find((c) => c.type === "get_state");
+		while (stateCmd) {
+			try {
 				proc.writeToStdout({
 					id: stateCmd.id,
 					type: "response",
@@ -213,8 +213,15 @@ export function settleRun(proc: FakeRpcProcess, finalText: string): void {
 					data: { sessionFile: "/tmp/fake-session.jsonl", sessionId: "fake-session" },
 				});
 				proc.commands.splice(proc.commands.indexOf(stateCmd), 1);
+			} catch {
+				clearInterval(timer);
+				return;
 			}
-			if (statsCmd) {
+			stateCmd = proc.commands.find((c) => c.type === "get_state");
+		}
+		let statsCmd = proc.commands.find((c) => c.type === "get_session_stats");
+		while (statsCmd) {
+			try {
 				proc.writeToStdout({
 					id: statsCmd.id,
 					type: "response",
@@ -223,8 +230,15 @@ export function settleRun(proc: FakeRpcProcess, finalText: string): void {
 					data: { tokens: { input: 10, output: 5, total: 15 }, cost: 0.01 },
 				});
 				proc.commands.splice(proc.commands.indexOf(statsCmd), 1);
+			} catch {
+				clearInterval(timer);
+				return;
 			}
-			if (textCmd) {
+			statsCmd = proc.commands.find((c) => c.type === "get_session_stats");
+		}
+		const textCmd = proc.commands.find((c) => c.type === "get_last_assistant_text");
+		if (textCmd) {
+			try {
 				proc.writeToStdout({
 					id: textCmd.id,
 					type: "response",
@@ -233,9 +247,9 @@ export function settleRun(proc: FakeRpcProcess, finalText: string): void {
 					data: { text: finalText },
 				});
 				clearInterval(timer);
+			} catch {
+				clearInterval(timer);
 			}
-		} catch {
-			clearInterval(timer);
 		}
 	}, 1);
 }

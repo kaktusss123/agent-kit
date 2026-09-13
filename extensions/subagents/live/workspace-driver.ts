@@ -92,11 +92,21 @@ export default function (pi: ExtensionAPI) {
 			entry("dispatch-start", { resultKey, workspace: req.workspace });
 			void (async () => {
 				try {
+					// onUpdate: Pi's transient tool-progress channel. The driver
+					// logs a bounded tail so the verify script can prove live
+					// observability (progress UI, never Main context).
+					const progress: Array<{ at: number; text: string }> = [];
+					const onUpdate = (u: { content: Array<{ type: string; text: string }> }) => {
+						const text = u.content.map((c) => (c.type === "text" ? c.text : "")).join("\n");
+						progress.push({ at: Date.now(), text });
+						if (progress.length > 100) progress.splice(0, progress.length - 100);
+						entry("progress", { resultKey, count: progress.length, last: text });
+					};
 					const pending = (workspaceTool as { execute: Function }).execute(
 						`drv-${resultKey}`,
 						{ workspace: req.workspace, task: req.task, timeout_ms: req.timeout_ms },
 						undefined,
-						undefined,
+						onUpdate,
 						ctx,
 					);
 					// Log the spawned child pid as soon as it exists: the newest
@@ -115,9 +125,9 @@ export default function (pi: ExtensionAPI) {
 					}, 200);
 					const res = (await pending) as { details: Record<string, unknown> };
 					clearInterval(pidTimer);
-					log.results[resultKey] = { details: res.details };
+					log.results[resultKey] = { details: res.details, updates: progress };
 					flush();
-					entry("dispatch-result", { resultKey, status: res.details.status });
+					entry("dispatch-result", { resultKey, status: res.details.status, updateCount: progress.length });
 				} catch (e) {
 					log.results[resultKey] = { error: String(e) };
 					flush();
