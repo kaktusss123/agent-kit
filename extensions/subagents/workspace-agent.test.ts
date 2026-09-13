@@ -55,14 +55,11 @@ function makeLayer(layerOpts?: { profileEntries?: () => string[]; killGraceMs?: 
 	fs.mkdirSync(tmp, { recursive: true });
 	fs.mkdirSync(taskRootRaw, { recursive: true });
 	const taskRoot = fs.realpathSync(taskRootRaw);
-	// Pin the task root for the layer under test: the generic
-	// AGENT_TASK_ROOT is cleared so an ambient value cannot override the
-	// fixture, and the legacy OMP_TASK_ROOT alias proves it still feeds
-	// the layer. Restored in cleanup().
+	// Pin the task root for the layer under test: AGENT_TASK_ROOT is set
+	// to the fixture, proving the override feeds the layer (and that an
+	// ambient value cannot leak). Restored in cleanup().
 	const previousGeneric = process.env.AGENT_TASK_ROOT;
-	const previousLegacy = process.env.OMP_TASK_ROOT;
-	delete process.env.AGENT_TASK_ROOT;
-	process.env.OMP_TASK_ROOT = taskRoot;
+	process.env.AGENT_TASK_ROOT = taskRoot;
 
 	const messages: Harness["messages"] = [];
 	const box = captureTool({
@@ -102,8 +99,6 @@ function makeLayer(layerOpts?: { profileEntries?: () => string[]; killGraceMs?: 
 		cleanup() {
 			if (previousGeneric === undefined) delete process.env.AGENT_TASK_ROOT;
 			else process.env.AGENT_TASK_ROOT = previousGeneric;
-			if (previousLegacy === undefined) delete process.env.OMP_TASK_ROOT;
-			else process.env.OMP_TASK_ROOT = previousLegacy;
 			fs.rmSync(base, { recursive: true, force: true });
 		},
 		agentId() {

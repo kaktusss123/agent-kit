@@ -33,7 +33,7 @@ execSync(`git -C "${seed}" worktree add -b feat/guard "${WS}" main`);
 
 const main = spawn(PI_BIN, ["--mode", "rpc", "--no-extensions", "--no-session", "-e", DRIVER], {
 	cwd: LIVE,
-	env: { ...process.env, OMP_TASK_ROOT: TASK_ROOT, PI_WDRV_LIVE_DIR: LIVE },
+	env: { ...process.env, AGENT_TASK_ROOT: TASK_ROOT, PI_WDRV_LIVE_DIR: LIVE },
 	stdio: ["pipe", "pipe", "pipe"],
 });
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));

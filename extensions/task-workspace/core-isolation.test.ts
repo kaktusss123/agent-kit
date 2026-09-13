@@ -35,12 +35,12 @@ describe("task-workspace core host independence", () => {
 
   test("core sources never reference the pi SDK, host plumbing, or task-root policy", () => {
     // task-root.ts is the single deliberate exception: it IS the task-root
-    // policy owned by the task subsystem (AGENT_TASK_ROOT → legacy
-    // OMP_TASK_ROOT → default), so reading the environment is its job. It
-    // must still stay harness-free: no pi SDK imports and no host plumbing.
+    // policy owned by the task subsystem (AGENT_TASK_ROOT → default), so
+    // reading the environment is its job. It must still stay host-free:
+    // no pi SDK imports and no host plumbing.
     const hostPlumbing =
       /\bExtensionAPI\b|\bExtensionContext\b|registerTool|\btypebox\b|\bpi\.on\b|\bctx\.cwd\b/;
-    const taskRootPolicy = /OMP_TASK_ROOT|\.omp|process\.env/;
+    const taskRootPolicy = /AGENT_TASK_ROOT|process\.env/;
     for (const file of readdirSync(CORE_DIR).filter(
       (f) => f.endsWith(".ts") && !f.endsWith(".test.ts") && f !== "index.ts",
     )) {
@@ -61,7 +61,7 @@ describe("task-workspace core host independence", () => {
     }
   });
 
-  test("core follows an injected task root — second-host shape, no default root", async () => {
+  test("core follows an injected task root — binding shape, no default root", async () => {
     const gitCore = await import("./git");
     const flowsCore = await import("./flows");
 

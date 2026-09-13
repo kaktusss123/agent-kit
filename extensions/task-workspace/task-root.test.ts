@@ -19,7 +19,7 @@ function withTempRoot(run: (root: string) => void): void {
 
 /** Run the resolver in a fresh process with an explicit environment — the
  *  only way to prove $HOME handling, because os.homedir() snapshots $HOME
- *  per process and ambient AGENT_TASK_ROOT/OMP_TASK_ROOT must not leak. */
+ *  per process and an ambient AGENT_TASK_ROOT must not leak. */
 function resolveInSubprocess(env: Record<string, string>): string {
   // No-argument call: the subprocess resolves against its own process.env.
   const script = `const m = await import(${JSON.stringify(RESOLVER_ENTRY)}); console.log(m.resolveTaskRoot());`;
@@ -29,42 +29,33 @@ function resolveInSubprocess(env: Record<string, string>): string {
   }).trim();
 }
 
-describe("shared task-root resolution (harness-agnostic)", () => {
-  test("generic AGENT_TASK_ROOT is used when set", () => {
+describe("task-root resolution", () => {
+  test("AGENT_TASK_ROOT is used when set", () => {
     withTempRoot((root) => {
       expect(resolveTaskRoot({ AGENT_TASK_ROOT: root })).toBe(realpathSync(root));
     });
   });
 
-  test("generic AGENT_TASK_ROOT beats legacy OMP_TASK_ROOT", () => {
-    withTempRoot((generic) => {
-      withTempRoot((legacy) => {
-        expect(
-          resolveTaskRoot({ AGENT_TASK_ROOT: generic, OMP_TASK_ROOT: legacy }),
-        ).toBe(realpathSync(generic));
-      });
-    });
-  });
-
-  test("legacy OMP_TASK_ROOT still works when generic root is absent", () => {
-    withTempRoot((legacy) => {
-      expect(resolveTaskRoot({ OMP_TASK_ROOT: legacy })).toBe(realpathSync(legacy));
-    });
-  });
-
-  test("default is the historical ~/.omp/tasks — never a harness-specific root", () => {
+  test("default is ~/.agent-kit/tasks", () => {
     // Structural pin against the ambient process home. Uses the core
     // non-throwing realpath (walk-up): the default root need not exist yet.
-    expect(resolveTaskRoot({})).toBe(realpath(join(homedir(), ".omp", "tasks")));
-    expect(
-      resolveTaskRoot({ OMP_AGENT_DIR: "/harness/omp", PI_AGENT_DIR: "/harness/pi" }),
-    ).toBe(realpath(join(homedir(), ".omp", "tasks")));
+    expect(resolveTaskRoot({})).toBe(realpath(join(homedir(), ".agent-kit", "tasks")));
   });
 
-  test("default follows $HOME on Linux (fresh process, clean environment)", () => {
+  test("unknown legacy env vars are ignored — no compatibility alias", () => {
+    withTempRoot((legacy) => {
+      expect(resolveTaskRoot({ OMP_TASK_ROOT: legacy })).toBe(
+        realpath(join(homedir(), ".agent-kit", "tasks")),
+      );
+    });
+  });
+
+  test("default follows $HOME (fresh process, clean environment)", () => {
     const fakeHome = mkdtempSync(join(tmpdir(), "task-root-home-"));
     try {
-      expect(resolveInSubprocess({ HOME: fakeHome })).toBe(join(fakeHome, ".omp", "tasks"));
+      expect(resolveInSubprocess({ HOME: fakeHome })).toBe(
+        join(fakeHome, ".agent-kit", "tasks"),
+      );
       expect(resolveInSubprocess({ HOME: fakeHome, AGENT_TASK_ROOT: "~/boxed" })).toBe(
         join(fakeHome, "boxed"),
       );
@@ -78,22 +69,14 @@ describe("shared task-root resolution (harness-agnostic)", () => {
     expect(resolveTaskRoot({ AGENT_TASK_ROOT: "~/tasks/box" })).toBe(
       join(homedir(), "tasks", "box"),
     );
-    expect(resolveTaskRoot({ OMP_TASK_ROOT: "~/legacy-box" })).toBe(
-      join(homedir(), "legacy-box"),
-    );
   });
 
-  test("empty or whitespace values fall through to the next precedence level", () => {
-    withTempRoot((legacy) => {
-      expect(resolveTaskRoot({ AGENT_TASK_ROOT: "", OMP_TASK_ROOT: legacy })).toBe(
-        realpathSync(legacy),
-      );
-      expect(resolveTaskRoot({ AGENT_TASK_ROOT: "   ", OMP_TASK_ROOT: legacy })).toBe(
-        realpathSync(legacy),
-      );
-    });
-    expect(resolveTaskRoot({ AGENT_TASK_ROOT: "", OMP_TASK_ROOT: "" })).toBe(
-      realpath(join(homedir(), ".omp", "tasks")),
+  test("empty or whitespace values fall through to the default", () => {
+    expect(resolveTaskRoot({ AGENT_TASK_ROOT: "" })).toBe(
+      realpath(join(homedir(), ".agent-kit", "tasks")),
+    );
+    expect(resolveTaskRoot({ AGENT_TASK_ROOT: "   " })).toBe(
+      realpath(join(homedir(), ".agent-kit", "tasks")),
     );
   });
 
@@ -104,7 +87,7 @@ describe("shared task-root resolution (harness-agnostic)", () => {
     });
   });
 
-  test("a symlinked root resolves to the real path — same location for every harness", () => {
+  test("a symlinked root resolves to the real path", () => {
     withTempRoot((real) => {
       const link = join(tmpdir(), `task-root-link-${Date.now()}-${process.pid}`);
       symlinkSync(real, link);
@@ -113,19 +96,6 @@ describe("shared task-root resolution (harness-agnostic)", () => {
       } finally {
         rmSync(link, { force: true });
       }
-    });
-  });
-
-  test("generic root wins even when harness-specific dirs are configured", () => {
-    withTempRoot((generic) => {
-      expect(
-        resolveTaskRoot({
-          AGENT_TASK_ROOT: generic,
-          OMP_AGENT_DIR: "/harness/omp",
-          PI_AGENT_DIR: "/harness/pi",
-          OPENCODE_CONFIG_DIR: "/harness/opencode",
-        }),
-      ).toBe(realpathSync(generic));
     });
   });
 });

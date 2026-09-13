@@ -2,8 +2,7 @@
  * task-workspace core — host-neutral shared types.
  *
  * Everything in ./task-workspace/ is the host-independent deterministic core
- * of the task-workspace runtime: no OMP/Pi SDK imports, no extension plumbing.
- * The OMP binding lives in ../task-workspace.ts.
+ * of the task-workspace runtime: no pi SDK imports, no extension plumbing.
  */
 
 // Path classification for a filesystem location relative to the task root.

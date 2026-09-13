@@ -2,7 +2,7 @@
  * task-workspace core — runtime tool flows.
  *
  * Deterministic mechanics behind task_status / ensure_task_repo /
- * remove_task_lane / checkpoint_commit. Host-independent: no OMP/Pi SDK
+ * remove_task_lane / checkpoint_commit. Host-independent: no pi SDK
  * imports, no host result representation. Each flow takes plain parameters,
  * the session cwd, and an explicit task root, and returns a plain domain
  * result object; the host binding owns schemas, serialization, result

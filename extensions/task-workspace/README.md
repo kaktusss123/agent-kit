@@ -2,10 +2,10 @@
 
 Deterministic task-workspace runtime for pi: manages git worktrees for
 multi-repo task isolation. Branch = task identity; the workspace root is
-resolved by `task-root.ts`: `AGENT_TASK_ROOT` first, then the legacy
-`OMP_TASK_ROOT` alias, then the historical default `~/.omp/tasks`. The same
-task identity resolves to the same filesystem location for every session.
-All state lives in git (branches + worktrees); no manifest files.
+resolved by `task-root.ts`: the `AGENT_TASK_ROOT` override first, then the
+default `~/.agent-kit/tasks`. The same task identity resolves to the same
+filesystem location for every session. All state lives in git (branches +
+worktrees); no manifest files.
 
 ## Surfaces
 
@@ -31,7 +31,7 @@ All state lives in git (branches + worktrees); no manifest files.
 
 `index.ts` is the pi binding (ExtensionAPI tool registration, TypeBox
 schemas, result `details`); `task-root.ts` is the task-root resolution
-policy (`AGENT_TASK_ROOT` → legacy `OMP_TASK_ROOT` → default); the
+policy (`AGENT_TASK_ROOT` override → `~/.agent-kit/tasks` default); the
 remaining sibling modules (`flows.ts`, `git.ts`, `guard.ts`, `types.ts`) are a
 host-independent core that receives its task root explicitly and returns plain
 domain results. `core-isolation.test.ts` proves the core imports and runs

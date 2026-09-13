@@ -51,7 +51,7 @@ execSync(`git -C "${seed}" worktree add -b feat/live-ws "${WS}" main`);
 // --- main process -----------------------------------------------------------
 const main = spawn(PI_BIN, ["--mode", "rpc", "--no-extensions", "--no-session", "-e", DRIVER], {
 	cwd: LIVE,
-	env: { ...process.env, OMP_TASK_ROOT: TASK_ROOT },
+	env: { ...process.env, AGENT_TASK_ROOT: TASK_ROOT },
 	stdio: ["pipe", "pipe", "pipe"],
 });
 let buf = "";

@@ -212,10 +212,10 @@ export function createWorkspaceLayer(
 		return rt;
 	};
 
-	// Shared, harness-agnostic task-root policy lives in the task subsystem
-	// (../task-workspace/task-root): AGENT_TASK_ROOT, then the legacy
-	// OMP_TASK_ROOT alias, then the historical default. This layer never
-	// computes a filesystem layout itself.
+	// Task-root policy lives in the task subsystem
+	// (../task-workspace/task-root): AGENT_TASK_ROOT override, then the
+	// ~/.agent-kit/tasks default. This layer never computes a filesystem
+	// layout itself.
 	const taskRoot = resolveTaskRoot();
 
 	/** The bound runtime (events and settlement only run after a dispatch bound it). */

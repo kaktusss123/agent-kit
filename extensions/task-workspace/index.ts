@@ -2,9 +2,9 @@
  * task-workspace — pi binding for the deterministic task-workspace runtime.
  *
  * Manages git worktrees for multi-repo task isolation.
- * Branch = task identity. Workspace root = the shared task root resolved by
- * ./task-root (AGENT_TASK_ROOT, then the legacy OMP_TASK_ROOT alias, then
- * the historical ~/.omp/tasks default) + /<branch_flat>/.
+ * Branch = task identity. Workspace root = the task root resolved by
+ * ./task-root (AGENT_TASK_ROOT override, then the ~/.agent-kit/tasks
+ * default) + /<branch_flat>/.
  * All state lives in git (branches + worktrees); no manifest files.
  *
  * Residual limitation (accepted by design): flattening a branch name into the
@@ -16,7 +16,7 @@
  * TypeBox schemas, session-cwd translation, and the tool-result
  * representation (content JSON plus the structured `details` attachment).
  * The task root itself is not host-owned: it is resolved once per
- * registration by the harness-agnostic shared resolver in ./task-root.
+ * registration by the task-root resolver in ./task-root.
  * The deterministic mechanics live in the sibling modules (flows.ts,
  * git.ts, guard.ts, types.ts) — a host-independent core that receives its
  * task root explicitly and returns plain domain results.
@@ -120,12 +120,11 @@ function detailsFor(tool: string, result: Record<string, unknown>): unknown {
 }
 
 export default function (pi: ExtensionAPI): void {
-  // Shared task-root policy, owned by the task subsystem (see ./task-root):
-  // AGENT_TASK_ROOT, then the legacy OMP_TASK_ROOT alias, then the
-  // historical default. Resolved once per registration (production
-  // registers at startup, so the effective behavior equals module-load
-  // resolution); the core receives it explicitly and never reads the
-  // environment itself.
+  // Task-root policy, owned by the task subsystem (see ./task-root):
+  // AGENT_TASK_ROOT override, then the ~/.agent-kit/tasks default. Resolved
+  // once per registration (production registers at startup, so the effective
+  // behavior equals module-load resolution); the core receives it explicitly
+  // and never reads the environment itself.
   const TASK_ROOT = resolveTaskRoot();
 
   // typebox is imported directly (vanilla pi has no pi.typebox injection)
