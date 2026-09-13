@@ -2,8 +2,16 @@
 
 Observes pi's lifecycle hooks and publishes a small terminal-agnostic event
 model to pluggable sinks. Today the only sink is **Warp** (Warp CLI Agent
-Protocol v1 over OSC 777); a future headless control-plane transport is just
-another sink — no pi lifecycle code changes required.
+Protocol v1 over OSC 777).
+
+This is **best-effort observational telemetry only**: it may inform an
+external observer (today Warp) about run state. It must not be the basis for
+authoritative run state, remote control, cancel, reliable `needs_input`,
+reconnect/replay, or any other control-plane semantics. The sink contract is
+intentionally weak — no acknowledgements, no retries, event loss is
+permitted, and a failing sink never affects agent execution. A future
+transport that needs such guarantees requires a different interface, not
+"another sink".
 
 There is no LLM-facing tool: lifecycle is observed automatically, the model
 cannot emit status events.
@@ -79,6 +87,13 @@ failures are swallowed and can never break agent execution.
 
 Implement `AgentRuntimeEventSink { emit(event) }` and subscribe it in `index.ts`
 next to (or instead of) the Warp sink. No protocol code outside `warp*.ts`.
+
+The same boundary applies: a sink stays best-effort observational telemetry
+(no acknowledgements, no retries, loss permitted, sink failures invisible to
+the agent). A transport that needs acknowledgements, retries, reliable
+`needs_input` delivery, or remote control (cancel / reconnect / replay) does
+not fit this contract — design a separate interface for it instead of
+widening the sink.
 
 ## Tests
 

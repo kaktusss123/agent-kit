@@ -3,8 +3,13 @@
  *
  * Observes pi's lifecycle hooks and publishes a small terminal-agnostic event
  * model to AgentRuntimeEventSink consumers. The only sink today is
- * WarpCliAgentSink (Warp CLI Agent Protocol v1 over OSC 777); a future
- * control-plane transport is just another sink. The model never calls anything
+ * WarpCliAgentSink (Warp CLI Agent Protocol v1 over OSC 777). The contract is
+ * best-effort observational telemetry only: it may inform an external
+ * observer (today Warp) about run state, and must not be the basis for
+ * authoritative run state, remote control, cancel, reliable needs_input,
+ * reconnect/replay, or any other control-plane semantics — the sink has no
+ * acknowledgements, no retries, permits event loss, and a failing sink never
+ * affects agent execution. The model never calls anything
  * from the LLM side — lifecycle is observed automatically, there is no
  * telemetry tool.
  *
