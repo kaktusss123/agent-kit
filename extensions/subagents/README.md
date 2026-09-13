@@ -132,8 +132,10 @@ subagent runtime.
   and thinking level; without a model the dispatch is refused (`blocked`).
 
 Live verification: `node live/workspace-verify.mjs` (spawns a real main pi
-process and real children on the default model; 28 checks covering the
-acceptance scenarios A1–A3b, A5–A9, A11–A14).
+process and real children on the default model; covering the acceptance
+scenarios A1–A3b, A5–A9, A11–A14 plus the fail-closed profile proof L10 —
+missing entry → no process; broken capability → readiness fails, child
+killed, task never dispatched).
 
 Dev note: `bun test` needs `typebox` resolvable from the repo tree —
 `ln -s <pi-package>/node_modules/typebox node_modules/typebox` (gitignored).

@@ -189,7 +189,7 @@ const task1 = [
 // ---------------- L3: needs_input (A6, A6b) ---------------------------------
 {
 	const task3 = [
-		"Call ask_parent with the question: What is the magic word?",
+		"Call ask with the question: What is the magic word?",
 		"Then reply with the word you received and call report_result as your FINAL action with status done, a summary mentioning the magic word, changed_scope [], verification [], gaps [].",
 	].join(" ");
 	dispatchCmd("L3", { workspace: WS, task: task3, timeout_ms: 180000 });
@@ -333,7 +333,7 @@ const task1 = [
 {
 	dispatchCmd("L9", {
 		workspace: WS,
-		task: "Call ask_parent with the question: May I proceed? Then wait for the answer.",
+		task: "Call ask with the question: May I proceed? Then wait for the answer.",
 		timeout_ms: 30000,
 	});
 	const first = await waitResult("L9", 60000); // needs_input
