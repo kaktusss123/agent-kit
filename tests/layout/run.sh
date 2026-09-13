@@ -66,5 +66,21 @@ check "installer accepts no runtime arguments" \
 	bash -c "grep -q 'manages a single runtime' '$REPO/bin/agent-kit'"
 rm -f "$REST"
 
+# --- task root carries no retired-run location legacy ----------------------------
+
+check "task-root default is ~/.agent-kit/tasks" \
+	bash -c "grep -q '\"\.agent-kit\", \"tasks\"' '$REPO/extensions/task-workspace/task-root.ts'"
+check "task-root resolver has no OMP_TASK_ROOT or .omp path" \
+	bash -c "! grep -qE 'OMP_TASK_ROOT|\.omp' '$REPO/extensions/task-workspace/task-root.ts'"
+check "active tree has no retired task-root/harness terminology" \
+	bash -c "! grep -rniqE 'OMP_TASK_ROOT|\.omp/tasks|OMP_AGENT_DIR|OPENCODE_CONFIG_DIR|harness-agnostic|every harness' \
+		'$REPO/extensions' '$REPO/skills' '$REPO/prompts' '$REPO/tests' '$REPO/README.md' \
+		--exclude=run.sh --exclude=task-root.test.ts"
+# Exclusions: run.sh files carry these check patterns themselves, and
+# task-root.test.ts is the deliberate negative pin proving the retired
+# alias is ignored (behavioral proof, not live support).
+check "no /move in active workflow surface" \
+	bash -c "! grep -rnqE '(^|[\`[:space:]])/move\b' '$REPO/skills' '$REPO/prompts'"
+
 printf '\n%d passed, %d failed\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]

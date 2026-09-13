@@ -20,16 +20,37 @@ skills/<name>/           canonical skill packages:
                            scripts/      — только если skill'у реально нужны
                                            свои скрипты
 extensions/<name>/       Pi extensions: deterministic runtime mechanics
+prompts/                 тонкие Pi prompt templates — workflow entrypoints
+                           /spec и /dev; связывают существующие skills,
+                           а не дублируют их policy
 bin/agent-kit            инсталлер (install / uninstall / status)
 tests/                   verification:
                            installer/ — ownership-семантика инсталлера
                            layout/    — бывшая multi-harness архитектура
                                         не возвращается
-                           skills/    — валидация skill-пакетов
+                           skills/    — валидация skill-пакетов и промптов
 ```
 
-Категории `prompts/` и `scripts/` появляются в корне только тогда, когда в
-них есть реальный контент; пустые директории ради схемы не создаются.
+Категория `scripts/` появляется в корне только тогда, когда в ней есть
+реальный контент; пустые директории ради схемы не создаются.
+
+## Workflow entrypoints
+
+`/spec` и `/dev` — тонкие Pi prompt templates (`~/.pi/agent/prompts/`):
+
+- **`/spec`** — Main владеет discovery: разговор с пользователем, product
+  и design решения, синтез evidence, canonical `SPEC.md`. Repository
+  analysis — по состоянию managed task worktree (explicit paths или
+  bounded research subagents с `cwd=<worktree>`), не dirty source
+  checkout. cwd Main-сессии не меняется.
+- **`/dev`** — Main — task controller: intent, решения, оркестрация,
+  review, integration. Мутация репозиториев выполняется RepoOwner'ами
+  (`workspace_agent`, по одному на writable repository, укоренёнными в
+  managed worktrees). Owner'ы реализуют и верифицируют внутри своих
+  worktrees; Main ревьюит результат и чинит через fresh owner.
+
+Промпты задают mode и связывают существующие capabilities (`skill://git-task`,
+`skill://implementation`, …); вся policy живет в skills/references.
 
 ## Semantic policy vs deterministic mechanics
 
@@ -102,8 +123,8 @@ extensions/* -> ~/.pi/agent/extensions/*
 prompts/*    -> ~/.pi/agent/prompts/*   (если категория существует)
 ```
 
-- Установка — это symlinks из `~/.pi/agent` в этот checkout, никогда
-  копирование. Override корня: `PI_AGENT_DIR` (по умолчанию `~/.pi/agent`).
+Установка — это symlinks из `~/.pi/agent` в этот checkout, никогда
+копирование. Override корня: `PI_AGENT_DIR` (по умолчанию `~/.pi/agent`).
 - Каждый `install` заодно ставит команду
   `~/.local/bin/agent-kit -> <этот checkout>/bin/agent-kit`. Повторный
   `install` из другого checkout'а/worktree переносит управляемые ссылки и
@@ -144,8 +165,8 @@ prompts/*    -> ~/.pi/agent/prompts/*   (если категория сущес�
 `install` или `uninstall` мигрирует его один раз:
 
 - строки pi переходят в текущий формат без потери владения;
-- строки omp/opencode убираются под их нативными корнями
-  (`OMP_AGENT_DIR` / `OPENCODE_CONFIG_DIR`) с тем же proof: удаляется
+- строки omp/opencode убираются под их историческими корнями
+  (`~/.omp/agent`, `~/.config/opencode`) с тем же proof: удаляется
   только ссылка, чья цель всё ещё в точности равна записанной; всё
   остальное освобождается без удаления.
 

@@ -93,5 +93,48 @@ else
 	ok "no stale vendor language"
 fi
 
+# --- prompt templates are thin entrypoints into existing skills ----------------
+
+for prompt in "$SELF_DIR"/prompts/*.md; do
+	[ -f "$prompt" ] || continue
+	name="$(basename "$prompt" .md)"
+
+	if [ -n "$(awk 'NR == 1 && $0 != "---" { exit 1 } NR > 1 { if ($0 == "---") exit; print }' "$prompt" | sed -n 's/^description:[[:space:]]*//p')" ]; then
+		ok "$name: description present"
+	else
+		bad "$name: description missing"
+	fi
+
+	lines="$(grep -c . "$prompt" || true)"
+	if [ "$lines" -le 30 ]; then
+		ok "$name: thin entrypoint ($lines non-empty lines)"
+	else
+		bad "$name: too long for an entrypoint ($lines non-empty lines)"
+	fi
+
+	missing=0
+	while IFS= read -r target; do
+		[ -n "$target" ] || continue
+		if [ ! -d "$SKILLS/$target" ]; then
+			bad "$name: skill://$target does not exist"
+			missing=1
+		fi
+	done < <(grep -ohE 'skill://[A-Za-z0-9-]+' "$prompt" | sed 's|^skill://||')
+	if [ "$missing" -eq 0 ] && grep -q 'skill://' "$prompt"; then
+		ok "$name: all skill:// targets exist"
+	elif [ "$missing" -eq 0 ]; then
+		bad "$name: references no canonical skill"
+	fi
+done
+
+# --- git-task: single-repo dev is RepoOwner-owned (no Main-owns-edits model) ----
+
+if grep -q 'dispatch exactly one RepoOwner' "$SKILLS/git-task/SKILL.md" && \
+	! grep -qE 'implements directly|/move' "$SKILLS/git-task/SKILL.md"; then
+	ok "git-task: single-repo dev dispatches a RepoOwner"
+else
+	bad "git-task: single-repo dev must dispatch exactly one RepoOwner (no direct implementation, no /move)"
+fi
+
 printf '\n%d passed, %d failed\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]
