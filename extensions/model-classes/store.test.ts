@@ -85,6 +85,35 @@ describe("failure semantics", () => {
 		expect(fs.readdirSync(dir).filter((f) => f.endsWith(".tmp"))).toEqual([]);
 	});
 
+	test("set on corrupt storage fails and leaves the file byte-for-byte untouched (F1)", () => {
+		const file = tmpFile();
+		saveModelClass(file, "smart", { model: "keep/m", thinking: "xhigh" });
+		fs.writeFileSync(file, "{ not json");
+		const before = fs.readFileSync(file, "utf8");
+		expect(() => saveModelClass(file, "cheap", { model: "new/m", thinking: "low" })).toThrow();
+		expect(fs.readFileSync(file, "utf8")).toBe(before); // smart not silently destroyed
+	});
+
+	test("set on unreadable storage fails and leaves the file untouched (F1)", () => {
+		if (typeof process.getuid === "function" && process.getuid() === 0) return; // root reads anyway
+		const file = tmpFile();
+		saveModelClass(file, "smart", { model: "keep/m", thinking: "xhigh" });
+		fs.chmodSync(file, 0o000);
+		try {
+			expect(() => saveModelClass(file, "cheap", { model: "new/m", thinking: "low" })).toThrow();
+		} finally {
+			fs.chmodSync(file, 0o644);
+		}
+		expect(loadModelClasses(file).smart).toEqual({ model: "keep/m", thinking: "xhigh" });
+	});
+
+	test("an empty storage file starts fresh (carries no classes to lose)", () => {
+		const file = tmpFile();
+		fs.writeFileSync(file, "");
+		saveModelClass(file, "cheap", { model: "a/m", thinking: "low" });
+		expect(loadModelClasses(file).cheap).toEqual({ model: "a/m", thinking: "low" });
+	});
+
 	test("missing file loads as empty", () => {
 		expect(loadModelClasses(path.join(os.tmpdir(), `mc-none-${Date.now()}.json`))).toEqual({});
 	});

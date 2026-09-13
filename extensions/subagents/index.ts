@@ -26,9 +26,8 @@
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { StringEnum } from "@earendil-works/pi-ai";
 import { Type } from "typebox";
-import { createExactModelMatcher, resolveModelClass, type ModelClassEnv } from "../model-classes/core";
-import { loadModelClasses, modelClassesPath, type ModelPair, type ThinkingLevel } from "../model-classes/store";
 import { LocalSubagentRuntime } from "./controller";
+import { resolveSpawnPair, type SpawnModelClass } from "./spawn-model";
 import {
 	formatAskRequestBlock,
 	formatResult,
@@ -53,9 +52,6 @@ const CONFIG = {
 // =============================================================================
 // Tool schema
 // =============================================================================
-
-/** Model-facing spawn model selection: a class, never a concrete model. */
-type SpawnModelClass = "cheap" | "default" | "smart";
 
 const SubagentParams = Type.Object({
 	op: StringEnum(["spawn", "status", "steer", "follow_up", "wait", "result", "respond", "cancel"] as const, {
@@ -274,34 +270,6 @@ export default function (pi: ExtensionAPI) {
 }
 
 // -------------------------------------------------------------------- helpers
-
-/** Structural view of the tool ctx needed for spawn-time class resolution. */
-interface SpawnModelCtx {
-	model?: { provider: string; id: string } | undefined;
-	modelRegistry: { getAll(): import("../model-classes/core").ModelLike[] };
-}
-
-/**
- * Resolve a spawn modelClass to the concrete pair the child needs. This is
- * the LLM/orchestration → runtime boundary (SPEC): the model picks a class,
- * the resolver (shared with /model-class) produces concrete model +
- * thinking, and only then is the child process started. An unconfigured
- * class or a model that is no longer available throws here, so no child is
- * spawned and there is no fallback (fail closed).
- */
-function resolveSpawnPair(ref: SpawnModelClass, ctx: SpawnModelCtx, currentThinking: ThinkingLevel): ModelPair {
-	const stored = loadModelClasses(modelClassesPath());
-	const env: ModelClassEnv = {
-		currentPair: () =>
-			ctx.model
-				? { model: `${ctx.model.provider}/${ctx.model.id}`, thinking: currentThinking }
-				: null,
-		findModel: createExactModelMatcher(ctx.modelRegistry.getAll()),
-	};
-	const resolved = resolveModelClass(ref, stored, env);
-	if (!resolved.ok) throw new Error(resolved.error);
-	return resolved.pair;
-}
 
 function requireId(params: { id?: string }): void {
 	if (!params.id) throw new Error("this op requires `id` (see op=status for ids)");

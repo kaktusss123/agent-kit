@@ -30,7 +30,6 @@ import {
 	applyResolvedPair,
 	canonicalModelId,
 	createExactModelMatcher,
-	notConfiguredError,
 	resolveModelClass,
 	type ModelClassEnv,
 	type ModelLike,
@@ -123,6 +122,8 @@ export default function (pi: ExtensionAPI) {
 
 			// switch — resolve and validate the whole target combination
 			// BEFORE touching the session; any failure leaves it unchanged.
+			// The resolver returns the matched registry model, so there is no
+			// second lookup to race with a registry refresh.
 			let stored;
 			try {
 				stored = loadStored();
@@ -131,26 +132,20 @@ export default function (pi: ExtensionAPI) {
 				return;
 			}
 			const resolved = resolveModelClass(parsed.name, stored, envFor(ctx));
-			if (!resolved.ok) {
-				ctx.ui.notify(resolved.error, "error");
+			if (!resolved.ok || !resolved.model) {
+				ctx.ui.notify(resolved.ok ? "no model resolved in the current session" : resolved.error, "error");
 				return;
 			}
-			const target = resolved.pair;
+			const target = { pair: resolved.pair, model: resolved.model };
 			const previous = ctx.model
 				? { pair: { model: canonicalModelId(ctx.model), thinking: pi.getThinkingLevel() }, model: ctx.model }
 				: null;
-			const model = envFor(ctx).findModel(target.model);
-			if (!model) {
-				// Raced with a registry change after resolution; fail closed.
-				ctx.ui.notify(notConfiguredError(parsed.name), "error");
-				return;
-			}
-			const outcome = await applyResolvedPair(applier, { pair: target, model }, previous);
+			const outcome = await applyResolvedPair(applier, target, previous);
 			if (!outcome.ok) {
 				ctx.ui.notify(outcome.error, "error");
 				return;
 			}
-			ctx.ui.notify(renderSwitched(parsed.name, target.model, target.thinking), "info");
+			ctx.ui.notify(renderSwitched(parsed.name, target.pair.model, target.pair.thinking), "info");
 		},
 	});
 }

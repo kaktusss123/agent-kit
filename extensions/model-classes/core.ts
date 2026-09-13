@@ -43,7 +43,14 @@ export interface ModelClassEnv {
 }
 
 export type ResolveOutcome =
-	| { ok: true; pair: ModelPair; /** Which stored state produced the pair. */ origin: "session" | "stored" }
+	| {
+			ok: true;
+			pair: ModelPair;
+			/** Which stored state produced the pair. */
+			origin: "session" | "stored";
+			/** The matched registry model for stored classes (session pairs resolve to ctx.model). */
+			model?: ModelLike;
+	  }
 	| { ok: false; error: string };
 
 /** All thinking levels a model actually supports (mirrors pi-ai `getSupportedThinkingLevels`). */
@@ -100,7 +107,10 @@ export function notConfiguredError(name: "cheap" | "smart"): string {
 /**
  * Resolve a class reference to a concrete model + thinking pair (SPEC §5).
  * `default` snapshots the live session; `cheap`/`smart` read persisted state
- * and validate the saved combination against the current registry.
+ * and validate the saved combination against the current registry. Stored
+ * classes return the matched registry model so callers never have to look
+ * the model up a second time (a second lookup is a race window with a
+ * misleading failure mode).
  */
 export function resolveModelClass(ref: ModelClassRef, stored: StoredClasses, env: ModelClassEnv): ResolveOutcome {
 	if (ref === "default") {
@@ -123,7 +133,7 @@ export function resolveModelClass(ref: ModelClassRef, stored: StoredClasses, env
 			error: `Model class "${ref}" refers to ${saved.model} with thinking level "${saved.thinking}", which that model does not support. Re-save it: \`/model-class ${ref} set\`.`,
 		};
 	}
-	return { ok: true, pair: saved, origin: "stored" };
+	return { ok: true, pair: saved, origin: "stored", model };
 }
 
 // ------------------------------------------------------------------ switching

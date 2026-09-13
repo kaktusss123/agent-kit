@@ -106,18 +106,31 @@ export function loadModelClasses(file: string): StoredClasses {
 
 /**
  * Persist one class (read-modify-write, atomic tmp+rename). Overwrites an
- * existing entry without confirmation. Throws on any write failure — the
- * previous file (and the previous value) stays valid.
+ * existing entry without confirmation, but only owns the one key it writes:
+ * a storage file that cannot be confidently read (unreadable or corrupt)
+ * aborts the save with an error — `set` never silently replaces classes it
+ * could not see. Only a missing file starts a fresh object. Throws on any
+ * write failure — the previous file (and the previous value) stays valid.
  */
 export function saveModelClass(file: string, name: ModelClassName, pair: ModelPair): void {
-	// Preserve unknown keys on rewrite; known keys are fully owned here.
-	let data: Record<string, unknown> = {};
+	let raw: string;
 	try {
-		const parsed = JSON.parse(fs.readFileSync(file, "utf8"));
-		if (typeof parsed === "object" && parsed !== null) data = parsed as Record<string, unknown>;
-	} catch {
-		// Missing or unreadable previous file: start a fresh object. A corrupt
-		// file is only replaced on an explicit `set`, never silently on load.
+		raw = fs.readFileSync(file, "utf8");
+	} catch (e) {
+		if ((e as NodeJS.ErrnoException).code === "ENOENT") raw = "";
+		else throw e;
+	}
+	let data: Record<string, unknown>;
+	if (raw.trim() === "") {
+		data = {}; // missing or empty file: nothing to preserve
+	} else {
+		// Deliberately outside any try: a corrupt file must fail the save, not
+		// be replaced from a fresh object (that would drop the other class).
+		const parsed: unknown = JSON.parse(raw);
+		if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
+			throw new Error(`model classes storage is corrupt (expected a JSON object): ${file}`);
+		}
+		data = parsed as Record<string, unknown>;
 	}
 	data[name] = pair;
 	fs.mkdirSync(path.dirname(file), { recursive: true });

@@ -140,8 +140,9 @@ describe("resolveModelClass — stored classes", () => {
 			ok: true,
 			pair: { model: "prov-b/openai/gpt-oss-120b", thinking: "medium" },
 			origin: "stored",
+			model: MODEL_B, // single-resolution contract: the match travels with the outcome
 		});
-		expect(resolveModelClass("smart", stored, env)).toMatchObject({ ok: true, origin: "stored" });
+		expect(resolveModelClass("smart", stored, env)).toMatchObject({ ok: true, origin: "stored", model: MODEL_A });
 	});
 
 	test("unconfigured class -> spec error, session state irrelevant (A7)", () => {
