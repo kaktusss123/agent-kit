@@ -93,15 +93,24 @@ queueing and starting a run from the session's real state.
 rooted in a managed task worktree with a strict protocol around the shared
 subagent runtime.
 
-- **Per-spawn profile**: RepoOwner children load the task-workspace entry and
-  a reporting bridge in addition to the base bridge (`SpawnOptions.
-  additionalExtensions`). Generic children are byte-identical to before.
-- **Readiness handshake**: before the task prompt is sent, each profile entry
-  confirms initialization from its `session_start` handler (fire-and-forget
-  notify carrying the registered tool set; blocking dialogs would deadlock —
-  the child's stdin reader attaches only after `rebindSession`). The
-  controller validates entry ids, `ok`, and required tools; failures kill the
-  child with the task never reaching a model (fail closed, `dispatched:false`).
+- **Per-spawn profile**: RepoOwner children load the task-workspace entry, a
+  reporting bridge, and a readiness probe in addition to the base bridge
+  (`SpawnOptions.additionalExtensions`; the probe comes last as a pure
+  observer — no tools, no tool_call hooks). Generic children are
+  byte-identical to before.
+- **Readiness handshake**: before the task prompt is sent, a subagents-owned
+  readiness probe (the last profile entry) reads the child's actual session
+  tool set once from its `session_start` handler (fire-and-forget notify per
+  contract entry; blocking dialogs would deadlock — the child's stdin reader
+  attaches only after `rebindSession`). Capability extensions declare
+  nothing about readiness; the contract has a single home inside subagents
+  (`PROFILE_READINESS` in readiness.ts is the declared RepoOwner default the
+  workspace layer passes) and travels PER-SPAWN to the child via the
+  `PI_SUBAGENT_READINESS_CONTRACT` env var — the probe reports exactly what
+  its controller declared for this spawn (no/invalid env contract → no
+  handler, fail closed). The controller validates entry ids, `ok`, and
+  required tools; failures kill the child with the task never reaching a
+  model (fail closed, `dispatched:false`).
 - **Dispatch point**: readiness + RPC acceptance of the initial prompt.
   Everything before is `dispatched:false`; after it there is no fallback —
   abort detaches (the run continues), repair is a new RepoOwner.
@@ -127,8 +136,10 @@ subagent runtime.
   and thinking level; without a model the dispatch is refused (`blocked`).
 
 Live verification: `node live/workspace-verify.mjs` (spawns a real main pi
-process and real children on the default model; 28 checks covering the
-acceptance scenarios A1–A3b, A5–A9, A11–A14).
+process and real children on the default model; covering the acceptance
+scenarios A1–A3b, A5–A9, A11–A14 plus the fail-closed profile proof L10 —
+missing entry → no process; broken capability → readiness fails, child
+killed, task never dispatched).
 
 Dev note: `bun test` needs `typebox` resolvable from the repo tree —
 `ln -s <pi-package>/node_modules/typebox node_modules/typebox` (gitignored).

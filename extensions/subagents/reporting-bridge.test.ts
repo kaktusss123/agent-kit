@@ -9,7 +9,6 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { envelopeFileName, validateEnvelopeRecord } from "./envelope";
-import { READINESS_ENV } from "./readiness";
 
 const VALID_ENVELOPE = {
 	status: "done",
@@ -71,7 +70,6 @@ function makeBridge(opts?: { agentId?: string }): Harness {
 			fs.rmSync(dir, { recursive: true, force: true });
 			delete process.env.PI_SUBAGENT_ID;
 			delete process.env.PI_SUBAGENT_RESULTS_DIR;
-			delete process.env[READINESS_ENV];
 		},
 	};
 	void h.setReported;
@@ -217,20 +215,19 @@ describe("reporting bridge staleness (F2)", () => {
 		}
 	});
 
-	test("no readiness signal outside profiled children", async () => {
-		const before = process.env[READINESS_ENV];
-		delete process.env[READINESS_ENV];
+	test("the bridge registers no readiness signaling (readiness is observed by the probe)", async () => {
 		const h = makeBridge();
 		try {
-			// the factory ran without PI_SUBAGENT_READINESS: no session_start
-			// handler may have been registered (signalChildReadiness no-op).
-			// Evidence: the bridge factory did not throw and report_result is
-			// registered; the readiness contract itself is covered live.
+			await report(h, "only concern is the report");
+			// Boundary (SPEC R2): capability extensions declare nothing about
+			// readiness — the factory must not register a session_start handler
+			// (the subagents-owned readiness probe covers the contract), and its
+			// only tool is report_result.
+			expect(h.handlers.session_start).toBeUndefined();
 			expect(h.tool).toBeDefined();
-			expect(h.tool.name === "report_result" || h.tool.definition === undefined).toBe(true);
+			expect(h.tool.name).toBe("report_result");
 		} finally {
 			h.cleanup();
-			if (before !== undefined) process.env[READINESS_ENV] = before;
 		}
 	});
 });

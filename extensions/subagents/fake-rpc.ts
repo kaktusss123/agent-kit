@@ -7,7 +7,7 @@ import { EventEmitter } from "node:events";
 import { JsonlReader } from "./jsonl";
 import type { ChildProcessLike, SpawnFn } from "./rpc-child";
 
-export type SpawnSpec = { command: string; args: string[]; cwd: string };
+export type SpawnSpec = { command: string; args: string[]; cwd: string; env?: NodeJS.ProcessEnv };
 
 type StdioLike = {
 	on(event: "data", cb: (chunk: Buffer) => void): unknown;
@@ -127,7 +127,7 @@ export function createFakeSpawnFactory(): FakeHarness {
 	const spawned: FakeRpcProcess[] = [];
 	let handler: ((proc: FakeRpcProcess, spec: SpawnSpec) => void) | null = null;
 	const spawnFn: SpawnFn = (command, args, opts) => {
-		const proc = new FakeRpcProcess({ command, args, cwd: opts.cwd });
+		const proc = new FakeRpcProcess({ command, args, cwd: opts.cwd, env: opts.env });
 		spawned.push(proc);
 		// Mirror pi RPC behavior: respond async so promise chains settle
 		// naturally.

@@ -5,7 +5,10 @@
  * hooks (agent_start/agent_end/agent_settled, ui_prompt_start/end,
  * session_start/shutdown) and must not carry transport-specific fields.
  * Sinks translate these events into their own wire protocols (Warp OSC 777
- * today, a future control-plane transport tomorrow).
+ * today). The contract is best-effort observational telemetry only: it may
+ * inform an external observer (today Warp) about run state, and must never
+ * be the basis for authoritative run state, remote control, cancel, reliable
+ * needs_input, reconnect/replay, or any other control-plane semantics.
  *
  * Named Runtime* to stay unambiguous next to pi-agent-core's low-level
  * AgentEvent / AgentEventSink loop contract.
@@ -24,8 +27,13 @@ export type AgentRuntimeEvent =
 	| { type: "attention_resolved"; kind: UIPromptKind; title?: string };
 
 /**
- * A consumer of semantic agent events. Sinks must be cheap and best-effort:
- * delivery guarantees, retries, and acknowledgements are out of scope.
+ * A consumer of semantic agent events: observational telemetry only.
+ *
+ * The contract is intentionally weak — no acknowledgements, no retries, event
+ * loss is permitted, and a failing sink never affects agent execution. Sinks
+ * must also be cheap. It must not be used as a control surface: authoritative
+ * run state, remote control, cancel, reliable needs_input, or
+ * reconnect/replay require a different interface, not another sink.
  */
 export interface AgentRuntimeEventSink {
 	emit(event: AgentRuntimeEvent): void | Promise<void>;

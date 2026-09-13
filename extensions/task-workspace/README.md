@@ -37,6 +37,6 @@ host-independent core that receives its task root explicitly and returns plain
 domain results. `core-isolation.test.ts` proves the core imports and runs
 with no host context.
 
-This directory is also loaded as an additional extension entry into
-`workspace_agent` RepoOwner children (see `../subagents/`), which is
-why it must stay self-contained here.
+This directory is loaded as an additional extension entry by other consumers
+(e.g. child agent profiles); it must stay self-contained here — no imports
+from sibling extension directories.

@@ -14,8 +14,9 @@
  *   report_result itself) invalidates the record — it is rewritten with
  *   `stale: true`. Settlement on the main side accepts only fresh records,
  *   so "finish by reporting" is a mechanical property, not an instruction.
- * - Readiness: reports the registered tool set to the controller through the
- *   shared readiness handshake (signalChildReadiness).
+ * - Readiness: none. The bridge declares nothing about readiness — the
+ *   subagents-owned readiness probe observes this entry against the
+ *   controller's contract (see readiness.ts / readiness-probe.ts).
  */
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import * as fs from "node:fs";
@@ -28,7 +29,6 @@ import {
 	type Envelope,
 	type EnvelopeRecord,
 } from "./envelope";
-import { signalChildReadiness } from "./readiness";
 
 /** Entry id of this extension in the spawn readiness contract. */
 export const REPORTING_ENTRY_ID = "workspace-reporting";
@@ -183,6 +183,4 @@ export default function (pi: ExtensionAPI) {
 			};
 		},
 	});
-
-	signalChildReadiness(pi, REPORTING_ENTRY_ID, ["report_result"]);
 }

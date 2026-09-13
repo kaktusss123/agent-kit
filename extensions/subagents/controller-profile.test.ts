@@ -18,7 +18,7 @@ import {
 	settleRun,
 	startRun,
 } from "./fake-rpc";
-import { parseReadinessPayload } from "./readiness";
+import { parseReadinessPayload, READINESS_CONTRACT_ENV } from "./readiness";
 import { validateEnvelope, validateEnvelopeRecord } from "./envelope";
 import type { SubagentModelEvent } from "./types";
 
@@ -76,6 +76,14 @@ describe("per-spawn additionalExtensions", () => {
 			expect(exts).toEqual(["/fake/bridge.ts", "/ext/task-workspace/index.ts", "/ext/subagents/reporting-bridge.ts"]);
 			expect(args).toContain("--no-extensions");
 			expect(args[args.indexOf("--name") + 1]).toBe("subagent:owner-x");
+			// The exact readiness contract passed to spawn() travels verbatim to
+			// the child via the env var the probe observes (single source of
+			// truth for THIS spawn).
+			expect(JSON.parse(proc.spec.env?.[READINESS_CONTRACT_ENV] ?? "null"))
+				.toEqual({
+					"task-workspace": ["task_status", "ensure_task_repo"],
+					"workspace-reporting": ["report_result"],
+				});
 			await runtime.shutdown();
 			await pending.catch(() => {});
 			void autoAcceptPrompt;
@@ -92,6 +100,9 @@ describe("per-spawn additionalExtensions", () => {
 			const proc = harness.spawned[0];
 			const exts = proc.spec.args.map((a, i) => (a === "-e" ? proc.spec.args[i + 1] : null)).filter(Boolean);
 			expect(exts).toEqual(["/fake/bridge.ts"]);
+			// Byte-identical environment: no readiness contract is shipped for a
+			// generic child (the probe is not even loaded there).
+			expect(proc.spec.env?.[READINESS_CONTRACT_ENV]).toBeUndefined();
 			await runtime.shutdown();
 			await pending.catch(() => {});
 		} finally {
