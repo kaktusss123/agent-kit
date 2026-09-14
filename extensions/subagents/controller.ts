@@ -965,7 +965,10 @@ export class LocalSubagentRuntime implements SubagentRuntime {
 		record.activeTools.set(toolCallId, {
 			toolCallId,
 			name,
-			summary: summarizeToolActivity(name, ev.args),
+			// The child's cwd (managed worktree for workspace runs) lets the
+			// summary stay workspace-relative instead of burning the cap on the
+			// absolute worktree prefix.
+			summary: summarizeToolActivity(name, ev.args, record.cwd),
 			startedAt: Date.now(),
 		});
 	}

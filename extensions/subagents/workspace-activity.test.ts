@@ -95,6 +95,23 @@ describe("controller: live tool activity (T4-T6)", () => {
 		}
 	});
 
+	test("record.cwd is passed as workspace: `cd <cwd> && …` collapses in the summary", async () => {
+		const h = makeRuntime();
+		try {
+			const { proc } = await spawnChild(h);
+			writeStart(proc, {
+				toolCallId: "t1",
+				toolName: "bash",
+				args: { command: `cd ${h.tmp} && git status` },
+			});
+			const snap = h.runtime.inspect()[0]!;
+			expect(snap.activeTool?.summary).toBe("git status");
+		} finally {
+			await h.runtime.shutdown();
+			h.cleanup();
+		}
+	});
+
 	test("T5: tool_execution_end clears active and appends bounded recent with endedAt", async () => {
 		const h = makeRuntime();
 		try {

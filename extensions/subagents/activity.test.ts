@@ -4,6 +4,7 @@
  * no child processes, deterministic clocks.
  */
 import { describe, expect, test } from "bun:test";
+import * as os from "node:os";
 import { formatRunStatus, summarizeToolActivity, type RunStatusView } from "./activity";
 import type { ToolActivity } from "./types";
 
@@ -82,6 +83,76 @@ describe("summarizeToolActivity", () => {
 	test("whitespace-only candidates are skipped, later policy keys still tried", () => {
 		expect(summarizeToolActivity("grep", { pattern: "   \n  ", path: "/tmp/fallback" })).toBe("/tmp/fallback");
 		expect(summarizeToolActivity("bash", { command: "   \n  " })).toBeUndefined();
+	});
+});
+
+describe("summarizeToolActivity: workspace-relative compaction", () => {
+	const WS = "/tmp/ws";
+
+	test("cd <ws> && … strips to the payload", () => {
+		expect(summarizeToolActivity("bash", { command: "cd /tmp/ws && git status" }, WS)).toBe("git status");
+	});
+
+	test("quoted cd <ws> strips to the payload", () => {
+		expect(summarizeToolActivity("bash", { command: 'cd "/tmp/ws" && git status' }, WS)).toBe("git status");
+	});
+
+	test("bare workspace mentions become .", () => {
+		expect(summarizeToolActivity("bash", { command: "ls /tmp/ws && git -C /tmp/ws status" }, WS)).toBe(
+			"ls . && git -C . status",
+		);
+	});
+
+	test("subdirectory references stay relative to the workspace root", () => {
+		expect(summarizeToolActivity("bash", { command: "cd /tmp/ws/extensions && ls" }, WS)).toBe("cd extensions && ls");
+	});
+
+	test("|| idiom is not stripped and sibling-prefix paths stay intact", () => {
+		expect(
+			summarizeToolActivity("bash", { command: "cat /tmp/ws-neighbor/f && cd /tmp/ws || ls" }, WS),
+		).toBe("cat /tmp/ws-neighbor/f && cd . || ls");
+	});
+
+	test("workspace-prefix safety: only segment boundaries match", () => {
+		expect(summarizeToolActivity("bash", { command: "ls /tmp/ws-backup && tar -cf x /tmp/ws-backup" }, WS)).toBe(
+			"ls /tmp/ws-backup && tar -cf x /tmp/ws-backup",
+		);
+	});
+
+	test("paths embedded in commands compact too", () => {
+		expect(summarizeToolActivity("bash", { command: "grep -rn guard /tmp/ws/extensions/x" }, WS)).toBe(
+			"grep -rn guard extensions/x",
+		);
+	});
+
+	test("file tool paths become workspace-relative", () => {
+		expect(summarizeToolActivity("read", { path: "/tmp/ws/extensions/task-workspace/guard.ts" }, WS)).toBe(
+			"extensions/task-workspace/guard.ts",
+		);
+	});
+
+	test("a path equal to the workspace becomes .", () => {
+		expect(summarizeToolActivity("read", { path: "/tmp/ws" }, WS)).toBe(".");
+	});
+
+	test("paths under home collapse to ~/...", () => {
+		expect(summarizeToolActivity("edit", { path: os.homedir() + "/notes/x.md" }, WS)).toBe("~/notes/x.md");
+	});
+
+	test("no workspace argument: byte-identical back-compat", () => {
+		expect(summarizeToolActivity("bash", { command: "cd /tmp/ws && git status" })).toBe("cd /tmp/ws && git status");
+		expect(summarizeToolActivity("read", { path: "/tmp/ws" })).toBe("/tmp/ws");
+		expect(summarizeToolActivity("edit", { path: os.homedir() + "/notes/x.md" })).toBe(os.homedir() + "/notes/x.md");
+	});
+
+	test("empty workspace argument behaves like no workspace", () => {
+		expect(summarizeToolActivity("read", { path: "/tmp/ws" }, "")).toBe("/tmp/ws");
+	});
+
+	test("the cap still applies after compaction", () => {
+		const s = summarizeToolActivity("bash", { command: "cd /tmp/ws && " + "y".repeat(200) }, WS);
+		expect(s?.length).toBe(72 + 1); // cap + ellipsis
+		expect(s?.endsWith("…")).toBe(true);
 	});
 });
 
