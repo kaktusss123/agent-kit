@@ -27,8 +27,9 @@ worktrees); no manifest files.
   interceptor; bash git mutations are enforced where git executes: the bash
   tool is overridden so each child gets a PATH shim (`shim/git`) that asks
   the policy module (`shim/policy.mjs`) per real git invocation — local
-  mutations on the primary checkout of a repo with managed worktrees are
-  blocked (routing failure), `--no-verify` everywhere, redirection via
+  mutations in managed and other linked worktrees pass, while mutations on
+  the primary checkout of a repo with managed worktrees are blocked (routing
+  failure), `--no-verify` everywhere, redirection via
   `--git-dir`/`GIT_DIR` fails closed; read-only and `push` pass.
 
 ## Layout
@@ -37,8 +38,8 @@ worktrees); no manifest files.
 schemas, result `details`, and the bash tool override that arms the git
 PATH shim); `task-root.ts` is the task-root resolution policy
 (`AGENT_TASK_ROOT` override → `~/.agent-kit/tasks` default); the remaining
-sibling modules (`flows.ts`, `git.ts`, `guard.ts`, `types.ts`) are a
-host-independent core that receives its task root explicitly and returns
+sibling modules (`flows.ts`, `git.ts`, `guard.ts`, `shim-path.ts`, `types.ts`)
+are a host-independent core that receives its task root explicitly and returns
 plain domain results. `core-isolation.test.ts` proves the core imports and
 runs with no host context.
 

@@ -107,30 +107,6 @@ function isLinkedWorktree(repoRoot) {
   }
 }
 
-/** Common dir of a linked worktree (the primary checkout's .git dir), or
- *  null when the .git file does not have the standard
- *  `<common>/.git/worktrees/<id>` shape. */
-function commonDirOf(repoRoot) {
-  try {
-    const content = readFileSync(join(repoRoot, ".git"), "utf8");
-    if (!content.startsWith("gitdir:")) return null;
-    let gitdir = content.slice("gitdir:".length).trim();
-    if (!isAbsolute(gitdir)) gitdir = join(repoRoot, gitdir);
-    gitdir = realpathSafe(gitdir);
-    const worktrees = gitdir.split("/");
-    if (
-      worktrees.length > 3 &&
-      worktrees[worktrees.length - 2] === "worktrees" &&
-      worktrees[worktrees.length - 3] === ".git"
-    ) {
-      return worktrees.slice(0, -2).join("/");
-    }
-    return null;
-  } catch {
-    return null;
-  }
-}
-
 function underTaskRoot(p, taskRoot) {
   return taskRoot !== "" && (p.startsWith(taskRoot + "/") || p === taskRoot);
 }
@@ -207,15 +183,7 @@ export function decidePolicy({ cwd, argv, env, taskRoot }) {
     const root = findGitRoot(dir);
     if (!root) return allow(); // not inside a repository
     if (underTaskRoot(realpathSafe(root), taskRoot)) return allow(); // managed
-    if (isLinkedWorktree(root)) {
-      const common = commonDirOf(root);
-      if (!common || !underTaskRoot(realpathSafe(common), taskRoot)) {
-        return allow(); // another linked worktree
-      }
-      // A linked worktree whose common dir lives under the task root is
-      // part of a managed repo: fall through to the routing check so the
-      // command is pointed at the managed worktree(s).
-    }
+    if (isLinkedWorktree(root)) return allow(); // another linked worktree
     const hint = managedWorktreeHint(root, taskRoot);
     if (!hint) return allow(); // primary checkout without managed worktrees
     return block(

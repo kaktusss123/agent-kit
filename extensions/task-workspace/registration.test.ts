@@ -1,8 +1,8 @@
 /**
  * Standalone registration regression (SPEC R2/R3.2): loading the
  * task-workspace extension entry (with no subagents module involved) still
- * registers exactly the same surface as before the decoupling — the 4 tools
- * and the tool_call mutation guard — using the capture-seam style of
+ * registers the four task tools, the intentional bash override, and the
+ * tool_call mutation guard using the capture-seam style of
  * workspace-agent.test.ts.
  */
 import { execFileSync } from "node:child_process";
@@ -12,6 +12,7 @@ import * as path from "node:path";
 import { describe, expect, test } from "bun:test";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 const EXPECTED_TOOLS = [
+  "bash",
   "checkpoint_commit",
   "ensure_task_repo",
   "remove_task_lane",
@@ -42,9 +43,10 @@ function loadStandalone(): Capture {
 }
 
 describe("standalone task-workspace registration", () => {
-  test("registers exactly the 4 tools plus the tool_call mutation guard", () => {
+  test("registers the four task tools, bash override, and mutation guard", () => {
     const capture = loadStandalone();
     expect([...capture.tools].sort()).toEqual(EXPECTED_TOOLS);
+    expect(capture.tools).toContain("bash");
     expect(capture.toolCallHandlers).toHaveLength(1);
   });
 

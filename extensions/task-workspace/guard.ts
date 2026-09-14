@@ -7,8 +7,9 @@
  * (./shim/git) to every bash child, so every real `git` invocation
  * reports its post-`cd` working directory and exact argv to the policy
  * module (./shim/policy.mjs), which classifies with the shared tables in
- * ./shim/classify.mjs and routes local mutations to managed task
- * worktrees. There is deliberately NO Bash parsing anywhere in agent-kit;
+ * ./shim/classify.mjs. It blocks primary-checkout mutations when managed
+ * worktrees exist, while other linked worktrees remain allowed. There is
+ * deliberately NO Bash parsing anywhere in agent-kit;
  * this module keeps only the write/edit guard plus thin typed re-exports
  * of the shared classification (single source of truth: classify.mjs).
  */
@@ -19,10 +20,15 @@ import {
   findGitRoot,
   isAllowedIgnoredPrimaryPath,
   isGitMetadataPath,
+  isTemporaryPath,
   managedWorktreeHint,
   realpath,
 } from "./git";
-import type { GuardVerdict, PathClassification } from "./types";
+import type {
+  GitInvocationClassification,
+  GuardVerdict,
+  PathClassification,
+} from "./types";
 
 // Shared classification tables and rules live in ./shim/classify.mjs —
 // the same module the runtime policy uses. Re-exported here (with the thin
@@ -53,7 +59,10 @@ export function classifyGitInvocation(
   argv: string[],
 ): GitInvocationClassification {
   const { rest } = splitGitGlobalArgs(argv);
-  return classifyInvocationTokens(rest[0] ?? "", rest.slice(1));
+  return classifyInvocationTokens(
+    rest[0] ?? "",
+    rest.slice(1),
+  ) as GitInvocationClassification;
 }
 
 /** Internal-URL targets are session resources, never filesystem paths. */

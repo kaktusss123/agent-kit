@@ -14,24 +14,13 @@ import { createGuardFixture, type GuardFixture } from "./fixture";
 const SHIM_PATH = join(import.meta.dir, "git");
 const POLICY_PATH = join(import.meta.dir, "policy.mjs");
 
-let fx: GuardFixture;
-let realGit: string;
-let shimEnv: Record<string, string>;
-
-beforeAll(() => {
-  // Independent of checkout state: the shim must be executable on disk.
-  chmodSync(SHIM_PATH, 0o755);
-  realGit = spawnSync("sh", ["-c", "command -v git"], { encoding: "utf8" }).stdout.trim();
-  if (!realGit) throw new Error("real git not found on PATH");
-});
-
-afterAll(async () => {
-  if (fx) await fx.destroy();
-});
-
 /** Guard environment armed like the extension's spawnHook, with the shim
  *  dir FIRST on PATH (proving the fail-open path skips the shim itself). */
-function buildEnv(withGuard: boolean): Record<string, string> {
+function buildEnv(
+  fx: GuardFixture,
+  realGit: string,
+  withGuard: boolean,
+): Record<string, string> {
   const env: Record<string, string> = {};
   for (const [k, v] of Object.entries(process.env)) {
     if (v !== undefined && !k.startsWith("AGENT_KIT_") && k !== "AGENT_TASK_ROOT") {
@@ -62,9 +51,21 @@ function runShim(
 }
 
 describe("shim subprocess: block", () => {
+  let fx: GuardFixture;
+  let shimEnv: Record<string, string>;
+
   beforeAll(async () => {
+    chmodSync(SHIM_PATH, 0o755);
+    const realGit = spawnSync("sh", ["-c", "command -v git"], {
+      encoding: "utf8",
+    }).stdout.trim();
+    if (!realGit) throw new Error("real git not found on PATH");
     fx = await createGuardFixture("agent-kit-shim-block-");
-    shimEnv = buildEnv(true);
+    shimEnv = buildEnv(fx, realGit, true);
+  });
+
+  afterAll(async () => {
+    if (fx) await fx.destroy();
   });
 
   test("primary mutation: block message on stderr, exit 1, names root and hint", () => {
@@ -86,9 +87,21 @@ describe("shim subprocess: block", () => {
 });
 
 describe("shim subprocess: transparent passthrough on allow", () => {
+  let fx: GuardFixture;
+  let shimEnv: Record<string, string>;
+
   beforeAll(async () => {
+    chmodSync(SHIM_PATH, 0o755);
+    const realGit = spawnSync("sh", ["-c", "command -v git"], {
+      encoding: "utf8",
+    }).stdout.trim();
+    if (!realGit) throw new Error("real git not found on PATH");
     fx = await createGuardFixture("agent-kit-shim-pass-");
-    shimEnv = buildEnv(true);
+    shimEnv = buildEnv(fx, realGit, true);
+  });
+
+  afterAll(async () => {
+    if (fx) await fx.destroy();
   });
 
   test("rev-parse --show-toplevel runs real git in the managed worktree", () => {
@@ -134,9 +147,21 @@ describe("shim subprocess: transparent passthrough on allow", () => {
 });
 
 describe("shim subprocess: fail open without the guard environment", () => {
+  let fx: GuardFixture;
+  let shimEnv: Record<string, string>;
+
   beforeAll(async () => {
+    chmodSync(SHIM_PATH, 0o755);
+    const realGit = spawnSync("sh", ["-c", "command -v git"], {
+      encoding: "utf8",
+    }).stdout.trim();
+    if (!realGit) throw new Error("real git not found on PATH");
     fx = await createGuardFixture("agent-kit-shim-open-");
-    shimEnv = buildEnv(false);
+    shimEnv = buildEnv(fx, realGit, false);
+  });
+
+  afterAll(async () => {
+    if (fx) await fx.destroy();
   });
 
   test("git works unguarded with a short stderr note, despite the shim being first on PATH", () => {
@@ -152,13 +177,17 @@ describe("shim subprocess: fail open without the guard environment", () => {
   });
 });
 
-let hygieneFx: GuardFixture;
-
 describe("shim script hygiene", () => {
+  let fx: GuardFixture;
+
   beforeAll(async () => {
-    hygieneFx = await createGuardFixture("agent-kit-shim-hygiene-");
+    chmodSync(SHIM_PATH, 0o755);
+    fx = await createGuardFixture("agent-kit-shim-hygiene-");
   });
-  afterAll(() => hygieneFx.destroy());
+
+  afterAll(async () => {
+    if (fx) await fx.destroy();
+  });
 
   test("shim is executable and policy/classify are plain ESM modules", () => {
     const src = readFileSync(SHIM_PATH, "utf8") as string;
@@ -171,7 +200,7 @@ describe("shim script hygiene", () => {
     // pi may run under bun, but the policy must not depend on bun APIs.
     // Run plain node against the fixture primary with NO AGENT_TASK_ROOT:
     // an unconfigured task root fails mutations closed.
-    const r = spawnSync("node", [POLICY_PATH, hygieneFx.primary, "commit", "-m", "x"], {
+    const r = spawnSync("node", [POLICY_PATH, fx.primary, "commit", "-m", "x"], {
       env: { ...process.env, AGENT_TASK_ROOT: "" },
       encoding: "utf8",
     });
