@@ -37,7 +37,7 @@ Repair means a NEW workspace spawn whose task begins with inspecting the existin
 
 ## Restrictions the runtime enforces
 
-- RepoOwner children may spawn repo-local helpers through the same `subagent` tool: plain `cwd` spawns only, with the full `modelClass` choice (cheap/default/smart). They cannot create workspace spawns — the owner is the only writer of its worktree.
+- RepoOwner children may spawn repo-local helpers through the same `subagent` tool: plain `cwd` spawns only, with the full `modelClass` choice (cheap/default/smart). Helpers are part of the owner's execution and may use ordinary tools inside this workspace, but they cannot create workspace spawns: a managed worktree has exactly one owning RepoOwner, and helpers never become separate RepoOwners.
 - On an owner, the `subagent` tool accepts only `status`, `result`, `respond`, `cancel`; `wait`, `steer`, `follow_up` are rejected (owner lifecycle events belong to the workspace registry; steering would bypass the deadline).
 - Workspace runs produce no generic `[subagent ...]` deliveries; do not `wait()` on them.
 

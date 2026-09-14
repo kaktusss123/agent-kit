@@ -72,6 +72,8 @@ Late escalation: Main keeps ownership of the repository whose owner already ran;
 
 ## Worker verification reports
 
+Completion ordering (ADR-0002): a `done` outcome describes a committed, settled candidate. Before `report_result(status=done)`, the finished state must be committed as a candidate commit, and the final verification must have run against the repository after that commit was created. Checks run before the commit remain development feedback; they do not replace the post-commit final verification. If verification, hooks, or repair changed repository state after the last commit, that state is a new candidate: commit it and verify it again before yielding.
+
 Before yielding, a repo owner returns a compact structured report (JSON, no raw test output):
 
 ```json

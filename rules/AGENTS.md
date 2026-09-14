@@ -61,6 +61,7 @@
 * A blocked task-workspace mutation is a routing failure, not authorization to reproduce the same mutation through eval, Python, shell, sed/cp, or another agent. Manual tracked-file adaptation is allowed only when it is an explicit implementation/recovery decision, with the reason and a re-verified diff.
 * Never pass an inferred `base_ref` (a release/hotfix/maintenance branch picked from context or merely observed in Git output); use an explicit user/SPEC/task decision, the deterministic runtime, or ask.
 * Raw `git commit --no-verify` is forbidden everywhere; the only hook-bypass path is `checkpoint_commit`'s deferred hook verification after a real, current hook failure.
+* Task work completes from committed state only: before yielding `done`, the finished state must be committed as a candidate commit and finally verified after that commit; any later repository change (verification side effects, repair) means a new candidate commit and a new final verification.
 
 # Environment boundaries
 
