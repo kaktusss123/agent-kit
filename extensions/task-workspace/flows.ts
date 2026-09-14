@@ -43,6 +43,11 @@ const DEFERRED_PASS_RESULTS: Record<string, true> = {
   yes: true,
 };
 
+/** Default development branches can never be task branches (canonical or
+ *  lane): task work must land on its own reviewable branch. Exact names
+ *  only — "release/main" or "develop-2" stay ordinary task branches. */
+const PROTECTED_TASK_BRANCHES = new Set(["main", "master", "develop"]);
+
 // ─── task_status ────────────────────────────────────────────────────────
 
 export async function taskStatus(
@@ -98,6 +103,14 @@ export async function ensureTaskRepo(
   ctxCwd: string,
   opts: { taskRoot: string },
 ) {
+  // 0. Protected branches: refuse before anything is created or changed.
+  if (PROTECTED_TASK_BRANCHES.has(params.branch)) {
+    return {
+      status: "error",
+      message: `Refusing ${params.branch} as a task branch: ${[...PROTECTED_TASK_BRANCHES].join(", ")} are default development branches, not task branches. Ask the user or derive a proper task branch name.`,
+    };
+  }
+
   // 1. Resolve source repo (canonicalize cwd to avoid symlink mismatches)
   const cwd = realpath(ctxCwd);
   const sourceAbs = expandPath(params.source_path, cwd);
@@ -599,6 +612,57 @@ export async function removeTaskLane(
 
 // ─── checkpoint_commit ──────────────────────────────────────────────────
 
+/** HEAD's file set as Git reports it (empty for an unreadable state, which
+ *  the comparison below then fails closed on). */
+async function headFiles(repoRoot: string): Promise<string[]> {
+  const r = await git(
+    repoRoot,
+    "diff-tree",
+    "--no-commit-id",
+    "--name-only",
+    "-r",
+    "--root",
+    "HEAD",
+  );
+  return r.ok ? r.stdout.split("\n").filter((f) => f) : [];
+}
+
+/** Postcondition for every successful commit: the created commit must
+ *  contain exactly the intended paths. Pre-commit hooks may adjust the
+ *  index they run against and Git commits that adjusted index (verified on
+ *  git 2.47: even `commit --only` picks up hook-staged files), so the
+ *  scope can only be proven after the commit exists. Fail closed: report
+ *  the fact; the model decides the repair — no automatic history rewrite.
+ *  Returns the mismatch result, or null when the scope is exact. */
+async function commitScopeResult(
+  repoRoot: string,
+  commitSha: string,
+  intended: string[],
+): Promise<
+  | null
+  | {
+      status: "commit_scope_mismatch";
+      commit: string;
+      intended: string[];
+      actual: string[];
+      reason: string;
+    }
+> {
+  const actual = await headFiles(repoRoot);
+  const same =
+    actual.length === intended.length &&
+    [...actual].sort().join("\n") === [...intended].sort().join("\n");
+  if (same) return null;
+  return {
+    status: "commit_scope_mismatch",
+    commit: commitSha,
+    intended: [...intended].sort(),
+    actual: [...actual].sort(),
+    reason:
+      "The created commit contains files outside the intended path set (typically a pre-commit hook staging extras). The commit exists; inspect it and decide the repair (e.g. revert it). Nothing was rewritten automatically.",
+  };
+}
+
 export interface DeferredHookEvidence {
   blocker_kind: "external_prerequisite" | "external_availability";
   failed_hook: string;
@@ -764,6 +828,8 @@ export async function checkpointCommit(
       };
     }
     const deferredLog = await git(repoRoot, "log", "-1", "--format=%H");
+    const deferredScope = await commitScopeResult(repoRoot, deferredLog.stdout, relPaths);
+    if (deferredScope) return deferredScope;
     return {
       status: "committed_with_deferred_hook",
       commit: deferredLog.stdout,
@@ -785,8 +851,10 @@ export async function checkpointCommit(
     };
   }
 
-  // 8. Verify
+  // 8. Verify: scope postcondition first, then the worktree state.
   const log = await git(repoRoot, "log", "-1", "--format=%H");
+  const scopeResult = await commitScopeResult(repoRoot, log.stdout, relPaths);
+  if (scopeResult) return scopeResult;
   const status = await git(repoRoot, "status", "--porcelain");
   const branch = await getRepoBranch(repoRoot);
   const remainingDirty = status.ok

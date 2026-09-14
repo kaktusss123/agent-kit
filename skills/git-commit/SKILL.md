@@ -11,7 +11,7 @@ Create a checkpoint from the repository state without broadening its scope.
 
 Judgment (model): whether a checkpoint is warranted, where it belongs, the semantic message, ticket policy, and choosing the exact intended path set.
 
-Mechanics (runtime): the `checkpoint_commit` tool enforces exact staging, secret-path rejection, ambiguous-staged detection, hook execution, and primary-checkout protection, and reports a structured result. Read `references/checkpoint.md` before the first checkpoint commit in a session; it is the operative contract for inputs, statuses, and the deferred-hook evidence path. Do not duplicate those guarantees by hand.
+Mechanics (runtime): the `checkpoint_commit` tool enforces exact staging, secret-path rejection, ambiguous-staged detection, hook execution, primary-checkout protection, and post-commit scope verification of the created commit, and reports a structured result. Read `references/checkpoint.md` before the first checkpoint commit in a session; it is the operative contract for inputs, statuses, and the deferred-hook evidence path. Do not duplicate those guarantees by hand.
 
 The by-hand procedure in this skill is the fallback for repositories outside any Pi-managed task workspace (no `checkpoint_commit` target). Everywhere else the runtime tool is the path.
 

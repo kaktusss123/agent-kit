@@ -14,14 +14,17 @@ worktrees); no manifest files.
   branch, HEAD, upstream, classification, dirty paths, and artifacts.
 - **`ensure_task_repo`** — attach a source repo to the task workspace as a git
   worktree. Reuses existing worktrees, creates new ones from local/remote
-  branches, or fetches and creates from the remote default. Never forces,
-  resets, or detaches.
+  branches, or fetches and creates from the remote default. Protected default
+  development branches (`main`, `master`, `develop`) are refused as task
+  branches. Never forces, resets, or detaches.
 - **`remove_task_lane`** — safely remove one clean secondary lane from its
   managed task workspace (canonical worktrees rejected; non-force only).
 - **`checkpoint_commit`** — stage exact paths and commit within a repository.
   Blocks primary-checkout commits unless `allow_primary=true`, rejects
   secret-like paths, verifies paths inside the repo, enforces exact staging,
-  requires hooks to run; `deferred_hook` allows controlled commit with
+  requires hooks to run, and verifies the created commit against the intended
+  paths after hooks run (a hook-staged extra file fails closed as
+  `commit_scope_mismatch`); `deferred_hook` allows controlled commit with
   deferred hook verification after a real external-prerequisite hook failure.
 - **Mutation guard** — write/edit targets are classified by the `tool_call`
   interceptor; bash git mutations are enforced where git executes: the bash

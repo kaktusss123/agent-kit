@@ -32,7 +32,7 @@ Meaningful results and the required reaction:
 - `base_selection_required`, `remote_selection_required` → the runtime refuses to guess product branching semantics; ask the user (see SKILL.md) and retry with an explicit value.
 - `branch_in_use` → another worktree already holds the branch; report which one and ask. Never force, detach, or remove it.
 
-Guarantees: the runtime never forces, resets, or detaches anything; the same task identity resolves to the same workspace location for every session; all state lives in git (branches + worktrees), so there are no manifest files to corrupt or migrate.
+Guarantees: the runtime never forces, resets, or detaches anything; the same task identity resolves to the same workspace location for every session; protected default development branches (`main`, `master`, `develop`) are refused as task branches — canonical and lane calls alike — before anything is created or changed; all state lives in git (branches + worktrees), so there are no manifest files to corrupt or migrate.
 
 ## Secondary lanes
 
