@@ -14,9 +14,9 @@
  */
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { formatModelEvent } from "./delivery";
-import type { SubagentRuntime } from "./types";
+import type { LocalSubagentRuntime } from "./controller";
 
-export function attachDelivery(pi: ExtensionAPI, runtime: SubagentRuntime): void {
+export function attachDelivery(pi: ExtensionAPI, runtime: LocalSubagentRuntime): void {
 	runtime.onEvent((ev) => {
 		const text = formatModelEvent(ev);
 		pi.sendMessage(

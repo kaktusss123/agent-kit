@@ -147,38 +147,3 @@ export type WaitOutcome =
 	| { status: "cancelled" }
 	| { status: "needs_input"; question: string; request?: AskInput }
 	| { status: "timeout"; state: AgentState };
-
-/**
- * Boundary between model-facing subagent semantics and the concrete runtime.
- *
- * The tool and command layers depend only on this interface; the current
- * implementation is local child processes speaking pi RPC, but it can be
- * replaced (e.g. an external daemon) without changing the model contract.
- */
-export interface SubagentRuntime {
-	/** Start a child agent. Resolves quickly, once the initial prompt is accepted. */
-	spawn(opts: SpawnOptions): Promise<AgentSnapshot>;
-	/** Redirect a running child mid-flight. */
-	steer(agentId: string, message: string): Promise<void>;
-	/** Queue work for a child: after the current run, or as a new run when idle. */
-	followUp(agentId: string, message: string): Promise<void>;
-	/** Block until the agent reaches a meaningful event (or timeout). */
-	wait(
-		agentId: string,
-		opts?: { timeoutMs?: number; signal?: AbortSignal },
-	): Promise<WaitOutcome>;
-	/** Lazily fetch the full persisted result of an agent. */
-	result(agentId: string): Promise<AgentResult | null>;
-	/** Answer a pending ask question; the child resumes. */
-	respond(agentId: string, answer: string): Promise<void>;
-	/** Stop an agent: pi abort, then SIGTERM, then SIGKILL escalation. */
-	cancel(agentId: string): Promise<void>;
-	/** Snapshot one agent (by id) or all agents. */
-	inspect(agentId?: string): AgentSnapshot[];
-	/** Subscribe to model-visible events; returns an unsubscribe function. */
-	onEvent(cb: (ev: SubagentModelEvent) => void): () => void;
-	/** Kill all live children without latching the runtime shut. */
-	cancelAll(): Promise<void>;
-	/** Kill all live children and latch the runtime shut (main shutdown). */
-	shutdown(): Promise<void>;
-}

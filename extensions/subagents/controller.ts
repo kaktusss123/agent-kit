@@ -42,7 +42,6 @@ import type {
 	AgentState,
 	SpawnOptions,
 	SubagentModelEvent,
-	SubagentRuntime,
 	ToolActivity,
 	WaitOutcome,
 } from "./types";
@@ -113,7 +112,6 @@ interface AgentRecord {
 	pendingDispatch: boolean;
 	/** True between child `agent_start` and the matching `agent_settled`. */
 	runActive: boolean;
-	settledOnce: boolean;
 	waiters: Array<(outcome: WaitOutcome) => void>;
 	spawnWaiters: Array<(ok: boolean) => void>;
 	dispatchWaiters: Map<string, (ev: Record<string, unknown>) => void>;
@@ -134,7 +132,7 @@ interface AgentRecord {
 
 const ASK_TOOL = "ask";
 
-export class LocalSubagentRuntime implements SubagentRuntime {
+export class LocalSubagentRuntime {
 	private readonly records = new Map<string, AgentRecord>();
 	private readonly listeners = new Set<(ev: SubagentModelEvent) => void>();
 	private shutDown = false;
@@ -231,7 +229,6 @@ export class LocalSubagentRuntime implements SubagentRuntime {
 			cancelRequested: false,
 			pendingDispatch: false,
 			runActive: false,
-			settledOnce: false,
 			waiters: [],
 			spawnWaiters: [],
 			dispatchWaiters: new Map(),
@@ -387,7 +384,6 @@ export class LocalSubagentRuntime implements SubagentRuntime {
 
 		if (type === "agent_settled") {
 			record.runActive = false;
-			record.settledOnce = true;
 			record.pendingQuestion = undefined;
 			if (record.cancelRequested) return; // exit path will mark cancelled
 			// Collect state, final text, and stats. Responses correlate by
@@ -737,7 +733,7 @@ export class LocalSubagentRuntime implements SubagentRuntime {
 			// subagent tool rejects wait for workspace children; the runtime
 			// enforces the same rule here (defense in depth).
 			throw new Error(
-				`agent ${agentId} is workspace-owned; use workspace_agent query-mode instead of subagent wait`,
+				`agent ${agentId} is workspace-owned; the workspace spawn owns the run outcome — use op=status / op=result`,
 			);
 		}
 		// Already meaningful: resolve from current state. A pending dispatch
@@ -990,7 +986,7 @@ export class LocalSubagentRuntime implements SubagentRuntime {
 	private pushEvent(record: AgentRecord, ev: SubagentModelEvent, opts?: { background?: boolean }): void {
 		// Event router: a workspace-routed child's lifecycle events belong to
 		// the workspace run registry — waiters and generic listeners never see
-		// them (the terminal surface is [workspace_agent completed]).
+		// them (the terminal surface is the shared [subagent completed] event).
 		if (record.eventRoute === "workspace") {
 			for (const cb of this.workspaceListeners) {
 				try {

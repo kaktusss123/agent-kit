@@ -1,19 +1,20 @@
 /**
- * Workspace layer — the RepoOwner contract on top of the subagent primitive.
+ * Workspace runs — the RepoOwner contract for `subagent` spawns that own a
+ * managed task worktree.
  *
- * One shared SubagentRuntime stays the owner of all child processes; this
- * module is the second policy surface inside the same extension (jiti loads
- * each extension entry with a private module cache, so cross-extension
- * sharing is impossible by construction). RepoOwner children are spawned with
- * a per-spawn profile (task-workspace binding + reporting bridge), their
- * lifecycle events are routed here by the controller's event router, and the
- * generic `subagent` policy never sees them.
+ * Workspace is a MODE of a `subagent` spawn, not a separate agent kind: the
+ * same LocalSubagentRuntime owns every child process; this module adds the
+ * RepoOwner policy surface for spawns created with `workspace=<path>`.
+ * RepoOwner children are spawned with a per-spawn profile (task-workspace
+ * binding + reporting bridge + readiness probe), their lifecycle events are
+ * routed here by the controller's event router (`eventRoute: "workspace"`),
+ * and generic subagent surfaces stay untouched.
  *
- * Contract (see SPEC §3):
- * - fail closed before dispatch (model pinning, workspace validation, static
- *   preflight, readiness handshake — the task prompt never reaches a model
- *   before the child proves initialization);
- * - no fallback after dispatch (abort = detach; repair = a new RepoOwner);
+ * Contract:
+ * - fail closed before dispatch (model pinning to the main session, workspace
+ *   validation, static preflight, readiness handshake — the task prompt never
+ *   reaches a model before the child proves initialization);
+ * - no fallback after dispatch (abort = detach; repair = a new owner spawn);
  * - deadline covers the whole run including the report ladder;
  * - settlement accepts only a fresh report_result envelope (staleness is
  *   enforced by the reporting bridge); terminal outcomes retire the child
@@ -23,13 +24,12 @@
  *   stopped (accessible repository, current HEAD, clean tree); otherwise
  *   the outcome downgrades to blocked with a done_rejected reason, and
  *   every terminal result carries objective Git facts read by the runtime;
- * - durable query: `workspace_agent(run_id)` returns any run's state or
- *   terminal envelope for the rest of the main session.
+ * - every run is identified by its agentId (the subagent id); state and the
+ *   terminal outcome stay queryable through `subagent` op=status/result for
+ *   the rest of the main session.
  */
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
-import { Type } from "typebox";
 import * as fs from "node:fs";
-import * as os from "node:os";
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
 import {
@@ -51,7 +51,8 @@ import type { DirtyState } from "../task-workspace/types";
 import { resolveTaskRoot } from "../task-workspace/task-root";
 import { formatRunStatus, type RunStatusView } from "./activity";
 import { formatNeedsInputBody } from "./delivery";
-import type { AgentResult, AgentSnapshot, SpawnOptions, SubagentModelEvent } from "./types";
+import type { AgentSnapshot, SubagentModelEvent } from "./types";
+import type { LocalSubagentRuntime } from "./controller";
 import type { AskInput } from "../ask/contract";
 
 // ============================================================ configuration
@@ -59,7 +60,7 @@ import type { AskInput } from "../ask/contract";
 /** Report ladder depth: at most this many follow-ups before `blocked`. */
 const LADDER_MAX = 3;
 
-const DEFAULT_TIMEOUT_MS = 600000;
+const DEFAULT_DEADLINE_MS = 600000;
 
 /** Live status refresh cadence: modest — a few seconds, not a spinner. */
 const STATUS_REFRESH_MS = 3000;
@@ -74,9 +75,6 @@ export type ExternalStatus =
 	| "needs_input"
 	| "error"
 	| "running";
-
-/** Query-only status for a run that has not reached a terminal outcome. */
-export type InProgressStatus = "running";
 
 /**
  * Objective Git facts of the workspace, read mechanically by the runtime
@@ -98,7 +96,6 @@ interface TerminalOutcome {
 }
 
 interface WorkspaceAgentRun {
-	runId: string;
 	agentId: string;
 	workspace: string;
 	task: string;
@@ -119,19 +116,18 @@ interface WorkspaceAgentRun {
 	waiters: Array<(outcome: "settled" | "needs_input" | "detached") => void>;
 }
 
-export interface DispatchResult {
+/** Protocol outcome of a workspace run, as returned by spawn and op=result. */
+export interface WorkspaceRunOutcome {
 	status: ExternalStatus;
 	dispatched: boolean;
 	workspace: string;
 	agentId?: string;
-	runId?: string;
 	state?: string;
 	question?: string;
 	/** Structured canonical ask request when status is needs_input. */
 	request?: AskInput;
 	deadlineMsLeft?: number;
 	result?: Envelope;
-	summary?: string;
 	last_output?: string;
 	reason?: string;
 	child_may_have_mutated_repo?: boolean;
@@ -139,16 +135,25 @@ export interface DispatchResult {
 	git_facts?: GitFacts;
 }
 
-export interface WorkspaceLayer {
-	/** True when the agent id belongs to a workspace-routed RepoOwner. */
-	isManagedAgent(agentId: string): boolean;
+/** Point-in-time view of a workspace run for op=status / op=result. */
+export interface WorkspaceRunView {
+	/** Set when the run reached a terminal outcome; still queryable afterwards. */
+	terminal?: WorkspaceRunOutcome;
+	state: string;
+	workspace: string;
+	deadlineMsLeft: number;
+	ladder?: { step: number; max: number };
+	question?: string;
+	/** Structured canonical ask request while the run waits for input. */
+	request?: AskInput;
 }
 
 /**
  * Cross-tool allow-list for RepoOwner children on the `subagent` tool.
- * status/result/respond/cancel stay available to Main; wait would steal the
- * one lifecycle event from the workspace registry, steer/follow_up would
- * bypass the run's deadline and task contract.
+ * status/result/respond/cancel stay available to Main. The workspace spawn
+ * call owns the run's outcome (wait would steal lifecycle events that belong
+ * to this registry); steer/follow_up would bypass the run's deadline and
+ * task contract.
  */
 export function managedAgentOpPolicy(op: string): { allowed: boolean; reason?: string } {
 	switch (op) {
@@ -156,24 +161,17 @@ export function managedAgentOpPolicy(op: string): { allowed: boolean; reason?: s
 			return {
 				allowed: false,
 				reason:
-					"wait is not allowed for workspace_agent runs (workspace-owned agent): lifecycle events belong to the workspace registry — use workspace_agent(run_id) query-mode",
+					"wait is not allowed for workspace runs (workspace-owned agent): the workspace spawn call owns the run outcome — use op=status / op=result",
 			};
 		case "steer":
 		case "follow_up":
 			return {
 				allowed: false,
-				reason: `${op} is not allowed for workspace_agent runs (workspace-owned agent): it would bypass the run's deadline and task contract`,
+				reason: `${op} is not allowed for workspace runs (workspace-owned agent): it would bypass the run's deadline and task contract`,
 			};
 		default:
 			return { allowed: true };
 	}
-}
-
-/** Minimal slice of the tool-execute context the layer needs. */
-export interface DispatchContext {
-	model?: { provider: string; id: string };
-	thinkingLevel?: string;
-	cwd?: string;
 }
 
 /**
@@ -181,53 +179,63 @@ export interface DispatchContext {
  * place on the tool call. Never enters Main's LLM context; calls after the
  * tool promise settles are ignored by pi.
  */
-type ToolUpdateCallback = (update: {
+export type ToolUpdateCallback = (update: {
 	content: Array<{ type: "text"; text: string }>;
 	details?: unknown;
 }) => void;
 
-/**
- * Runtime subset the workspace layer needs. LocalSubagentRuntime satisfies
- * this structurally; the interface keeps the runtime swappable in tests and
- * documents that the layer never creates controllers itself (SPEC D1).
- */
-export interface WorkspaceAgentRuntime {
-	spawn(opts: SpawnOptions): Promise<AgentSnapshot>;
-	followUp(agentId: string, message: string): Promise<void>;
-	respond(agentId: string, answer: string): Promise<void>;
-	cancel(agentId: string): Promise<void>;
-	retire(agentId: string): Promise<void>;
-	inspect(agentId?: string): AgentSnapshot[];
-	result(agentId: string): Promise<AgentResult | null>;
-	onWorkspaceEvent(cb: (ev: SubagentModelEvent) => void): () => void;
-	isWorkspaceRouted(agentId: string): boolean;
-	getResultsDir(): string;
+/** Arguments of a workspace-mode `subagent` spawn. */
+export interface WorkspaceSpawnArgs {
+	workspace: string;
+	task: string;
+	/** Run deadline in seconds (covers the whole run including the report ladder). */
+	deadlineSec?: number;
+	signal?: AbortSignal;
+	onUpdate?: ToolUpdateCallback;
+	/** Main session model; the child inherits it (no modelClass in workspace mode). */
+	model?: { provider: string; id: string };
+	thinkingLevel?: string;
+	cwd?: string;
+}
+
+/** Tool-shaped result of a workspace spawn (JSON content + structured details). */
+export interface WorkspaceToolResult {
+	content: [{ type: "text"; text: string }];
+	details: WorkspaceRunOutcome | Record<string, unknown>;
+	isError?: boolean;
 }
 
 // ==================================================================== layer
 
-export interface WorkspaceLayerOptions {
+export interface WorkspaceRunsOptions {
 	/** Override the profile entrypoint paths (tests: point at missing files). */
 	profileEntries?: () => string[];
 	/** Live status refresh interval override (tests: fast cadence). */
 	statusRefreshMs?: number;
 }
 
-export function createWorkspaceLayer(
-	pi: ExtensionAPI,
-	getRuntime: (ctxCwd: string | undefined) => WorkspaceAgentRuntime,
-	opts?: WorkspaceLayerOptions,
-): WorkspaceLayer {
-	const runsByRunId = new Map<string, WorkspaceAgentRun>();
-	const runsByAgentId = new Map<string, WorkspaceAgentRun>();
-	let runCounter = 0;
+/** RepoOwner policy surface for workspace-mode subagent spawns. */
+export interface WorkspaceRuns {
+	/** Validate, spawn, and (unless aborted) block until terminal/needs_input. */
+	spawnRun(args: WorkspaceSpawnArgs): Promise<WorkspaceToolResult>;
+	/** Current view of a run (undefined when the agent is not workspace-owned). */
+	runView(agentId: string): WorkspaceRunView | undefined;
+	/** True when the agent id belongs to a workspace-routed RepoOwner. */
+	isManaged(agentId: string): boolean;
+}
 
-	// The runtime is created lazily by the host (F1: the workspace_agent tool
-	// is registered eagerly here, before any subagent tool call), but children
-	// can only exist after the layer acquired the runtime. Once acquired, bind
-	// it and subscribe the single event-ownership handler exactly once.
-	let boundRt: WorkspaceAgentRuntime | undefined;
-	const R = (ctxCwd: string | undefined): WorkspaceAgentRuntime => {
+export function createWorkspaceRuns(
+	pi: ExtensionAPI,
+	getRuntime: (ctxCwd: string | undefined) => LocalSubagentRuntime,
+	opts?: WorkspaceRunsOptions,
+): WorkspaceRuns {
+	const runsByAgentId = new Map<string, WorkspaceAgentRun>();
+
+	// The runtime is created lazily by the host, but children can only exist
+	// after the layer acquired it. Once acquired, bind it and subscribe the
+	// single event-ownership handler exactly once.
+	let boundRt: LocalSubagentRuntime | undefined;
+	const R = (ctxCwd: string | undefined): LocalSubagentRuntime => {
 		const rt = getRuntime(ctxCwd);
 		if (rt !== boundRt) {
 			boundRt = rt;
@@ -250,7 +258,7 @@ export function createWorkspaceLayer(
 	const statusRefreshMs = opts?.statusRefreshMs ?? STATUS_REFRESH_MS;
 
 	/** The bound runtime (events and settlement only run after a dispatch bound it). */
-	const rt = (): WorkspaceAgentRuntime => {
+	const rt = (): LocalSubagentRuntime => {
 		if (!boundRt) return R(undefined);
 		return boundRt;
 	};
@@ -457,26 +465,25 @@ export function createWorkspaceLayer(
 	 */
 	function notifyNeedsInput(run: WorkspaceAgentRun): void {
 		const lines = [
-			`[workspace_agent needs_input]`,
-			`runId: ${run.runId}`,
+			`[subagent needs input] ${run.agentId} — workspace run`,
 			`agentId: ${run.agentId}`,
 			`workspace: ${run.workspace}`,
 			...formatNeedsInputBody(run.question ?? "(unknown)", run.request),
 			`answer via subagent op=respond id=${run.agentId} answer=<...>; the run resumes under the same deadline`,
-			`details via workspace_agent(run_id: "${run.runId}")`,
+			`details via subagent op=result id=${run.agentId}`,
 		];
 		try {
 			pi.sendMessage(
 				{
-					customType: "workspace-agent-event",
+					customType: "subagent-event",
 					content: lines.join("\n"),
 					display: true,
-					details: { runId: run.runId, agentId: run.agentId, kind: "needs_input" },
+					details: { agentId: run.agentId, kind: "needs_input", workspace: true },
 				},
 				{ deliverAs: "steer", triggerTurn: true },
 			);
 		} catch {
-			// Query-mode remains the recovery path if delivery fails.
+			// op=status/result remain the recovery path if delivery fails.
 		}
 	}
 
@@ -492,8 +499,7 @@ export function createWorkspaceLayer(
 	function notifyCompleted(run: WorkspaceAgentRun): void {
 		const o = run.terminal!;
 		const lines = [
-			`[workspace_agent completed]`,
-			`runId: ${run.runId}`,
+			`[subagent completed] ${run.agentId} — workspace run`,
 			`agentId: ${run.agentId}`,
 			`workspace: ${run.workspace}`,
 			`status: ${o.status}`,
@@ -508,14 +514,14 @@ export function createWorkspaceLayer(
 		}
 		if (o.reason) lines.push(`reason: ${o.reason}`);
 		if (o.childMayHaveMutatedRepo) lines.push(`child_may_have_mutated_repo: true`);
-		lines.push(`details via workspace_agent(run_id: "${run.runId}")`);
+		lines.push(`details via subagent op=result id=${run.agentId}`);
 		try {
 			pi.sendMessage(
 				{
-					customType: "workspace-agent-event",
+					customType: "subagent-event",
 					content: lines.join("\n"),
 					display: true,
-					details: { runId: run.runId, agentId: run.agentId, kind: "completed", status: o.status },
+					details: { agentId: run.agentId, kind: "completed", status: o.status, workspace: true },
 				},
 				{ deliverAs: "steer", triggerTurn: true },
 			);
@@ -565,7 +571,7 @@ export function createWorkspaceLayer(
 	function buildStatusView(run: WorkspaceAgentRun, snap: AgentSnapshot): RunStatusView {
 		const now = Date.now();
 		return {
-			runId: run.runId,
+			runId: run.agentId,
 			agentId: run.agentId,
 			workspace: run.workspace,
 			state: run.state,
@@ -712,76 +718,14 @@ export function createWorkspaceLayer(
 		return defaultProfileEntries(moduleDirname());
 	}
 
-	// ----------------------------------------------------------------- tool
+	// -------------------------------------------------------- spawn (dispatch)
 
-	pi.registerTool({
-		name: "workspace_agent",
-		label: "Workspace Agent",
-		description:
-			"Run a RepoOwner agent rooted in a managed task worktree. Dispatch-mode: workspace_agent(workspace, task, " +
-			"timeout_ms?) blocks until a terminal outcome (done/partial/blocked) or needs_input; strict validation and " +
-			"readiness happen before dispatch (fail closed), and there is no fallback after dispatch — abort detaches " +
-			"and the run keeps going. Query-mode: workspace_agent(run_id) returns the current state (running / needs_input) or the terminal " +
-			"envelope of any run of this session (completion events are notifications, not the only API). Terminal results " +
-			"carry objective Git facts (branch, HEAD, dirty) read by the runtime after the child stopped; a done outcome " +
-			"is runtime-verified against a clean settled worktree — dirty or unreadable state downgrades it to blocked.",
-		parameters: Type.Object({
-			workspace: Type.Optional(
-				Type.String({ description: "Dispatch-mode: absolute managed task worktree path (the RepoOwner's cwd)" }),
-			),
-			task: Type.Optional(Type.String({ description: "Dispatch-mode: the task prompt for the RepoOwner" })),
-			timeout_ms: Type.Optional(
-				Type.Integer({
-					description: `Dispatch-mode: run deadline in ms (default ${DEFAULT_TIMEOUT_MS}); covers the whole run including the report ladder`,
-					minimum: 1000,
-				}),
-			),
-			run_id: Type.Optional(
-				Type.String({
-					description:
-						"Query-mode: runId (or agentId) from any earlier dispatch/query response; returns state or terminal envelope",
-				}),
-			),
-		}),
-		promptGuidelines: [
-			"Dispatch independent repo owners in parallel with multiple workspace_agent calls in one block.",
-			"The result JSON carries the protocol outcome in `status`; the RepoOwner's product outcome lives in `result.status` (present only when external status is done).",
-			"Terminal results include runtime-read `git_facts` (branch, HEAD SHA, dirty paths) — never ask the model for these; trust `git_facts` over any textual self-report about repository state.",
-			"needs_input suspends the run without finishing it: answer via subagent op=respond (allowed for RepoOwners); the run continues under the same deadline.",
-			"If a RepoOwner failed, do not re-dispatch blindly: inspect its worktree — after dispatch there is no fallback, the repair path is a new RepoOwner with inspection.",
-		],
-		async execute(_toolCallId, params, signal, onUpdate, ctx) {
-			// Bind the runtime (lazy in the host) for whichever mode runs.
-			R(ctx.cwd);
-			// Query-mode: durable lookup by runId or agentId.
-			if (params.run_id) {
-				return queryRun(params.run_id);
-			}
-			if (!params.workspace || !params.task) {
-				return err("dispatch-mode requires `workspace` and `task` (or `run_id` for query-mode)");
-			}
-			return dispatch(params.workspace, params.task, params.timeout_ms, signal, onUpdate, ctx);
-		},
-	});
-
-	// -------------------------------------------------------------- dispatch
-
-	type ToolResult = {
-		content: [{ type: "text"; text: string }];
-		details: DispatchResult | Record<string, unknown>;
-		isError?: boolean;
-	};
-
-	async function dispatch(
-		workspace: string,
-		task: string,
-		timeoutMs: number | undefined,
-		signal: AbortSignal | undefined,
-		onUpdate: ToolUpdateCallback | undefined,
-		ctx: DispatchContext,
-	): Promise<ToolResult> {
-		// Pre-dispatch gate 1: model pinning — no silent defaults.
-		if (!ctx.model) {
+	async function spawnRun(args: WorkspaceSpawnArgs): Promise<WorkspaceToolResult> {
+		const { workspace, task, signal, onUpdate } = args;
+		const deadlineMs = Math.max(1000, (args.deadlineSec ?? DEFAULT_DEADLINE_MS / 1000) * 1000);
+		// Pre-dispatch gate 1: model pinning — no silent defaults. Workspace
+		// children inherit the main session model (modelClass does not apply).
+		if (!args.model) {
 			return fail("blocked", workspace, "no model resolved in the current session (refusing to use a silent default)");
 		}
 		// Pre-dispatch gate 2: workspace validation.
@@ -808,12 +752,12 @@ export function createWorkspaceLayer(
 		const base = path.basename(realWorkspace);
 		let snap: AgentSnapshot;
 		try {
-			snap = await R(ctx.cwd).spawn({
+			snap = await R(args.cwd).spawn({
 				task,
 				label: `owner-${base}`,
 				cwd: realWorkspace,
-				model: `${ctx.model.provider}/${ctx.model.id}`,
-				thinking: ctx.thinkingLevel,
+				model: `${args.model.provider}/${args.model.id}`,
+				thinking: args.thinkingLevel,
 				additionalExtensions: profileEntries(),
 				readinessEntries: PROFILE_READINESS,
 				eventRoute: "workspace",
@@ -821,18 +765,18 @@ export function createWorkspaceLayer(
 			});
 		} catch (e) {
 			const message = e instanceof Error ? e.message : String(e);
-			// SPEC 3.2: an abort before the task prompt was accepted means no
-			// process and no task — blocked, dispatched:false. (If acceptance
-			// won the race, spawn resolved and the signal's ownership moved to
-			// the detach wait below.)
+			// An abort before the task prompt was accepted means no process
+			// and no task — blocked, dispatched:false. (If acceptance won the
+			// race, spawn resolved and the signal's ownership moved to the
+			// detach wait below.)
 			if (message.includes("aborted before dispatch")) {
 				return fail("blocked", workspace, message);
 			}
-			// Pre-dispatch startup failures are classified (SPEC A2c/A10): a
-			// broken/missing extension, a dead child, or a rejected/timed-out
-			// prompt all mean "this profile cannot run here" → unsupported, the
-			// Main-side fallback signal. Only genuinely unclassified wrapper
-			// failures surface as error.
+			// Pre-dispatch startup failures are classified: a broken/missing
+			// extension, a dead child, or a rejected/timed-out prompt all mean
+			// "this profile cannot run here" → unsupported, the Main-side
+			// fallback signal. Only genuinely unclassified wrapper failures
+			// surface as error.
 			const startupFailure =
 				message.includes("readiness handshake") ||
 				message.includes("exited before accepting") ||
@@ -843,13 +787,11 @@ export function createWorkspaceLayer(
 			return fail(startupFailure ? "unsupported" : "error", workspace, message);
 		}
 
-		const runId = `wr-${++runCounter}-${Math.random().toString(36).slice(2, 6)}`;
 		const run: WorkspaceAgentRun = {
-			runId,
 			agentId: snap.id,
 			workspace: realWorkspace,
 			task,
-			deadline: Date.now() + Math.max(1000, timeoutMs ?? DEFAULT_TIMEOUT_MS),
+			deadline: Date.now() + deadlineMs,
 			startedAt: Date.now(),
 			state: "running",
 			ladder: 0,
@@ -857,13 +799,12 @@ export function createWorkspaceLayer(
 			deadlineFired: false,
 			waiters: [],
 		};
-		runsByRunId.set(runId, run);
 		runsByAgentId.set(snap.id, run);
 		armDeadline(run);
 		startLiveStatus(run, onUpdate);
 
 		// Blocking wait: terminal or needs_input. Abort = detach (the run
-		// keeps going; completion arrives as an event / via query-mode).
+		// keeps going; completion arrives as an event / via op=status|result).
 		try {
 			const waitOutcome = await new Promise<"settled" | "needs_input" | "detached">((resolve) => {
 				const w = (outcome: "settled" | "needs_input" | "detached") => {
@@ -892,15 +833,14 @@ export function createWorkspaceLayer(
 					dispatched: true,
 					workspace: realWorkspace,
 					agentId: run.agentId,
-					runId,
 					state: run.state,
 					deadlineMsLeft: Math.max(0, run.deadline - Date.now()),
 					...(run.terminal
 						? {}
-						: { reason: "detached by main abort; the run continues under its deadline — completion arrives as [workspace_agent completed] or via workspace_agent(run_id)" }),
+						: { reason: "detached by main abort; the run continues under its deadline — completion arrives as a [subagent completed] event or via subagent op=result" }),
 				});
 			}
-			return ok(runResult(run));
+			return ok(runOutcome(run));
 		} finally {
 			// The progress loop dies on EVERY exit: terminal, needs_input,
 			// detach, and thrown errors. No leaked timers, no updates after the
@@ -911,21 +851,12 @@ export function createWorkspaceLayer(
 
 	// ----------------------------------------------------------------- query
 
-	function queryRun(key: string): ToolResult {
-		const run = runsByRunId.get(key) ?? runsByAgentId.get(key);
-		if (!run) {
-			return err(`unknown run id: ${key} (runs live for the current main session only)`);
-		}
-		return ok(runResult(run));
-	}
-
-	function runResult(run: WorkspaceAgentRun): DispatchResult {
-		const base: DispatchResult = {
+	function runOutcome(run: WorkspaceAgentRun): WorkspaceRunOutcome {
+		const base: WorkspaceRunOutcome = {
 			status: "blocked",
 			dispatched: true,
 			workspace: run.workspace,
 			agentId: run.agentId,
-			runId: run.runId,
 		};
 		if (run.terminal) {
 			return {
@@ -949,9 +880,9 @@ export function createWorkspaceLayer(
 			};
 		}
 		// Query-only in-progress status: never returned by the blocking
-		// dispatch (which resolves only on terminal/needs_input), so the
-		// shared orchestration rule "partial/blocked means inspect + repair"
-		// cannot be triggered by a merely running owner.
+		// spawn (which resolves only on terminal/needs_input), so the shared
+		// orchestration rule "partial/blocked means inspect + repair" cannot
+		// be triggered by a merely running owner.
 		return {
 			...base,
 			status: "running",
@@ -960,28 +891,38 @@ export function createWorkspaceLayer(
 		};
 	}
 
+	function runView(agentId: string): WorkspaceRunView | undefined {
+		const run = runsByAgentId.get(agentId);
+		if (!run) return undefined;
+		const outcome = runOutcome(run);
+		return {
+			...(run.terminal ? { terminal: outcome } : {}),
+			...(outcome.status === "needs_input" ? { question: run.question, request: run.request } : {}),
+			state: run.terminal ? "settled" : run.state,
+			workspace: run.workspace,
+			deadlineMsLeft: Math.max(0, run.deadline - Date.now()),
+			...(run.ladder > 0 ? { ladder: { step: run.ladder, max: LADDER_MAX } } : {}),
+		};
+	}
+
 	// --------------------------------------------------------------- helpers
 
-	function fail(status: "blocked" | "unsupported" | "error", workspace: string, reason: string): ToolResult {
+	function fail(status: "blocked" | "unsupported" | "error", workspace: string, reason: string): WorkspaceToolResult {
 		return ok({ status, dispatched: false, workspace, reason });
 	}
 
-	function ok(result: DispatchResult): ToolResult {
+	function ok(result: WorkspaceRunOutcome): WorkspaceToolResult {
 		return {
 			content: [{ type: "text" as const, text: JSON.stringify(result) }],
 			details: result,
 		};
 	}
 
-	function err(text: string): ToolResult {
-		return {
-			content: [{ type: "text" as const, text: `Error: ${text}` }],
-			details: { error: text },
-			isError: true,
-		};
-	}
-
-	return { isManagedAgent: (agentId: string) => runsByAgentId.has(agentId) };
+	return {
+		spawnRun,
+		runView,
+		isManaged: (agentId: string) => runsByAgentId.has(agentId),
+	};
 }
 
 // -------------------------------------------------------------------- helpers

@@ -9,6 +9,17 @@ import type { AgentResult, AgentSnapshot, SubagentModelEvent } from "./types";
 import { formatAskRequestJson, type AskInput } from "../ask/contract";
 
 /**
+ * Structured workspace-run facts for the status view. Structural twin of the
+ * workspace layer's run view (kept local so delivery stays import-light).
+ */
+export interface StatusRunView {
+	state: string;
+	workspace: string;
+	deadlineMsLeft: number;
+	ladder?: { step: number; max: number };
+}
+
+/**
  * The resolver instruction (SPEC §10): Main first tries to answer a child's
  * ask from context it already has; only an unknown decision is re-asked of
  * the user through Main's own `ask`.
@@ -60,16 +71,17 @@ export function formatModelEvent(ev: SubagentModelEvent): string {
 				`reason: ${ev.reason}`,
 				`details available via subagent op=result id=${ev.agentId}`,
 			].join("\n");
-		case "cancelled":
-			return `[subagent cancelled] ${ev.label} (id: ${ev.agentId})`;
 		case "needs_input":
 			return [
 				`[subagent needs input] ${ev.label} (id: ${ev.agentId})`,
 				...formatNeedsInputBody(ev.question, ev.request),
 				`answer with subagent op=respond id=${ev.agentId} answer=<...>; the agent is suspended until then`,
 			].join("\n");
+		case "cancelled":
 		case "input_resolved":
-			// Workspace-routed only; never reaches generic delivery.
+			// cancelled: consumed by waiters only, never delivered in the
+			// background (the cancelling side already knows the outcome).
+			// input_resolved: workspace-routed only; never reaches generic delivery.
 			return "";
 	}
 }
@@ -83,7 +95,7 @@ const STATE_ORDER: Record<AgentSnapshot["state"], number> = {
 	cancelled: 3,
 };
 
-export function formatSnapshot(s: AgentSnapshot): string {
+export function formatSnapshot(s: AgentSnapshot, run?: StatusRunView): string {
 	const elapsed = formatDuration(s.elapsedMs);
 	const parts = [`${s.id}`, `“${s.label}”`, s.state];
 	if (!s.alive) parts.push("(process exited)");
@@ -93,15 +105,20 @@ export function formatSnapshot(s: AgentSnapshot): string {
 	const lines = [parts.join("  ")];
 	if (s.pendingQuestion) lines.push(`  question: ${s.pendingQuestion}`);
 	if (s.lastError) lines.push(`  error: ${s.lastError}`);
+	if (run) {
+		const runParts = [run.workspace, `state ${run.state}`, `deadline ${formatDuration(run.deadlineMsLeft)}`];
+		if (run.ladder && run.ladder.step > 0) runParts.push(`report recovery ${run.ladder.step}/${run.ladder.max}`);
+		lines.push(`  run: ${runParts.join(" · ")}`);
+	}
 	return lines.join("\n");
 }
 
-export function formatStatusList(snapshots: AgentSnapshot[]): string {
+export function formatStatusList(snapshots: AgentSnapshot[], runViews?: Map<string, StatusRunView>): string {
 	if (snapshots.length === 0) return "No subagents in this session.";
 	const sorted = [...snapshots].sort(
 		(a, b) => STATE_ORDER[a.state] - STATE_ORDER[b.state] || b.startedAt - a.startedAt,
 	);
-	return sorted.map(formatSnapshot).join("\n");
+	return sorted.map((s) => formatSnapshot(s, runViews?.get(s.id))).join("\n");
 }
 
 export function formatResult(result: AgentResult): string {
@@ -128,6 +145,34 @@ export function formatResult(result: AgentResult): string {
 function oneLine(text: string, max = 160): string {
 	const flat = text.replace(/\s+/g, " ").trim();
 	return flat.length > max ? `${flat.slice(0, max)}…` : flat;
+}
+
+/**
+ * Live progress view for a blocking wait: truthful point-in-time snapshot of
+ * the child (identity, state, elapsed, current tool, bounded recent activity).
+ * Rendered into the tool call via Pi's transient onUpdate channel — display
+ * only, never Main's LLM context.
+ */
+export function formatLiveSnapshot(s: AgentSnapshot): string {
+	const head = [`subagent ${s.id} “${s.label}”`, s.state, formatDuration(s.elapsedMs)];
+	if (s.model) head.push(s.model);
+	if (!s.alive) head.push("(process exited)");
+	const lines = [head.join(" · ")];
+	if (s.pendingQuestion) lines.push(`question: ${s.pendingQuestion}`);
+	if (s.lastError) lines.push(`error: ${s.lastError}`);
+	if (s.activeTool) {
+		const age = formatDuration(Math.max(0, Date.now() - s.activeTool.startedAt));
+		const parts = [s.activeTool.name, s.activeTool.summary, age].filter(Boolean);
+		lines.push(`current: ${parts.join(" · ")}`);
+	}
+	if (s.recentActivity && s.recentActivity.length > 0) {
+		lines.push("recent:");
+		for (const entry of s.recentActivity) {
+			const parts = [entry.name, entry.summary].filter(Boolean);
+			lines.push(`  ${parts.join(" · ")}`);
+		}
+	}
+	return lines.join("\n");
 }
 
 /** Compact human duration ("18s", "10m39s", "2h5m") shared by status views. */
