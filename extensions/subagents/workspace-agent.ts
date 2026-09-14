@@ -18,6 +18,11 @@
  * - settlement accepts only a fresh report_result envelope (staleness is
  *   enforced by the reporting bridge); terminal outcomes retire the child
  *   while preserving its record;
+ * - settled-state verification (ADR-0003): a `done` product outcome is
+ *   accepted only when the worktree reads back settled after the child
+ *   stopped (accessible repository, current HEAD, clean tree); otherwise
+ *   the outcome downgrades to blocked with a done_rejected reason, and
+ *   every terminal result carries objective Git facts read by the runtime;
  * - durable query: `workspace_agent(run_id)` returns any run's state or
  *   terminal envelope for the rest of the main session.
  */
@@ -34,7 +39,15 @@ import {
 	type EnvelopeRecord,
 } from "./envelope";
 import { PROFILE_READINESS } from "./readiness";
-import { expandPath, git, isLinkedWorktree, realpath } from "../task-workspace/git";
+import {
+	expandPath,
+	getRepoBranch,
+	git,
+	isLinkedWorktree,
+	parseDirtyStatus,
+	realpath,
+} from "../task-workspace/git";
+import type { DirtyState } from "../task-workspace/types";
 import { resolveTaskRoot } from "../task-workspace/task-root";
 import { formatRunStatus, type RunStatusView } from "./activity";
 import { formatNeedsInputBody } from "./delivery";
@@ -65,12 +78,23 @@ export type ExternalStatus =
 /** Query-only status for a run that has not reached a terminal outcome. */
 export type InProgressStatus = "running";
 
+/**
+ * Objective Git facts of the workspace, read mechanically by the runtime
+ * (ADR-0002 §10) — never model-reported. `branch` is empty on detached HEAD.
+ */
+export interface GitFacts {
+	branch: string;
+	headSha: string;
+	dirty: DirtyState;
+}
+
 interface TerminalOutcome {
 	status: "done" | "partial" | "blocked";
 	reason?: string;
 	result?: Envelope;
 	lastOutput?: string;
 	childMayHaveMutatedRepo: boolean;
+	gitFacts?: GitFacts;
 }
 
 interface WorkspaceAgentRun {
@@ -111,6 +135,8 @@ export interface DispatchResult {
 	last_output?: string;
 	reason?: string;
 	child_may_have_mutated_repo?: boolean;
+	/** Runtime-read Git facts of the workspace at settlement (undefined when Git could not be read at all). */
+	git_facts?: GitFacts;
 }
 
 export interface WorkspaceLayer {
@@ -268,7 +294,7 @@ export function createWorkspaceLayer(
 				// or explicit cancel by Main. The child is already dead when
 				// this arrives.
 				if (run.terminal || run.deadlineFired) return;
-				finish(run, {
+				await finish(run, {
 					status: "blocked",
 					reason: "cancelled_by_main",
 					lastOutput: await lastOutput(run.agentId),
@@ -304,9 +330,38 @@ export function createWorkspaceLayer(
 				run.deadlineTimer = undefined;
 			}
 			// Terminal lifecycle (F4): the completion is published only after
-			// the settled child is actually gone.
+			// the settled child is actually gone — which is also what keeps
+			// the settled-state check below free of concurrent mutation.
 			await retireChild(run);
-			finish(run, {
+			if (record.envelope.status === "done") {
+				// Settled-state verification (ADR-0003): a done outcome is
+				// accepted only when Git reads the worktree as settled —
+				// accessible repository, current HEAD, clean tree. Read after
+				// the child stopped, so it cannot mutate during the check.
+				const state = await readGitState(run.workspace);
+				if (!state.ok) {
+					await finish(run, {
+						status: "blocked",
+						reason: state.facts
+							? `done_rejected_dirty_worktree: ${formatDirty(state.facts.dirty)}`
+							: `done_rejected_unreadable_git_state: ${state.problem}`,
+						lastOutput: await lastOutput(run.agentId),
+						childMayHaveMutatedRepo: true,
+						gitFacts: state.facts,
+					});
+					return;
+				}
+				await finish(run, {
+					status: "done",
+					result: record.envelope,
+					childMayHaveMutatedRepo: false,
+					gitFacts: state.facts,
+				});
+				return;
+			}
+			// partial/blocked product outcomes exist to report unfinished work:
+			// no clean-tree requirement; facts are attached by finish().
+			await finish(run, {
 				status: "done",
 				result: record.envelope,
 				childMayHaveMutatedRepo: false,
@@ -324,7 +379,7 @@ export function createWorkspaceLayer(
 			} catch {
 				if (!run.terminal && !run.deadlineFired) {
 					await retireChild(run);
-					finish(run, {
+					await finish(run, {
 						status: "blocked",
 						reason: "report_ladder_delivery_failed",
 						lastOutput: await lastOutput(run.agentId),
@@ -338,7 +393,7 @@ export function createWorkspaceLayer(
 		if (childOutcome === "completed") {
 			if (deadlinePassed) {
 				await retireChild(run);
-				finish(run, {
+				await finish(run, {
 					status: "partial",
 					reason: "deadline",
 					lastOutput: last,
@@ -346,7 +401,7 @@ export function createWorkspaceLayer(
 				});
 			} else {
 				await retireChild(run);
-				finish(run, {
+				await finish(run, {
 					status: "blocked",
 					reason: "no_valid_report",
 					lastOutput: last,
@@ -357,7 +412,7 @@ export function createWorkspaceLayer(
 		}
 		// Child run failed without a fresh envelope: no trusted outcome exists.
 		await retireChild(run);
-		finish(run, {
+		await finish(run, {
 			status: "blocked",
 			reason: childOutcome === "failed" ? "child_failed" : "child_cancelled",
 			lastOutput: last,
@@ -379,9 +434,17 @@ export function createWorkspaceLayer(
 		);
 	}
 
-	function finish(run: WorkspaceAgentRun, outcome: TerminalOutcome): void {
+	async function finish(run: WorkspaceAgentRun, outcome: TerminalOutcome): Promise<void> {
 		if (run.terminal) return;
+		// Claim the outcome BEFORE any await: a concurrent terminal event
+		// (cancel racing a settle) must observe `terminal` and back off. The
+		// Git-facts fetch between claim and resolution only refines the record.
 		run.terminal = outcome;
+		// Objective Git facts (ADR-0002 §10): runtime-read, never model-
+		// reported. The fresh-envelope settle path passes them explicitly
+		// (it needs the verdict anyway); every other terminal outcome gets
+		// a best-effort read here. A failed read leaves them undefined.
+		outcome.gitFacts = outcome.gitFacts ?? (await readGitFacts(run.workspace));
 		if (run.deadlineTimer) clearTimeout(run.deadlineTimer);
 		resolveWaiters(run, "settled");
 		notifyCompleted(run);
@@ -435,6 +498,11 @@ export function createWorkspaceLayer(
 			`workspace: ${run.workspace}`,
 			`status: ${o.status}`,
 		];
+		if (o.gitFacts) {
+			lines.push(
+				`git: branch=${o.gitFacts.branch || "(detached)"} head=${o.gitFacts.headSha} dirty=${formatDirty(o.gitFacts.dirty)}`,
+			);
+		}
 		if (o.status === "done" && o.result) {
 			lines.push(`result: ${JSON.stringify(o.result)}`);
 		}
@@ -533,7 +601,7 @@ export function createWorkspaceLayer(
 					// cancel escalation is best-effort; the run outcome stands
 				}
 				const last = await lastOutput(run.agentId).catch(() => undefined);
-				finish(run, {
+				await finish(run, {
 					status: "partial",
 					reason: "deadline",
 					lastOutput: last,
@@ -654,7 +722,9 @@ export function createWorkspaceLayer(
 			"timeout_ms?) blocks until a terminal outcome (done/partial/blocked) or needs_input; strict validation and " +
 			"readiness happen before dispatch (fail closed), and there is no fallback after dispatch — abort detaches " +
 			"and the run keeps going. Query-mode: workspace_agent(run_id) returns the current state (running / needs_input) or the terminal " +
-			"envelope of any run of this session (completion events are notifications, not the only API).",
+			"envelope of any run of this session (completion events are notifications, not the only API). Terminal results " +
+			"carry objective Git facts (branch, HEAD, dirty) read by the runtime after the child stopped; a done outcome " +
+			"is runtime-verified against a clean settled worktree — dirty or unreadable state downgrades it to blocked.",
 		parameters: Type.Object({
 			workspace: Type.Optional(
 				Type.String({ description: "Dispatch-mode: absolute managed task worktree path (the RepoOwner's cwd)" }),
@@ -676,6 +746,7 @@ export function createWorkspaceLayer(
 		promptGuidelines: [
 			"Dispatch independent repo owners in parallel with multiple workspace_agent calls in one block.",
 			"The result JSON carries the protocol outcome in `status`; the RepoOwner's product outcome lives in `result.status` (present only when external status is done).",
+			"Terminal results include runtime-read `git_facts` (branch, HEAD SHA, dirty paths) — never ask the model for these; trust `git_facts` over any textual self-report about repository state.",
 			"needs_input suspends the run without finishing it: answer via subagent op=respond (allowed for RepoOwners); the run continues under the same deadline.",
 			"If a RepoOwner failed, do not re-dispatch blindly: inspect its worktree — after dispatch there is no fallback, the repair path is a new RepoOwner with inspection.",
 		],
@@ -864,6 +935,7 @@ export function createWorkspaceLayer(
 				reason: run.terminal.reason,
 				last_output: run.terminal.lastOutput,
 				child_may_have_mutated_repo: run.terminal.childMayHaveMutatedRepo,
+				...(run.terminal.gitFacts ? { git_facts: run.terminal.gitFacts } : {}),
 			};
 		}
 		if (run.state === "waiting_input") {
@@ -913,6 +985,61 @@ export function createWorkspaceLayer(
 }
 
 // -------------------------------------------------------------------- helpers
+
+/**
+ * Objective state of the workspace, read mechanically from Git.
+ * The three settled-state checks for a `done` product outcome:
+ * accessible git repository, current HEAD, clean working tree
+ * (untracked non-ignored files count as dirt; ignored files — build
+ * output, caches — do not). `facts` is present whenever Git could read
+ * at least status, so even a rejected done carries what Main needs.
+ */
+type GitState = { ok: true; facts: GitFacts } | { ok: false; problem: string; facts?: GitFacts };
+
+async function readGitState(workspace: string): Promise<GitState> {
+	try {
+		const toplevel = await git(workspace, "rev-parse", "--show-toplevel");
+		if (!toplevel.ok) {
+			return {
+				ok: false,
+				problem: `not an accessible git repository (${toplevel.stderr || "git rev-parse --show-toplevel failed"})`,
+			};
+		}
+		const head = await git(workspace, "rev-parse", "HEAD");
+		if (!head.ok) {
+			return { ok: false, problem: `no current HEAD (${head.stderr || "git rev-parse HEAD failed"})` };
+		}
+		const status = await git(workspace, "status", "--porcelain=v2", "--no-renames");
+		if (!status.ok) {
+			return { ok: false, problem: `git status failed (${status.stderr || "no output"})` };
+		}
+		const facts: GitFacts = {
+			branch: await getRepoBranch(workspace),
+			headSha: head.stdout,
+			dirty: parseDirtyStatus(status.stdout),
+		};
+		if (facts.dirty.staged.length > 0 || facts.dirty.unstaged.length > 0) {
+			return { ok: false, problem: `working tree is not clean (${formatDirty(facts.dirty)})`, facts };
+		}
+		return { ok: true, facts };
+	} catch (e) {
+		// git missing or unspawnable: fail closed, never silently "clean"
+		return { ok: false, problem: `git state unreadable: ${e instanceof Error ? e.message : String(e)}` };
+	}
+}
+
+/** Best-effort facts for terminal outcomes that carry no acceptance verdict. */
+async function readGitFacts(workspace: string): Promise<GitFacts | undefined> {
+	return (await readGitState(workspace)).facts;
+}
+
+/** Bounded human summary of the dirty state (reason lines, notifications). */
+function formatDirty(dirty: DirtyState): string {
+	const parts: string[] = [];
+	if (dirty.staged.length > 0) parts.push(`staged: ${dirty.staged.join(", ")}`);
+	if (dirty.unstaged.length > 0) parts.push(`unstaged: ${dirty.unstaged.join(", ")}`);
+	return parts.join("; ") || "clean";
+}
 
 /**
  * Additional-extension load order for the RepoOwner profile. ORDER MATTERS:

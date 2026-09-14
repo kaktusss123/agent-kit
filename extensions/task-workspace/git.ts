@@ -220,19 +220,41 @@ export async function getUpstream(repoRoot: string, branch: string): Promise<str
 
 export async function getSourceDirty(
   sourceRoot: string,
-): Promise<{ staged: string[]; unstaged: string[] }> {
-  const r = await git(sourceRoot, "status", "--porcelain=v1");
+): Promise<DirtyState> {
+  // porcelain v2: lines start with a token ("1 ", "? "), never a bare status
+  // column — immune to the whitespace-trimming inside git().
+  const r = await git(sourceRoot, "status", "--porcelain=v2", "--no-renames");
   if (!r.ok) return { staged: [], unstaged: [] };
+  return parseDirtyStatus(r.stdout);
+}
+
+/** Parse `git status --porcelain=v2 --no-renames` output; the single
+ *  definition of the dirty-state shape (staged = index differs from HEAD,
+ *  unstaged = worktree/index differs, untracked counts as unstaged; lists
+ *  are capped). Trailing "\t<origPath>" rename fields cannot occur because
+ *  --no-renames is always passed with this format. */
+export function parseDirtyStatus(stdout: string): DirtyState {
   const staged: string[] = [];
   const unstaged: string[] = [];
-  for (const line of r.stdout.split("\n")) {
+  const push = (xy: string, path: string): void => {
+    if (xy[0] !== ".") staged.push(path);
+    if (xy[1] !== ".") unstaged.push(path);
+  };
+  for (const line of stdout.split("\n")) {
     if (!line) continue;
-    const indexStatus = line[0];
-    const workStatus = line[1];
-    const path = line.slice(3);
-    if (indexStatus !== " " && indexStatus !== "?") staged.push(path);
-    // Untracked files ("??") are source dirt too — the typical manual-change case.
-    if (workStatus !== " ") unstaged.push(path);
+    if (line.startsWith("? ")) {
+      // Untracked files are dirt too — the typical manual-change case.
+      unstaged.push(line.slice(2));
+      continue;
+    }
+    if (line.startsWith("! ")) continue; // ignored files are not dirt
+    // "1 XY sub mH mI mW hH hI <path>" / "u XY sub m1 m2 m3 mW h1 h2 h3 <path>"
+    const fields = line.split(" ");
+    if (fields[0] === "1" && fields.length >= 9) {
+      push(fields[1]!, fields.slice(8).join(" "));
+    } else if (fields[0] === "u" && fields.length >= 11) {
+      push(fields[1]!, fields.slice(10).join(" "));
+    }
   }
   return {
     staged: staged.slice(0, 50),

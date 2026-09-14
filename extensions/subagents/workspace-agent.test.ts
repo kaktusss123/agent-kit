@@ -284,6 +284,133 @@ describe("happy path", () => {
 	});
 });
 
+describe("settled-state verification (A3)", () => {
+	test("clean worktree + fresh done report → done, with runtime-read git facts", async () => {
+		const h = makeLayer();
+		try {
+			const ws = makeWorktree(h.taskRoot, "a3-clean-ws");
+			const { pending, proc } = await driveToRunning(h, { workspace: ws, task: "t" });
+			const agentId = h.agentId();
+			writeEnvelope(h, agentId);
+			settleRun(proc, "did the work");
+			const res = await pending;
+			expect(res.details).toMatchObject({ status: "done", child_may_have_mutated_repo: false });
+			const facts = res.details.git_facts as { branch: string; headSha: string; dirty: { staged: string[]; unstaged: string[] } };
+			expect(facts.branch).toBe("feat/a3-clean-ws");
+			expect(facts.headSha).toBe(execFileSync("git", ["-C", ws, "rev-parse", "HEAD"], { encoding: "utf8" }).trim());
+			expect(facts.dirty).toMatchObject({ staged: [], unstaged: [] });
+			// the completion notification carries the same objective facts
+			const note = h.messages.find((m) => String(m.message.content).includes("[workspace_agent completed]"));
+			expect(String(note?.message.content)).toContain("branch=feat/a3-clean-ws");
+			expect(String(note?.message.content)).toContain("dirty=clean");
+		} finally {
+			await h.runtime.shutdown();
+			h.cleanup();
+		}
+	});
+
+	test("dirty worktree + done report → blocked (not done), reason names the dirt", async () => {
+		const h = makeLayer();
+		try {
+			const ws = makeWorktree(h.taskRoot, "a3-dirty-ws");
+			const { pending, proc } = await driveToRunning(h, { workspace: ws, task: "t" });
+			const agentId = h.agentId();
+			writeEnvelope(h, agentId); // child reported done, then a run left changes behind
+			fs.appendFileSync(path.join(ws, "README.md"), "verification leftover\n");
+			fs.writeFileSync(path.join(ws, "scratch.txt"), "untracked artifact\n");
+			settleRun(proc, "claimed done");
+			const res = await pending;
+			expect(res.details).toMatchObject({ status: "blocked", child_may_have_mutated_repo: true });
+			expect(res.details.result).toBeUndefined(); // done was rejected: no trusted result
+			expect(String(res.details.reason)).toContain("done_rejected_dirty_worktree");
+			expect(String(res.details.reason)).toContain("README.md");
+			const facts = res.details.git_facts as { dirty: { unstaged: string[] } };
+			expect(facts.dirty.unstaged).toContain("README.md");
+			expect(facts.dirty.unstaged).toContain("scratch.txt");
+		} finally {
+			await h.runtime.shutdown();
+			h.cleanup();
+		}
+	});
+
+	test("owner committed the candidate → clean tree → done at the new HEAD", async () => {
+		const h = makeLayer();
+		try {
+			const ws = makeWorktree(h.taskRoot, "a3-commit-ws");
+			const { pending, proc } = await driveToRunning(h, { workspace: ws, task: "t" });
+			const agentId = h.agentId();
+			// the owner's candidate commit (normally via checkpoint_commit)
+			fs.writeFileSync(path.join(ws, "impl.txt"), "work\n");
+			execFileSync("git", ["-C", ws, "add", "impl.txt"]);
+			execFileSync("git", ["-C", ws, "commit", "-qm", "candidate"]);
+			const sha = execFileSync("git", ["-C", ws, "rev-parse", "HEAD"], { encoding: "utf8" }).trim();
+			writeEnvelope(h, agentId);
+			settleRun(proc, "candidate committed and verified");
+			const res = await pending;
+			expect(res.details).toMatchObject({ status: "done", child_may_have_mutated_repo: false });
+			expect((res.details.git_facts as { headSha: string }).headSha).toBe(sha);
+		} finally {
+			await h.runtime.shutdown();
+			h.cleanup();
+		}
+	});
+
+	test("git state unreadable → fail closed: blocked (not done)", async () => {
+		const h = makeLayer();
+		try {
+			const ws = makeWorktree(h.taskRoot, "a3-gone-ws");
+			const { pending, proc } = await driveToRunning(h, { workspace: ws, task: "t" });
+			const agentId = h.agentId();
+			writeEnvelope(h, agentId);
+			fs.rmSync(ws, { recursive: true, force: true }); // worktree vanished after the report
+			settleRun(proc, "claimed done");
+			const res = await pending;
+			expect(res.details).toMatchObject({ status: "blocked", child_may_have_mutated_repo: true });
+			expect(res.details.result).toBeUndefined();
+			expect(String(res.details.reason)).toContain("done_rejected_unreadable_git_state");
+			expect(res.details.git_facts).toBeUndefined();
+		} finally {
+			await h.runtime.shutdown();
+			h.cleanup();
+		}
+	});
+
+	test("partial envelope over a dirty tree settles done with result.status=partial", async () => {
+		const h = makeLayer();
+		try {
+			const ws = makeWorktree(h.taskRoot, "a3-partial-ws");
+			const { pending, proc } = await driveToRunning(h, { workspace: ws, task: "t" });
+			writeEnvelope(h, h.agentId(), { status: "partial" }); // unfinished work may stay dirty
+			fs.appendFileSync(path.join(ws, "README.md"), "unfinished\n");
+			settleRun(proc, "ran out of time");
+			const res = await pending;
+			expect(res.details).toMatchObject({ status: "done", child_may_have_mutated_repo: false });
+			expect((res.details.result as Envelope).status).toBe("partial");
+			expect(res.details.git_facts).toBeDefined();
+		} finally {
+			await h.runtime.shutdown();
+			h.cleanup();
+		}
+	});
+
+	test("blocked envelope keeps working: settles done with result.status=blocked", async () => {
+		const h = makeLayer();
+		try {
+			const ws = makeWorktree(h.taskRoot, "a3-blockedenv-ws");
+			const { pending, proc } = await driveToRunning(h, { workspace: ws, task: "t" });
+			writeEnvelope(h, h.agentId(), { status: "blocked" });
+			settleRun(proc, "could not proceed");
+			const res = await pending;
+			expect(res.details).toMatchObject({ status: "done" });
+			expect((res.details.result as Envelope).status).toBe("blocked");
+			expect(res.details.git_facts).toBeDefined();
+		} finally {
+			await h.runtime.shutdown();
+			h.cleanup();
+		}
+	});
+});
+
 describe("staleness and report ladder", () => {
 	test("stale envelope → ladder follow-up → fresh report → done", async () => {
 		const h = makeLayer();
