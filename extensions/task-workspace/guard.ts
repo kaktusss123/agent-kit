@@ -7,7 +7,8 @@
  * "git" — and produces host-neutral guard verdicts for write/edit targets
  * and bash commands: local ref mutations route to managed worktrees (the
  * plain `cd <path> &&` idiom is honored), raw `--no-verify` is blocked
- * everywhere, everything else fails closed. A net against routing mistakes,
+ * everywhere, and input beyond the scanner's recursion limit is blocked as
+ * unanalyzable. Everything else fails closed. A net against routing mistakes,
  * not a sandbox. The host binding maps a verdict onto its own tool-call
  * block.
  */
@@ -283,13 +284,33 @@ function classifyFetchOperation(rest: string[]): GitOperationClass {
 interface ShellWord {
   raw: string;
   literal: string;
+  hasExpansion: boolean;
+  hasUnquotedGlob: boolean;
 }
 
 type Emit = (words: ShellWord[]) => void;
+type ControlOperator = ";" | "&&" | "||" | "|" | "&" | "\n";
+interface ScanState {
+  unanalyzable: boolean;
+}
+
+/** Shell nesting is recursive in the lexer, but hostile input must never
+ *  exhaust the JavaScript stack. Crossing this limit marks the whole command
+ *  unanalyzable; the bash guard then blocks it. */
+const MAX_SCANNER_RECURSION_DEPTH = 64;
 
 /** Leading NAME=value words at command position are skipped by the scanner
  *  while it stays at command position (`GIT_DIR=x git commit`). */
 const ASSIGNMENT_WORD_RE = /^[A-Za-z_][A-Za-z0-9_]*=/;
+const TRANSPARENT_RESERVED_WORDS = new Set([
+  "!",
+  "time",
+  "if",
+  "then",
+  "elif",
+  "else",
+  "do",
+]);
 
 /** Lexically scan one shell command list from `start`, visiting every simple
  *  command's words at command position. Command position: string start and
@@ -298,34 +319,73 @@ const ASSIGNMENT_WORD_RE = /^[A-Za-z_][A-Za-z0-9_]*=/;
  *  the stop index. Assignment prefixes are skipped; `#` at word start
  *  comments out the rest of the line; redirections are skipped together with
  *  their target word. Every branch advances — no termination loops. */
-function scanShellList(command: string, start: number, visit: Emit): number {
+function scanShellList(
+  command: string,
+  start: number,
+  visit: Emit,
+  state: ScanState,
+  depth = 0,
+  onTopLevelControl?: (operator: ControlOperator) => void,
+): number {
+  if (depth > MAX_SCANNER_RECURSION_DEPTH) {
+    state.unanalyzable = true;
+    return command.length;
+  }
+
   let i = start;
   let atCommand = true;
   let words: ShellWord[] = [];
   let raw = "";
   let literal = "";
+  let hasExpansion = false;
+  let hasUnquotedGlob = false;
   let inWord = false;
+  let braceGroupDepth = 0;
 
+  const clearWord = (): void => {
+    raw = "";
+    literal = "";
+    hasExpansion = false;
+    hasUnquotedGlob = false;
+  };
   const endWord = (): void => {
     if (!inWord) return;
     inWord = false;
-    if (atCommand && words.length === 0 && ASSIGNMENT_WORD_RE.test(raw)) {
-      raw = "";
-      literal = "";
-      return; // assignment prefix: skipped, command position retained
+    if (atCommand && words.length === 0) {
+      if (ASSIGNMENT_WORD_RE.test(raw)) {
+        clearWord();
+        return; // assignment prefix: skipped, command position retained
+      }
+      if (!hasExpansion && raw === literal && TRANSPARENT_RESERVED_WORDS.has(literal)) {
+        clearWord();
+        return;
+      }
+      if (!hasExpansion && raw === "{" && literal === "{") {
+        braceGroupDepth++;
+        clearWord();
+        return;
+      }
+      if (!hasExpansion && raw === "}" && literal === "}" && braceGroupDepth > 0) {
+        braceGroupDepth--;
+        clearWord();
+        atCommand = false;
+        return;
+      }
     }
-    words.push({ raw, literal });
+    words.push({ raw, literal, hasExpansion, hasUnquotedGlob });
     atCommand = false;
-    raw = "";
-    literal = "";
+    clearWord();
   };
   const flushCommand = (): void => {
     endWord();
     if (words.length > 0) visit(words);
     words = [];
   };
-  const separator = (): void => {
+  const separator = (operator: ControlOperator): void => {
+    // Flush first so a `}` immediately before the operator closes its brace
+    // group before top-level control flow is classified.
     flushCommand();
+    if (braceGroupDepth === 0) onTopLevelControl?.(operator);
     atCommand = true;
   };
 
@@ -336,7 +396,7 @@ function scanShellList(command: string, start: number, visit: Emit): number {
       return i;
     }
     if (ch === "\n") {
-      separator();
+      separator("\n");
       i++;
       continue;
     }
@@ -346,47 +406,48 @@ function scanShellList(command: string, start: number, visit: Emit): number {
       continue;
     }
     if (ch === ";") {
-      separator();
+      separator(";");
       i++;
       continue;
     }
     if (ch === "|") {
-      separator();
-      i += command[i + 1] === "|" ? 2 : 1;
+      const operator = command[i + 1] === "|" ? "||" : "|";
+      separator(operator);
+      i += operator.length;
       continue;
     }
     if (ch === "&") {
-      if (command[i + 1] === "&") {
-        separator();
-        i += 2;
-        continue;
-      }
       if (command[i + 1] === ">") {
-        i = readRedirection(command, i, visit);
+        i = readRedirection(command, i, visit, state, depth);
         continue;
       }
-      separator();
-      i++;
+      const operator = command[i + 1] === "&" ? "&&" : "&";
+      separator(operator);
+      i += operator.length;
       continue;
     }
     if (ch === "(") {
       // Subshell: its content is a nested command list that really executes.
-      separator();
-      const close = scanShellList(command, i + 1, visit);
+      flushCommand();
+      atCommand = true;
+      const close = scanShellList(command, i + 1, visit, state, depth + 1);
       i = Math.min(close + 1, command.length);
       atCommand = false;
       continue;
     }
     if (ch === "<" || ch === ">") {
-      // A bare digit word immediately before the operator is an fd number.
-      if (inWord && /^[0-9]+$/.test(raw)) {
-        raw = "";
-        literal = "";
+      // A bare digit or `{name}` immediately before the operator is an fd.
+      if (
+        inWord &&
+        !hasExpansion &&
+        (/^[0-9]+$/.test(raw) || /^\{[A-Za-z_][A-Za-z0-9_]*\}$/.test(raw))
+      ) {
+        clearWord();
         inWord = false;
       } else {
         endWord();
       }
-      i = readRedirection(command, i, visit);
+      i = readRedirection(command, i, visit, state, depth);
       continue;
     }
     if (ch === "#" && !inWord) {
@@ -395,12 +456,14 @@ function scanShellList(command: string, start: number, visit: Emit): number {
       while (i < command.length && command[i] !== "\n") i++;
       continue;
     }
-    const word = readShellWord(command, i, visit);
+    const word = readShellWord(command, i, visit, state, depth);
     if (word.raw !== "") {
       // A bare \<newline> continuation reads as an empty word and must not
       // end command position or inject an empty token.
       raw += word.raw;
       literal += word.literal;
+      hasExpansion ||= word.hasExpansion;
+      hasUnquotedGlob ||= word.hasUnquotedGlob;
       inWord = true;
     }
     i = word.next;
@@ -414,14 +477,20 @@ function scanShellList(command: string, start: number, visit: Emit): number {
  *  unaffected: a redirection is part of the current simple command. Heredoc
  *  bodies are intentionally not modeled — the following lines stay parsed as
  *  commands, which fails closed. */
-function readRedirection(command: string, i: number, visit: Emit): number {
+function readRedirection(
+  command: string,
+  i: number,
+  visit: Emit,
+  state: ScanState,
+  depth: number,
+): number {
   while (i < command.length && (command[i] === "<" || command[i] === ">")) i++;
   if (command[i] === "|" || command[i] === "&") i++;
   while (i < command.length && (command[i] === "<" || command[i] === ">")) i++;
   while (i < command.length && /\s/.test(command[i]!) && command[i] !== "\n") i++;
   if (i >= command.length) return i;
   if (/[\s;&|()`<>]/.test(command[i]!)) return i; // no/invalid target: nothing to skip
-  return readShellWord(command, i, visit).next;
+  return readShellWord(command, i, visit, state, depth).next;
 }
 
 /** Read one shell word starting at `i`: single/double quotes, backslash
@@ -434,10 +503,14 @@ function readShellWord(
   command: string,
   start: number,
   visit: Emit,
-): { raw: string; literal: string; next: number } {
+  state: ScanState,
+  depth: number,
+): ShellWord & { next: number } {
   let i = start;
   let raw = "";
   let literal = "";
+  let hasExpansion = false;
+  let hasUnquotedGlob = false;
   while (i < command.length) {
     const ch = command[i]!;
     if (ch === "'") {
@@ -449,9 +522,10 @@ function readShellWord(
       continue;
     }
     if (ch === '"') {
-      const part = readDoubleQuoted(command, i, visit);
+      const part = readDoubleQuoted(command, i, visit, state, depth);
       raw += part.raw;
       literal += part.literal;
+      hasExpansion ||= part.hasExpansion;
       i = part.next;
       continue;
     }
@@ -472,23 +546,26 @@ function readShellWord(
       continue;
     }
     if (ch === "$") {
-      const part = readDollarExpansion(command, i, visit);
+      const part = readDollarExpansion(command, i, visit, state, depth);
       raw += part.raw;
+      hasExpansion = true;
       i = part.next;
       continue; // expansion output contributes no literal
     }
     if (ch === "`") {
-      const part = readBacktickSubstitution(command, i, visit);
+      const part = readBacktickSubstitution(command, i, visit, state, depth);
       raw += part.raw;
+      hasExpansion = true;
       i = part.next;
       continue; // substitution output contributes no literal
     }
     if (/[\s;&|()`<>]/.test(ch)) break; // end of word
     raw += ch;
     literal += ch;
+    hasUnquotedGlob ||= ch === "*" || ch === "?" || ch === "[";
     i++;
   }
-  return { raw, literal, next: i };
+  return { raw, literal, hasExpansion, hasUnquotedGlob, next: i };
 }
 
 /** Read a double-quoted string starting at its opening `"` (kept in raw).
@@ -499,13 +576,18 @@ function readDoubleQuoted(
   command: string,
   start: number,
   visit: Emit,
-): { raw: string; literal: string; next: number } {
+  state: ScanState,
+  depth: number,
+): { raw: string; literal: string; hasExpansion: boolean; next: number } {
   let i = start + 1;
   let raw = '"';
   let literal = "";
+  let hasExpansion = false;
   while (i < command.length) {
     const ch = command[i]!;
-    if (ch === '"') return { raw: raw + '"', literal, next: i + 1 };
+    if (ch === '"') {
+      return { raw: raw + '"', literal, hasExpansion, next: i + 1 };
+    }
     if (ch === "\\") {
       const nxt = command[i + 1];
       if (nxt === "$" || nxt === "`" || nxt === '"' || nxt === "\\") {
@@ -523,14 +605,16 @@ function readDoubleQuoted(
       continue;
     }
     if (ch === "$") {
-      const part = readDollarExpansion(command, i, visit);
+      const part = readDollarExpansion(command, i, visit, state, depth);
       raw += part.raw;
+      hasExpansion = true;
       i = part.next;
       continue;
     }
     if (ch === "`") {
-      const part = readBacktickSubstitution(command, i, visit);
+      const part = readBacktickSubstitution(command, i, visit, state, depth);
       raw += part.raw;
+      hasExpansion = true;
       i = part.next;
       continue;
     }
@@ -538,7 +622,7 @@ function readDoubleQuoted(
     literal += ch;
     i++;
   }
-  return { raw, literal, next: i }; // unterminated quote
+  return { raw, literal, hasExpansion, next: i }; // unterminated quote
 }
 
 /** Read a `$`-expansion at `i` (raw only; the output contributes no
@@ -550,25 +634,85 @@ function readDollarExpansion(
   command: string,
   i: number,
   visit: Emit,
+  state: ScanState,
+  depth: number,
 ): { raw: string; next: number } {
   const nxt = command[i + 1];
   if (nxt === "(") {
     if (command[i + 2] === "(") {
       const end = skipParens(command, i + 1);
+      const bodyEnd = command[end - 1] === ")" ? Math.max(i + 3, end - 2) : end;
+      scanNestedSubstitutions(command, i + 3, bodyEnd, visit, state, depth + 1);
       return { raw: command.slice(i, end), next: end };
     }
     // scanShellList stops at the matching `)` because it is quote-aware.
-    const stop = scanShellList(command, i + 2, visit);
+    const stop = scanShellList(command, i + 2, visit, state, depth + 1);
     const end = Math.min(stop + 1, command.length);
     return { raw: command.slice(i, end), next: end };
   }
   if (nxt === "{") {
     const end = skipBraces(command, i + 2);
+    const bodyEnd = command[end - 1] === "}" ? end - 1 : end;
+    scanNestedSubstitutions(command, i + 2, bodyEnd, visit, state, depth + 1);
     return { raw: command.slice(i, end), next: end };
   }
   let j = i + 1;
   while (j < command.length && /[A-Za-z0-9_*@#?!-]/.test(command[j]!)) j++;
   return { raw: command.slice(i, j), next: j };
+}
+
+/** `${...}` and `$((...))` are opaque to literal-word recognition, but their
+ *  bodies can contain command substitutions that execute. Find only those
+ *  nested `$()` and backtick spans, then feed their bodies back through the
+ *  command-list scanner. */
+function scanNestedSubstitutions(
+  command: string,
+  start: number,
+  end: number,
+  visit: Emit,
+  state: ScanState,
+  depth: number,
+): void {
+  if (depth > MAX_SCANNER_RECURSION_DEPTH) {
+    state.unanalyzable = true;
+    return;
+  }
+
+  let i = start;
+  let quote: "none" | "single" | "double" = "none";
+  while (i < end && !state.unanalyzable) {
+    const ch = command[i]!;
+    if (quote === "single") {
+      if (ch === "'") quote = "none";
+      i++;
+      continue;
+    }
+    if (ch === "\\") {
+      i = Math.min(i + 2, end);
+      continue;
+    }
+    if (ch === "'" && quote === "none") {
+      quote = "single";
+      i++;
+      continue;
+    }
+    if (ch === '"') {
+      quote = quote === "double" ? "none" : "double";
+      i++;
+      continue;
+    }
+    if (ch === "$" && (command[i + 1] === "(" || command[i + 1] === "{")) {
+      const part = readDollarExpansion(command, i, visit, state, depth);
+      i = Math.max(i + 1, Math.min(part.next, end));
+      continue;
+    }
+    if (ch === "`") {
+      const part = readBacktickSubstitution(command, i, visit, state, depth);
+      i = Math.max(i + 1, Math.min(part.next, end));
+      continue;
+    }
+    i++;
+  }
 }
 
 /** Read a backtick substitution starting at `i` (POSIX: the first unescaped
@@ -578,6 +722,8 @@ function readBacktickSubstitution(
   command: string,
   i: number,
   visit: Emit,
+  state: ScanState,
+  depth: number,
 ): { raw: string; next: number } {
   let j = i + 1;
   while (j < command.length && command[j] !== "`") {
@@ -588,7 +734,7 @@ function readBacktickSubstitution(
         : j + 1;
   }
   const end = j < command.length ? j + 1 : j; // past closing backtick, or end
-  scanShellList(command.slice(i + 1, j), 0, visit);
+  scanShellList(command.slice(i + 1, j), 0, visit, state, depth + 1);
   return { raw: command.slice(i, end), next: end };
 }
 
@@ -629,54 +775,97 @@ function skipBraces(command: string, i: number): number {
  *  stay the RAW slices after the `git` word, so parseGitTokens, the
  *  subcommand classifiers and `--no-verify` detection behave exactly as
  *  before. */
-export function parseGitInvocations(command: string): ParsedGitInvocation[] {
+interface GitInvocationAnalysis {
+  invocations: ParsedGitInvocation[];
+  unanalyzable: boolean;
+}
+
+function analyzeGitInvocations(command: string): GitInvocationAnalysis {
   const invocations: ParsedGitInvocation[] = [];
-  scanShellList(command, 0, (words) => {
-    if (words[0]?.literal !== "git") return;
-    invocations.push(parseGitTokens(words.slice(1).map((w) => w.raw)));
-  });
-  return invocations;
+  const state: ScanState = { unanalyzable: false };
+  scanShellList(
+    command,
+    0,
+    (words) => {
+      if (words[0]?.literal !== "git" || words[0].hasExpansion) return;
+      invocations.push(parseGitTokens(words.slice(1).map((w) => w.raw)));
+    },
+    state,
+  );
+  return { invocations, unanalyzable: state.unanalyzable };
+}
+
+export function parseGitInvocations(command: string): ParsedGitInvocation[] {
+  return analyzeGitInvocations(command).invocations;
 }
 
 /** Literal cd target of the EXACT `cd <path> &&` idiom, or null. The target
  *  is a single fully-literal word resolved by the same word reader (quotes
- *  and backslash escapes allowed; no `$var`, no `$(...)`, no backticks; not
+ *  and backslash escapes allowed; no expansion, no unquoted glob syntax, not
  *  starting with `-`). Returns null — fail closed, so an implicit "."
  *  resolves against the session cwd as before — when the prefix shape
- *  differs in any way, when `||`, `;` or a newline appears where `&&` is
- *  required, or when ANY `cd` appears as a command word anywhere in the
+ *  differs, when top-level `;`, `||`, `&`, or newline occurs anywhere in the
+ *  remainder, or when ANY `cd` appears as a command word anywhere in the
  *  remainder (scanner-checked, including inside substitutions and
- *  subshells). With `&&` a failed cd short-circuits the shell, so resolving
- *  "." against the target can never allow a mutation that actually runs in
- *  the session cwd; with `;` or `||` it could — hence the strict shape. */
+ *  subshells). With an `&&`-only top level, a failed cd short-circuits the
+ *  shell, so resolving "." against the target cannot allow a mutation that
+ *  actually runs in the session cwd. */
 export function resolveCommandCwdPrefix(command: string): string | null {
   const noop = (): void => {};
+  const state: ScanState = { unanalyzable: false };
   let i = 0;
   while (i < command.length && /\s/.test(command[i]!) && command[i] !== "\n") i++;
-  const cd = readShellWord(command, i, noop);
-  if (cd.literal !== "cd" || cd.raw === "") return null;
+  const cd = readShellWord(command, i, noop, state, 0);
+  if (cd.literal !== "cd" || cd.raw === "" || cd.hasExpansion) return null;
   i = cd.next;
   if (i >= command.length || command[i] === "\n" || !/\s/.test(command[i]!)) return null;
   while (i < command.length && /\s/.test(command[i]!) && command[i] !== "\n") i++;
   if (i >= command.length || command[i] === "\n") return null;
-  const target = readShellWord(command, i, noop);
+  const target = readShellWord(command, i, noop, state, 0);
   if (target.raw === "" || target.raw.startsWith("-")) return null;
-  if (target.raw.includes("$") || target.raw.includes("`")) return null;
+  // Keep computed targets fail closed, including conservative rejection of a
+  // quoted dollar/backtick. Unquoted glob syntax can redirect cd at runtime;
+  // quoted glob characters remain literal and are safe.
+  if (
+    state.unanalyzable ||
+    target.hasExpansion ||
+    target.raw.includes("$") ||
+    target.raw.includes("`") ||
+    target.hasUnquotedGlob
+  ) {
+    return null;
+  }
   i = target.next;
   while (i < command.length && /\s/.test(command[i]!) && command[i] !== "\n") i++;
   if (command[i] !== "&" || command[i + 1] !== "&") return null;
-  if (hasCdCommandWord(command.slice(i + 2))) return null;
+  if (!isSafeCwdRemainder(command.slice(i + 2))) return null;
   return target.literal;
 }
 
-/** True when the remainder contains `cd` as a command word anywhere the
- *  scanner reaches (including subshells and command substitutions). */
-function hasCdCommandWord(remainder: string): boolean {
-  let found = false;
-  scanShellList(remainder, 0, (words) => {
-    if (words[0]?.literal === "cd") found = true;
-  });
-  return found;
+/** The initial cd remains authoritative only while the rest of the top-level
+ *  list is joined by `&&`. A later unconditional branch could execute after
+ *  cd failed and would therefore run in the session cwd. Commands nested in a
+ *  brace group or substitution remain in the cd shell; any nested literal cd
+ *  still rejects the override conservatively. */
+function isSafeCwdRemainder(remainder: string): boolean {
+  let hasCd = false;
+  let unsafeControl = false;
+  const state: ScanState = { unanalyzable: false };
+  scanShellList(
+    remainder,
+    0,
+    (words) => {
+      if (words[0]?.literal === "cd" && !words[0].hasExpansion) hasCd = true;
+    },
+    state,
+    0,
+    (operator) => {
+      if (operator === ";" || operator === "||" || operator === "&" || operator === "\n") {
+        unsafeControl = true;
+      }
+    },
+  );
+  return !state.unanalyzable && !hasCd && !unsafeControl;
 }
 
 function parseGitTokens(tokens: string[]): ParsedGitInvocation {
@@ -812,7 +1001,19 @@ export function guardManagedBashCommand(
 ): GuardVerdict {
   if (!command) return undefined;
 
-  const invocations = parseGitInvocations(command);
+  const cwd = realpath(ctxCwd);
+  const analysis = analyzeGitInvocations(command);
+  const invocations = analysis.invocations;
+  if (analysis.unanalyzable) {
+    const root = findGitRoot(cwd);
+    const hint = root ? managedWorktreeHint(root, opts.taskRoot) : null;
+    return {
+      block: true,
+      reason: hint
+        ? `Blocked: bash command exceeds the shell scanner nesting limit, so git routing cannot be analyzed safely. Use the managed task worktree(s) of this repo: ${hint}. This block is a routing failure, not a bypass authorization; split or simplify the command.`
+        : "Blocked: bash command exceeds the shell scanner nesting limit, so git routing cannot be analyzed safely. Use the managed task worktree(s). This block is a routing failure, not a bypass authorization; split or simplify the command.",
+    };
+  }
 
   // Raw hook bypass is policy, not routing: forbidden everywhere, including
   // managed worktrees. The controlled deferral path lives in
@@ -824,7 +1025,6 @@ export function guardManagedBashCommand(
         "Blocked: raw \`git commit --no-verify\` bypasses pre-commit hooks. Commit normally (hooks run); if a hook fails on an external prerequisite such as an unpublished same-task dependency, retry via checkpoint_commit with deferred_hook evidence.",
     };
   }
-  const cwd = realpath(ctxCwd);
   // The exact `cd <path> &&` idiom re-points the implicit repo target: a
   // failed cd short-circuits the shell (&&), so this can never allow a
   // mutation that actually runs in the session cwd. Anything else — a

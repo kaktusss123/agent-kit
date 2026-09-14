@@ -265,8 +265,16 @@ export default function (pi: ExtensionAPI): void {
 
     if (event.toolName !== "bash") return;
     const input = event.input as Record<string, unknown>;
-    return guardManagedBashCommand(input.command as string | undefined, ctx.cwd, {
-      taskRoot: TASK_ROOT,
-    });
+    try {
+      return guardManagedBashCommand(input.command as string | undefined, ctx.cwd, {
+        taskRoot: TASK_ROOT,
+      });
+    } catch {
+      return {
+        block: true,
+        reason:
+          "Blocked: bash command routing failed because the mutation guard could not analyze it safely. Use the managed task worktree(s) for this repository. This block is a routing failure, not a bypass authorization; split or simplify the command.",
+      };
+    }
   });
 }

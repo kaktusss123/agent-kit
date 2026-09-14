@@ -140,6 +140,49 @@ describe("bash guard: command-position recognition", () => {
   test("block: assignment prefix stays detected", () => {
     expect(verdict(`GIT_AUTHOR_NAME=x git commit -m m`)?.block).toBe(true);
   });
+
+  test("F-A: cd override is limited to a safe && remainder and literal target", () => {
+    expect(verdict(`cd ${managed}/missing && echo skipped; git commit -m x`)?.block).toBe(
+      true,
+    );
+    expect(verdict(`cd ${managed} && git add -A; git commit -m x`)?.block).toBe(true);
+    expect(verdict(`cd ${managed} && false || git commit -m x`)?.block).toBe(true);
+    expect(verdict(`cd ${managed} && sleep 1 & git commit -m x`)?.block).toBe(true);
+    expect(verdict(`cd ${managed} && echo ok\ngit commit -m x`)?.block).toBe(true);
+    expect(verdict(`cd ${managed} && { echo ok; } ; git commit -m x`)?.block).toBe(true);
+    expect(verdict(`cd ${managed} && git commit -m "a; b"`)).toBeUndefined();
+    expect(verdict(`cd ${managed}/sour* && git commit -m x`)?.block).toBe(true);
+    // Quoting makes the glob character literal, so the exact cd idiom remains valid.
+    expect(verdict(`cd '/tmp/x*' && git commit -m x`)).toBeUndefined();
+  });
+
+  test("F-B: substitutions nested in parameter and arithmetic expansions execute", () => {
+    expect(verdict(`echo \${x:-$(git commit --no-verify -m x)}`)?.block).toBe(true);
+    expect(verdict(`echo $((1 + $(git commit -m x)))`)?.block).toBe(true);
+    expect(verdict(`echo "\${x:-$(git commit -m x)}"`)?.block).toBe(true);
+    expect(verdict("echo ${x:-`git commit -m x`}")?.block).toBe(true);
+    expect(verdict(`echo \${x:-default}`)).toBeUndefined();
+  });
+
+  test("F-C: reserved prefixes, brace groups, and named-fd redirects retain command position", () => {
+    expect(verdict(`time git commit -m x`)?.block).toBe(true);
+    expect(verdict(`{ git commit -m x; }`)?.block).toBe(true);
+    expect(verdict(`if true; then git commit -m x; fi`)?.block).toBe(true);
+    expect(verdict(`cd ${managed} && time cd ${sourceRepo} && git commit -m x`)?.block).toBe(
+      true,
+    );
+    expect(
+      verdict(`cd ${managed} && { cd ${sourceRepo}; } && git commit -m x`)?.block,
+    ).toBe(true);
+    expect(verdict(`{fd}>out git commit -m x`)?.block).toBe(true);
+    expect(verdict(`cd ${managed} && git commit -m x`)).toBeUndefined();
+  });
+
+  test("F-E: excessive scanner nesting fails closed without throwing", () => {
+    const command = `echo ${"$(".repeat(2_000)}printf safe${")".repeat(2_000)}`;
+    expect(() => verdict(command)).not.toThrow();
+    expect(verdict(command)?.block).toBe(true);
+  });
 });
 
 describe("parseGitInvocations lexer", () => {
@@ -163,6 +206,13 @@ describe("parseGitInvocations lexer", () => {
 
   test("git in argument position is not an invocation", () => {
     expect(guardCore.parseGitInvocations(`echo git commit`)).toHaveLength(0);
+  });
+
+  test("F-D: an expanded command word is not direct literal git", () => {
+    // Accepted blind spot: computed command words are not classified as literal git.
+    expect(guardCore.parseGitInvocations(`$(printf nope)git commit -m x`)).toHaveLength(0);
+    expect(verdict(`$(printf nope)git commit -m x`)).toBeUndefined();
+    expect(guardCore.parseGitInvocations(`$(git commit -m x)`)).toHaveLength(1);
   });
 
   test("-C repo ref is preserved", () => {
