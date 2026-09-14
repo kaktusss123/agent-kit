@@ -6,11 +6,11 @@
  * and assignment-prefix/comment handling; never any occurrence of the word
  * "git" — and produces host-neutral guard verdicts for write/edit targets
  * and bash commands: local ref mutations route to managed worktrees (the
- * plain `cd <path> &&` idiom is honored), raw `--no-verify` is blocked
- * everywhere, and input beyond the scanner's recursion limit is blocked as
- * unanalyzable. Everything else fails closed. A net against routing mistakes,
- * not a sandbox. The host binding maps a verdict onto its own tool-call
- * block.
+ * `cd <path> &&` override is limited to git-only chains), raw `--no-verify`
+ * is blocked everywhere, and input beyond the scanner's recursion limit is
+ * blocked as unanalyzable. Everything else fails closed. A net against
+ * routing mistakes, not a sandbox. The host binding maps a verdict onto its
+ * own tool-call block.
  */
 import { basename, join } from "node:path";
 import {
@@ -302,6 +302,7 @@ const MAX_SCANNER_RECURSION_DEPTH = 64;
 /** Leading NAME=value words at command position are skipped by the scanner
  *  while it stays at command position (`GIT_DIR=x git commit`). */
 const ASSIGNMENT_WORD_RE = /^[A-Za-z_][A-Za-z0-9_]*=/;
+const ARRAY_ASSIGNMENT_WORD_RE = /^([A-Za-z_][A-Za-z0-9_]*\+?=)$/;
 const TRANSPARENT_RESERVED_WORDS = new Set([
   "!",
   "time",
@@ -310,7 +311,18 @@ const TRANSPARENT_RESERVED_WORDS = new Set([
   "elif",
   "else",
   "do",
+  "while",
+  "until",
+  "for",
+  "select",
+  "coproc",
+  "case",
 ]);
+
+type CasePhase = "subject" | "in" | "pattern" | "body";
+interface CaseContext {
+  phase: CasePhase;
+}
 
 /** Lexically scan one shell command list from `start`, visiting every simple
  *  command's words at command position. Command position: string start and
@@ -341,7 +353,10 @@ function scanShellList(
   let hasUnquotedGlob = false;
   let inWord = false;
   let braceGroupDepth = 0;
+  let timeMayTakePortableOption = false;
+  const caseStack: CaseContext[] = [];
 
+  const currentCase = (): CaseContext | undefined => caseStack.at(-1);
   const clearWord = (): void => {
     raw = "";
     literal = "";
@@ -352,11 +367,60 @@ function scanShellList(
     if (!inWord) return;
     inWord = false;
     if (atCommand && words.length === 0) {
+      const caseContext = currentCase();
+      if (caseContext?.phase === "subject") {
+        caseContext.phase = "in";
+        clearWord();
+        return;
+      }
+      if (caseContext?.phase === "in") {
+        if (hasExpansion || raw !== "in" || literal !== "in") {
+          state.unanalyzable = true;
+        }
+        caseContext.phase = "pattern";
+        clearWord();
+        return;
+      }
+      if (caseContext?.phase === "pattern") {
+        if (!hasExpansion && raw === "esac" && literal === "esac") {
+          caseStack.pop();
+          clearWord();
+          atCommand = false;
+          return;
+        }
+        // Case patterns are data. An attached ')' branch below moves the
+        // scanner into the executable body.
+        clearWord();
+        return;
+      }
+      if (
+        caseContext?.phase === "body" &&
+        !hasExpansion &&
+        raw === "esac" &&
+        literal === "esac"
+      ) {
+        caseStack.pop();
+        clearWord();
+        atCommand = false;
+        return;
+      }
+      if (
+        timeMayTakePortableOption &&
+        !hasExpansion &&
+        raw === "-p" &&
+        literal === "-p"
+      ) {
+        timeMayTakePortableOption = false;
+        clearWord();
+        return;
+      }
       if (ASSIGNMENT_WORD_RE.test(raw)) {
         clearWord();
         return; // assignment prefix: skipped, command position retained
       }
       if (!hasExpansion && raw === literal && TRANSPARENT_RESERVED_WORDS.has(literal)) {
+        if (literal === "time") timeMayTakePortableOption = true;
+        if (literal === "case") caseStack.push({ phase: "subject" });
         clearWord();
         return;
       }
@@ -372,6 +436,7 @@ function scanShellList(
         return;
       }
     }
+    timeMayTakePortableOption = false;
     words.push({ raw, literal, hasExpansion, hasUnquotedGlob });
     atCommand = false;
     clearWord();
@@ -386,12 +451,28 @@ function scanShellList(
     // group before top-level control flow is classified.
     flushCommand();
     if (braceGroupDepth === 0) onTopLevelControl?.(operator);
+    timeMayTakePortableOption = false;
     atCommand = true;
   };
 
   while (i < command.length) {
     const ch = command[i]!;
     if (ch === ")") {
+      const caseContext = currentCase();
+      if (caseContext?.phase === "pattern") {
+        if (!inWord) {
+          state.unanalyzable = true;
+          return i;
+        }
+        // Only an attached ')' closes a recognized case pattern. The pattern
+        // itself is data and must not be visited as a command.
+        clearWord();
+        inWord = false;
+        caseContext.phase = "body";
+        i++;
+        atCommand = true;
+        continue;
+      }
       flushCommand();
       return i;
     }
@@ -406,7 +487,20 @@ function scanShellList(
       continue;
     }
     if (ch === ";") {
+      const caseContext = currentCase();
+      if (caseContext?.phase === "body" && command[i + 1] === ";") {
+        separator(";");
+        caseContext.phase = "pattern";
+        i += 2;
+        continue;
+      }
       separator(";");
+      i++;
+      continue;
+    }
+    if (ch === "|" && currentCase()?.phase === "pattern") {
+      // Pattern alternatives are data, not pipelines.
+      endWord();
       i++;
       continue;
     }
@@ -427,6 +521,21 @@ function scanShellList(
       continue;
     }
     if (ch === "(") {
+      if (inWord && ARRAY_ASSIGNMENT_WORD_RE.test(raw)) {
+        // Bash array assignment contents are data, not a subshell. The lack
+        // of whitespace before '(' is significant. Function definitions do
+        // not match because their pending word has no '='.
+        clearWord();
+        inWord = false;
+        i = skipParens(command, i);
+        atCommand = false;
+        continue;
+      }
+      if (currentCase()?.phase === "pattern" && !inWord) {
+        // Bash permits an optional opening '(' before a case pattern.
+        i++;
+        continue;
+      }
       // Subshell: its content is a nested command list that really executes.
       flushCommand();
       atCommand = true;
@@ -469,6 +578,7 @@ function scanShellList(
     i = word.next;
   }
   flushCommand();
+  if (caseStack.length > 0) state.unanalyzable = true;
   return i;
 }
 
@@ -802,14 +912,10 @@ export function parseGitInvocations(command: string): ParsedGitInvocation[] {
 /** Literal cd target of the EXACT `cd <path> &&` idiom, or null. The target
  *  is a single fully-literal word resolved by the same word reader (quotes
  *  and backslash escapes allowed; no expansion, no unquoted glob syntax, not
- *  starting with `-`). Returns null — fail closed, so an implicit "."
- *  resolves against the session cwd as before — when the prefix shape
- *  differs, when top-level `;`, `||`, `&`, or newline occurs anywhere in the
- *  remainder, or when ANY `cd` appears as a command word anywhere in the
- *  remainder (scanner-checked, including inside substitutions and
- *  subshells). With an `&&`-only top level, a failed cd short-circuits the
- *  shell, so resolving "." against the target cannot allow a mutation that
- *  actually runs in the session cwd. */
+ *  starting with `-`). The remainder may contain only literal git commands,
+ *  assignment prefixes, and recognized reserved words, joined at top level
+ *  only by `&&`. Any other command word, later cd, or unsafe control operator
+ *  returns null, so an implicit "." resolves against the session cwd. */
 export function resolveCommandCwdPrefix(command: string): string | null {
   const noop = (): void => {};
   const state: ScanState = { unanalyzable: false };
@@ -823,6 +929,16 @@ export function resolveCommandCwdPrefix(command: string): string | null {
   if (i >= command.length || command[i] === "\n") return null;
   const target = readShellWord(command, i, noop, state, 0);
   if (target.raw === "" || target.raw.startsWith("-")) return null;
+  // Bash expands ~+ and ~- from the shell directory stack, while ~name uses
+  // the named user's home. expandPath does not model those semantics, so only
+  // plain ~ and ~/... are accepted for the cwd override.
+  if (
+    target.literal.startsWith("~") &&
+    target.literal !== "~" &&
+    !target.literal.startsWith("~/")
+  ) {
+    return null;
+  }
   // Keep computed targets fail closed, including conservative rejection of a
   // quoted dollar/backtick. Unquoted glob syntax can redirect cd at runtime;
   // quoted glob characters remain literal and are safe.
@@ -842,20 +958,26 @@ export function resolveCommandCwdPrefix(command: string): string | null {
   return target.literal;
 }
 
-/** The initial cd remains authoritative only while the rest of the top-level
- *  list is joined by `&&`. A later unconditional branch could execute after
- *  cd failed and would therefore run in the session cwd. Commands nested in a
- *  brace group or substitution remain in the cd shell; any nested literal cd
- *  still rejects the override conservatively. */
+/** The initial cd remains authoritative only when every executable command
+ *  in the remainder is literal git and the top-level list is joined by `&&`.
+ *  Assignments and recognized reserved words are transparent. Any other
+ *  command denies the override, even if it cannot change cwd. This deliberate
+ *  fail-closed rule means `cd <worktree> && gh ... && git commit` must use
+ *  `git -C <worktree>` instead. */
 function isSafeCwdRemainder(remainder: string): boolean {
   let hasCd = false;
+  let hasNonGitCommand = false;
   let unsafeControl = false;
   const state: ScanState = { unanalyzable: false };
   scanShellList(
     remainder,
     0,
     (words) => {
-      if (words[0]?.literal === "cd" && !words[0].hasExpansion) hasCd = true;
+      const commandWord = words[0];
+      if (commandWord?.literal === "cd" && !commandWord.hasExpansion) hasCd = true;
+      if (commandWord?.literal !== "git" || commandWord.hasExpansion) {
+        hasNonGitCommand = true;
+      }
     },
     state,
     0,
@@ -865,7 +987,7 @@ function isSafeCwdRemainder(remainder: string): boolean {
       }
     },
   );
-  return !state.unanalyzable && !hasCd && !unsafeControl;
+  return !state.unanalyzable && !hasCd && !hasNonGitCommand && !unsafeControl;
 }
 
 function parseGitTokens(tokens: string[]): ParsedGitInvocation {
@@ -1025,11 +1147,11 @@ export function guardManagedBashCommand(
         "Blocked: raw \`git commit --no-verify\` bypasses pre-commit hooks. Commit normally (hooks run); if a hook fails on an external prerequisite such as an unpublished same-task dependency, retry via checkpoint_commit with deferred_hook evidence.",
     };
   }
-  // The exact `cd <path> &&` idiom re-points the implicit repo target: a
-  // failed cd short-circuits the shell (&&), so this can never allow a
-  // mutation that actually runs in the session cwd. Anything else — a
-  // second cd, `;`/`||`, a computed target — fails closed to the session
-  // cwd via resolveCommandCwdPrefix returning null.
+  // The exact `cd <path> &&` idiom re-points the implicit repo target only
+  // for a git-only remainder. A failed cd short-circuits the shell, and no
+  // accepted later command can change the parent shell cwd. Other commands,
+  // a second cd, unsafe control flow, or a computed target fail closed to the
+  // session cwd via resolveCommandCwdPrefix returning null.
   const cdLiteral = resolveCommandCwdPrefix(command);
   const cdBase = cdLiteral === null ? null : expandPath(cdLiteral, cwd);
 

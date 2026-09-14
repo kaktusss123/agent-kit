@@ -99,12 +99,8 @@ describe("bash guard: command-position recognition", () => {
     expect(verdict(`git -C ${managed} commit -m m`)).toBeUndefined();
   });
 
-  test("allow: full incident shape under the cd idiom", () => {
-    expect(
-      verdict(
-        `cd ${managed} && gh pr create --repo o/r --title "feat: verify settled git state on RepoOwner done; attach runtime git facts" --body b`,
-      ),
-    ).toBeUndefined();
+  test("block: a non-git command denies the cd override", () => {
+    expect(verdict(`cd ${managed} && gh pr view && git commit -m m`)?.block).toBe(true);
   });
 
   test("block: quoted git command word (F2 bypass)", () => {
@@ -139,6 +135,47 @@ describe("bash guard: command-position recognition", () => {
 
   test("block: assignment prefix stays detected", () => {
     expect(verdict(`GIT_AUTHOR_NAME=x git commit -m m`)?.block).toBe(true);
+  });
+
+  test("F1: reserved constructs retain command position", () => {
+    expect(verdict(`while git branch x; do break; done`)?.block).toBe(true);
+    expect(verdict(`until git branch x; do break; done`)?.block).toBe(true);
+    expect(verdict(`for i in 1 2; do git branch x; done`)?.block).toBe(true);
+    expect(verdict(`coproc git branch x`)?.block).toBe(true);
+    expect(verdict(`time -p git branch x`)?.block).toBe(true);
+    expect(verdict('case $x in a) git branch x;; esac')?.block).toBe(true);
+    expect(
+      verdict(`cd ${managed} && while git branch x; do break; done`)?.block,
+    ).toBe(true);
+  });
+
+  test("F2: unsupported tilde forms deny the cd override", () => {
+    expect(verdict(`cd ~+ && git branch x`)?.block).toBe(true);
+    expect(verdict(`cd ~ && git -C ${managed} status`)).toBeUndefined();
+  });
+
+  test("F3: only git commands may follow the cd prefix", () => {
+    expect(
+      verdict(`cd ${managed} && builtin cd ${sourceRepo} && git branch x`)?.block,
+    ).toBe(true);
+    expect(
+      verdict(`cd ${managed} && command cd ${sourceRepo} && git branch x`)?.block,
+    ).toBe(true);
+    expect(
+      verdict(
+        `cd ${managed} && pushd ${sourceRepo} >/dev/null && git branch x`,
+      )?.block,
+    ).toBe(true);
+    expect(
+      verdict(`cd ${managed} && eval 'cd ${sourceRepo}' && git branch x`)?.block,
+    ).toBe(true);
+    expect(verdict(`cd ${managed} && git add -A && git commit -m m`)).toBeUndefined();
+    expect(verdict(`cd ${managed} && VAR=1 git commit -m m`)).toBeUndefined();
+  });
+
+  test("F4: array assignment data is inert but function bodies stay scanned", () => {
+    expect(verdict('words=(git commit -m x); printf "%s" "${#words[@]}"')).toBeUndefined();
+    expect(verdict(`f() (git branch x)`)?.block).toBe(true);
   });
 
   test("F-A: cd override is limited to a safe && remainder and literal target", () => {
@@ -202,6 +239,12 @@ describe("parseGitInvocations lexer", () => {
     const invs = guardCore.parseGitInvocations(`echo "$(git commit -m x)"`);
     expect(invs).toHaveLength(1);
     expect(invs[0]!.mutating).toBe(true);
+  });
+
+  test("case pattern delimiters expose body commands", () => {
+    const invs = guardCore.parseGitInvocations("case $x in a) git branch x;; esac");
+    expect(invs).toHaveLength(1);
+    expect(invs[0]!.subcommand).toBe("branch");
   });
 
   test("git in argument position is not an invocation", () => {
