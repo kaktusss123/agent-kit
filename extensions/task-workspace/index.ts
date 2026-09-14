@@ -83,10 +83,10 @@ const POLICY_PATH = join(SHIM_DIR, "policy.mjs");
  *  process is never mutated, so every extension-side child_process call
  *  (git.ts, flows.ts) stays on the unmodified environment and never sees
  *  the shim. */
-function armGitShim(taskRoot: string) {
+export function armGitShim(taskRoot: string) {
   return ({ command, cwd, env }: BashSpawnContext): BashSpawnContext => {
     try {
-      const realGit = env.PATH ? resolveGitOnPath(env.PATH) : null;
+      const realGit = env.PATH ? resolveGitOnPath(env.PATH, cwd) : null;
       if (!realGit) return { command, cwd, env };
       return {
         command,
