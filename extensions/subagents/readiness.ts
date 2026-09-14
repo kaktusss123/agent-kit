@@ -47,14 +47,23 @@ export const READINESS_PROTOCOL = "pi-subagents-readiness";
 export const TASK_WORKSPACE_ENTRY_ID = "task-workspace";
 
 /**
+ * Entry id of the subagents extension inside the RepoOwner profile: the
+ * profile loads the SAME index the main session uses, so a workspace worker
+ * can spawn plain `subagent` children (repo-local helpers) and pick their
+ * modelClass (cheap/default/smart) — its own work still runs on the inherited
+ * main-session model.
+ */
+export const SUBAGENTS_ENTRY_ID = "subagents";
+
+/**
  * The RepoOwner readiness contract — the canonical declared default for the
  * entry id -> required tools mapping, owned here (the controller's profile
  * contract), never by the capability extensions themselves.
  *
  * Workspace spawns declare it per spawn (`SpawnOptions.readinessEntries`);
  * the controller validates the child's tool-set report against that map.
- * Capability extensions (task-workspace, reporting-bridge) declare nothing —
- * they must not know they are profiled.
+ * Capability extensions (task-workspace, reporting-bridge, subagents) declare
+ * nothing — they must not know they are profiled.
  */
 export const PROFILE_READINESS: Record<string, string[]> = {
 	[TASK_WORKSPACE_ENTRY_ID]: [
@@ -64,6 +73,7 @@ export const PROFILE_READINESS: Record<string, string[]> = {
 		"remove_task_lane",
 	],
 	[REPORTING_ENTRY_ID]: ["report_result"],
+	[SUBAGENTS_ENTRY_ID]: ["subagent"],
 };
 
 /**

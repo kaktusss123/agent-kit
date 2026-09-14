@@ -51,8 +51,11 @@ cancel/deadline/shutdown), never as an instruction to guess.
 
 ## Child environment
 
-`pi --mode rpc --no-extensions -e bridge.ts` — no parent extension stack, no
-recursive spawning by construction. Normal skills/context files stay on.
+`pi --mode rpc --no-extensions -e bridge.ts` — no parent extension stack.
+Generic children therefore cannot spawn recursively by construction; a
+workspace worker additionally carries the subagents index (see the
+workspace section) and may spawn plain `subagent` helpers. Normal
+skills/context files stay on.
 Per-spawn `cwd`, `label`, and `modelClass` (`cheap | default | smart`,
 default `default`; resolved to concrete model + thinking by the
 model-classes resolver before the process starts — see
@@ -104,7 +107,9 @@ working exactly as before (no ownership semantics, modelClass applies);
 main session's model and thinking level.
 
 - **Per-spawn profile**: RepoOwner children load the task-workspace entry, a
-  reporting bridge, and a readiness probe in addition to the base bridge
+  reporting bridge, the subagents index (so the owner can spawn plain
+  `subagent` helpers — modelClass applies to those, never to the owner
+  itself), and a readiness probe in addition to the base bridge
   (`SpawnOptions.additionalExtensions`; the probe comes last as a pure
   observer — no tools, no tool_call hooks). Generic children are
   byte-identical.

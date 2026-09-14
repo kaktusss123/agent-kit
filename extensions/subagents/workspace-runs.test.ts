@@ -151,7 +151,7 @@ async function driveToRunning(h: Harness, params: Record<string, unknown>, signa
 		);
 	}
 	const proc = h.lastProc();
-	confirmReadiness(proc, { tools: ["task_status", "ensure_task_repo", "checkpoint_commit", "remove_task_lane", "report_result"] });
+	confirmReadiness(proc, { tools: ["task_status", "ensure_task_repo", "checkpoint_commit", "remove_task_lane", "report_result", "subagent"] });
 	autoAcceptPrompt(proc);
 	await tick(20);
 	return { pending, proc };
@@ -558,7 +558,7 @@ describe("needs_input", () => {
 			const pending = dispatchCall(h, { workspace: ws, task: "t" });
 			for (let i = 0; i < 100 && h.harness.spawned.length === 0; i++) await tick(20);
 			const proc = h.lastProc();
-			confirmReadiness(proc, { tools: ["task_status", "ensure_task_repo", "checkpoint_commit", "remove_task_lane", "report_result"] });
+			confirmReadiness(proc, { tools: ["task_status", "ensure_task_repo", "checkpoint_commit", "remove_task_lane", "report_result", "subagent"] });
 			autoAcceptPrompt(proc);
 			await tick(20);
 			proc.writeToStdout({
@@ -599,7 +599,7 @@ describe("detach and cancel", () => {
 			const pending = dispatchCall(h, { workspace: ws, task: "t" }, ac.signal);
 			for (let i = 0; i < 100 && h.harness.spawned.length === 0; i++) await tick(20);
 			const proc = h.lastProc();
-			confirmReadiness(proc, { tools: ["task_status", "ensure_task_repo", "checkpoint_commit", "remove_task_lane", "report_result"] });
+			confirmReadiness(proc, { tools: ["task_status", "ensure_task_repo", "checkpoint_commit", "remove_task_lane", "report_result", "subagent"] });
 			autoAcceptPrompt(proc);
 			await tick(20);
 
@@ -707,14 +707,66 @@ describe("static preflight (A2b)", () => {
 });
 
 describe("N1 profile order and sequential report", () => {
-	test("reporting bridge loads BEFORE task-workspace; the readiness probe is the last (observer) entry", () => {
+	test("reporting bridge loads BEFORE task-workspace; subagents index enables nested spawns; the readiness probe is the last (observer) entry", () => {
 		const entries = defaultProfileEntries("/ext");
-		expect(entries).toHaveLength(3);
+		expect(entries).toHaveLength(4);
 		expect(entries[0]).toContain("reporting-bridge.ts");
 		expect(entries[1]).toContain(path.join("task-workspace", "index.ts"));
+		// The subagents index loads into the workspace child so a RepoOwner
+		// can spawn plain `subagent` helpers (modelClass applies to those).
+		expect(entries[2]).toBe(path.join("/ext", "index.ts"));
 		// The probe is a subagents-owned file and comes last: its session_start
 		// observer must not perturb the capability entries' tool_call order.
-		expect(entries[2]).toContain("readiness-probe.ts");
+		expect(entries[3]).toContain("readiness-probe.ts");
+	});
+
+	test("the workspace child profile carries the subagents extension (nested spawn capability)", async () => {
+		const h = makeLayer();
+		try {
+			const ws = makeWorktree(h.taskRoot, "nested-profile-ws");
+			const { proc } = await driveToRunning(h, { workspace: ws, task: "t" });
+			const args = proc.spec.args;
+			const exts = args.map((a, i) => (a === "-e" ? args[i + 1] : null)).filter(Boolean);
+			// base bridge + RepoOwner profile; the subagents index is loaded
+			// into THIS child, so op=spawn is available inside the owner.
+			expect(exts.some((e) => e.endsWith("/subagents/index.ts"))).toBe(true);
+			expect(exts.some((e) => e.endsWith("reporting-bridge.ts"))).toBe(true);
+		} finally {
+			await h.runtime.shutdown();
+			h.cleanup();
+		}
+	});
+
+	test("a tool-set report without the nested `subagent` tool fails closed", async () => {
+		const h = makeLayer();
+		try {
+			const ws = makeWorktree(h.taskRoot, "nested-missing-ws");
+			const pending = h.runs.spawnRun({
+				workspace: ws,
+				task: "t",
+				model: { provider: "zai", id: "glm-x" },
+				thinkingLevel: "low",
+				cwd: h.tmp,
+			});
+			for (let i = 0; i < 100 && h.harness.spawned.length === 0; i++) await tick(20);
+			const proc = h.lastProc();
+			// everything EXCEPT the nested subagent tool: the subagents entry
+			// is unsatisfied → the task must never reach this child's model.
+			confirmReadiness(proc, {
+				tools: ["task_status", "ensure_task_repo", "checkpoint_commit", "remove_task_lane", "report_result", "task"],
+			});
+			// spawnRun surfaces the readiness failure as an unsupported result
+			// (dispatched:false) — the classification of a broken profile.
+			const res = await pending;
+			expect(res.details).toMatchObject({ status: "unsupported", dispatched: false });
+			expect(String(res.details.reason)).toContain("missing required tools");
+			expect(String(res.details.reason)).toContain("subagent");
+			expect(proc.signalsReceived).toContain("SIGKILL");
+			expect(proc.commands.find((c) => c.type === "prompt" && c.id === "spawn-prompt")).toBeUndefined();
+		} finally {
+			await h.runtime.shutdown();
+			h.cleanup();
+		}
 	});
 });
 
@@ -729,7 +781,7 @@ describe("N2 deadline vs retire race", () => {
 			for (let i = 0; i < 100 && h.harness.spawned.length === 0; i++) await tick(20);
 			const proc = h.lastProc();
 			proc.ignoreSigterm = true;
-			confirmReadiness(proc, { tools: ["task_status", "ensure_task_repo", "checkpoint_commit", "remove_task_lane", "report_result"] });
+			confirmReadiness(proc, { tools: ["task_status", "ensure_task_repo", "checkpoint_commit", "remove_task_lane", "report_result", "subagent"] });
 			autoAcceptPrompt(proc);
 			await tick(30);
 			const agentId = h.agentId();

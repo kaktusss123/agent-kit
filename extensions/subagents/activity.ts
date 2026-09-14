@@ -74,7 +74,6 @@ function truncate(text: string, max: number): string {
 export interface RunStatusView {
 	/** The owning subagent id — the single run identifier. */
 	agentId: string;
-	agentId: string;
 	workspace: string;
 	/** Workspace run state: running | waiting_input | settling | terminating. */
 	state: string;

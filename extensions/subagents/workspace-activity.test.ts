@@ -354,7 +354,7 @@ async function driveToRunning(h: Harness, params: Record<string, unknown>, signa
 	for (let i = 0; i < 100 && h.spawned.length === 0; i++) await tick(20);
 	if (h.spawned.length === 0) throw new Error("dispatch never spawned a child");
 	const proc = h.lastProc();
-	confirmReadiness(proc, { tools: ["task_status", "ensure_task_repo", "checkpoint_commit", "remove_task_lane", "report_result"] });
+	confirmReadiness(proc, { tools: ["task_status", "ensure_task_repo", "checkpoint_commit", "remove_task_lane", "report_result", "subagent"] });
 	autoAcceptPrompt(proc);
 	await tick(40);
 	return { pending, proc };

@@ -1,5 +1,7 @@
 /**
- * LocalSubagentRuntime — the local-process implementation of SubagentRuntime.
+ * LocalSubagentRuntime — the local-process implementation of the subagent
+ * runtime: model-facing semantics (spawn/steer/wait/…) over local child pi
+ * processes speaking pi RPC.
  *
  * Each agent is an independent pi process in `--mode rpc` running with
  * `--no-extensions -e <bridge>` so children get a minimal, controlled

@@ -162,3 +162,271 @@ describe("subagent tool surface", () => {
 		expect(res.isError).toBe(true);
 	});
 });
+
+// ---------------------------------------------------------------------------
+// Nested spawn: main -> subagent(workspace=...) -> subagent(modelClass=...)
+//
+// The workspace profile ships THIS extension's index.ts into the RepoOwner
+// child, so the worker owns the same `subagent` tool the main session has.
+// These tests load the real index.ts (the exact file the profile carries),
+// point the model-classes store at a scratch agent dir, and prove that a
+// `modelClass=cheap` spawn through the real tool execute() starts a real
+// grandchild process whose argv carries the RESOLVED class model.
+// ---------------------------------------------------------------------------
+
+describe("nested spawn from a workspace worker", () => {
+	test("child-embedded subagent tool resolves modelClass=cheap and starts the grandchild with it", async () => {
+		const base = fs.mkdtempSync(path.join(os.tmpdir(), "subagent-nested-test-"));
+		const agentDir = path.join(base, "agent-dir");
+		fs.mkdirSync(agentDir, { recursive: true });
+		// The persisted class store (same file /main/ writes; the worker reads
+		// it through the inherited PI_CODING_AGENT_DIR).
+		fs.writeFileSync(
+			path.join(agentDir, "model-classes.json"),
+			JSON.stringify({ cheap: { model: "budget/nano", thinking: "minimal" } }),
+		);
+		const argvOut = path.join(base, "grandchild-argv.json");
+		const probe = path.join(base, "argv-probe.js");
+		// The grandchild records its own CLI argv AND pid, then stays alive
+		// until killed (it does not speak RPC, so the runtime will fail it on
+			// termination — the argv record is the contract under test here).
+		fs.writeFileSync(
+			probe,
+			"require('node:fs').writeFileSync(process.env.PI_ARGV_OUT, JSON.stringify({ argv: process.argv.slice(1), pid: process.pid }));\n" +
+			"setInterval(() => {}, 1000);\n",
+		);
+		const prevAgentDir = process.env.PI_CODING_AGENT_DIR;
+		const prevArgvOut = process.env.PI_ARGV_OUT;
+		const prevArgv1 = process.argv[1];
+		process.env.PI_CODING_AGENT_DIR = agentDir;
+		process.env.PI_ARGV_OUT = argvOut;
+		// Make the runtime resolve the pi invocation to the argv probe itself
+		// (the same `process.execPath + argv[1]` rule a real pi cli hits).
+		process.argv[1] = probe;
+
+		try {
+			const { pi, tools } = makePi();
+			registerExtension(pi);
+			const def = tools.get("subagent")!;
+			// The worker's tool context: its own model is the inherited main
+			// model; the registry is what stored classes resolve against.
+			const ctx = {
+				cwd: base,
+				model: { provider: "zai", id: "glm-x" },
+				thinkingLevel: "high",
+				modelRegistry: {
+					getAll: () => [
+						{ provider: "budget", id: "nano", reasoning: true },
+						{ provider: "zai", id: "glm-x", reasoning: true },
+					],
+				},
+			};
+			// The spawn ack proves the class RESOLVED (fail closed otherwise),
+			// but the probe child never speaks RPC — the ack only lands after
+			// the runtime's acceptance timeout. Run the execute WITHOUT await
+			// and read the argv record while it is pending.
+			const pending = def.execute(
+				"tc-n1",
+				{ op: "spawn", task: "repo-local helper work", modelClass: "cheap" },
+				undefined,
+				undefined,
+				ctx,
+			) as Promise<{ details: { snapshot?: { id: string; pid?: number; model?: string; thinking?: string } }; isError?: boolean }>;
+
+			// Proof at the real process boundary: wait for the grandchild to
+			// record its argv+pid, then verify the resolved model reached the CLI.
+			let recorded: { argv: string[]; pid: number } | undefined;
+			for (let i = 0; i < 100 && !recorded; i++) {
+				await new Promise((r) => setTimeout(r, 50));
+				try {
+					recorded = JSON.parse(fs.readFileSync(argvOut, "utf8")) as { argv: string[]; pid: number };
+				} catch {
+					// not written yet
+				}
+			}
+			expect(recorded).toBeDefined();
+			const argv = recorded!.argv;
+			expect(argv).toContain("--model");
+			expect(argv[argv.indexOf("--model") + 1]).toBe("budget/nano");
+			expect(argv).toContain("--thinking");
+			expect(argv[argv.indexOf("--thinking") + 1]).toBe("minimal");
+			// and it is a plain subagent child of the worker
+			const nameIdx = argv.indexOf("--name");
+			expect(argv[nameIdx + 1]).toStartWith("subagent:");
+
+			// terminate the probe grandchild; the pending spawn settles as a
+				// failed attempt (the probe never speaks RPC) — irrelevant here.
+			try {
+				process.kill(recorded!.pid);
+			} catch {
+				// already gone
+			}
+			const res = await pending;
+			expect(res.isError).toBe(true); // the probe child is not an RPC peer
+		} finally {
+			if (prevAgentDir === undefined) delete process.env.PI_CODING_AGENT_DIR;
+			else process.env.PI_CODING_AGENT_DIR = prevAgentDir;
+			if (prevArgvOut === undefined) delete process.env.PI_ARGV_OUT;
+			else process.env.PI_ARGV_OUT = prevArgvOut;
+			process.argv[1] = prevArgv1;
+			fs.rmSync(base, { recursive: true, force: true });
+		}
+	}, 30000);
+
+	test("smart resolves to the STORED pair (not the inherited session model) and starts the grandchild with it", async () => {
+		const base = fs.mkdtempSync(path.join(os.tmpdir(), "subagent-nested-test-"));
+		const agentDir = path.join(base, "agent-dir");
+		fs.mkdirSync(agentDir, { recursive: true });
+		// stored smart = zai/glm-x @ high; the worker session itself runs low —
+		// if the stored pair were ignored, --thinking would say low, not high.
+		fs.writeFileSync(
+			path.join(agentDir, "model-classes.json"),
+			JSON.stringify({ smart: { model: "zai/glm-x", thinking: "high" } }),
+		);
+		const argvOut = path.join(base, "grandchild-argv.json");
+		const probe = path.join(base, "argv-probe.js");
+		fs.writeFileSync(
+			probe,
+			"require('node:fs').writeFileSync(process.env.PI_ARGV_OUT, JSON.stringify({ argv: process.argv.slice(1), pid: process.pid }));\n" +
+			"setInterval(() => {}, 1000);\n",
+		);
+		const prevAgentDir = process.env.PI_CODING_AGENT_DIR;
+		const prevArgvOut = process.env.PI_ARGV_OUT;
+		const prevArgv1 = process.argv[1];
+		process.env.PI_CODING_AGENT_DIR = agentDir;
+		process.env.PI_ARGV_OUT = argvOut;
+		process.argv[1] = probe;
+
+		try {
+			const { pi, tools } = makePi();
+			registerExtension(pi);
+			const def = tools.get("subagent")!;
+			const ctx = {
+				cwd: base,
+				model: { provider: "zai", id: "glm-x" },
+				thinkingLevel: "low",
+				modelRegistry: {
+					getAll: () => [{ provider: "zai", id: "glm-x", reasoning: true }],
+				},
+			};
+			const pending = def.execute(
+				"tc-n2",
+				{ op: "spawn", task: "critical review", modelClass: "smart" },
+				undefined,
+				undefined,
+				ctx,
+			) as Promise<unknown>;
+
+			let recorded: { argv: string[]; pid: number } | undefined;
+			for (let i = 0; i < 100 && !recorded; i++) {
+				await new Promise((r) => setTimeout(r, 50));
+				try {
+					recorded = JSON.parse(fs.readFileSync(argvOut, "utf8")) as { argv: string[]; pid: number };
+				} catch {
+					// not written yet
+				}
+			}
+			expect(recorded).toBeDefined();
+			const argv = recorded!.argv;
+			expect(argv).toContain("--model");
+			expect(argv[argv.indexOf("--model") + 1]).toBe("zai/glm-x");
+			expect(argv).toContain("--thinking");
+			expect(argv[argv.indexOf("--thinking") + 1]).toBe("high"); // stored, NOT the session's low
+
+			try {
+				process.kill(recorded!.pid);
+			} catch {
+				// already gone
+			}
+			await pending;
+
+			// cheap is not configured in this dir → refused before any process.
+			const bad = (await def.execute(
+				"tc-n3",
+				{ op: "spawn", task: "t", modelClass: "cheap" },
+				undefined,
+				undefined,
+				ctx,
+			)) as { isError?: boolean; details: { error?: string } };
+			expect(bad.isError).toBe(true);
+			expect(bad.details.error).toContain("cheap");
+			// no grandchild was ever started for the refused class
+			expect(fs.existsSync(argvOut + ".second")).toBe(false);
+		} finally {
+			if (prevAgentDir === undefined) delete process.env.PI_CODING_AGENT_DIR;
+			else process.env.PI_CODING_AGENT_DIR = prevAgentDir;
+			if (prevArgvOut === undefined) delete process.env.PI_ARGV_OUT;
+			else process.env.PI_ARGV_OUT = prevArgvOut;
+			process.argv[1] = prevArgv1;
+			fs.rmSync(base, { recursive: true, force: true });
+		}
+	}, 15000);
+
+	test("default inherits the worker's session model and starts the grandchild with it", async () => {
+		const base = fs.mkdtempSync(path.join(os.tmpdir(), "subagent-nested-test-"));
+		const agentDir = path.join(base, "agent-dir");
+		fs.mkdirSync(agentDir, { recursive: true });
+		const argvOut = path.join(base, "grandchild-argv.json");
+		const probe = path.join(base, "argv-probe.js");
+		fs.writeFileSync(
+			probe,
+			"require('node:fs').writeFileSync(process.env.PI_ARGV_OUT, JSON.stringify({ argv: process.argv.slice(1), pid: process.pid }));\n" +
+			"setInterval(() => {}, 1000);\n",
+		);
+		const prevAgentDir = process.env.PI_CODING_AGENT_DIR;
+		const prevArgvOut = process.env.PI_ARGV_OUT;
+		const prevArgv1 = process.argv[1];
+		process.env.PI_CODING_AGENT_DIR = agentDir; // no stored classes: default must still work
+		process.env.PI_ARGV_OUT = argvOut;
+		process.argv[1] = probe;
+
+		try {
+			const { pi, tools } = makePi();
+			// the worker session's live thinking level feeds the default class
+			(pi as unknown as { getThinkingLevel(): string }).getThinkingLevel = () => "high";
+			registerExtension(pi);
+			const def = tools.get("subagent")!;
+			const ctx = {
+				cwd: base,
+				model: { provider: "zai", id: "glm-x" },
+				thinkingLevel: "high",
+				modelRegistry: { getAll: () => [{ provider: "zai", id: "glm-x", reasoning: true }] },
+			};
+			const pending = def.execute(
+				"tc-n4",
+				{ op: "spawn", task: "helper" }, // no modelClass → default
+				undefined,
+				undefined,
+				ctx,
+			) as Promise<unknown>;
+
+			let recorded: { argv: string[]; pid: number } | undefined;
+			for (let i = 0; i < 100 && !recorded; i++) {
+				await new Promise((r) => setTimeout(r, 50));
+				try {
+					recorded = JSON.parse(fs.readFileSync(argvOut, "utf8")) as { argv: string[]; pid: number };
+				} catch {
+					// not written yet
+				}
+			}
+			expect(recorded).toBeDefined();
+			const argv = recorded!.argv;
+			expect(argv[argv.indexOf("--model") + 1]).toBe("zai/glm-x");
+			expect(argv[argv.indexOf("--thinking") + 1]).toBe("high"); // the session pair
+
+			try {
+				process.kill(recorded!.pid);
+			} catch {
+				// already gone
+			}
+			await pending;
+		} finally {
+			if (prevAgentDir === undefined) delete process.env.PI_CODING_AGENT_DIR;
+			else process.env.PI_CODING_AGENT_DIR = prevAgentDir;
+			if (prevArgvOut === undefined) delete process.env.PI_ARGV_OUT;
+			else process.env.PI_ARGV_OUT = prevArgvOut;
+			process.argv[1] = prevArgv1;
+			fs.rmSync(base, { recursive: true, force: true });
+		}
+	}, 15000);
+});

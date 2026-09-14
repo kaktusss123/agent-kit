@@ -572,7 +572,6 @@ export function createWorkspaceRuns(
 		const now = Date.now();
 		return {
 			agentId: run.agentId,
-			agentId: run.agentId,
 			workspace: run.workspace,
 			state: run.state,
 			...(run.ladder > 0 ? { ladder: { step: run.ladder, max: LADDER_MAX } } : {}),
@@ -988,15 +987,19 @@ function formatDirty(dirty: DirtyState): string {
  * staleness hook runs first — pi dispatches tool_call handlers in extension
  * order and stops at the first block, so a blocked call (e.g. the mutation
  * guard refusing a raw no-verify commit) must already have invalidated the
- * previous report_result envelope. The readiness probe comes LAST as a pure
- * observer (no tools, no tool_call hooks): its session_start handler fires
- * after all factories have run anyway, and its position must not perturb the
- * capability entries' handler order.
+ * previous report_result envelope. The subagents index follows: it registers
+ * the plain `subagent` tool (nested repo-local helpers, modelClass applies)
+ * and owns no tool_call hooks, so it does not perturb the guard order. The
+ * readiness probe comes LAST as a pure observer (no tools, no tool_call
+ * hooks): its session_start handler fires after all factories have run
+ * anyway, and its position must not perturb the capability entries' handler
+ * order.
  */
 export function defaultProfileEntries(moduleDir: string): string[] {
 	return [
 		path.join(moduleDir, "reporting-bridge.ts"),
 		path.join(moduleDir, "..", "task-workspace", "index.ts"),
+		path.join(moduleDir, "index.ts"),
 		path.join(moduleDir, "readiness-probe.ts"),
 	];
 }
