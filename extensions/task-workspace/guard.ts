@@ -1,16 +1,21 @@
 /**
  * task-workspace core — git mutation classification and guard verdicts.
  *
- * Classifies every git invocation in a shell command (fail closed) and
- * produces host-neutral guard verdicts for write/edit targets and bash
- * commands. The host binding maps a verdict onto its own tool-call block.
+ * Recognizes direct, literal `git` invocations in shell COMMAND position —
+ * a lexical, quote/escape-aware scan with recursion into `$(...)`/backticks
+ * and assignment-prefix/comment handling; never any occurrence of the word
+ * "git" — and produces host-neutral guard verdicts for write/edit targets
+ * and bash commands: local ref mutations route to managed worktrees (the
+ * plain `cd <path> &&` idiom is honored), raw `--no-verify` is blocked
+ * everywhere, everything else fails closed. A net against routing mistakes,
+ * not a sandbox. The host binding maps a verdict onto its own tool-call
+ * block.
  */
 import { basename, join } from "node:path";
 import {
   classifyPath,
   expandPath,
   findGitRoot,
-  hasTemporaryShellCwd,
   isAllowedIgnoredPrimaryPath,
   isGitMetadataPath,
   isTemporaryPath,
@@ -259,38 +264,419 @@ function classifyFetchOperation(rest: string[]): GitOperationClass {
   return "safe-refresh";
 }
 
-/** Conservative scan of EVERY `git` invocation in a (possibly compound) shell
- * command. It is not a shell interpreter: ambiguous input errs toward
- * local/ref-mutation so the guard fails closed. */
+// ─── Shell lexer: command-position git discovery ──────────────────────────
+//
+// The guard recognizes a direct, literal `git` invocation in shell COMMAND
+// position — never any occurrence of the word "git". This is a lexical scan
+// (words, shell operators, quote/escape awareness), explicitly NOT a bash
+// interpreter. Deliberately NOT modeled — blind spots, do not "fix" here:
+// heredoc bodies remain parsed as commands (fail closed, same as today);
+// wrapper commands (`sudo git`, `env git`, `xargs git`, `command git`),
+// computed command words (`$(echo git) commit`) and `/usr/bin/git` are not
+// detected. The guard is a routing-mistake net, not a sandbox.
+
+/** One shell word: `raw` is the byte slice of the command (fed to
+ *  parseGitTokens, byte-for-byte as before) and `literal` is the fully
+ *  resolved text (quotes stripped, escapes resolved) used only to recognize
+ *  the command word itself. Substitution output is runtime data and
+ *  contributes nothing to `literal`. */
+interface ShellWord {
+  raw: string;
+  literal: string;
+}
+
+type Emit = (words: ShellWord[]) => void;
+
+/** Leading NAME=value words at command position are skipped by the scanner
+ *  while it stays at command position (`GIT_DIR=x git commit`). */
+const ASSIGNMENT_WORD_RE = /^[A-Za-z_][A-Za-z0-9_]*=/;
+
+/** Lexically scan one shell command list from `start`, visiting every simple
+ *  command's words at command position. Command position: string start and
+ *  after `;`, `&&`, `||`, `|`, `&`, `(`, newline. Stops at a bare `)` (the
+ *  close of an enclosing `$(...)` substitution) or end of input and returns
+ *  the stop index. Assignment prefixes are skipped; `#` at word start
+ *  comments out the rest of the line; redirections are skipped together with
+ *  their target word. Every branch advances — no termination loops. */
+function scanShellList(command: string, start: number, visit: Emit): number {
+  let i = start;
+  let atCommand = true;
+  let words: ShellWord[] = [];
+  let raw = "";
+  let literal = "";
+  let inWord = false;
+
+  const endWord = (): void => {
+    if (!inWord) return;
+    inWord = false;
+    if (atCommand && words.length === 0 && ASSIGNMENT_WORD_RE.test(raw)) {
+      raw = "";
+      literal = "";
+      return; // assignment prefix: skipped, command position retained
+    }
+    words.push({ raw, literal });
+    atCommand = false;
+    raw = "";
+    literal = "";
+  };
+  const flushCommand = (): void => {
+    endWord();
+    if (words.length > 0) visit(words);
+    words = [];
+  };
+  const separator = (): void => {
+    flushCommand();
+    atCommand = true;
+  };
+
+  while (i < command.length) {
+    const ch = command[i]!;
+    if (ch === ")") {
+      flushCommand();
+      return i;
+    }
+    if (ch === "\n") {
+      separator();
+      i++;
+      continue;
+    }
+    if (/\s/.test(ch)) {
+      endWord();
+      i++;
+      continue;
+    }
+    if (ch === ";") {
+      separator();
+      i++;
+      continue;
+    }
+    if (ch === "|") {
+      separator();
+      i += command[i + 1] === "|" ? 2 : 1;
+      continue;
+    }
+    if (ch === "&") {
+      if (command[i + 1] === "&") {
+        separator();
+        i += 2;
+        continue;
+      }
+      if (command[i + 1] === ">") {
+        i = readRedirection(command, i, visit);
+        continue;
+      }
+      separator();
+      i++;
+      continue;
+    }
+    if (ch === "(") {
+      // Subshell: its content is a nested command list that really executes.
+      separator();
+      const close = scanShellList(command, i + 1, visit);
+      i = Math.min(close + 1, command.length);
+      atCommand = false;
+      continue;
+    }
+    if (ch === "<" || ch === ">") {
+      // A bare digit word immediately before the operator is an fd number.
+      if (inWord && /^[0-9]+$/.test(raw)) {
+        raw = "";
+        literal = "";
+        inWord = false;
+      } else {
+        endWord();
+      }
+      i = readRedirection(command, i, visit);
+      continue;
+    }
+    if (ch === "#" && !inWord) {
+      // Comment: skip to end of line (the newline itself re-opens command
+      // position).
+      while (i < command.length && command[i] !== "\n") i++;
+      continue;
+    }
+    const word = readShellWord(command, i, visit);
+    if (word.raw !== "") {
+      // A bare \<newline> continuation reads as an empty word and must not
+      // end command position or inject an empty token.
+      raw += word.raw;
+      literal += word.literal;
+      inWord = true;
+    }
+    i = word.next;
+  }
+  flushCommand();
+  return i;
+}
+
+/** Skip a redirection operator (`<`, `>`, `>>`, `2>`, `>&`, `&>`, `>|`,
+ *  heredoc/herestring operators) and its target word. Command position is
+ *  unaffected: a redirection is part of the current simple command. Heredoc
+ *  bodies are intentionally not modeled — the following lines stay parsed as
+ *  commands, which fails closed. */
+function readRedirection(command: string, i: number, visit: Emit): number {
+  while (i < command.length && (command[i] === "<" || command[i] === ">")) i++;
+  if (command[i] === "|" || command[i] === "&") i++;
+  while (i < command.length && (command[i] === "<" || command[i] === ">")) i++;
+  while (i < command.length && /\s/.test(command[i]!) && command[i] !== "\n") i++;
+  if (i >= command.length) return i;
+  if (/[\s;&|()`<>]/.test(command[i]!)) return i; // no/invalid target: nothing to skip
+  return readShellWord(command, i, visit).next;
+}
+
+/** Read one shell word starting at `i`: single/double quotes, backslash
+ *  escapes (including `\<newline>` continuations), `$`-expansions and
+ *  backticks (recursed with `visit` — that content is executed shell and
+ *  contributes no literal), stopping before whitespace, a control operator,
+ *  `)` or end of input. Mid-word quote concatenation (`g"it"`) resolves in
+ *  the literal. */
+function readShellWord(
+  command: string,
+  start: number,
+  visit: Emit,
+): { raw: string; literal: string; next: number } {
+  let i = start;
+  let raw = "";
+  let literal = "";
+  while (i < command.length) {
+    const ch = command[i]!;
+    if (ch === "'") {
+      const close = command.indexOf("'", i + 1);
+      const end = close === -1 ? command.length : close + 1;
+      raw += command.slice(i, end);
+      literal += command.slice(i + 1, close === -1 ? command.length : close);
+      i = end;
+      continue;
+    }
+    if (ch === '"') {
+      const part = readDoubleQuoted(command, i, visit);
+      raw += part.raw;
+      literal += part.literal;
+      i = part.next;
+      continue;
+    }
+    if (ch === "\\") {
+      const nxt = command[i + 1];
+      if (nxt === "\n") {
+        i += 2; // line continuation: splices, leaves neither raw nor literal
+        continue;
+      }
+      if (nxt === undefined) {
+        raw += "\\";
+        i++;
+        continue;
+      }
+      raw += "\\" + nxt;
+      literal += nxt;
+      i += 2;
+      continue;
+    }
+    if (ch === "$") {
+      const part = readDollarExpansion(command, i, visit);
+      raw += part.raw;
+      i = part.next;
+      continue; // expansion output contributes no literal
+    }
+    if (ch === "`") {
+      const part = readBacktickSubstitution(command, i, visit);
+      raw += part.raw;
+      i = part.next;
+      continue; // substitution output contributes no literal
+    }
+    if (/[\s;&|()`<>]/.test(ch)) break; // end of word
+    raw += ch;
+    literal += ch;
+    i++;
+  }
+  return { raw, literal, next: i };
+}
+
+/** Read a double-quoted string starting at its opening `"` (kept in raw).
+ *  `\` escapes `$`, backtick, `"`, `\` and newlines; `$(...)` and backticks
+ *  inside are recursed with `visit` (executed shell) and contribute no
+ *  literal. */
+function readDoubleQuoted(
+  command: string,
+  start: number,
+  visit: Emit,
+): { raw: string; literal: string; next: number } {
+  let i = start + 1;
+  let raw = '"';
+  let literal = "";
+  while (i < command.length) {
+    const ch = command[i]!;
+    if (ch === '"') return { raw: raw + '"', literal, next: i + 1 };
+    if (ch === "\\") {
+      const nxt = command[i + 1];
+      if (nxt === "$" || nxt === "`" || nxt === '"' || nxt === "\\") {
+        raw += "\\" + nxt;
+        literal += nxt;
+        i += 2;
+        continue;
+      }
+      if (nxt === "\n") {
+        i += 2;
+        continue;
+      }
+      raw += "\\";
+      i++;
+      continue;
+    }
+    if (ch === "$") {
+      const part = readDollarExpansion(command, i, visit);
+      raw += part.raw;
+      i = part.next;
+      continue;
+    }
+    if (ch === "`") {
+      const part = readBacktickSubstitution(command, i, visit);
+      raw += part.raw;
+      i = part.next;
+      continue;
+    }
+    raw += ch;
+    literal += ch;
+    i++;
+  }
+  return { raw, literal, next: i }; // unterminated quote
+}
+
+/** Read a `$`-expansion at `i` (raw only; the output contributes no
+ *  literal). `$(...)` contents are executed shell and recursed with `visit`
+ *  — that recursion is what detects `echo "$(git commit ...)"`. `$((` is
+ *  treated as arithmetic (paren counting); `$( (` stays a substitution, so a
+ *  subshell inside it is still scanned. */
+function readDollarExpansion(
+  command: string,
+  i: number,
+  visit: Emit,
+): { raw: string; next: number } {
+  const nxt = command[i + 1];
+  if (nxt === "(") {
+    if (command[i + 2] === "(") {
+      const end = skipParens(command, i + 1);
+      return { raw: command.slice(i, end), next: end };
+    }
+    // scanShellList stops at the matching `)` because it is quote-aware.
+    const stop = scanShellList(command, i + 2, visit);
+    const end = Math.min(stop + 1, command.length);
+    return { raw: command.slice(i, end), next: end };
+  }
+  if (nxt === "{") {
+    const end = skipBraces(command, i + 2);
+    return { raw: command.slice(i, end), next: end };
+  }
+  let j = i + 1;
+  while (j < command.length && /[A-Za-z0-9_*@#?!-]/.test(command[j]!)) j++;
+  return { raw: command.slice(i, j), next: j };
+}
+
+/** Read a backtick substitution starting at `i` (POSIX: the first unescaped
+ *  backtick closes it). Its contents are executed shell and recursed with
+ *  `visit` via a bounded sub-scan. */
+function readBacktickSubstitution(
+  command: string,
+  i: number,
+  visit: Emit,
+): { raw: string; next: number } {
+  let j = i + 1;
+  while (j < command.length && command[j] !== "`") {
+    j =
+      command[j] === "\\" &&
+      (command[j + 1] === "$" || command[j + 1] === "`" || command[j + 1] === "\\")
+        ? j + 2
+        : j + 1;
+  }
+  const end = j < command.length ? j + 1 : j; // past closing backtick, or end
+  scanShellList(command.slice(i + 1, j), 0, visit);
+  return { raw: command.slice(i, end), next: end };
+}
+
+/** Skip from `i` (at `(`) to just past the matching `)`. */
+function skipParens(command: string, i: number): number {
+  let depth = 0;
+  while (i < command.length) {
+    const ch = command[i]!;
+    if (ch === "(") depth++;
+    else if (ch === ")") {
+      depth--;
+      if (depth === 0) return i + 1;
+    }
+    i++;
+  }
+  return i;
+}
+
+/** Skip from `i` (just past `${`) to just past the matching `}`. */
+function skipBraces(command: string, i: number): number {
+  let depth = 1;
+  while (i < command.length) {
+    const ch = command[i]!;
+    if (ch === "{") depth++;
+    else if (ch === "}") {
+      depth--;
+      if (depth === 0) return i + 1;
+    }
+    i++;
+  }
+  return i;
+}
+
+/** Conservative scan of EVERY direct, literal `git` invocation in a
+ *  (possibly compound) shell command, recognized in shell COMMAND position
+ *  by the lexical scanner above. It is not a shell interpreter: ambiguous
+ *  input errs toward local/ref-mutation so the guard fails closed. Tokens
+ *  stay the RAW slices after the `git` word, so parseGitTokens, the
+ *  subcommand classifiers and `--no-verify` detection behave exactly as
+ *  before. */
 export function parseGitInvocations(command: string): ParsedGitInvocation[] {
   const invocations: ParsedGitInvocation[] = [];
-  const gitWord = /(^|[\s;&|(`])git(?=$|[\s;&|(`])/g;
-  let m: RegExpExecArray | null;
-
-  while ((m = gitWord.exec(command)) !== null) {
-    const tokens: string[] = [];
-    let i = m.index + m[0].length;
-    while (i < command.length) {
-      while (i < command.length && /\s/.test(command[i])) i++;
-      if (i >= command.length) break;
-      const ch = command[i];
-      if (";&|()`".includes(ch)) break;
-      if (ch === '"' || ch === "'") {
-        const close = command.indexOf(ch, i + 1);
-        const end = close === -1 ? command.length : close + 1;
-        tokens.push(command.slice(i, end));
-        i = end;
-      } else {
-        let j = i;
-        while (j < command.length && !/[\s;&|()`]/.test(command[j])) j++;
-        tokens.push(command.slice(i, j));
-        i = j;
-      }
-    }
-    invocations.push(parseGitTokens(tokens));
-    gitWord.lastIndex = i;
-  }
+  scanShellList(command, 0, (words) => {
+    if (words[0]?.literal !== "git") return;
+    invocations.push(parseGitTokens(words.slice(1).map((w) => w.raw)));
+  });
   return invocations;
+}
+
+/** Literal cd target of the EXACT `cd <path> &&` idiom, or null. The target
+ *  is a single fully-literal word resolved by the same word reader (quotes
+ *  and backslash escapes allowed; no `$var`, no `$(...)`, no backticks; not
+ *  starting with `-`). Returns null — fail closed, so an implicit "."
+ *  resolves against the session cwd as before — when the prefix shape
+ *  differs in any way, when `||`, `;` or a newline appears where `&&` is
+ *  required, or when ANY `cd` appears as a command word anywhere in the
+ *  remainder (scanner-checked, including inside substitutions and
+ *  subshells). With `&&` a failed cd short-circuits the shell, so resolving
+ *  "." against the target can never allow a mutation that actually runs in
+ *  the session cwd; with `;` or `||` it could — hence the strict shape. */
+export function resolveCommandCwdPrefix(command: string): string | null {
+  const noop = (): void => {};
+  let i = 0;
+  while (i < command.length && /\s/.test(command[i]!) && command[i] !== "\n") i++;
+  const cd = readShellWord(command, i, noop);
+  if (cd.literal !== "cd" || cd.raw === "") return null;
+  i = cd.next;
+  if (i >= command.length || command[i] === "\n" || !/\s/.test(command[i]!)) return null;
+  while (i < command.length && /\s/.test(command[i]!) && command[i] !== "\n") i++;
+  if (i >= command.length || command[i] === "\n") return null;
+  const target = readShellWord(command, i, noop);
+  if (target.raw === "" || target.raw.startsWith("-")) return null;
+  if (target.raw.includes("$") || target.raw.includes("`")) return null;
+  i = target.next;
+  while (i < command.length && /\s/.test(command[i]!) && command[i] !== "\n") i++;
+  if (command[i] !== "&" || command[i + 1] !== "&") return null;
+  if (hasCdCommandWord(command.slice(i + 2))) return null;
+  return target.literal;
+}
+
+/** True when the remainder contains `cd` as a command word anywhere the
+ *  scanner reaches (including subshells and command substitutions). */
+function hasCdCommandWord(remainder: string): boolean {
+  let found = false;
+  scanShellList(remainder, 0, (words) => {
+    if (words[0]?.literal === "cd") found = true;
+  });
+  return found;
 }
 
 function parseGitTokens(tokens: string[]): ParsedGitInvocation {
@@ -439,11 +825,13 @@ export function guardManagedBashCommand(
     };
   }
   const cwd = realpath(ctxCwd);
-  if (
-    hasTemporaryShellCwd(command) &&
-    invocations.every((inv) => !inv.mutating || inv.repoRef === null)
-  )
-    return undefined;
+  // The exact `cd <path> &&` idiom re-points the implicit repo target: a
+  // failed cd short-circuits the shell (&&), so this can never allow a
+  // mutation that actually runs in the session cwd. Anything else — a
+  // second cd, `;`/`||`, a computed target — fails closed to the session
+  // cwd via resolveCommandCwdPrefix returning null.
+  const cdLiteral = resolveCommandCwdPrefix(command);
+  const cdBase = cdLiteral === null ? null : expandPath(cdLiteral, cwd);
 
   // Compound commands must not hide a mutating git invocation behind
   // read-only ones: EVERY git invocation in the command is classified, and
@@ -454,7 +842,8 @@ export function guardManagedBashCommand(
     const repoRef = inv.repoRef ?? ".";
     // A URI-like repo ref (git -C local://… …) is never a filesystem repo.
     if (INTERNAL_URI_RE.test(repoRef.trim())) continue;
-    const repoAbs = expandPath(repoRef, cwd);
+    const repoAbs =
+      inv.repoRef === null && cdBase !== null ? cdBase : expandPath(repoRef, cwd);
     if (isTemporaryPath(repoAbs)) continue;
     let classification: PathClassification;
     try {
