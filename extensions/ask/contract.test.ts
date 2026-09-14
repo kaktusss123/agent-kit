@@ -90,10 +90,10 @@ describe("normalizeAskArguments", () => {
 				],
 			}).questions[0]!.recommended;
 		expect(asIndex(true)).toBe(0);
-		expect(asIndex(false)).toBeUndefined();
+		expect(asIndex(false)).toBeUndefined(); // explicit no-recommendation sentinel
 		expect(asIndex(" b ")).toBe(1); // exact label match
 		expect(asIndex("B")).toBe(1); // trimmed + case-insensitive fallback
-		expect(asIndex("nope")).toBeUndefined();
+		expect(asIndex("nope")).toBe("nope"); // unrepairable: kept raw for schema rejection
 	});
 
 	test("explicit question-level recommendation wins over embedded flags", () => {
@@ -108,6 +108,37 @@ describe("normalizeAskArguments", () => {
 			],
 		});
 		expect(fixed.questions[0]!.recommended).toBe(1);
+		// An explicit question-level key wins even when it means no recommendation:
+		// `false` drops it, embedded flags do not resurrect it.
+		const explicitFalse = normalizeAskArguments({
+			questions: [
+				{
+					id: "x",
+					question: "q",
+					options: [{ label: "a", recommended: true }, { label: "b" }],
+					recommended: false,
+				},
+			],
+		});
+		expect(explicitFalse.questions[0]!.recommended).toBeUndefined();
+	});
+
+	test("preserves wrong-typed recognized fields so the schema rejects them", () => {
+		// The Codex P1 regression: dropping an unrepairable `multi` would
+		// silently turn a multi-select question into single-select.
+		const fixed = normalizeAskArguments({
+			questions: [
+				{
+					id: "x",
+					question: "q",
+					multi: "true",
+					options: [{ label: "a", description: 5 }],
+				},
+			],
+		});
+		expect(fixed.questions[0]!.multi).toBe("true");
+		expect(fixed.questions[0]!.options[0]!.description).toBe(5);
+		expect(Value.Check(AskSchema, fixed)).toBe(false);
 	});
 
 	test("drops unknown extra properties at every level", () => {

@@ -45,9 +45,13 @@ rejects the whole call:
   `question.recommended` (first flagged option wins);
 - question-level `recommended` given as a boolean (`true` → first option) or
   as an option label string (exact match, then trimmed case-insensitive);
+  unmatchable label strings are kept raw so the schema rejects the call;
 - unknown extra properties at any level are dropped — the model-facing twin
   of the lenient transport validation in `validateAskInput`.
 
 Anything unrepairable passes through unchanged, so the strict schema still
-produces a precise validation error. The public schema stays strict;
-`ask-schema.ts` descriptions steer models to the canonical shape.
+produces a precise validation error. Recognized fields with wrong-typed
+values are likewise preserved, never dropped — silently omitting e.g. a
+non-boolean `multi` would turn a multi-select question into single-select.
+The public schema stays strict; `ask-schema.ts` descriptions steer models
+to the canonical shape.

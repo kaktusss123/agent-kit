@@ -163,29 +163,46 @@ function normalizeAskQuestionArg(raw: unknown): unknown {
 			return;
 		}
 		const option: Record<string, unknown> = {};
-		if (typeof rawOption.label === "string") option.label = rawOption.label;
-		if (typeof rawOption.description === "string") option.description = rawOption.description;
-		if (typeof rawOption.preview === "string") option.preview = rawOption.preview;
+		// Recognized fields keep their raw value: a wrong-typed value must reach
+		// the strict schema so it rejects the call with a precise error, instead
+		// of this shim silently degrading semantics (e.g. dropping a non-boolean
+		// `multi` would turn a multi-select question into single-select).
+		if (rawOption.label !== undefined) option.label = rawOption.label;
+		if (rawOption.description !== undefined) option.description = rawOption.description;
+		if (rawOption.preview !== undefined) option.preview = rawOption.preview;
 		if (rawOption.recommended === true && flaggedIndex === undefined) flaggedIndex = index;
 		options.push(option);
 	});
 	const question: Record<string, unknown> = {};
-	if (typeof raw.id === "string") question.id = raw.id;
-	if (typeof raw.question === "string") question.question = raw.question;
-	if (typeof raw.header === "string") question.header = raw.header;
+	// Same preservation rule as options: recognized fields pass through
+	// untouched (wrong-typed values are rejected by the schema, never dropped).
+	if (raw.id !== undefined) question.id = raw.id;
+	if (raw.question !== undefined) question.question = raw.question;
+	if (raw.header !== undefined) question.header = raw.header;
 	question.options = options;
-	if (typeof raw.multi === "boolean") question.multi = raw.multi;
-	// An explicit question-level recommendation wins over embedded flags;
-	// embedded flags apply only when the question level has nothing repairable.
-	const recommended = repairRecommended(raw.recommended, options) ?? flaggedIndex;
-	if (recommended !== undefined) question.recommended = recommended;
+	if (raw.multi !== undefined) question.multi = raw.multi;
+	// An explicit question-level `recommended` key wins over embedded flags;
+	// flags apply only when the question carries no recommendation signal.
+	if (raw.recommended !== undefined) {
+		const verdict = repairRecommended(raw.recommended, options);
+		if (verdict === "keep") question.recommended = raw.recommended; // schema rejects precisely
+		else if (typeof verdict === "number") question.recommended = verdict;
+		// "drop" → omit: explicit no-recommendation or unreferencable `true`
+	} else if (flaggedIndex !== undefined) {
+		question.recommended = flaggedIndex;
+	}
 	return question;
 }
 
-/** Question-level `recommended` repairs; undefined = nothing repairable. */
-function repairRecommended(raw: unknown, options: unknown[]): number | undefined {
+/**
+ * Question-level `recommended` verdict: the repaired index, `"drop"` for an
+ * explicit no-recommendation value, or `"keep"` — preserve the raw value so
+ * the strict schema rejects the call instead of the shim hiding the problem.
+ */
+function repairRecommended(raw: unknown, options: unknown[]): number | "keep" | "drop" {
 	if (typeof raw === "number") return raw; // already canonical (out-of-range never matches a row)
-	if (raw === true) return options.length > 0 ? 0 : undefined;
+	if (raw === true) return options.length > 0 ? 0 : "drop";
+	if (raw === false) return "drop"; // explicit no-recommendation sentinel
 	if (typeof raw === "string") {
 		const exact = options.findIndex((o) => isPlainObject(o) && o.label === raw);
 		if (exact !== -1) return exact;
@@ -196,7 +213,7 @@ function repairRecommended(raw: unknown, options: unknown[]): number | undefined
 		);
 		if (loose !== -1) return loose;
 	}
-	return undefined;
+	return "keep"; // unmatchable label or non-scalar: let the schema reject it
 }
 
 /** Parse + validate a serialized request (the child -> controller wire form). */
