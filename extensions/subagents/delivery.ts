@@ -33,7 +33,7 @@ export const RESOLVE_INSTRUCTION =
 
 /**
  * Shared needs_input rendering for every Main-facing surface (background
- * delivery, subagent wait, workspace_agent events/query): the flat summary,
+ * delivery, subagent wait, and workspace-run needs_input surfaces): the flat summary,
  * the resolution instruction, and the lossless structured request.
  */
 export function formatNeedsInputBody(question: string, request: AskInput | undefined): string[] {
