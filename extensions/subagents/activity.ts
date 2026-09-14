@@ -8,7 +8,12 @@
  *   a bounded, conservative one-line summary. Only allow-listed scalar keys
  *   are ever extracted (command/path/pattern/query/...), whitespace is
  *   flattened, and the result is aggressively truncated. Whole argument
- *   blobs and tool output never pass through here.
+ *   blobs and tool output never pass through here. When the caller passes
+ *   the child's workspace cwd, workspace-absolute paths and `cd <workspace>`
+ *   prefixes are compacted to workspace-relative forms (home paths collapse
+ *   to `~/...`) so the cap is spent on the actual command/file, not on the
+ *   worktree path prefix. All matching is literal and pure string work; the
+ *   formatted view stays workspace-aware via the run's own workspace line.
  * - formatRunStatus: render one point-in-time view of a workspace run
  *   (identity, lifecycle state, elapsed/deadline, session, current tool,
  *   bounded recent activity) as compact plain text for onUpdate.
@@ -16,6 +21,7 @@
  * This is status telemetry, not a log: every collection that flows through
  * this module stays hard-capped by its producer (controller/workspace layer).
  */
+import { homedir } from "node:os";
 import type { ToolActivity } from "./types";
 import { formatDuration } from "./delivery";
 
@@ -42,12 +48,21 @@ const TOOL_SUMMARY_POLICY: Record<string, readonly string[]> = {
 const SUMMARY_MAX = 72;
 const RECENT_SUMMARY_MAX = 48;
 
+/** Evaluated once; home-relative paths are collapsed to `~/...` summaries. */
+const HOME = homedir();
+
 /**
  * Bounded one-line preview of a tool call's arguments, extracted only for
  * tools with an explicit policy and only from that policy's keys. Unknown
  * tools and unknown arguments produce no summary — never a serialized blob.
+ *
+ * `workspace` (the child's cwd, i.e. the managed worktree) enables literal,
+ * segment-boundary-safe compaction: workspace paths become relative, bare
+ * workspace mentions become `.`, home paths become `~/...`, and a redundant
+ * leading `cd <workspace> && ` is stripped. Without it the summary is
+ * byte-identical to the plain flatten-and-truncate behavior.
  */
-export function summarizeToolActivity(name: string, args: unknown): string | undefined {
+export function summarizeToolActivity(name: string, args: unknown, workspace?: string): string | undefined {
 	const allowed = TOOL_SUMMARY_POLICY[name];
 	if (!allowed) return undefined; // unknown tool: no summary, no scanning
 	if (typeof args !== "object" || args === null) return undefined;
@@ -56,9 +71,77 @@ export function summarizeToolActivity(name: string, args: unknown): string | und
 		const value = record[key];
 		if (typeof value !== "string") continue;
 		const flat = flattenOneLine(value);
-		if (flat) return truncate(flat, SUMMARY_MAX);
+		if (!flat) continue;
+		return truncate(compactForSummary(key, flat, workspace), SUMMARY_MAX);
 	}
 	return undefined;
+}
+
+/** Per-key dispatch into the workspace-relative transforms (no-op without a workspace). */
+function compactForSummary(key: string, flat: string, workspace?: string): string {
+	if (!workspace) return flat; // back-compat: byte-identical to plain flatten
+	if (key === "command") return compactCommand(flat, workspace);
+	if (key === "path" || key === "file_path") return compactPath(flat, workspace);
+	return flat; // pattern/query stay verbatim
+}
+
+/** Workspace-relative path; home-relative as fallback; never touches siblings. */
+function compactPath(value: string, workspace: string): string {
+	if (value === workspace) return ".";
+	if (value.startsWith(workspace + "/")) {
+		const rel = value.slice(workspace.length + 1);
+		return rel || "."; // trailing-slash edge: never emit an empty summary
+	}
+	return tildifyHome(value);
+}
+
+function tildifyHome(value: string): string {
+	if (!HOME) return value;
+	if (value === HOME) return "~";
+	if (value.startsWith(HOME + "/")) return "~/" + value.slice(HOME.length + 1);
+	return value;
+}
+
+/**
+ * Literal command compaction: `workspace/` prefixes vanish, bare workspace
+ * mentions (followed by end/whitespace/quote/paren/separator) become `.`;
+ * the same for home (`~/`, `~`) — home AFTER workspace so workspace wins.
+ * A redundant leading `cd . && ` idiom is dropped; the result is re-flattened
+ * because substitutions can leave double spaces behind.
+ */
+function compactCommand(cmd: string, workspace: string): string {
+	let out = cmd.replaceAll(workspace + "/", "");
+	out = replaceBare(out, workspace, ".");
+	if (HOME) {
+		out = out.replaceAll(HOME + "/", "~/");
+		out = replaceBare(out, HOME, "~");
+	}
+	out = stripRedundantLeadingCd(out);
+	return flattenOneLine(out);
+}
+
+/** Replace literal occurrences not followed by path-continuation characters. */
+function replaceBare(text: string, literal: string, replacement: string): string {
+	if (!literal) return text;
+	const escaped = literal.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+	return text.replace(new RegExp(`${escaped}(?=$|[\\s'\"\`(),;&|<>])`, "g"), replacement);
+}
+
+/** Leading `cd . && ` idioms (incl. simple-quoted dots) carry no information. */
+const REDUNDANT_CD_PREFIXES = [
+	"cd . && ", "cd ./ && ", "cd ~ && ",
+	'cd "." && ', "cd '.' && ",
+	'cd "./" && ', "cd './' && ",
+	'cd "~" && ', "cd '~' && ",
+];
+
+function stripRedundantLeadingCd(cmd: string): string {
+	for (const prefix of REDUNDANT_CD_PREFIXES) {
+		if (!cmd.startsWith(prefix)) continue;
+		const rest = cmd.slice(prefix.length);
+		return rest || cmd; // stripping must never empty the summary
+	}
+	return cmd;
 }
 
 /** Collapse control characters and whitespace runs into a single-line string. */
