@@ -119,6 +119,23 @@ describe("checkpoint_commit exact scope", () => {
     expect((second as { staged: string[] }).staged.sort()).toEqual(["a.txt", "generated.txt"]);
   });
 
+  test("hook that drops an intended path from the index → commit_scope_mismatch", async () => {
+    const repo = makeRepo("hook-drop");
+    writeFileSync(join(repo, "a.txt"), "aaa\n");
+    writeFileSync(join(repo, "b.txt"), "bbb\n");
+    setHook(repo, "git rm -q --cached b.txt\nexit 0\n");
+
+    const r = await commit(repo, ["a.txt", "b.txt"]);
+
+    expect(r.status).toBe("commit_scope_mismatch");
+    const scope = r as { commit: string; intended: string[]; actual: string[] };
+    expect(scope.intended).toEqual(["a.txt", "b.txt"]);
+    expect(scope.actual).toEqual(["a.txt"]);
+    // The reported commit is the real created commit.
+    expect(scope.commit).toBe(sh(repo, "git", "rev-parse", "HEAD"));
+    expect(commitFiles(repo)).toEqual(["a.txt"]);
+  });
+
   test("deletions commit exactly, even under an extra-staging hook", async () => {
     const repo = makeRepo("deletion");
     writeFileSync(join(repo, "doomed.txt"), "bye\n");

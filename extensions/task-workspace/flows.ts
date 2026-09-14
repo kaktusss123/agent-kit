@@ -612,9 +612,11 @@ export async function removeTaskLane(
 
 // ─── checkpoint_commit ──────────────────────────────────────────────────
 
-/** HEAD's file set as Git reports it (empty for an unreadable state, which
- *  the comparison below then fails closed on). */
-async function headFiles(repoRoot: string): Promise<string[]> {
+/** The created commit's file set as Git reports it (empty for an unreadable
+ *  state, which the comparison below then fails closed on). The exact SHA is
+ *  passed in, never HEAD: the postcondition must be bound to the immutable
+ *  commit being reported, even if the worktree moves on. */
+async function commitFiles(repoRoot: string, commitSha: string): Promise<string[]> {
   const r = await git(
     repoRoot,
     "diff-tree",
@@ -622,18 +624,18 @@ async function headFiles(repoRoot: string): Promise<string[]> {
     "--name-only",
     "-r",
     "--root",
-    "HEAD",
+    commitSha,
   );
   return r.ok ? r.stdout.split("\n").filter((f) => f) : [];
 }
 
-/** Postcondition for every successful commit: the created commit must
- *  contain exactly the intended paths. Pre-commit hooks may adjust the
- *  index they run against and Git commits that adjusted index (verified on
- *  git 2.47: even `commit --only` picks up hook-staged files), so the
- *  scope can only be proven after the commit exists. Fail closed: report
- *  the fact; the model decides the repair — no automatic history rewrite.
- *  Returns the mismatch result, or null when the scope is exact. */
+/** Postcondition for every successful commit: the created commit's file set
+ *  must equal the intended paths. Pre-commit hooks may adjust the index they
+ *  run against and Git commits that adjusted index (verified on git 2.47:
+ *  even `commit --only` picks up hook-staged files), so the scope can only
+ *  be proven after the commit exists — read from the exact reported SHA.
+ *  Fail closed: report the fact; the model decides the repair — no automatic
+ *  history rewrite. Returns the mismatch result, or null when exact. */
 async function commitScopeResult(
   repoRoot: string,
   commitSha: string,
@@ -648,7 +650,7 @@ async function commitScopeResult(
       reason: string;
     }
 > {
-  const actual = await headFiles(repoRoot);
+  const actual = await commitFiles(repoRoot, commitSha);
   const same =
     actual.length === intended.length &&
     [...actual].sort().join("\n") === [...intended].sort().join("\n");
@@ -659,7 +661,7 @@ async function commitScopeResult(
     intended: [...intended].sort(),
     actual: [...actual].sort(),
     reason:
-      "The created commit contains files outside the intended path set (typically a pre-commit hook staging extras). The commit exists; inspect it and decide the repair (e.g. revert it). Nothing was rewritten automatically.",
+      "The created commit file set differs from the intended path set (typically a pre-commit hook staging extra files or dropping intended ones). The commit exists; inspect it and decide the repair (e.g. revert it). Nothing was rewritten automatically.",
   };
 }
 
