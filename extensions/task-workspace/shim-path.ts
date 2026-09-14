@@ -1,14 +1,41 @@
-import { accessSync, constants as fsConstants, realpathSync, statSync } from "node:fs";
+import {
+  accessSync,
+  constants as fsConstants,
+  readFileSync,
+  realpathSync,
+  statSync,
+} from "node:fs";
 import { isAbsolute, join, resolve } from "node:path";
 
-/** First executable regular file named `git` on PATH. Relative PATH entries
- * are resolved at arm time so the shim always receives an absolute path.
- * When `excludeDir` is given and resolvable, the entry whose directory is
- * that directory (compared by real path, so symlinked install paths still
- * match) is skipped — a nested process inheriting a PATH that already
- * starts with the shim's own directory can never select the shim as real
- * git. Unresolvable `excludeDir` or entries exclude nothing; the lookup
- * stays fail-open. */
+/** First line of the marker comment inside `shim/git`. */
+const SHIM_MARKER = "# task-workspace git PATH shim";
+
+/** Invariant: a task-workspace shim copy — from any install, reached via
+ * any symlink path — is never resolved as real git. The shim script starts
+ * with a shebang followed by the marker comment, so both of its first two
+ * lines are checked against the marker. Unreadable candidates are simply
+ * not excluded by content; the lookup stays fail-open. */
+function isShimScript(candidate: string): boolean {
+  let content: string;
+  try {
+    content = readFileSync(candidate, "utf8");
+  } catch {
+    return false;
+  }
+  const [first, second] = content.split("\n");
+  if (first?.startsWith(SHIM_MARKER)) return true;
+  return first?.startsWith("#!") === true && second?.startsWith(SHIM_MARKER) === true;
+}
+
+/** First executable regular file named `git` on PATH that is not a
+ * task-workspace shim copy. Relative PATH entries are resolved at arm time
+ * so the shim always receives an absolute path. A candidate is skipped when
+ * its directory is `excludeDir` (compared by real path, so symlinked install
+ * paths still match) or when the candidate file itself starts with the shim
+ * marker comment, so a nested process inheriting a PATH that contains any
+ * shim copy — its own directory's or a foreign install's — can never select
+ * it as real git. Unresolvable `excludeDir` or entries, and unreadable
+ * candidate files, exclude nothing; the lookup stays fail-open. */
 export function resolveGitOnPath(
   pathValue: string,
   cwd: string = process.cwd(),
@@ -36,6 +63,7 @@ export function resolveGitOnPath(
     try {
       if (!statSync(candidate).isFile()) continue;
       accessSync(candidate, fsConstants.X_OK);
+      if (isShimScript(candidate)) continue;
       return realpathSync(candidate);
     } catch {
       continue;

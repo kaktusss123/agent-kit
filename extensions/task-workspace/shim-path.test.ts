@@ -3,6 +3,7 @@ import {
   chmod,
   mkdir,
   mkdtemp,
+  readFile,
   rm,
   symlink,
   writeFile,
@@ -53,6 +54,32 @@ test("resolveGitOnPath matches the excluded dir through a symlink by real path",
     const resolved = resolveGitOnPath(`${shimLink}:${bin}`, root, shim);
 
     expect(resolved).toBe(realpathSync(realGit));
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("resolveGitOnPath skips a foreign shim copy dir and resolves later real git", async () => {
+  const root = await mkdtemp(join(tmpdir(), "agent-kit-git-path-"));
+  try {
+    const foreign = join(root, "foreign-install");
+    const foreignGit = join(foreign, "git");
+    const bin = join(root, "bin");
+    const realGit = join(bin, "git");
+    await mkdir(foreign);
+    await mkdir(bin);
+    const shimScript = await readFile(join(import.meta.dir, "shim", "git"), "utf8");
+    await writeFile(foreignGit, shimScript);
+    await chmod(foreignGit, 0o755);
+    await writeFile(realGit, "#!/bin/sh\nexit 0\n");
+    await chmod(realGit, 0o755);
+
+    const resolved = resolveGitOnPath(`${foreign}:${bin}`, root, join(import.meta.dir, "shim"));
+
+    expect(resolved).toBe(realpathSync(realGit));
+    // The content check alone must reject the copy even without excludeDir.
+    expect(resolveGitOnPath(`${foreign}:${bin}`, root)).toBe(realpathSync(realGit));
+    expect(resolveGitOnPath(foreign, root)).toBeNull();
   } finally {
     await rm(root, { recursive: true, force: true });
   }

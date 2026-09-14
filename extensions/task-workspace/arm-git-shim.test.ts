@@ -1,6 +1,6 @@
 import { execFileSync } from "node:child_process";
 import { realpathSync } from "node:fs";
-import { chmod, mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { chmod, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { expect, test } from "bun:test";
@@ -72,6 +72,37 @@ test("armGitShim never selects the shim itself when PATH already starts with the
 
     expect(result.env.AGENT_KIT_REAL_GIT).toBe(realpathSync(git));
     expect(result.env.AGENT_KIT_REAL_GIT).not.toBe(join(SHIM_DIR, "git"));
+    expect(result.env.PATH).toBe(`${SHIM_DIR}:${context.env.PATH}`);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("armGitShim never selects a foreign shim copy dir when it is first on PATH", async () => {
+  const cache = join(homedir(), ".cache");
+  await mkdir(cache, { recursive: true });
+  const root = await mkdtemp(join(cache, "agent-kit-arm-git-shim-"));
+  try {
+    const foreign = join(root, "foreign-install");
+    const foreignGit = join(foreign, "git");
+    const bin = join(root, "bin");
+    const git = join(bin, "git");
+    await mkdir(foreign);
+    await mkdir(bin);
+    await writeFile(foreignGit, await readFile(join(import.meta.dir, "shim", "git"), "utf8"));
+    await chmod(foreignGit, 0o755);
+    await writeFile(git, "#!/bin/sh\nexit 0\n");
+    await chmod(git, 0o755);
+
+    const context = {
+      command: "git status",
+      cwd: root,
+      env: { PATH: `${foreign}:${bin}` },
+    };
+    const result = runHook(context, join(root, "tasks"));
+
+    expect(result.env.AGENT_KIT_REAL_GIT).toBe(realpathSync(git));
+    expect(result.env.AGENT_KIT_REAL_GIT).not.toBe(foreignGit);
     expect(result.env.PATH).toBe(`${SHIM_DIR}:${context.env.PATH}`);
   } finally {
     await rm(root, { recursive: true, force: true });
