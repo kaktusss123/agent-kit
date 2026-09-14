@@ -2,8 +2,9 @@
 #
 # Layout regression tests: the retired multi-harness architecture must not
 # reappear. agent-kit is a Pi-first framework; the canonical tree is
-# skills/, extensions/, bin/, tests/ (+ prompts/ and scripts/ only when a
-# category actually has content).
+# skills/, extensions/, bin/, tests/, plus rules/AGENTS.md as the canonical
+# root instructions file linked to ~/.pi/agent/AGENTS.md (+ prompts/ and
+# scripts/ only when a category actually has content).
 #
 # Exit code: 0 when all checks pass, 1 otherwise.
 set -euo pipefail
