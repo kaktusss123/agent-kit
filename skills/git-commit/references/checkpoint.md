@@ -9,7 +9,7 @@ checkpoint_commit(repo, paths, message, allow_primary?, deferred_hook?)
 ```
 
 - `repo` — repository path (root or any directory inside one); must be a git repository.
-- `paths` — the exact intended file paths to stage and commit. This is the entire intended scope; the tool reconciles the staged set to exactly these paths.
+- `paths` — the exact intended file paths to stage and commit. This is the entire intended scope; the tool stages exactly these paths and, after hooks run, verifies the created commit against this set.
 - `message` — the full commit message per SKILL.md policy.
 - `allow_primary` — set only for the explicit user-requested manual-source commit; anything else on a primary checkout is rejected.
 - `deferred_hook` — evidence object; see below. Never a first attempt.
@@ -24,6 +24,7 @@ The tool always runs repository hooks on the commit attempt; there is no way to 
 - `ambiguous_staged` — the pre-existing staged set differs from the intended paths, and merging would silently broaden scope. Resolve with the user (or explicitly include the pre-staged paths in `paths` when they are genuinely part of the checkpoint).
 - `path_outside_repo` — a path outside the repository was passed; correct the path set.
 - `commit_failed` — hook failure or git error. The result includes the failed hook's output and a `staged_tree` SHA binding the exact staged contents. Decide: code-validation failure → fix or escalate (never defer); external-prerequisite failure → see below.
+- `commit_scope_mismatch` — the created commit file set differs from the intended path set, typically because a pre-commit hook staged extra files or dropped intended ones: hooks may adjust the index they run against, and Git commits that adjusted index (`git commit --only` does not prevent this). The commit exists; the tool refuses to report success. Inspect the commit and decide the repair (for example revert it) — nothing is rewritten automatically.
 - `deferred_hook_rejected` — the evidence did not authorize the bypass (wrong tree SHA, non-passing manual check, non-external blocker kind, evidence fields missing). Re-verify reality; do not resubmit the same evidence.
 - `committed_with_deferred_hook` — committed with the gap recorded; the result carries commit id, failed hook, failure reason, manual checks, and `remaining_gap`.
 

@@ -197,7 +197,7 @@ export default function (pi: ExtensionAPI): void {
     name: "ensure_task_repo",
     label: "Ensure Task Repo",
     description:
-      "Attach a source repo to the task workspace as a git worktree. Results identify the task, canonical-or-lane kind, slot, target worktree, branch/base provenance, upstream, and the exact inputRepo checkout facts. Reuses existing worktrees, creates new ones from local/remote branches, or fetches and creates from remote default. Never forces, resets, or detaches.",
+      "Attach a source repo to the task workspace as a git worktree. Results identify the task, canonical-or-lane kind, slot, target worktree, branch/base provenance, upstream, and the exact inputRepo checkout facts. Reuses existing worktrees, creates new ones from local/remote branches, or fetches and creates from remote default. Protected default development branches (main, master, develop) are refused as task branches. Never forces, resets, or detaches.",
     parameters: tb.Object({
       branch: tb.String({
         description:
@@ -264,7 +264,7 @@ export default function (pi: ExtensionAPI): void {
     name: "checkpoint_commit",
     label: "Checkpoint Commit",
     description:
-      "Stage exact paths and commit within a repository. Guards: blocks primary checkout unless allow_primary=true, rejects secret-like paths, verifies paths inside repo, enforces exact staging, requires hooks to run. deferred_hook enables controlled commit with deferred hook verification after a real external-prerequisite hook failure.",
+      "Stage exact paths and commit within a repository. Guards: blocks primary checkout unless allow_primary=true, rejects secret-like paths, verifies paths inside repo, enforces exact staging, requires hooks to run, and verifies the created commit against paths (a hook-staged extra file fails closed as commit_scope_mismatch). deferred_hook enables controlled commit with deferred hook verification after a real external-prerequisite hook failure.",
     parameters: tb.Object({
       repo: tb.String({ description: "Repository path (root or dir inside one)" }),
       paths: tb.Array(tb.String(), {
