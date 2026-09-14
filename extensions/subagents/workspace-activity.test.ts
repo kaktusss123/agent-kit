@@ -24,7 +24,7 @@ import {
 	startRun,
 } from "./fake-rpc";
 import { envelopeFileName, type Envelope } from "./envelope";
-import { createWorkspaceLayer } from "./workspace-agent";
+import { createWorkspaceRuns, type WorkspaceRuns } from "./workspace-runs";
 
 const tick = (ms = 20) => new Promise((r) => setTimeout(r, ms));
 
@@ -261,7 +261,7 @@ interface Harness {
 	spawned: FakeRpcProcess[];
 	tmp: string;
 	taskRoot: string;
-	tool: { def?: { execute: Function } };
+	runs: WorkspaceRuns;
 	updates: Update[];
 	messages: Array<{ message: Record<string, unknown> }>;
 	cleanup(): void;
@@ -284,11 +284,7 @@ function makeLayer(): Harness {
 
 	const updates: Update[] = [];
 	const messages: Harness["messages"] = [];
-	const tool: Harness["tool"] = {};
 	const pi = {
-		registerTool: (def: { name: string; execute: Function }) => {
-			if (def.name === "workspace_agent") tool.def = def;
-		},
 		sendMessage: (message: Record<string, unknown>) => {
 			messages.push({ message });
 		},
@@ -306,14 +302,14 @@ function makeLayer(): Harness {
 		readinessTimeoutMs: 5000,
 	});
 	// Fast refresh cadence so tests observe the loop without real waiting.
-	createWorkspaceLayer(pi, () => runtime, { statusRefreshMs: 25 });
+	const runs = createWorkspaceRuns(pi, () => runtime, { statusRefreshMs: 25 });
 
 	return {
 		runtime,
 		spawned: harness.spawned,
 		tmp,
 		taskRoot,
-		tool,
+		runs,
 		updates,
 		messages,
 		cleanup() {
@@ -351,20 +347,22 @@ function makeWorktree(taskRoot: string, name: string): string {
 	return ws;
 }
 
-/** Dispatch through the real tool execute, capturing onUpdate into h.updates. */
+/** Dispatch a workspace spawn, capturing onUpdate into h.updates. */
 function dispatch(h: Harness, params: Record<string, unknown>, signal?: AbortSignal) {
-	const execute = h.tool.def!.execute as (
-		id: string,
-		params: Record<string, unknown>,
-		signal: AbortSignal | undefined,
-		ou: unknown,
-		ctx: unknown,
-	) => Promise<{ details: Record<string, unknown> }>;
 	const onUpdate = (u: { content: Array<{ type: string; text: string }> }) => {
 		const text = u.content.map((c) => (c.type === "text" ? c.text : "")).join("\n");
 		h.updates.push({ text, at: Date.now() });
 	};
-	return execute("tc-obs", params, signal ?? undefined, onUpdate, CTX);
+	return h.runs.spawnRun({
+		workspace: params.workspace as string,
+		task: params.task as string,
+		deadlineSec: params.timeout_ms !== undefined ? (params.timeout_ms as number) / 1000 : undefined,
+		signal,
+		onUpdate,
+		model: CTX.model,
+		thinkingLevel: CTX.thinkingLevel,
+		cwd: CTX.cwd,
+	}) as Promise<{ details: Record<string, unknown> }>;
 }
 
 /** Drive a dispatch to a running child: confirm readiness, accept the prompt. */
@@ -373,10 +371,7 @@ async function driveToRunning(h: Harness, params: Record<string, unknown>, signa
 	for (let i = 0; i < 100 && h.spawned.length === 0; i++) await tick(20);
 	if (h.spawned.length === 0) throw new Error("dispatch never spawned a child");
 	const proc = h.lastProc();
-	confirmReadiness(proc, "task-workspace", {
-		tools: ["task_status", "ensure_task_repo", "checkpoint_commit", "remove_task_lane"],
-	});
-	confirmReadiness(proc, "workspace-reporting", { tools: ["report_result"] });
+	confirmReadiness(proc, { tools: ["task_status", "ensure_task_repo", "checkpoint_commit", "remove_task_lane", "report_result", "subagent"] });
 	autoAcceptPrompt(proc);
 	await tick(40);
 	return { pending, proc };
@@ -396,7 +391,7 @@ function writeEnvelope(h: Harness, agentId: string): void {
 	);
 }
 
-describe("workspace_agent live updates", () => {
+describe("workspace run live updates", () => {
 	test("T1/T2: updates emitted after dispatch with stable run identity", async () => {
 		const h = makeLayer();
 		try {
@@ -406,7 +401,7 @@ describe("workspace_agent live updates", () => {
 			expect(h.updates.length).toBeGreaterThanOrEqual(1);
 			const first = h.updates[0]!.text;
 			const agentId = h.agentId();
-			expect(first).toMatch(/RepoOwner wr-\d+-[0-9a-z]+/);
+			expect(first).toMatch(/RepoOwner sa-\d+-[0-9a-z]+/);
 			expect(first).toContain(agentId);
 			expect(first).toContain(ws);
 			expect(first).toContain("running");
@@ -484,16 +479,13 @@ describe("workspace_agent live updates", () => {
 			const ws = makeWorktree(h.taskRoot, "obs-refresh-ws");
 			const { pending } = await driveToRunning(h, { workspace: ws, task: "work" });
 			const count0 = h.updates.length;
-			await tick(1200); // cross the one-second elapsed boundary at 25ms cadence
+			await tick(2500); // cross two one-second elapsed boundaries at 25ms cadence
 			expect(h.updates.length).toBeGreaterThan(count0);
 			expect(new Set(h.updates.map((u) => u.text)).size).toBeGreaterThanOrEqual(2); // elapsed moved
-			// run semantics untouched: query-mode still reports a running run
-			const runId = h.updates[0]!.text.match(/RepoOwner (wr-\d+-[0-9a-z]+)/)![1]!;
-			const queryExecute = h.tool.def!.execute as Function;
-			const q = (await queryExecute("tc-q", { run_id: runId }, undefined, undefined, CTX)) as {
-				details: Record<string, unknown>;
-			};
-			expect(q.details).toMatchObject({ status: "running", runId, dispatched: true });
+			// run semantics untouched: the registry still reports a running run
+			const view = h.runs.runView(h.agentId())!;
+			expect(view.state).toBe("running");
+			expect(view.deadlineMsLeft).toBeGreaterThan(0);
 
 			writeEnvelope(h, h.agentId());
 			settleRun(h.lastProc(), "finished");
@@ -547,7 +539,7 @@ describe("workspace_agent live updates", () => {
 			writeEnvelope(h, h.agentId());
 			settleRun(h.lastProc(), "finished after answer");
 			await tick(120);
-			const done = h.messages.find((m) => String(m.message.content ?? "").includes("[workspace_agent completed]"));
+			const done = h.messages.find((m) => String(m.message.content ?? "").includes("[subagent completed]"));
 			expect(done).toBeDefined();
 		} finally {
 			await h.runtime.shutdown();
@@ -574,7 +566,7 @@ describe("workspace_agent live updates", () => {
 			writeEnvelope(h, agentId);
 			settleRun(h.lastProc(), "finished while detached");
 			await tick(120);
-			const done = h.messages.find((m) => String(m.message.content ?? "").includes("[workspace_agent completed]"));
+			const done = h.messages.find((m) => String(m.message.content ?? "").includes("[subagent completed]"));
 			expect(done).toBeDefined();
 		} finally {
 			await h.runtime.shutdown();

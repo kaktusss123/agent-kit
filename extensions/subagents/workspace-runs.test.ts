@@ -1,8 +1,9 @@
 /**
- * Unit tests for the workspace layer: pre-dispatch gates, settlement machine
- * (envelope/ladder/deadline precedence), needs_input, detach, Main cancel,
- * and durable query-mode. The child is the FakeRpcProcess; the envelope file
- * is written directly, simulating the child's report_result persistence.
+ * Unit tests for workspace-mode subagent spawns: pre-dispatch gates,
+ * settlement machine (envelope/ladder/deadline precedence), needs_input,
+ * detach, Main cancel, and durable query via the run registry. The child is
+ * the FakeRpcProcess; the envelope file is written directly, simulating the
+ * child's report_result persistence.
  */
 import { describe, expect, test } from "bun:test";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
@@ -19,32 +20,25 @@ import {
 	settleRun,
 } from "./fake-rpc";
 import { envelopeFileName, type Envelope } from "./envelope";
-import { createWorkspaceLayer, defaultProfileEntries, managedAgentOpPolicy } from "./workspace-agent";
+import {
+	createWorkspaceRuns,
+	defaultProfileEntries,
+	managedAgentOpPolicy,
+	type WorkspaceRuns,
+} from "./workspace-runs";
 
 const tick = (ms = 30) => new Promise((r) => setTimeout(r, ms));
 
 interface Harness {
 	runtime: LocalSubagentRuntime;
 	harness: ReturnType<typeof createFakeSpawnFactory>;
+	runs: WorkspaceRuns;
 	tmp: string;
 	taskRoot: string;
-	tool: ReturnType<typeof captureTool>;
 	messages: Array<{ message: Record<string, unknown>; options?: Record<string, unknown> }>;
 	cleanup(): void;
 	agentId(): string;
 	lastProc(): FakeRpcProcess;
-}
-
-function captureTool(pi: {
-	registerTool(def: { name: string }): void;
-}): { def?: { name: string; execute: Function } } {
-	const box: { def?: { name: string; execute: Function } } = {};
-	const realRegister = pi.registerTool.bind(pi);
-	(pi as { registerTool: unknown }).registerTool = (def: { name: string; execute: Function }) => {
-		if (def.name === "workspace_agent") box.def = def;
-		realRegister(def);
-	};
-	return box;
 }
 
 function makeLayer(layerOpts?: { profileEntries?: () => string[]; killGraceMs?: number }): Harness {
@@ -62,15 +56,7 @@ function makeLayer(layerOpts?: { profileEntries?: () => string[]; killGraceMs?: 
 	process.env.AGENT_TASK_ROOT = taskRoot;
 
 	const messages: Harness["messages"] = [];
-	const box = captureTool({
-		registerTool(def) {
-			if (def.name === "workspace_agent") box.def = def as never;
-		},
-	} as ExtensionAPI);
 	const pi = {
-		registerTool: (def: { name: string; execute: Function }) => {
-			if (def.name === "workspace_agent") box.def = def;
-		},
 		sendMessage: (message: Record<string, unknown>, options?: Record<string, unknown>) => {
 			messages.push({ message, options });
 		},
@@ -87,14 +73,14 @@ function makeLayer(layerOpts?: { profileEntries?: () => string[]; killGraceMs?: 
 		dispatchTimeoutMs: 2000,
 		readinessTimeoutMs: 5000,
 	});
-	createWorkspaceLayer(pi, () => runtime, layerOpts);
+	const runs = createWorkspaceRuns(pi, () => runtime, layerOpts);
 
 	return {
 		runtime,
 		harness,
+		runs,
 		tmp,
 		taskRoot,
-		tool: box as Harness["tool"],
 		messages,
 		cleanup() {
 			if (previousGeneric === undefined) delete process.env.AGENT_TASK_ROOT;
@@ -134,8 +120,16 @@ function makeWorktree(taskRoot: string, name: string): string {
 const CTX = { model: { provider: "zai", id: "glm-x" }, thinkingLevel: "low", cwd: "/tmp" };
 
 function dispatchCall(h: Harness, params: Record<string, unknown>, signal?: AbortSignal, ctxOverride?: unknown) {
-	const execute = h.tool.def!.execute as (id: string, params: Record<string, unknown>, signal: AbortSignal | undefined, ou: unknown, ctx: unknown) => Promise<{ details: Record<string, unknown>; content: [{ type: string; text: string }]; isError?: boolean }>;
-	return execute("tc-1", params, signal ?? undefined, undefined, ctxOverride ?? CTX);
+	const ctx = (ctxOverride ?? CTX) as { model?: { provider: string; id: string }; thinkingLevel?: string; cwd?: string };
+	return h.runs.spawnRun({
+		workspace: params.workspace as string,
+		task: params.task as string,
+		deadlineSec: params.timeout_ms !== undefined ? (params.timeout_ms as number) / 1000 : undefined,
+		signal,
+		model: ctx.model,
+		thinkingLevel: ctx.thinkingLevel,
+		cwd: ctx.cwd,
+	});
 }
 
 /** Drive a dispatch to a running child: confirm readiness, accept the prompt. */
@@ -157,10 +151,7 @@ async function driveToRunning(h: Harness, params: Record<string, unknown>, signa
 		);
 	}
 	const proc = h.lastProc();
-	confirmReadiness(proc, "task-workspace", {
-		tools: ["task_status", "ensure_task_repo", "checkpoint_commit", "remove_task_lane"],
-	});
-	confirmReadiness(proc, "workspace-reporting", { tools: ["report_result"] });
+	confirmReadiness(proc, { tools: ["task_status", "ensure_task_repo", "checkpoint_commit", "remove_task_lane", "report_result", "subagent"] });
 	autoAcceptPrompt(proc);
 	await tick(20);
 	return { pending, proc };
@@ -265,18 +256,17 @@ describe("happy path", () => {
 			expect((res.details.result as Envelope).summary).toBe("all good");
 			// terminal notification was sent once, with the full envelope
 			expect(h.messages).toHaveLength(1);
-			expect(String(h.messages[0]!.message.content)).toContain("[workspace_agent completed]");
+			expect(String(h.messages[0]!.message.content)).toContain("[subagent completed]");
 			expect(String(h.messages[0]!.message.content)).toContain("\"summary\":\"all good\"");
 			// child retired: process dead, record keeps completed
 			await tick(30);
 			expect(proc.closed).toBe(true);
 			expect(h.runtime.inspect(agentId)[0]!.state).toBe("completed");
 
-			// durable query by runId returns the same terminal envelope
-			const runId = res.details.runId as string;
-			const q = await dispatchCall(h, { run_id: runId });
-			expect(q.details).toMatchObject({ status: "done", runId });
-			expect((q.details.result as Envelope).verification[0]).toMatchObject({ result: "pass" });
+			// the run registry still returns the same terminal envelope by agentId
+			const view = h.runs.runView(agentId)!;
+			expect(view.terminal).toMatchObject({ status: "done" });
+			expect((view.terminal!.result as Envelope).verification[0]).toMatchObject({ result: "pass" });
 		} finally {
 			await h.runtime.shutdown();
 			h.cleanup();
@@ -300,7 +290,7 @@ describe("settled-state verification (A3)", () => {
 			expect(facts.headSha).toBe(execFileSync("git", ["-C", ws, "rev-parse", "HEAD"], { encoding: "utf8" }).trim());
 			expect(facts.dirty).toMatchObject({ staged: [], unstaged: [] });
 			// the completion notification carries the same objective facts
-			const note = h.messages.find((m) => String(m.message.content).includes("[workspace_agent completed]"));
+			const note = h.messages.find((m) => String(m.message.content).includes("[subagent completed]"));
 			expect(String(note?.message.content)).toContain("branch=feat/a3-clean-ws");
 			expect(String(note?.message.content)).toContain("dirty=clean");
 		} finally {
@@ -545,15 +535,9 @@ describe("needs_input", () => {
 			});
 			await tick(30);
 			// The pending dispatch call must still be blocked here (needs_input
-			// resolves it). Emulate the Main flow: resolve happens below via a
-			// second ask_parent round after respond; for unit simplicity we
-			// check query-mode state instead.
-			const res = await (async () => {
-				const waiter = dispatchCall(h, { run_id: "x" });
-				return waiter;
-			})();
-			expect(res.isError).toBe(true); // unknown run id before any response
-			void res;
+			// resolves it). The unknown-id path of the run registry is checked
+			// for diagnostics.
+			expect(h.runs.runView("nope")).toBeUndefined();
 
 			// respond resumes the child; then it reports and settles
 			await h.runtime.respond(agentId, "use main");
@@ -574,10 +558,7 @@ describe("needs_input", () => {
 			const pending = dispatchCall(h, { workspace: ws, task: "t" });
 			for (let i = 0; i < 100 && h.harness.spawned.length === 0; i++) await tick(20);
 			const proc = h.lastProc();
-			confirmReadiness(proc, "task-workspace", {
-				tools: ["task_status", "ensure_task_repo", "checkpoint_commit", "remove_task_lane"],
-			});
-			confirmReadiness(proc, "workspace-reporting", { tools: ["report_result"] });
+			confirmReadiness(proc, { tools: ["task_status", "ensure_task_repo", "checkpoint_commit", "remove_task_lane", "report_result", "subagent"] });
 			autoAcceptPrompt(proc);
 			await tick(20);
 			proc.writeToStdout({
@@ -593,16 +574,15 @@ describe("needs_input", () => {
 				dispatched: true,
 				question: "q: q? (yes | no)",
 			});
-			const { runId, agentId } = res.details as { runId: string; agentId: string };
+			const { agentId } = res.details as { agentId: string };
 
-			// run NOT finished: query-mode returns needs_input with deadline left
-			const q1 = await dispatchCall(h, { run_id: runId });
-			expect(q1.details).toMatchObject({ status: "needs_input", state: "waiting_input" });
-			// structured request survives to query-mode (lossless forwarding)
-			const req = (q1.details as { request?: { questions: Array<{ id?: string }> } }).request;
-			expect(req?.questions[0]?.id).toBe("q");
-			expect((q1.details.deadlineMsLeft as number) ?? 0).toBeGreaterThan(0);
-			void agentId;
+			// run NOT finished: the registry returns needs_input with deadline left
+			const v1 = h.runs.runView(agentId)!;
+			expect(v1.state).toBe("waiting_input");
+			expect(v1.deadlineMsLeft).toBeGreaterThan(0);
+			// structured request survives to the registry (lossless forwarding)
+			expect(v1.request?.questions[0]?.id).toBe("q");
+			expect(v1.question).toBeDefined();
 		} finally {
 			await h.runtime.shutdown();
 			h.cleanup();
@@ -619,10 +599,7 @@ describe("detach and cancel", () => {
 			const pending = dispatchCall(h, { workspace: ws, task: "t" }, ac.signal);
 			for (let i = 0; i < 100 && h.harness.spawned.length === 0; i++) await tick(20);
 			const proc = h.lastProc();
-			confirmReadiness(proc, "task-workspace", {
-				tools: ["task_status", "ensure_task_repo", "checkpoint_commit", "remove_task_lane"],
-			});
-			confirmReadiness(proc, "workspace-reporting", { tools: ["report_result"] });
+			confirmReadiness(proc, { tools: ["task_status", "ensure_task_repo", "checkpoint_commit", "remove_task_lane", "report_result", "subagent"] });
 			autoAcceptPrompt(proc);
 			await tick(20);
 
@@ -630,7 +607,7 @@ describe("detach and cancel", () => {
 			const res = await pending;
 			expect(res.details).toMatchObject({ dispatched: true, state: "running" });
 			expect(String(res.details.reason)).toContain("detached");
-			const { runId, agentId } = res.details as { runId: string; agentId: string };
+			const { agentId } = res.details as { agentId: string };
 			expect(h.runtime.inspect(agentId)[0]!.alive).toBe(true); // NOT cancelled
 
 			// F3: with no blocking waiter left, a new ask must reach
@@ -644,28 +621,26 @@ describe("detach and cancel", () => {
 			});
 			await tick(30);
 			const ask = h.messages.find(
-				(m) => m.message.customType === "workspace-agent-event" && String(m.message.content).includes("[workspace_agent needs_input]"),
+				(m) => m.message.customType === "subagent-event" && String(m.message.content).includes("[subagent needs input]"),
 			);
 			expect(ask).toBeDefined();
 			expect(String(ask!.message.content)).toContain("Second question while detached?");
 
 			// F3: after respond, input_resolved clears the pending question —
-			// query-mode must stop claiming an answer is still expected.
+			// the registry must stop claiming an answer is still expected.
 			await h.runtime.respond(agentId, "answer");
 			await tick(20);
-			const qAsk = await dispatchCall(h, { run_id: runId });
-			expect(qAsk.details.status).not.toBe("needs_input");
+			expect(h.runs.runView(agentId)!.state).not.toBe("waiting_input");
 
 			// the run finishes on its own
 			writeEnvelope(h, agentId);
 			settleRun(proc, "finished while detached");
 			await tick(80);
 			const done = h.messages.find(
-				(m) => m.message.customType === "workspace-agent-event" && String(m.message.content).includes("[workspace_agent completed]"),
+				(m) => m.message.customType === "subagent-event" && String(m.message.content).includes("[subagent completed]"),
 			);
 			expect(done).toBeDefined(); // completion notification still arrives
-			const q = await dispatchCall(h, { run_id: runId });
-			expect(q.details).toMatchObject({ status: "done" });
+			expect(h.runs.runView(agentId)!.terminal).toMatchObject({ status: "done" });
 		} finally {
 			await h.runtime.shutdown();
 			h.cleanup();
@@ -732,14 +707,66 @@ describe("static preflight (A2b)", () => {
 });
 
 describe("N1 profile order and sequential report", () => {
-	test("reporting bridge loads BEFORE task-workspace; the readiness probe is the last (observer) entry", () => {
+	test("reporting bridge loads BEFORE task-workspace; subagents index enables nested spawns; the readiness probe is the last (observer) entry", () => {
 		const entries = defaultProfileEntries("/ext");
-		expect(entries).toHaveLength(3);
+		expect(entries).toHaveLength(4);
 		expect(entries[0]).toContain("reporting-bridge.ts");
 		expect(entries[1]).toContain(path.join("task-workspace", "index.ts"));
+		// The subagents index loads into the workspace child so a RepoOwner
+		// can spawn plain `subagent` helpers (modelClass applies to those).
+		expect(entries[2]).toBe(path.join("/ext", "index.ts"));
 		// The probe is a subagents-owned file and comes last: its session_start
 		// observer must not perturb the capability entries' tool_call order.
-		expect(entries[2]).toContain("readiness-probe.ts");
+		expect(entries[3]).toContain("readiness-probe.ts");
+	});
+
+	test("the workspace child profile carries the subagents extension (nested spawn capability)", async () => {
+		const h = makeLayer();
+		try {
+			const ws = makeWorktree(h.taskRoot, "nested-profile-ws");
+			const { proc } = await driveToRunning(h, { workspace: ws, task: "t" });
+			const args = proc.spec.args;
+			const exts = args.map((a, i) => (a === "-e" ? args[i + 1] : null)).filter(Boolean);
+			// base bridge + RepoOwner profile; the subagents index is loaded
+			// into THIS child, so op=spawn is available inside the owner.
+			expect(exts.some((e) => e.endsWith("/subagents/index.ts"))).toBe(true);
+			expect(exts.some((e) => e.endsWith("reporting-bridge.ts"))).toBe(true);
+		} finally {
+			await h.runtime.shutdown();
+			h.cleanup();
+		}
+	});
+
+	test("a tool-set report without the nested `subagent` tool fails closed", async () => {
+		const h = makeLayer();
+		try {
+			const ws = makeWorktree(h.taskRoot, "nested-missing-ws");
+			const pending = h.runs.spawnRun({
+				workspace: ws,
+				task: "t",
+				model: { provider: "zai", id: "glm-x" },
+				thinkingLevel: "low",
+				cwd: h.tmp,
+			});
+			for (let i = 0; i < 100 && h.harness.spawned.length === 0; i++) await tick(20);
+			const proc = h.lastProc();
+			// everything EXCEPT the nested subagent tool: the subagents entry
+			// is unsatisfied → the task must never reach this child's model.
+			confirmReadiness(proc, {
+				tools: ["task_status", "ensure_task_repo", "checkpoint_commit", "remove_task_lane", "report_result", "task"],
+			});
+			// spawnRun surfaces the readiness failure as an unsupported result
+			// (dispatched:false) — the classification of a broken profile.
+			const res = await pending;
+			expect(res.details).toMatchObject({ status: "unsupported", dispatched: false });
+			expect(String(res.details.reason)).toContain("missing required tools");
+			expect(String(res.details.reason)).toContain("subagent");
+			expect(proc.signalsReceived).toContain("SIGKILL");
+			expect(proc.commands.find((c) => c.type === "prompt" && c.id === "spawn-prompt")).toBeUndefined();
+		} finally {
+			await h.runtime.shutdown();
+			h.cleanup();
+		}
 	});
 });
 
@@ -754,10 +781,7 @@ describe("N2 deadline vs retire race", () => {
 			for (let i = 0; i < 100 && h.harness.spawned.length === 0; i++) await tick(20);
 			const proc = h.lastProc();
 			proc.ignoreSigterm = true;
-			confirmReadiness(proc, "task-workspace", {
-				tools: ["task_status", "ensure_task_repo", "checkpoint_commit", "remove_task_lane"],
-			});
-			confirmReadiness(proc, "workspace-reporting", { tools: ["report_result"] });
+			confirmReadiness(proc, { tools: ["task_status", "ensure_task_repo", "checkpoint_commit", "remove_task_lane", "report_result", "subagent"] });
 			autoAcceptPrompt(proc);
 			await tick(30);
 			const agentId = h.agentId();
@@ -780,7 +804,7 @@ describe("N2 deadline vs retire race", () => {
 			expect(h.runtime.inspect(agentId)[0]!.state).toBe("completed");
 			// exactly one completion notification, no partial/cancel noise
 			const completions = h.messages.filter(
-				(m) => m.message.customType === "workspace-agent-event" && String(m.message.content).includes("status: done"),
+				(m) => m.message.customType === "subagent-event" && String(m.message.content).includes("status: done"),
 			);
 			expect(completions.length).toBe(1);
 		} finally {
@@ -826,20 +850,19 @@ describe("N3 pre-dispatch abort", () => {
 	});
 });
 
-describe("query-mode and allow-list", () => {
-	test("unknown run id errors; policy matrix matches the contract", async () => {
+	describe("run registry and allow-list", () => {
+	test("unknown agent id has no run view; policy matrix matches the contract", async () => {
 		const h = makeLayer();
 		try {
-			const q = await dispatchCall(h, { run_id: "wr-nope" });
-			expect(q.isError).toBe(true);
-			expect(String(q.content[0].text)).toContain("unknown run id");
+			expect(h.runs.runView("sa-nope")).toBeUndefined();
+			expect(h.runs.isManaged("sa-nope")).toBe(false);
 
 			expect(managedAgentOpPolicy("status").allowed).toBe(true);
 			expect(managedAgentOpPolicy("result").allowed).toBe(true);
 			expect(managedAgentOpPolicy("respond").allowed).toBe(true);
 			expect(managedAgentOpPolicy("cancel").allowed).toBe(true);
 			expect(managedAgentOpPolicy("wait").allowed).toBe(false);
-			expect(String(managedAgentOpPolicy("wait").reason)).toContain("workspace_agent(run_id)");
+			expect(String(managedAgentOpPolicy("wait").reason)).toContain("op=status / op=result");
 			expect(managedAgentOpPolicy("steer").allowed).toBe(false);
 			expect(managedAgentOpPolicy("follow_up").allowed).toBe(false);
 			expect(managedAgentOpPolicy("spawn").allowed).toBe(true);

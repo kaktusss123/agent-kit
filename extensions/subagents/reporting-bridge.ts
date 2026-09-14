@@ -4,7 +4,7 @@
  * Loaded per-spawn via `additionalExtensions` next to the shared base bridge
  * (which keeps providing `ask`). Adds exactly one capability:
  * `report_result`, the trusted structured outcome channel of the
- * workspace_agent protocol.
+ * workspace-mode (RepoOwner) protocol.
  *
  * Semantics:
  * - The tool validates params against the envelope schema (typebox) and

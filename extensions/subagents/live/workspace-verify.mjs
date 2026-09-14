@@ -1,5 +1,5 @@
 /**
- * Live verification of the workspace_agent layer against real pi children.
+ * Live verification of workspace-mode subagent spawns against real pi children.
  * Run: node workspace-verify.mjs   (after `bun test` — needs the repo tree)
  *
  * Scenarios:
@@ -157,11 +157,11 @@ const task1 = [
 		try { process.kill(pid, 0); } catch { alive = false; }
 		check("L1/A13 child process retired after done", pid && !alive, `pid=${pid} alive=${alive}`);
 
-		runCmd(`/wdrv-query ${r.details.runId} L1Q`);
+		runCmd(`/wdrv-view ${r.details.agentId} L1Q`);
 		const q = await waitResult("L1Q", 20000);
 		check(
-			"L7 query-mode returns the same terminal envelope",
-			!!q && q.details?.status === "done" && q.details?.result?.summary === env.summary,
+			"L7 run registry returns the same terminal envelope",
+			!!q && q.details?.terminal?.status === "done" && q.details?.terminal?.result?.summary === env.summary,
 			JSON.stringify(q?.details ?? q).slice(0, 160),
 		);
 	}
@@ -196,12 +196,11 @@ const task1 = [
 	const l0 = await waitResult("L3", 120000); // the dispatch call returns at needs_input
 	check(
 		"L3/A6 dispatch returns needs_input with ids",
-		!!l0 && l0.details?.status === "needs_input" && !!l0.details?.agentId && !!l0.details?.runId,
+		!!l0 && l0.details?.status === "needs_input" && !!l0.details?.agentId,
 		JSON.stringify(l0?.details ?? l0).slice(0, 160),
 	);
 	if (l0?.details?.status === "needs_input") {
 		const agentId = l0.details.agentId;
-		const runId = l0.details.runId;
 		// run must still be alive (suspended, not finished)
 		const ev = log().events.find((e) => e.kind === "spawned" && e.resultKey === "L3");
 		let alive = true;
@@ -215,22 +214,22 @@ const task1 = [
 		const t0 = Date.now();
 		while (Date.now() - t0 < 300000) {
 			await sleep(3000);
-			runCmd(`/wdrv-query ${runId} L3Q`);
+			runCmd(`/wdrv-view ${agentId} L3Q`);
 			await sleep(1500);
 			try {
 				const l = log();
 				q = l.results.L3Q;
-				if (q?.details?.status === "done") break;
+				if (q?.details?.terminal?.status === "done") break;
 			} catch { /* no log yet */ }
 		}
-		check("L3/A6 completed after respond", !!q && q.details?.status === "done", JSON.stringify(q?.details ?? q).slice(0, 160));
-		check("L3 envelope mentions the magic word", !!q?.details?.result && JSON.stringify(q.details.result).includes("sesame"));
+		check("L3/A6 completed after respond", !!q && q.details?.terminal?.status === "done", JSON.stringify(q?.details ?? q).slice(0, 160));
+		check("L3 envelope mentions the magic word", !!q?.details?.terminal?.result && JSON.stringify(q.details.terminal.result).includes("sesame"));
 		const l = log();
-		const notified = l.messages.find((m) => m.customType === "workspace-agent-event" && String(m.content).includes(agentId) && String(m.content).includes('"status":"done"'));
-		check("L3 [workspace_agent completed] delivered with envelope", !!notified);
+		const notified = l.messages.find((m) => m.customType === "subagent-event" && String(m.content).includes(agentId) && String(m.content).includes('"status":"done"'));
+		check("L3 [subagent completed] delivered with envelope", !!notified);
 
 		// A6b: notification lost → durable query still returns the envelope
-		check("L3/A6b query-mode result identical to notification", !!q && !!notified && JSON.stringify(q.details.result) === (notified.content.match(/result: (.*)/) ?? [])[1]?.trim());
+		check("L3/A6b run registry result identical to notification", !!q && !!notified && JSON.stringify(q.details.terminal.result) === (notified.content.match(/result: (.*)/) ?? [])[1]?.trim());
 	}
 }
 
@@ -338,20 +337,20 @@ const task1 = [
 	});
 	const first = await waitResult("L9", 60000); // needs_input
 	check("L9/A3b needs_input reached", !!first && first.details?.status === "needs_input", JSON.stringify(first?.details ?? first).slice(0, 120));
-	if (!first?.details?.runId) {
-		check("L9/A3b deadline through needs_input → partial + killed", false, "no runId");
+	if (!first?.details?.agentId) {
+		check("L9/A3b deadline through needs_input → partial + killed", false, "no agentId");
 	} else {
 		// Never respond: the deadline must fire through needs_input.
 		let r = null;
 		const t0 = Date.now();
 		while (Date.now() - t0 < 120000) {
 			await sleep(3000);
-			runCmd(`/wdrv-query ${first.details.runId} L9Q`);
+			runCmd(`/wdrv-view ${first.details.agentId} L9Q`);
 			await sleep(1500);
 			try {
 				const l = log();
 				const v = l.results.L9Q;
-				if (v?.details?.status === "partial") { r = v; break; }
+				if (v?.details?.terminal?.status === "partial") { r = v; break; }
 			} catch { /* no log yet */ }
 		}
 		const l = log();

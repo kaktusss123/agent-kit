@@ -1,5 +1,5 @@
 /**
- * TypeBox schema for the workspace_agent report envelope.
+ * TypeBox schema for the workspace-mode report envelope.
  *
  * The canonical machine-checkable artifact of the envelope contract: the
  * reporting bridge passes it to pi's tool registration (pi validates

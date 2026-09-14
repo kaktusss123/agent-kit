@@ -1,10 +1,10 @@
 /**
- * Live verification driver for the workspace_agent layer: runs the REAL
- * LocalSubagentRuntime + createWorkspaceLayer inside a real main pi process
- * and drives scenarios through the registered workspace_agent tool's
- * execute() — the same path the main LLM would take, including pre-dispatch
- * gates and model pinning (ctx.model comes from the dispatch request file,
- * filled by the verify script from the main session's actual get_state).
+ * Live verification driver for workspace-mode subagent spawns: runs the REAL
+ * LocalSubagentRuntime + createWorkspaceRuns inside a real main pi process
+ * and drives scenarios through the same spawnRun entry the `subagent` tool
+ * uses, including pre-dispatch gates and model pinning (the model comes from
+ * the dispatch request file, filled by the verify script from the main
+ * session's actual get_state).
  *
  * Not part of the shipped extension wiring. State flows through
  * /tmp/pi-workspace-live/driver-log.json so the verify script can assert.
@@ -14,7 +14,7 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
 import { LocalSubagentRuntime } from "../controller";
-import { createWorkspaceLayer, defaultProfileEntries } from "../workspace-agent";
+import { createWorkspaceRuns, defaultProfileEntries } from "../workspace-runs";
 
 const LIVE_DIR = process.env.PI_WDRV_LIVE_DIR ?? "/tmp/pi-workspace-live";
 const LOG = path.join(LIVE_DIR, "driver-log.json");
@@ -41,13 +41,8 @@ export default function (pi: ExtensionAPI) {
 		flush();
 	};
 
-	// Capture the workspace_agent tool and completion notifications.
-	let workspaceTool: { execute: Function } | null = null;
-	const realRegister = (pi as { registerTool: unknown }).registerTool;
-	(pi as { registerTool: unknown }).registerTool = (def: { name: string; execute: Function }) => {
-		if (def.name === "workspace_agent") workspaceTool = def;
-		(realRegister as Function).call(pi, def);
-	};
+	// Capture completion notifications (no tool hook: the driver calls the
+	// run layer directly, mirroring the `subagent` tool's spawn path).
 	const realSend = (pi as { sendMessage: unknown }).sendMessage;
 	(pi as { sendMessage: unknown }).sendMessage = (message: { customType?: string; content?: unknown; details?: unknown }, options?: unknown) => {
 		log.messages.push({ at: Date.now(), customType: message.customType, content: message.content, details: message.details });
@@ -61,7 +56,7 @@ export default function (pi: ExtensionAPI) {
 	// RepoOwner profile for subsequent dispatches — pointing it at a missing or
 	// broken entry must fail closed before the task reaches a model.
 	let profileOverride: string[] | null = null;
-	const layer = createWorkspaceLayer(pi, () => runtime, {
+	const runs = createWorkspaceRuns(pi, () => runtime, {
 		profileEntries: () => profileOverride ?? defaultProfileEntries(SUBAGENTS_DIR),
 	});
 
@@ -88,7 +83,6 @@ export default function (pi: ExtensionAPI) {
 				thinkingLevel?: string;
 			};
 			const [provider, ...rest] = req.model.split("/");
-			const ctx = { model: { provider, id: rest.join("/") }, thinkingLevel: req.thinkingLevel ?? "low", cwd: LIVE_DIR };
 			entry("dispatch-start", { resultKey, workspace: req.workspace });
 			void (async () => {
 				try {
@@ -102,13 +96,15 @@ export default function (pi: ExtensionAPI) {
 						if (progress.length > 100) progress.splice(0, progress.length - 100);
 						entry("progress", { resultKey, count: progress.length, last: text });
 					};
-					const pending = (workspaceTool as { execute: Function }).execute(
-						`drv-${resultKey}`,
-						{ workspace: req.workspace, task: req.task, timeout_ms: req.timeout_ms },
-						undefined,
+					const pending = runs.spawnRun({
+						workspace: req.workspace,
+						task: req.task,
+						deadlineSec: req.timeout_ms !== undefined ? req.timeout_ms / 1000 : undefined,
 						onUpdate,
-						ctx,
-					);
+						model: { provider, id: rest.join("/") },
+						thinkingLevel: req.thinkingLevel ?? "low",
+						cwd: LIVE_DIR,
+					});
 					// Log the spawned child pid as soon as it exists: the newest
 					// ALIVE owner child started after this dispatch began (earlier
 					// scenarios' children are retired and must not match).
@@ -174,23 +170,14 @@ export default function (pi: ExtensionAPI) {
 		},
 	});
 
-	// wdrv-query <runId> <resultKey> — durable query-mode lookup.
-	pi.registerCommand("wdrv-query", {
-		description: "query <runId> <resultKey>",
+	// wdrv-view <agentId> <resultKey> — durable run-registry lookup by agentId.
+	pi.registerCommand("wdrv-view", {
+		description: "view <agentId> <resultKey>",
 		handler: async (args) => {
-			const [runId, resultKey] = args.trim().split(/\s+/);
-			void (workspaceTool as { execute: Function })
-				.execute(
-					`drv-q-${resultKey}`,
-					{ run_id: runId },
-					undefined,
-					undefined,
-					{ model: undefined, cwd: LIVE_DIR },
-				)
-				.then((res: { details: unknown; isError?: boolean }) => {
-					log.results[resultKey] = { details: res.details, isError: res.isError };
-					flush();
-				});
+			const [agentId, resultKey] = args.trim().split(/\s+/);
+			const view = runs.runView(agentId);
+			log.results[resultKey] = { details: view ?? { error: `unknown agent id: ${agentId}` }, isError: !view };
+			flush();
 		},
 	});
 
@@ -206,12 +193,12 @@ export default function (pi: ExtensionAPI) {
 		},
 	});
 
-	// wdrv-managed <agentId> — expose isManagedAgent for allow-list checks.
+	// wdrv-managed <agentId> — expose isManaged for allow-list checks.
 	pi.registerCommand("wdrv-managed", {
 		description: "managed <agentId> <resultKey>",
 		handler: async (args) => {
 			const [agentId, resultKey] = args.trim().split(/\s+/);
-			log.results[resultKey] = { managed: layer.isManagedAgent(agentId) };
+			log.results[resultKey] = { managed: runs.isManaged(agentId) };
 			flush();
 		},
 	});

@@ -162,7 +162,6 @@ const BASE_NOW = 1_000_000;
 
 function view(overrides?: Partial<RunStatusView>): RunStatusView {
 	return {
-		runId: "wr-1-8tw1",
 		agentId: "sa-1-q625",
 		workspace: "/home/vlad/.agent-kit/tasks/t1/agent-kit",
 		state: "running",
@@ -184,7 +183,7 @@ function view(overrides?: Partial<RunStatusView>): RunStatusView {
 describe("formatRunStatus", () => {
 	test("identity block: run, state, elapsed, deadline, agent, workspace, model, session", () => {
 		const text = formatRunStatus(view({ deadlineMsLeft: 261_000 }));
-		expect(text).toContain("RepoOwner wr-1-8tw1");
+		expect(text).toContain("RepoOwner sa-1-q625");
 		expect(text).toContain("running · 10m39s · deadline 4m21s");
 		expect(text).toContain("agent      sa-1-q625 · pid 18432");
 		expect(text).toContain("workspace  /home/vlad/.agent-kit/tasks/t1/agent-kit");
@@ -241,7 +240,7 @@ describe("formatRunStatus", () => {
 	});
 
 	test("waiting_input state renders truthfully", () => {
-		expect(formatRunStatus(view({ state: "waiting_input" }))).toMatch(/^RepoOwner wr-1-8tw1\n\nwaiting_input · /);
+		expect(formatRunStatus(view({ state: "waiting_input" }))).toMatch(/^RepoOwner sa-1-q625\n\nwaiting_input · /);
 	});
 
 	test("age of the active tool uses the injected clock", () => {

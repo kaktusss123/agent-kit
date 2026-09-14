@@ -45,9 +45,9 @@ tests/                   verification:
   checkout. cwd Main-сессии не меняется.
 - **`/dev`** — Main — task controller: intent, решения, оркестрация,
   review, integration. Мутация репозиториев выполняется RepoOwner'ами
-  (`workspace_agent`, по одному на writable repository, укоренёнными в
-  managed worktrees). Owner'ы реализуют и верифицируют внутри своих
-  worktrees; Main ревьюит результат и чинит через fresh owner.
+  (`subagent` op `spawn` с `workspace=<worktree>`, по одному на writable
+  repository). Owner'ы реализуют и верифицируют внутри своих worktrees;
+  Main ревьюит результат и чинит через fresh owner.
 
 Промпты задают mode и связывают существующие capabilities (`skill://git-task`,
 `skill://implementation`, …); вся policy живет в skills/references.
@@ -74,7 +74,7 @@ Skill может быть Pi-specific, может требовать конкр�
 - `skills/git-task/` — `SKILL.md` (task policy, identity, base selection,
   owners, review/repair) + `references/task-workspace.md` (контракт
   `task_status` / `ensure_task_repo` / `remove_task_lane` и mutation guard)
-  + `references/repo-owners.md` (контракт `workspace_agent`, `needs_input`,
+  + `references/repo-owners.md` (контракт workspace-спавна `subagent`, `needs_input`,
   terminal lifecycle, repair).
 - `skills/git-commit/` — `SKILL.md` (checkpoint judgment, branch/ticket/
   message policy, secrets) + `references/checkpoint.md` (контракт
@@ -94,8 +94,9 @@ mandatory: например, перед работой с task workspace — п�
   guard. Ядро (`flows.ts`, `git.ts`, `guard.ts`, `types.ts`) host-independent
   и тестируется без Pi (`core-isolation.test.ts`); второй real consumer у
   него отсутствует, поэтому library-уровень не выделяется.
-- **subagents** — subagent runtime и workspace-слой `workspace_agent`
-  (RepoOwner-протокол с readiness handshake, deadline и terminal envelope).
+- **subagents** — единый subagent runtime; workspace-режим того же `subagent`
+  (RepoOwner-протокол: readiness handshake, deadline, terminal envelope,
+  settled-state verification).
 - **ask** — структурные вопросы модели к пользователю/владельцу сессии.
 - **todo**, **continue-shortcut**, **agent-events**, **web-search**,
   **perf-stats**, **footer** — task list, shortcut, events/статусы, поиск,

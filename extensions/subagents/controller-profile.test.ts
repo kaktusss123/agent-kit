@@ -18,7 +18,7 @@ import {
 	settleRun,
 	startRun,
 } from "./fake-rpc";
-import { parseReadinessPayload, READINESS_CONTRACT_ENV } from "./readiness";
+import { parseReadinessPayload } from "./readiness";
 import { validateEnvelope, validateEnvelopeRecord } from "./envelope";
 import type { SubagentModelEvent } from "./types";
 
@@ -76,14 +76,9 @@ describe("per-spawn additionalExtensions", () => {
 			expect(exts).toEqual(["/fake/bridge.ts", "/ext/task-workspace/index.ts", "/ext/subagents/reporting-bridge.ts"]);
 			expect(args).toContain("--no-extensions");
 			expect(args[args.indexOf("--name") + 1]).toBe("subagent:owner-x");
-			// The exact readiness contract passed to spawn() travels verbatim to
-			// the child via the env var the probe observes (single source of
-			// truth for THIS spawn).
-			expect(JSON.parse(proc.spec.env?.[READINESS_CONTRACT_ENV] ?? "null"))
-				.toEqual({
-					"task-workspace": ["task_status", "ensure_task_repo"],
-					"workspace-reporting": ["report_result"],
-				});
+			// No readiness data travels to the child: the contract stays
+			// main-side, the probe only reports the observed tool set.
+			expect(proc.spec.env?.PI_SUBAGENT_READINESS_CONTRACT).toBeUndefined();
 			await runtime.shutdown();
 			await pending.catch(() => {});
 			void autoAcceptPrompt;
@@ -100,9 +95,9 @@ describe("per-spawn additionalExtensions", () => {
 			const proc = harness.spawned[0];
 			const exts = proc.spec.args.map((a, i) => (a === "-e" ? proc.spec.args[i + 1] : null)).filter(Boolean);
 			expect(exts).toEqual(["/fake/bridge.ts"]);
-			// Byte-identical environment: no readiness contract is shipped for a
-			// generic child (the probe is not even loaded there).
-			expect(proc.spec.env?.[READINESS_CONTRACT_ENV]).toBeUndefined();
+			// Byte-identical environment: the readiness contract never travels
+			// to children (generic or profiled) — nothing to assert here beyond
+			// the argv identity above.
 			await runtime.shutdown();
 			await pending.catch(() => {});
 		} finally {
@@ -112,16 +107,30 @@ describe("per-spawn additionalExtensions", () => {
 });
 
 describe("readiness handshake", () => {
-	test("withholds the task prompt until all entries confirmed, then dispatches", async () => {
+	test("withholds the task prompt until the tool-set report covers every entry, then dispatches", async () => {
 		const { runtime, harness, cleanup } = makeRuntime();
 		try {
 			const { pending, proc } = await spawnProfiled(runtime, harness);
 			await tick(20);
 			expect(proc.commands.find((c) => c.type === "prompt")).toBeUndefined();
-			confirmReadiness(proc, "task-workspace", { tools: ["task_status", "ensure_task_repo", "x"] });
+			// A report missing a required tool cannot satisfy the contract:
+			// reporting_result is still missing, so the spawn fails closed.
+			confirmReadiness(proc, { tools: ["task_status", "ensure_task_repo"] });
+			await expect(pending).rejects.toThrow(/readiness handshake failed/);
+			expect(proc.commands.find((c) => c.type === "prompt")).toBeUndefined();
+		} finally {
+			await runtime.shutdown();
+			cleanup();
+		}
+	});
+
+	test("a complete tool-set report dispatches the task prompt", async () => {
+		const { runtime, harness, cleanup } = makeRuntime();
+		try {
+			const { pending, proc } = await spawnProfiled(runtime, harness);
 			await tick(20);
-			expect(proc.commands.find((c) => c.type === "prompt")).toBeUndefined(); // one entry left
-			confirmReadiness(proc, "workspace-reporting", { tools: ["report_result"] });
+			expect(proc.commands.find((c) => c.type === "prompt")).toBeUndefined();
+			confirmReadiness(proc, { tools: ["task_status", "ensure_task_repo", "report_result"] });
 			autoAcceptPrompt(proc);
 			await pending;
 			const prompt = proc.commands.find((c) => c.type === "prompt" && c.id === "spawn-prompt");
@@ -133,16 +142,15 @@ describe("readiness handshake", () => {
 		}
 	});
 
-	test("ignores readiness from entries outside the profile", async () => {
+	test("ignores foreign notifies (wrong protocol marker)", async () => {
 		const { runtime, harness, cleanup } = makeRuntime();
 		try {
 			const { pending, proc } = await spawnProfiled(runtime, harness);
 			await tick(20);
-			confirmReadiness(proc, "bogus-entry", { tools: ["anything"] });
+			confirmReadiness(proc, { tools: ["anything"], protocol: "some-other-protocol" });
 			await tick(20);
 			expect(proc.commands.find((c) => c.type === "prompt")).toBeUndefined();
-			confirmReadiness(proc, "task-workspace", { tools: ["task_status", "ensure_task_repo"] });
-			confirmReadiness(proc, "workspace-reporting", { tools: ["report_result"] });
+			confirmReadiness(proc, { tools: ["task_status", "ensure_task_repo", "report_result"] });
 			autoAcceptPrompt(proc);
 			await pending;
 		} finally {
@@ -151,13 +159,12 @@ describe("readiness handshake", () => {
 		}
 	});
 
-	test("ok:false confirmation fails the spawn, kills the child, task never sent", async () => {
+	test("missing required tools fail the spawn, kill the child, task never sent", async () => {
 		const { runtime, harness, cleanup } = makeRuntime();
 		try {
 			const { pending, proc } = await spawnProfiled(runtime, harness);
-			confirmReadiness(proc, "task-workspace", { tools: ["task_status", "ensure_task_repo"] });
-			confirmReadiness(proc, "workspace-reporting", { ok: false, tools: ["report_result"] });
-			await expect(pending).rejects.toThrow(/readiness handshake failed.*failed initialization/);
+			confirmReadiness(proc, { tools: ["task_status"] }); // ensure_task_repo and report_result missing
+			await expect(pending).rejects.toThrow(/missing required tools: ensure_task_repo/);
 			expect(proc.signalsReceived).toContain("SIGKILL");
 			expect(proc.commands.find((c) => c.type === "prompt")).toBeUndefined();
 		} finally {
@@ -166,24 +173,10 @@ describe("readiness handshake", () => {
 		}
 	});
 
-	test("missing required tool fails the spawn even when ok:true", async () => {
-		const { runtime, harness, cleanup } = makeRuntime();
-		try {
-			const { pending, proc } = await spawnProfiled(runtime, harness);
-			confirmReadiness(proc, "task-workspace", { tools: ["task_status"] }); // ensure_task_repo missing
-			await expect(pending).rejects.toThrow(/missing required tools: ensure_task_repo/);
-			expect(proc.commands.find((c) => c.type === "prompt")).toBeUndefined();
-		} finally {
-			await runtime.shutdown();
-			cleanup();
-		}
-	});
-
-	test("missing confirmations time out: child killed, task never sent", async () => {
+	test("no readiness report times out: child killed, task never sent", async () => {
 		const { runtime, harness, cleanup } = makeRuntime({ readinessTimeoutMs: 60 });
 		try {
 			const { pending, proc } = await spawnProfiled(runtime, harness);
-			confirmReadiness(proc, "task-workspace", { tools: ["task_status", "ensure_task_repo"] });
 			await expect(pending).rejects.toThrow(/readiness handshake did not complete in time/);
 			expect(proc.signalsReceived).toContain("SIGKILL");
 			expect(proc.commands.find((c) => c.type === "prompt")).toBeUndefined();
@@ -193,18 +186,14 @@ describe("readiness handshake", () => {
 		}
 	});
 
-	test("readiness payload parsing rejects malformed or foreign notifies", () => {
-		expect(parseReadinessPayload(undefined)).toBeUndefined();
-		expect(parseReadinessPayload("not json")).toBeUndefined();
-		expect(parseReadinessPayload(JSON.stringify({ entry: "x", ok: true }))).toBeUndefined();
-		expect(
-			parseReadinessPayload(JSON.stringify({ protocol: "other", entry: "x", ok: true, tools: [], missing: [] })),
-		).toBeUndefined();
-		const good = parseReadinessPayload(
-			JSON.stringify({ protocol: "pi-subagents-readiness", entry: "x", ok: true, tools: ["t"], missing: [] }),
-		);
-		expect(good).toMatchObject({ entry: "x", ok: true });
-	});
+test("readiness payload parsing rejects malformed or foreign notifies", () => {
+	expect(parseReadinessPayload(undefined)).toBeUndefined();
+	expect(parseReadinessPayload("not json")).toBeUndefined();
+	expect(parseReadinessPayload(JSON.stringify({ protocol: "pi-subagents-readiness" }))).toBeUndefined();
+	expect(parseReadinessPayload(JSON.stringify({ protocol: "other", tools: [] }))).toBeUndefined();
+	const good = parseReadinessPayload(JSON.stringify({ protocol: "pi-subagents-readiness", tools: ["t"] }));
+	expect(good).toMatchObject({ protocol: "pi-subagents-readiness", tools: ["t"] });
+});
 });
 
 describe("retire() — terminal termination preserving the record", () => {
@@ -312,7 +301,7 @@ describe("workspace event routing", () => {
 			});
 			await tick(5);
 			const proc = harness.spawned[0];
-			confirmReadiness(proc, "e", { tools: ["t"] });
+			confirmReadiness(proc, { tools: ["t"] });
 			autoAcceptPrompt(proc);
 			const snap = await pending;
 			expect(runtime.isWorkspaceRouted(snap.id)).toBe(true);

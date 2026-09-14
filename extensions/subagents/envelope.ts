@@ -1,5 +1,5 @@
 /**
- * Envelope schema and file handoff for workspace_agent runs.
+ * Envelope schema and file handoff for workspace-mode subagent runs.
  *
  * The RepoOwner child reports its product outcome through the `report_result`
  * tool (reporting-bridge.ts), which validates params against the typebox

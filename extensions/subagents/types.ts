@@ -34,16 +34,17 @@ export interface SpawnOptions {
 	additionalExtensions?: string[];
 	/**
 	 * Readiness contract for the additional extensions: entry id -> tool names
-	 * the entry must report as registered. When set, the child's initial task
-	 * prompt is sent only after every listed entry confirmed readiness over
-	 * the extension UI protocol; otherwise the spawn fails with the child
-	 * killed and the task never reaching the model.
+	 * the entry must have registered. When set, the child's initial task
+	 * prompt is sent only after the readiness probe reported the child's
+	 * session tool set and every listed entry's required tools are present;
+	 * otherwise the spawn fails with the child killed and the task never
+	 * reaching the model.
 	 *
-	 * This map is also the child-side truth: it travels verbatim to THIS
-	 * spawn via the `PI_SUBAGENT_READINESS_CONTRACT` env var, which the
-	 * subagents-owned readiness probe observes (generic children never get
-	 * the env var). The child carries no global readiness policy.
-	 */
+	 * This contract stays MAIN-SIDE: the child carries no readiness policy —
+	 * the probe only reports the observed tool set, and the controller
+	 * validates it against this map. Generic children (no readiness entries)
+	 * are unaffected: they are spawned byte-identically and never probed.
+	 *//
 	readinessEntries?: Record<string, string[]>;
 	/**
 	 * Route this child's lifecycle events to the workspace layer instead of
@@ -147,38 +148,3 @@ export type WaitOutcome =
 	| { status: "cancelled" }
 	| { status: "needs_input"; question: string; request?: AskInput }
 	| { status: "timeout"; state: AgentState };
-
-/**
- * Boundary between model-facing subagent semantics and the concrete runtime.
- *
- * The tool and command layers depend only on this interface; the current
- * implementation is local child processes speaking pi RPC, but it can be
- * replaced (e.g. an external daemon) without changing the model contract.
- */
-export interface SubagentRuntime {
-	/** Start a child agent. Resolves quickly, once the initial prompt is accepted. */
-	spawn(opts: SpawnOptions): Promise<AgentSnapshot>;
-	/** Redirect a running child mid-flight. */
-	steer(agentId: string, message: string): Promise<void>;
-	/** Queue work for a child: after the current run, or as a new run when idle. */
-	followUp(agentId: string, message: string): Promise<void>;
-	/** Block until the agent reaches a meaningful event (or timeout). */
-	wait(
-		agentId: string,
-		opts?: { timeoutMs?: number; signal?: AbortSignal },
-	): Promise<WaitOutcome>;
-	/** Lazily fetch the full persisted result of an agent. */
-	result(agentId: string): Promise<AgentResult | null>;
-	/** Answer a pending ask question; the child resumes. */
-	respond(agentId: string, answer: string): Promise<void>;
-	/** Stop an agent: pi abort, then SIGTERM, then SIGKILL escalation. */
-	cancel(agentId: string): Promise<void>;
-	/** Snapshot one agent (by id) or all agents. */
-	inspect(agentId?: string): AgentSnapshot[];
-	/** Subscribe to model-visible events; returns an unsubscribe function. */
-	onEvent(cb: (ev: SubagentModelEvent) => void): () => void;
-	/** Kill all live children without latching the runtime shut. */
-	cancelAll(): Promise<void>;
-	/** Kill all live children and latch the runtime shut (main shutdown). */
-	shutdown(): Promise<void>;
-}

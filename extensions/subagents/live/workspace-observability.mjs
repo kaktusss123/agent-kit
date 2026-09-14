@@ -1,10 +1,10 @@
 /**
- * Live verification of workspace_agent OPERATOR OBSERVABILITY against real
+ * Live verification of workspace-mode subagent spawn OPERATOR OBSERVABILITY against real
  * pi children. Run: node workspace-observability.mjs
  *
  * Proves, while Main stays blocked inside the long-running tool call:
  *  O1  at least one progress update is emitted BEFORE the run settles;
- *  O2  updates carry the actual run identity (runId, agentId, workspace);
+ *  O2  updates carry the actual run identity (agentId, workspace);
  *  O3  a real child tool execution shows up as current activity
  *      (`bash · sleep 15`) while it runs;
  *  O4  the child's session identity is visible while still running;
@@ -125,7 +125,7 @@ for (let t0 = Date.now(); Date.now() - t0 < 60000; ) {
 			const updates = l.events.filter((e) => e.kind === "progress" && e.resultKey === "OBS1");
 			if (updates.length > 0) sawUpdateBeforeSettle = true;
 			const texts = updates.map((u) => u.last);
-			sawIdentity ||= texts.some((t) => /RepoOwner wr-\d+-[0-9a-z]+/.test(t) && t.includes(spawnedEv.agentId) && t.includes(WS));
+			sawIdentity ||= texts.some((t) => /RepoOwner sa-\d+-[0-9a-z]+/.test(t) && t.includes(spawnedEv.agentId) && t.includes(WS));
 			sawCurrentTool ||= texts.some((t) => t.includes("current\n  bash · sleep 15"));
 			sawSession ||= texts.some((t) => /^session    \S+/m.test(t) && /running/.test(t));
 			if (sawUpdateBeforeSettle && sawIdentity && sawCurrentTool && sawSession) break;
@@ -135,7 +135,7 @@ for (let t0 = Date.now(); Date.now() - t0 < 60000; ) {
 	await sleep(500);
 }
 check("O1 progress update emitted before settlement", sawUpdateBeforeSettle);
-check("O2 update carries actual run identity (runId/agentId/workspace)", sawIdentity);
+check("O2 update carries actual run identity (agentId/workspace)", sawIdentity);
 check("O3 real child tool execution visible as current activity", sawCurrentTool, "expected `bash · sleep 15`");
 check("O4 session identity visible while running", sawSession);
 
@@ -149,8 +149,8 @@ for (let t0 = Date.now(); Date.now() - t0 < 300000; ) {
 check("O6a RepoOwner settles done with envelope (semantics unchanged)",
 	!!result && result.details?.status === "done" && String(result.details?.result?.summary ?? "").includes("SLEEP-OK"),
 	JSON.stringify(result?.details ?? result ?? null).slice(0, 180));
-check("O6b dispatch carries stable ids matching the observed updates",
-	!!result && !!spawnedEv && result.details?.agentId === spawnedEv.agentId && !!result.details?.runId);
+check("O6b spawn carries stable ids matching the observed updates",
+	!!result && !!spawnedEv && result.details?.agentId === spawnedEv.agentId && !!result.details?.dispatched);
 
 const updates = result?.updates ?? [];
 check("O5 update count bounded (modest cadence, not spam)", updates.length > 0 && updates.length <= 40,

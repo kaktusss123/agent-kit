@@ -8,14 +8,20 @@ the main process. No daemon, no shared hub.
 
 - **`subagent` tool** (LLM): one compact tool with ops
   `spawn / status / steer / follow_up / wait / result / respond / cancel`.
-  `spawn` is asynchronous by default — it returns an id immediately and the
-  child works in parallel. Blocking on a child is modeled as `wait`, not as a
-  special agent type.
+  Plain `spawn` (cwd) is asynchronous — it returns an id immediately and the
+  child works in parallel; blocking on a child is `wait`, and the wait call
+  renders live progress (state, current tool, bounded recent activity) into
+  the tool call. Workspace `spawn` (`workspace=<managed worktree>`) is the
+  RepoOwner mode: the call blocks until a terminal outcome or `needs_input`
+  with the same live progress, an enforced deadline, and the report-envelope
+  contract (see the workspace section below). Management ops work uniformly
+  for both modes.
 - **Background delivery**: when a child reaches `completed`, `failed`, or
   `needs_input`, the main model receives a few compact lines via
   `pi.sendMessage({ deliverAs: "steer", triggerTurn: true })`. Pi 0.85.1
   delivers this at the next safe turn boundary when main is busy and starts a
   fresh run when main is idle (both verified against the installed version).
+  Detached workspace runs deliver their completion through the same channel.
 - **`/subagents` command**: compact live status table; `/subagents kill-all`
   terminates everything.
 
@@ -45,8 +51,11 @@ cancel/deadline/shutdown), never as an instruction to guess.
 
 ## Child environment
 
-`pi --mode rpc --no-extensions -e bridge.ts` — no parent extension stack, no
-recursive spawning by construction. Normal skills/context files stay on.
+`pi --mode rpc --no-extensions -e bridge.ts` — no parent extension stack.
+Generic children therefore cannot spawn recursively by construction; a
+workspace worker additionally carries the subagents index (see the
+workspace section) and may spawn plain `subagent` helpers. Normal
+skills/context files stay on.
 Per-spawn `cwd`, `label`, and `modelClass` (`cheap | default | smart`,
 default `default`; resolved to concrete model + thinking by the
 model-classes resolver before the process starts — see
@@ -87,38 +96,41 @@ queueing and starting a run from the session's real state.
   surfaces only as a pi `extension_error` event; that delivery is then lost
   (the agent remains queryable via `subagent status` / `result`).
 
-## Workspace layer (`workspace_agent`) — RepoOwner contract
+## Workspace spawn mode — RepoOwner contract
 
-`workspace_agent(workspace, task, timeout_ms?)` runs a RepoOwner: a child
-rooted in a managed task worktree with a strict protocol around the shared
-subagent runtime.
+Workspace is a MODE of a `subagent` spawn, not a separate agent kind:
+`subagent op=spawn workspace=<managed worktree> task=... deadlineSec=...`
+runs a RepoOwner — a child rooted in a managed task worktree with a strict
+protocol on top of the shared subagent runtime. Plain `cwd` spawns keep
+working exactly as before (no ownership semantics, modelClass applies);
+`modelClass` does not apply to workspace spawns — the child inherits the
+main session's model and thinking level.
 
 - **Per-spawn profile**: RepoOwner children load the task-workspace entry, a
-  reporting bridge, and a readiness probe in addition to the base bridge
+  reporting bridge, the subagents index (so the owner can spawn plain
+  `subagent` helpers — modelClass applies to those, never to the owner
+  itself), and a readiness probe in addition to the base bridge
   (`SpawnOptions.additionalExtensions`; the probe comes last as a pure
   observer — no tools, no tool_call hooks). Generic children are
-  byte-identical to before.
+  byte-identical.
 - **Readiness handshake**: before the task prompt is sent, a subagents-owned
   readiness probe (the last profile entry) reads the child's actual session
-  tool set once from its `session_start` handler (fire-and-forget notify per
-  contract entry; blocking dialogs would deadlock — the child's stdin reader
-  attaches only after `rebindSession`). Capability extensions declare
-  nothing about readiness; the contract has a single home inside subagents
-  (`PROFILE_READINESS` in readiness.ts is the declared RepoOwner default the
-  workspace layer passes) and travels PER-SPAWN to the child via the
-  `PI_SUBAGENT_READINESS_CONTRACT` env var — the probe reports exactly what
-  its controller declared for this spawn (no/invalid env contract → no
-  handler, fail closed). The controller validates entry ids, `ok`, and
-  required tools; failures kill the child with the task never reaching a
-  model (fail closed, `dispatched:false`).
+  tool set once from its `session_start` handler and reports it as a single
+  fire-and-forget notify (blocking dialogs would deadlock — the child's
+  stdin reader attaches only after `rebindSession`). The contract is
+  MAIN-SIDE only: `PROFILE_READINESS` in readiness.ts declares the RepoOwner
+  default the workspace layer passes per spawn, and the controller validates
+  the observed tool set against it. The child carries no readiness policy;
+  no readiness data travels to the child. Failures kill the child with the
+  task never reaching a model (fail closed, `dispatched:false`).
 - **Dispatch point**: readiness + RPC acceptance of the initial prompt.
   Everything before is `dispatched:false`; after it there is no fallback —
-  abort detaches (the run continues), repair is a new RepoOwner.
+  abort detaches (the run continues), repair is a new RepoOwner spawn.
 - **Event ownership**: RepoOwner lifecycle events route to the workspace run
-  registry only — no generic `[subagent ...]` deliveries, and `wait()` is
-  locked. The `subagent` tool on RepoOwner children allows only
-  `status / result / respond / cancel`; `wait / steer / follow_up` are
-  rejected with an explanation.
+  registry only — no generic `[subagent ...]` deliveries — and `wait()`,
+  `steer`, and `follow_up` are rejected on workspace runs (the workspace
+  spawn call owns the run outcome and its deadline). `status`, `result`,
+  `respond`, and `cancel` work uniformly for both modes.
 - **Envelope**: the child reports its product outcome via `report_result`
   (typebox-validated, atomic file handoff). Any later tool call invalidates
   the report — settlement accepts only fresh envelopes, so "finish by
@@ -138,15 +150,17 @@ subagent runtime.
   cancel use the real `cancel` (semantic cancellation).
 - **Terminal lifecycle**: terminal outcomes `retire()` the child — kill the
   settled process while preserving the terminal record (never `cancelled`).
-  Completion is announced as `[workspace_agent completed]`; the result stays
-  queryable via `workspace_agent(run_id)` for the rest of the session.
+  Completion is announced through the shared `[subagent completed]` event
+  channel with workspace fields; the terminal outcome stays queryable via
+  `subagent op=result id=<agentId>` for the rest of the session. Runs are
+  identified by their agentId; there is no separate run-id namespace.
 - **Model pinning**: the child runs with the main session's resolved model
-  and thinking level; without a model the dispatch is refused (`blocked`).
-- **Live operator observability**: while a blocking dispatch waits, the tool
+  and thinking level; without a model the spawn is refused (`blocked`).
+- **Live operator observability**: while a workspace spawn waits, the tool
   call re-renders a compact status view via Pi's transient `onUpdate`
   channel (display-only — never Main's LLM context, child transcript stays
-  isolated). The view shows run identity (runId/agentId/workspace), run
-  state (`running | waiting_input | settling | terminating`, plus
+  isolated). The view shows run identity (agentId/workspace), run state
+  (`running | waiting_input | settling | terminating`, plus
   `report recovery n/3` while the ladder is active), elapsed time and
   deadline left, pid, model/thinking, the child's session id, and the
   child's authoritative tool activity: `tool_execution_start` opens the
@@ -158,7 +172,10 @@ subagent runtime.
   Session identity is fetched with a single `get_state` right after prompt
   acceptance, so it is visible while the child runs, not only after
   settlement. The refresh loop ticks every 3 s and is stopped on every exit
-  path: terminal, needs_input, detach, and thrown errors.
+  path: terminal, needs_input, detach, and thrown errors. Plain spawns get
+  the same live progress on `subagent op=wait` (state, current tool, bounded
+  recent activity) — observability is a property of `subagent`, not a reason
+  to pick a workspace spawn.
 
 Live verification: `node live/workspace-verify.mjs` (spawns a real main pi
 process and real children on the default model; covering the acceptance

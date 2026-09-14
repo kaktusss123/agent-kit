@@ -1,9 +1,14 @@
 /**
- * LocalSubagentRuntime — the local-process implementation of SubagentRuntime.
+ * LocalSubagentRuntime — the local-process implementation of the subagent
+ * runtime: model-facing semantics (spawn/steer/wait/…) over local child pi
+ * processes speaking pi RPC.
  *
  * Each agent is an independent pi process in `--mode rpc` running with
  * `--no-extensions -e <bridge>` so children get a minimal, controlled
- * environment (no recursive subagent spawning, no parent extension stack).
+ * environment (no parent extension stack; a generic child cannot spawn
+ * subagents at all — only a workspace worker carries the subagents index,
+ * and its nested spawns are plain helpers only: workspace ownership is
+ * created exclusively by the main session).
  *
  * Event flow (proven against pi 0.85.1):
  * - child `agent_start` -> authoritative run boundary: reset run-local state
@@ -33,7 +38,7 @@ import {
 	type SpawnFn,
 } from "./rpc-child";
 import { defaultResultsDir, loadResult, saveResult, summarizeText } from "./result-store";
-import { parseReadinessPayload, READINESS_CONTRACT_ENV, type ReadinessPayload } from "./readiness";
+import { parseReadinessPayload, type ReadinessPayload } from "./readiness";
 import { ASK_WIRE_TITLE } from "./bridge-ask";
 import { formatAskRequestFlat, parseAskRequest, type AskInput } from "../ask/contract";
 import type {
@@ -42,7 +47,6 @@ import type {
 	AgentState,
 	SpawnOptions,
 	SubagentModelEvent,
-	SubagentRuntime,
 	ToolActivity,
 	WaitOutcome,
 } from "./types";
@@ -113,7 +117,6 @@ interface AgentRecord {
 	pendingDispatch: boolean;
 	/** True between child `agent_start` and the matching `agent_settled`. */
 	runActive: boolean;
-	settledOnce: boolean;
 	waiters: Array<(outcome: WaitOutcome) => void>;
 	spawnWaiters: Array<(ok: boolean) => void>;
 	dispatchWaiters: Map<string, (ev: Record<string, unknown>) => void>;
@@ -125,8 +128,6 @@ interface AgentRecord {
 	retireRequested: boolean;
 	/** Readiness contract: entry id -> required tool names (handshake pending). */
 	readinessExpected: Map<string, string[]>;
-	/** Entry ids that confirmed readiness. */
-	readinessConfirmed: Set<string>;
 	readinessDone: boolean;
 	acceptTimer?: NodeJS.Timeout;
 	readinessTimer?: NodeJS.Timeout;
@@ -134,7 +135,7 @@ interface AgentRecord {
 
 const ASK_TOOL = "ask";
 
-export class LocalSubagentRuntime implements SubagentRuntime {
+export class LocalSubagentRuntime {
 	private readonly records = new Map<string, AgentRecord>();
 	private readonly listeners = new Set<(ev: SubagentModelEvent) => void>();
 	private shutDown = false;
@@ -199,13 +200,11 @@ export class LocalSubagentRuntime implements SubagentRuntime {
 			PI_SUBAGENT_RESULTS_DIR: this.resultsDir,
 		};
 		const readinessEntries = opts.readinessEntries ?? {};
-		// The per-spawn readiness contract travels to the child via env: the
-		// subagents-owned readiness probe reports exactly the entries declared
-		// HERE (no global default on the child side). Generic children (no
-		// readiness entries) keep a byte-identical environment.
-		if (Object.keys(readinessEntries).length > 0) {
-			env[READINESS_CONTRACT_ENV] = JSON.stringify(readinessEntries);
-		}
+		// The readiness contract stays MAIN-SIDE (this spawn's readinessEntries);
+		// the child-side probe reports only the observed tool set, and the
+		// controller judges it against this map. No readiness data travels to
+		// the child: profiled and generic children get byte-identical
+		// environments.
 
 		const conn = new RpcChildConnection({
 			command: this.piInvocation.command,
@@ -231,7 +230,6 @@ export class LocalSubagentRuntime implements SubagentRuntime {
 			cancelRequested: false,
 			pendingDispatch: false,
 			runActive: false,
-			settledOnce: false,
 			waiters: [],
 			spawnWaiters: [],
 			dispatchWaiters: new Map(),
@@ -240,7 +238,6 @@ export class LocalSubagentRuntime implements SubagentRuntime {
 			eventRoute: opts.eventRoute,
 			retireRequested: false,
 			readinessExpected: new Map(Object.entries(readinessEntries)),
-			readinessConfirmed: new Set(),
 			readinessDone: false,
 		};
 		this.records.set(id, record);
@@ -387,7 +384,6 @@ export class LocalSubagentRuntime implements SubagentRuntime {
 
 		if (type === "agent_settled") {
 			record.runActive = false;
-			record.settledOnce = true;
 			record.pendingQuestion = undefined;
 			if (record.cancelRequested) return; // exit path will mark cancelled
 			// Collect state, final text, and stats. Responses correlate by
@@ -537,32 +533,29 @@ export class LocalSubagentRuntime implements SubagentRuntime {
 	}
 
 	/**
-	 * Readiness confirmation (profiled children only): a session_start handler
-	 * in an additional extension reported its identity and the tool set it
-	 * registered. Unknown entry → ignore; ok:false or missing required tools
-	 * → spawn fails with the child killed and the task prompt never sent
-	 * (dispatched:false, fail closed). All expected entries confirmed → the
-	 * task prompt is sent (dispatch point follows its acceptance).
+	 * Readiness report (profiled children only): the child-side probe
+	 * reported the tool set visible in the child session at session_start.
+	 * The controller validates it against THIS spawn's readiness contract:
+	 * any entry with missing required tools fails the spawn with the child
+	 * killed and the task prompt never sent (dispatched:false, fail closed).
+	 * All entries satisfied → the task prompt is sent (the dispatch point
+	 * follows its acceptance).
 	 */
 	private confirmReadiness(record: AgentRecord, payload: ReadinessPayload): void {
 		if (record.readinessDone || record.spawnSettled) return;
-		const entry = payload.entry;
-		if (!record.readinessExpected.has(entry)) return; // not a profiled entry; ignore
-		const required = record.readinessExpected.get(entry)!;
-		const missing = required.filter((t) => !payload.tools.includes(t));
-		if (payload.ok !== true || missing.length > 0) {
-			const detail = payload.ok !== true
-				? `entry "${entry}" reported failed initialization`
-				: `entry "${entry}" is missing required tools: ${missing.join(", ")}`;
-			this.failSpawn(record, `readiness handshake failed: ${detail}`, "SIGKILL");
+		if (record.readinessExpected.size === 0) return; // not a profiled spawn; ignore
+		const problems: string[] = [];
+		for (const [entry, required] of record.readinessExpected) {
+			const missing = required.filter((t) => !payload.tools.includes(t));
+			if (missing.length > 0) problems.push(`entry "${entry}" is missing required tools: ${missing.join(", ")}`);
+		}
+		if (problems.length > 0) {
+			this.failSpawn(record, `readiness handshake failed: ${problems.join("; ")}`, "SIGKILL");
 			return;
 		}
-		record.readinessConfirmed.add(entry);
-		if (record.readinessConfirmed.size === record.readinessExpected.size) {
-			record.readinessDone = true;
-			if (record.readinessTimer) clearTimeout(record.readinessTimer);
-			this.sendInitialPrompt(record);
-		}
+		record.readinessDone = true;
+		if (record.readinessTimer) clearTimeout(record.readinessTimer);
+		this.sendInitialPrompt(record);
 	}
 
 	private handleChildExit(record: AgentRecord, info: { code: number | null; signal: string | null }): void {
@@ -737,7 +730,7 @@ export class LocalSubagentRuntime implements SubagentRuntime {
 			// subagent tool rejects wait for workspace children; the runtime
 			// enforces the same rule here (defense in depth).
 			throw new Error(
-				`agent ${agentId} is workspace-owned; use workspace_agent query-mode instead of subagent wait`,
+				`agent ${agentId} is workspace-owned; the workspace spawn owns the run outcome — use op=status / op=result`,
 			);
 		}
 		// Already meaningful: resolve from current state. A pending dispatch
@@ -993,7 +986,7 @@ export class LocalSubagentRuntime implements SubagentRuntime {
 	private pushEvent(record: AgentRecord, ev: SubagentModelEvent, opts?: { background?: boolean }): void {
 		// Event router: a workspace-routed child's lifecycle events belong to
 		// the workspace run registry — waiters and generic listeners never see
-		// them (the terminal surface is [workspace_agent completed]).
+		// them (the terminal surface is the shared [subagent completed] event).
 		if (record.eventRoute === "workspace") {
 			for (const cb of this.workspaceListeners) {
 				try {

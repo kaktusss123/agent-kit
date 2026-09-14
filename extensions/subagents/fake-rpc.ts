@@ -168,11 +168,14 @@ export function startRun(proc: FakeRpcProcess): void {
 	proc.writeToStdout({ type: "agent_start" });
 }
 
-/** Emit a readiness handshake notify (protocol per readiness.ts). */
+/**
+ * Emit the readiness report notify (protocol per readiness.ts): one
+ * fire-and-forget notify carrying the child's observed tool set; the
+ * controller validates it against its own per-spawn contract.
+ */
 export function confirmReadiness(
 	proc: FakeRpcProcess,
-	entry: string,
-	opts?: { ok?: boolean; tools?: string[]; missing?: string[]; protocol?: string },
+	opts?: { tools?: string[]; protocol?: string },
 ): void {
 	proc.writeToStdout({
 		type: "extension_ui_request",
@@ -181,10 +184,7 @@ export function confirmReadiness(
 		notifyType: "info",
 		message: JSON.stringify({
 			protocol: opts?.protocol ?? "pi-subagents-readiness",
-			entry,
-			ok: opts?.ok ?? true,
 			tools: opts?.tools ?? [],
-			missing: opts?.missing ?? [],
 		}),
 	});
 }

@@ -4,17 +4,34 @@
  * Each subagent is a separate `pi --mode rpc` process with its own session,
  * cwd, and lifecycle, owned by this extension in the main process (no daemon).
  *
+ * There is ONE child-agent surface: the `subagent` tool. Workspace is a MODE
+ * of a spawn, not a separate agent kind:
+ *
+ * - plain spawn (`cwd`) starts the child in a working directory without any
+ *   repository-ownership semantics; the child picks its model by CLASS
+ *   (modelClass: cheap | default | smart) resolved through the model-classes
+ *   resolver before the process starts;
+ * - workspace spawn (`workspace=<managed worktree>`) starts the child as the
+ *   OWNER of that worktree (RepoOwner): the child inherits the main session's
+ *   model (modelClass does not apply), strict validation and readiness happen
+ *   before dispatch (fail closed), the spawn call blocks until a terminal
+ *   outcome (done/partial/blocked) or needs_input with live progress rendered
+ *   into the tool call, and the run gets the enforced deadline, the
+ *   report_result envelope contract, and settled-state verification
+ *   (ADR-0003) — see ./workspace-runs.
+ *
  * Surfaces:
- * - `subagent` tool (LLM): one compact tool — spawn / status / steer /
- *   follow_up / wait / result / respond / cancel. `spawn` is async by
- *   default; blocking is modeled as spawn + wait. Spawn picks the child's
- *   model by CLASS (modelClass: cheap | default | smart); the concrete
- *   model + thinking are resolved through the model-classes resolver
- *   (../model-classes/core) before the child process starts.
+ * - `subagent` tool (LLM): spawn / status / steer / follow_up / wait / result /
+ *   respond / cancel. Plain `spawn` is async by default; blocking is modeled
+ *   as spawn + wait (workspace spawns block themselves). Spawn time management
+ *   ops (status/result/respond/cancel) are identical for both modes; wait/
+ *   steer/follow_up are rejected for workspace runs (the workspace spawn call
+ *   owns the run outcome and its deadline).
  * - Background delivery: completed / failed / needs_input events reach the
  *   main model through pi.sendMessage with deliverAs:"steer" + triggerTurn,
  *   which pi 0.85.1 delivers at the next safe turn boundary when busy and as
  *   a fresh run when idle. The child transcript never enters main context.
+ *   Detached workspace runs deliver their completion through the same channel.
  * - `/subagents` command: compact live status table.
  *
  * Escalation uses the standard RPC extension UI protocol: the child bridge's
@@ -30,12 +47,17 @@ import { LocalSubagentRuntime } from "./controller";
 import { resolveSpawnPair, type SpawnModelClass } from "./spawn-model";
 import {
 	formatAskRequestBlock,
+	formatLiveSnapshot,
 	formatResult,
 	formatStatusList,
 	RESOLVE_INSTRUCTION,
 } from "./delivery";
-import { createWorkspaceLayer, managedAgentOpPolicy, type WorkspaceLayer } from "./workspace-agent";
-import type { SubagentRuntime } from "./types";
+import {
+	createWorkspaceRuns,
+	managedAgentOpPolicy,
+	type WorkspaceRunView,
+	type WorkspaceRuns,
+} from "./workspace-runs";
 import { attachDelivery } from "./wiring";
 
 // =============================================================================
@@ -45,8 +67,10 @@ import { attachDelivery } from "./wiring";
 const CONFIG = {
 	/** Default blocking cap for subagent wait. */
 	waitTimeoutSec: 600,
-	/** Cap for spawn text in tool results. */
-	spawnAckMaxChars: 400,
+	/** Default deadline for workspace runs (whole run incl. the report ladder). */
+	workspaceDeadlineSec: 600,
+	/** Live progress refresh cadence for blocking waits. */
+	liveStatusRefreshMs: 3000,
 };
 
 // =============================================================================
@@ -60,11 +84,29 @@ const SubagentParams = Type.Object({
 	task: Type.Optional(Type.String({ description: "spawn: initial task prompt for the child agent" })),
 	id: Type.Optional(Type.String({ description: "target agent id (omit for status to list all)" })),
 	label: Type.Optional(Type.String({ description: "spawn: short name for the agent" })),
-	cwd: Type.Optional(Type.String({ description: "spawn: working directory for the child (default: main cwd)" })),
+	cwd: Type.Optional(
+		Type.String({
+			description:
+				"spawn: working directory for the child (default: main cwd). Plain working directory — no repository ownership; use `workspace` for that",
+		}),
+	),
+	workspace: Type.Optional(
+		Type.String({
+			description:
+				"spawn: run this child as the OWNER of a managed task worktree (RepoOwner mode). The spawn call blocks until a terminal outcome (done/partial/blocked) or needs_input, with live progress in the tool call. The child inherits the main session model; modelClass does not apply",
+		}),
+	),
+	deadlineSec: Type.Optional(
+		Type.Integer({
+			description:
+				"spawn (workspace only): run deadline in seconds (default 600); covers the whole run including the report ladder",
+			minimum: 1,
+		}),
+	),
 	modelClass: Type.Optional(
 		StringEnum(["cheap", "default", "smart"] as const, {
 			description:
-				'spawn: model class for the child (default: "default" = current main model + thinking; "cheap"/"smart" = saved classes, configure via /model-class <class> set)',
+				'spawn (plain cwd only; ignored and rejected with workspace): model class for the child (default: "default" = current main model + thinking; "cheap"/"smart" = saved classes, configure via /model-class <class> set)',
 		}),
 	),
 	message: Type.Optional(Type.String({ description: "steer/follow_up: message for the child agent" })),
@@ -80,7 +122,7 @@ const SubagentParams = Type.Object({
 
 export default function (pi: ExtensionAPI) {
 	let runtime: LocalSubagentRuntime | null = null;
-	const workspaceLayer: WorkspaceLayer = createWorkspaceLayer(pi, getRuntime);
+	let runs: WorkspaceRuns | null = null;
 
 	function getRuntime(ctxCwd?: string): LocalSubagentRuntime {
 		if (!runtime) {
@@ -90,11 +132,19 @@ export default function (pi: ExtensionAPI) {
 		return runtime;
 	}
 
+	function getRuns(): WorkspaceRuns {
+		if (!runs) {
+			runs = createWorkspaceRuns(pi, (ctxCwd) => getRuntime(ctxCwd));
+		}
+		return runs;
+	}
+
 	pi.on("session_shutdown", async () => {
 		// Main session is gone: owned children must not become orphans.
 		if (runtime) {
 			const r = runtime;
 			runtime = null;
+			runs = null;
 			await r.shutdown();
 		}
 	});
@@ -106,32 +156,38 @@ export default function (pi: ExtensionAPI) {
 		label: "Subagent",
 		description: [
 			"Manage background subagents: independent pi agent processes with their own sessions.",
-			"Ops: spawn (async, returns an id immediately; the child works in parallel), status,",
-			"steer (redirect a running child), follow_up (queue work for after the current run,",
-			"or resume an idle child), wait (block until completed/failed/needs_input), result",
-			"(fetch the full persisted result), respond (answer a child's pending question),",
-			"cancel (abort and terminate a child).",
-			"When a background child settles, you receive a short [subagent ...] event message;",
-			"the child transcript is never added to your context — fetch details with op=result.",
+			"One surface, two spawn modes. Plain spawn (cwd) starts a child in a working directory; it works in the",
+			"background. Workspace spawn (workspace=<managed task worktree>) starts a child that OWNS that worktree:",
+			"the call blocks until a terminal outcome (done/partial/blocked) or needs_input, with live progress in the",
+			"tool call, an enforced deadline, and a structured report envelope (the child must finish by reporting).",
+			"Ops: spawn, status, steer (redirect a running child), follow_up (queue work for after the current run),",
+			"wait (block until completed/failed/needs_input; plain spawns only — a workspace spawn already blocks),",
+			"result (fetch the full persisted result; workspace runs return the report envelope + Git facts), respond",
+			"(answer a child's pending question), cancel (abort and terminate).",
+			"When a background child settles, you receive a short [subagent ...] event message; the child transcript",
+			"is never added to your context — fetch details with op=result.",
 		].join(" "),
 		promptGuidelines: [
 			"Use subagent op=spawn to delegate self-contained work that does not need your direct involvement, especially parallelizable or exploratory tasks.",
-			"spawn returns immediately; keep working or spawn more agents, then use subagent op=wait to block for a specific child when you need its outcome.",
-			"Model class policy (your explicit choice per spawn, never automatic): omit modelClass or use \"default\" for ordinary delegated work; use \"cheap\" for high-volume scouting, extraction, classification, and broad parallel research where lower cost matters more than maximum reasoning quality; use \"smart\" for critical review, difficult reasoning, and explicit escalation when default is insufficient. Configure cheap/smart via /model-class <class> set.",
+			"spawn (plain cwd) returns immediately; keep working or spawn more agents, then use subagent op=wait to block for a specific child when you need its outcome.",
+			"Workspace spawn: dispatch independent repo owners in parallel with multiple subagent calls with workspace=<worktree> in one block. The call blocks until a terminal outcome; its JSON carries the protocol outcome in `status`, and the owner's product outcome lives in `result.status` (present only when status is done).",
+			"Workspace runs inherit the main session model — do not pass modelClass with workspace (it is rejected). Plain children pick a model class per spawn: omit modelClass or use \"default\" for ordinary delegated work; \"cheap\" for high-volume scouting, extraction, classification, and broad parallel research; \"smart\" for critical review, difficult reasoning, and explicit escalation. Configure cheap/smart via /model-class <class> set.",
+			"Workspace terminal results include runtime-read `git_facts` (branch, HEAD SHA, dirty paths) — never ask the model for these; trust `git_facts` over any textual self-report about repository state.",
 			"When a child reports needs_input, first try to resolve the request from your own conversation and task context — do not ask the user again for information that is already known.",
-			"Only if the answer is unknown, use `ask` with the child's supplied request to get the missing decision, then answer via subagent op=respond (a plain-text answer is enough).",
+			"Only if the answer is unknown, use `ask` with the child's supplied request to get the missing decision, then answer via subagent op=respond id=<...> (a plain-text answer is enough; works for both modes).",
+			"If a workspace run failed or settled blocked, do not re-dispatch blindly: inspect its worktree — after dispatch there is no fallback, the repair path is a new workspace spawn whose task begins with inspecting current state.",
 		],
 		parameters: SubagentParams,
 
-		async execute(_toolCallId, params, signal, _onUpdate, ctx) {
+		async execute(_toolCallId, params, signal, onUpdate, ctx) {
 			const rt = getRuntime(ctx.cwd);
 			const op = params.op;
-			// Cross-tool allow-list for RepoOwner children: their lifecycle
-			// events belong to the workspace layer, so wait would steal the one
-			// lifecycle event, and steer/follow_up would bypass the run's
-			// deadline and task contract. respond/cancel/status/result remain
-			// the Main-facing surface.
-			if (params.id && workspaceLayer?.isManagedAgent(params.id)) {
+			// Cross-tool allow-list for workspace-owned children: their lifecycle
+			// events belong to the workspace run registry, so wait would steal
+			// the one lifecycle event, and steer/follow_up would bypass the
+			// run's deadline and task contract. status/result/respond/cancel
+			// remain the Main-facing surface for both modes.
+			if (params.id && runs?.isManaged(params.id)) {
 				const policy = managedAgentOpPolicy(op);
 				if (!policy.allowed) return err(policy.reason!);
 			}
@@ -139,6 +195,44 @@ export default function (pi: ExtensionAPI) {
 				switch (op) {
 					case "spawn": {
 						if (!params.task) return err("spawn requires `task`");
+						// Ownership nesting is flat: workspace owners are created
+						// exclusively by the main session. A child carrying
+						// PI_SUBAGENT_ID (a workspace worker) may spawn plain
+						// modelClass helpers but never another worktree owner —
+						// rejected here, before any process can start.
+						if (params.workspace && process.env.PI_SUBAGENT_ID) {
+							return err(
+								"workspace spawns can only be created by the main session: this worker cannot own another worktree — spawn plain `cwd` helpers instead",
+							);
+						}
+						if (params.workspace) {
+							// Workspace mode: the child owns a managed task worktree.
+							// Validation, profile, readiness, deadline, report
+							// envelope, and settled-state verification live in the
+							// workspace run layer; the call blocks until terminal.
+							if (params.modelClass) {
+								return err(
+									"modelClass does not apply to workspace spawns: the child inherits the main session model",
+								);
+							}
+							if (params.cwd) {
+								return err("workspace spawns root the child at the worktree; `cwd` does not apply");
+							}
+							const res = await getRuns().spawnRun({
+								workspace: params.workspace,
+								task: params.task,
+								deadlineSec: params.deadlineSec,
+								signal,
+								onUpdate,
+								model: ctx.model,
+								thinkingLevel: ctx.thinkingLevel,
+								cwd: ctx.cwd,
+							});
+							return res;
+						}
+						if (params.deadlineSec) {
+							return err("deadlineSec applies to workspace spawns only (plain spawns are managed via wait)");
+						}
 						// Resolve the class BEFORE spawning: an unconfigured class or
 						// a model that is gone fails the op without starting a child.
 						const pair = resolveSpawnPair(params.modelClass ?? "default", ctx, pi.getThinkingLevel());
@@ -161,7 +255,19 @@ export default function (pi: ExtensionAPI) {
 					case "status": {
 						const snaps = rt.inspect(params.id);
 						if (params.id && snaps.length === 0) return err(`unknown agent id: ${params.id}`);
-						return ok(formatStatusList(snaps), { agents: snaps.map(clipSnapshot) });
+						const views = new Map<string, WorkspaceRunView>();
+						for (const s of snaps) {
+							const v = runs?.runView(s.id);
+							if (v) views.set(s.id, v);
+						}
+						return ok(formatStatusList(snaps, views), {
+							agents: snaps.map((s) => {
+								const view = views.get(s.id);
+								return view
+									? { ...clipSnapshot(s), run: { workspace: view.workspace, state: view.state, ...(view.terminal ? { status: view.terminal.status } : {}), deadlineMsLeft: view.deadlineMsLeft, ...(view.ladder ? { ladder: view.ladder } : {}) } }
+									: clipSnapshot(s);
+							}),
+						});
 					}
 					case "steer": {
 						requireId(params);
@@ -179,40 +285,78 @@ export default function (pi: ExtensionAPI) {
 					}
 					case "wait": {
 						requireId(params);
-						const outcome = await rt.wait(params.id!, {
-							timeoutMs: (params.timeoutSec ?? CONFIG.waitTimeoutSec) * 1000,
-							signal,
-						});
-						switch (outcome.status) {
-							case "completed":
-								return ok(
-									`Subagent ${params.id} completed. summary: ${outcome.summary}\nfull result via op=result id=${params.id}`,
-									{ wait: outcome },
-								);
-							case "failed":
-								return err(`Subagent ${params.id} failed: ${outcome.reason}`);
-							case "needs_input":
-								return ok(
-									[
-										`Subagent ${params.id} asks: ${outcome.question}`,
-										...(outcome.request ? formatAskRequestBlock(outcome.request) : []),
-										RESOLVE_INSTRUCTION,
-										`Answer via op=respond id=${params.id} answer=<...>.`,
-									].join("\n"),
-									{ wait: outcome },
-								);
-							case "cancelled":
-								return ok(`Subagent ${params.id} was cancelled.`, { wait: outcome });
-							case "timeout":
-								return ok(
-									`wait timed out; subagent ${params.id} is still ${outcome.state}. It keeps running in the background.`,
-									{ wait: outcome },
-								);
+						const id = params.id!;
+						// Live progress: while blocked, periodically render a
+						// truthful snapshot of the child (state, current tool,
+						// bounded recent activity) into the tool call. Display-only;
+						// the child transcript stays isolated.
+						let progressTimer: ReturnType<typeof setInterval> | undefined;
+						try {
+							if (onUpdate) {
+								const emit = () => {
+									try {
+										const snap = rt.inspect(id)[0];
+										if (snap) onUpdate({ content: [{ type: "text" as const, text: formatLiveSnapshot(snap) }] });
+									} catch {
+										// progress rendering must never break the wait
+									}
+								};
+								emit();
+								progressTimer = setInterval(emit, CONFIG.liveStatusRefreshMs);
+								progressTimer.unref?.();
+							}
+							const outcome = await rt.wait(id, {
+								timeoutMs: (params.timeoutSec ?? CONFIG.waitTimeoutSec) * 1000,
+								signal,
+							});
+							switch (outcome.status) {
+								case "completed":
+									return ok(
+										`Subagent ${id} completed. summary: ${outcome.summary}\nfull result via op=result id=${id}`,
+										{ wait: outcome },
+									);
+								case "failed":
+									return err(`Subagent ${id} failed: ${outcome.reason}`);
+								case "needs_input":
+									return ok(
+										[
+											`Subagent ${id} asks: ${outcome.question}`,
+											...(outcome.request ? formatAskRequestBlock(outcome.request) : []),
+											RESOLVE_INSTRUCTION,
+											`Answer via op=respond id=${id} answer=<...>.`,
+										].join("\n"),
+										{ wait: outcome },
+									);
+								case "cancelled":
+									return ok(`Subagent ${id} was cancelled.`, { wait: outcome });
+								case "timeout":
+									return ok(
+										`wait timed out; subagent ${id} is still ${outcome.state}. It keeps running in the background.`,
+										{ wait: outcome },
+									);
+							}
+							break;
+						} finally {
+							// The progress loop dies on EVERY exit: outcome, timeout,
+							// abort, and thrown errors. No leaked timers, no updates
+							// after the tool call settled.
+							if (progressTimer) clearInterval(progressTimer);
 						}
-						break;
 					}
 					case "result": {
 						requireId(params);
+						const view = runs?.runView(params.id!);
+						if (view) {
+							// Workspace-owned run: the protocol outcome (envelope +
+							// Git facts) is the result surface.
+							if (!view.terminal) {
+								return ok(
+									`Workspace run ${params.id} has no final result yet (state: ${view.state}). It settles under its deadline; completion arrives as an event.`,
+									{ run: { workspace: view.workspace, state: view.state, deadlineMsLeft: view.deadlineMsLeft } },
+								);
+							}
+							return ok(JSON.stringify(view.terminal), { result: view.terminal });
+						}
 						const result = await rt.result(params.id!);
 						if (!result) {
 							const snaps = rt.inspect(params.id!);
@@ -288,6 +432,6 @@ function err(text: string) {
 	};
 }
 
-function clipSnapshot(s: ReturnType<SubagentRuntime["inspect"]>[number]) {
+function clipSnapshot(s: ReturnType<LocalSubagentRuntime["inspect"]>[number]) {
 	return { ...s, task: s.task.length > 200 ? `${s.task.slice(0, 200)}…` : s.task };
 }
