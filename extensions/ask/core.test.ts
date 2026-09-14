@@ -5,6 +5,7 @@ import {
 	advance,
 	clampCursor,
 	currentQuestion,
+	descriptionFor,
 	goBack,
 	initialState,
 	moveCursor,
@@ -259,6 +260,33 @@ describe("preview pane", () => {
 		expect(previewFor(state, qs)).toBe("alpha");
 		moveCursor(state, qs, 1);
 		expect(previewFor(state, qs)).toBeUndefined();
+	});
+});
+
+describe("description pane", () => {
+	test("descriptionFor returns the highlighted option's description and follows cursor moves", () => {
+		const state = initialState(questions);
+		expect(descriptionFor(state, questions)).toBe("integration"); // recommended row
+		moveCursor(state, questions, -1); // main has no description
+		expect(descriptionFor(state, questions)).toBeUndefined();
+		moveCursor(state, questions, 1);
+		expect(descriptionFor(state, questions)).toBe("integration");
+	});
+
+	test("descriptionFor is undefined for runtime control rows", () => {
+		const state = initialState(questions);
+		const rows = rowsFor(state, questions);
+		for (const kind of ["other", "chat"] as const) {
+			state.cursor = rows.findIndex((r) => r.kind === kind);
+			expect(descriptionFor(state, questions)).toBeUndefined();
+		}
+		// multi question: option without a description and the Done control row
+		state.answers[0] = { selectedOptions: ["develop"] };
+		advance(state, questions);
+		expect(descriptionFor(state, questions)).toBeUndefined(); // api has no description
+		const multiRows = rowsFor(state, questions);
+		state.cursor = multiRows.findIndex((r) => r.kind === "done");
+		expect(descriptionFor(state, questions)).toBeUndefined();
 	});
 });
 

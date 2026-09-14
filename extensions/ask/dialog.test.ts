@@ -66,6 +66,38 @@ describe("AskDialog", () => {
 		expect(lines).toContain("Chat about this");
 	});
 
+	test("the highlighted option's long description wraps and appears in full", () => {
+		const longDescription =
+			"Merges the release branch into main, runs the full verification suite, " +
+			"publishes the tagged artifacts, and finally updates the changelog file";
+		const qs: AskQuestion[] = [
+			{
+				id: "ship",
+				question: "Ship it?",
+				options: [{ label: "ship now", description: longDescription }, { label: "hold" }],
+				recommended: 0,
+			},
+		];
+		const dialog = new AskDialog(qs, stubTheme, () => {}, { markdownTheme: () => stubMdTheme });
+		const lines = dialog.render(80);
+		expect(lines.join("\n")).toContain("Merges the release"); // early fragment
+		expect(lines.join("\n")).toContain("changelog file"); // late fragment past the wrap
+	});
+
+	test("a ~40-char recommended label renders unclipped at width 80", () => {
+		const qs: AskQuestion[] = [
+			{
+				id: "fp",
+				question: "What to do with the finding?",
+				options: [{ label: "Suppress as FP in scanner" }, { label: "Fix now" }],
+				recommended: 0, // rendered label: "Suppress as FP in scanner (Recommended)" (39 chars)
+			},
+		];
+		const dialog = new AskDialog(qs, stubTheme, () => {}, { markdownTheme: () => stubMdTheme });
+		const lines = dialog.render(80);
+		expect(lines.some((line) => line.includes("Suppress as FP in scanner (Recommended)"))).toBe(true);
+	});
+
 	test("enter selects the highlighted option and advances to question 2", () => {
 		const { dialog, outcomes } = drive();
 		dialog.handleInput(RAW.down); // cursor: develop (single-select)
