@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+import { Value } from "typebox/value";
 import { AskSchema } from "./ask-schema";
 import { findReservedOptionLabel } from "./contract";
 import {
@@ -7,6 +8,7 @@ import {
 	formatAskOutcomeText,
 	formatAskRequestFlat,
 	formatAskRequestJson,
+	normalizeAskArguments,
 	parseAskRequest,
 	validateAskInput,
 	type AskInput,
@@ -51,6 +53,81 @@ describe("validateAskInput", () => {
 	test("is lenient about extra fields (transport future-proofing)", () => {
 		const padded = { questions: [{ ...sample.questions[0], note: "extra" }], extra: true };
 		expect(validateAskInput(padded)).toBeDefined();
+	});
+});
+
+describe("normalizeAskArguments", () => {
+	test("repairs the observed failure: recommended flags embedded in options", () => {
+		const raw = {
+			questions: [
+				{
+					id: "layout",
+					question: "Layout?",
+					options: [
+						{ label: "One file", description: "a", recommended: true },
+						{ label: "Two files", description: "b", recommended: true },
+					],
+				},
+			],
+		};
+		const fixed = normalizeAskArguments(raw);
+		expect(fixed.questions[0]!.recommended).toBe(0);
+		expect(fixed.questions[0]!.options).toEqual([
+			{ label: "One file", description: "a" },
+			{ label: "Two files", description: "b" },
+		]);
+		// End-to-end: the raw payload is rejected by the strict schema that
+		// produced the real-world validation error; the repaired one passes.
+		expect(Value.Check(AskSchema, raw)).toBe(false);
+		expect(Value.Check(AskSchema, fixed)).toBe(true);
+	});
+
+	test("repairs question-level boolean and label recommendations", () => {
+		const asIndex = (recommended: unknown) =>
+			normalizeAskArguments({
+				questions: [
+					{ id: "x", question: "q", options: [{ label: "a" }, { label: " b " }], recommended },
+				],
+			}).questions[0]!.recommended;
+		expect(asIndex(true)).toBe(0);
+		expect(asIndex(false)).toBeUndefined();
+		expect(asIndex(" b ")).toBe(1); // exact label match
+		expect(asIndex("B")).toBe(1); // trimmed + case-insensitive fallback
+		expect(asIndex("nope")).toBeUndefined();
+	});
+
+	test("explicit question-level recommendation wins over embedded flags", () => {
+		const fixed = normalizeAskArguments({
+			questions: [
+				{
+					id: "x",
+					question: "q",
+					options: [{ label: "a", recommended: true }, { label: "b" }],
+					recommended: 1,
+				},
+			],
+		});
+		expect(fixed.questions[0]!.recommended).toBe(1);
+	});
+
+	test("drops unknown extra properties at every level", () => {
+		const fixed = normalizeAskArguments({
+			title: "stray",
+			questions: [{ id: "x", question: "q", note: "n", options: [{ label: "a", icon: "i" }] }],
+		});
+		expect(fixed).toEqual({ questions: [{ id: "x", question: "q", options: [{ label: "a" }] }] });
+	});
+
+	test("passes unrepairable payloads through unchanged", () => {
+		const raw = { questions: [{ id: "x", options: "nope" }] };
+		expect(normalizeAskArguments(raw)).toEqual(raw);
+		expect(normalizeAskArguments(undefined)).toBeUndefined();
+		expect(normalizeAskArguments("nope")).toBe("nope");
+		expect(normalizeAskArguments({ questions: "nope" })).toEqual({ questions: "nope" });
+	});
+
+	test("leaves canonical input unchanged", () => {
+		expect(normalizeAskArguments(sample)).toEqual(sample);
 	});
 });
 

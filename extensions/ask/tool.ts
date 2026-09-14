@@ -20,6 +20,7 @@ import {
 	type AskQuestion,
 	findReservedOptionLabel,
 	formatAskOutcomeText,
+	normalizeAskArguments,
 } from "./contract";
 import { AskSchema } from "./ask-schema";
 import {
@@ -62,6 +63,12 @@ export interface AskToolDefinition {
 	description: string;
 	promptGuidelines: string[];
 	parameters: typeof AskSchema;
+	/**
+	 * Argument-repair shim (contract.ts): absorbs the malformed shapes models
+	 * actually emit (option-level `recommended` flags, boolean/label
+	 * recommendations, extra properties) before strict schema validation.
+	 */
+	prepareArguments(args: unknown): AskInput;
 	executionMode: "sequential";
 	execute(
 		toolCallId: string,
@@ -85,6 +92,7 @@ export function buildAskTool(backend: AskBackend): AskToolDefinition {
 		description: ASK_TOOL_DESCRIPTION,
 		promptGuidelines: [...ASK_TOOL_GUIDELINES],
 		parameters: AskSchema,
+		prepareArguments: normalizeAskArguments,
 		// One shared UI surface per session: run alone in the tool batch so
 		// concurrent asks cannot clobber each other's dialogs.
 		executionMode: "sequential",

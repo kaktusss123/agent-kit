@@ -18,7 +18,11 @@ export const AskOptionSchema = Type.Object({
 	preview: Type.Optional(
 		Type.String({ description: "Optional longer markdown/code preview shown for this option" }),
 	),
-}, { additionalProperties: false });
+}, {
+	additionalProperties: false,
+	description:
+		"One selectable option: label plus optional description and preview. No other fields — a recommendation belongs on the question, not here.",
+});
 
 export const AskQuestionSchema = Type.Object({
 	id: Type.String({ description: "Stable identifier for this question, used in the result" }),
@@ -31,7 +35,10 @@ export const AskQuestionSchema = Type.Object({
 	}),
 	multi: Type.Optional(Type.Boolean({ description: "Allow selecting multiple options" })),
 	recommended: Type.Optional(
-		Type.Number({ description: "Zero-based index of the recommended option" }),
+		Type.Number({
+			description:
+				"Zero-based index of the recommended option. A UI hint only — set it here on the question, never inside individual options.",
+		}),
 	),
 }, { additionalProperties: false });
 

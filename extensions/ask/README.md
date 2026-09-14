@@ -23,8 +23,8 @@ oh-my-pi's `ask` (reference contract) and shared by every role:
 
 ## Files
 
-- `contract.ts` — canonical types, validation, formatting. Free of pi and
-  typebox imports (unit-testable anywhere).
+- `contract.ts` — canonical types, validation, argument repair, formatting.
+  Free of pi and typebox imports (unit-testable anywhere).
 - `ask-schema.ts` — the typebox twin of the schema used by tool registration.
 - `core.ts` — pure dialog state machine: rows, selection, navigation, review,
   results.
@@ -32,3 +32,22 @@ oh-my-pi's `ask` (reference contract) and shared by every role:
 - `tool.ts` — pi-free tool builder; the environment seam is the injected
   `AskBackend` (rich dialog / RPC fallback / fail-closed).
 - `index.ts` — extension entry wiring the backend per execute context.
+
+## Argument repair
+
+Both registration sites (Main `tool.ts`, child `bridge-ask.ts`) set
+`prepareArguments` to `normalizeAskArguments` (contract.ts), so the malformed
+shapes models actually emit are repaired before the strict typebox schema
+rejects the whole call:
+
+- `recommended: true` embedded in individual options instead of a zero-based
+  index on the question (observed real-world failure) — moved to
+  `question.recommended` (first flagged option wins);
+- question-level `recommended` given as a boolean (`true` → first option) or
+  as an option label string (exact match, then trimmed case-insensitive);
+- unknown extra properties at any level are dropped — the model-facing twin
+  of the lenient transport validation in `validateAskInput`.
+
+Anything unrepairable passes through unchanged, so the strict schema still
+produces a precise validation error. The public schema stays strict;
+`ask-schema.ts` descriptions steer models to the canonical shape.

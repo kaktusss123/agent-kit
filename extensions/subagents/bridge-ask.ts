@@ -20,6 +20,7 @@ import {
 	ASK_TOOL_GUIDELINES,
 	type AskInput,
 	findReservedOptionLabel,
+	normalizeAskArguments,
 } from "../ask/contract";
 import { AskSchema } from "../ask/ask-schema";
 
@@ -43,6 +44,12 @@ export interface ChildAskToolDefinition {
 	description: string;
 	promptGuidelines: string[];
 	parameters: typeof AskSchema;
+	/**
+	 * Argument-repair shim (ask/contract.ts), identical to the Main side:
+	 * children must survive the same model mistakes (option-level `recommended`
+	 * flags, boolean/label recommendations, extra properties).
+	 */
+	prepareArguments(args: unknown): AskInput;
 	executionMode: "sequential";
 	execute(
 		toolCallId: string,
@@ -61,6 +68,7 @@ export function buildChildAskTool(): ChildAskToolDefinition {
 		description: ASK_TOOL_DESCRIPTION,
 		promptGuidelines: [...ASK_TOOL_GUIDELINES],
 		parameters: AskSchema,
+		prepareArguments: normalizeAskArguments,
 		// The dialog surface is a single shared UI channel: run alone in the
 		// tool batch so concurrent asks cannot interleave their requests.
 		executionMode: "sequential",

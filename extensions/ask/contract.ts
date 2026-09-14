@@ -128,6 +128,77 @@ export function validateAskInput(value: unknown): AskInput | undefined {
 	return { questions: questions as AskQuestion[] };
 }
 
+// ======================================================== argument repair
+
+/**
+ * Repair the argument shapes models actually emit before the strict typebox
+ * schema sees them (wired as `prepareArguments` on both registration sites,
+ * so it runs before validation and execute — the same compatibility-shim
+ * pattern as pi's own edit tool). The public schema stays strict; this shim
+ * absorbs the noise:
+ * - `recommended: true` embedded in individual options instead of a zero-based
+ *   index on the question (the observed real-world failure mode);
+ * - question-level `recommended` given as a boolean or an option label;
+ * - unknown extra properties at any level (the model-facing twin of the
+ *   lenient transport validation above).
+ * Anything unrepairable is passed through unchanged so the strict schema
+ * still produces a precise validation error — only cosmetic noise is dropped,
+ * never required structure added.
+ */
+export function normalizeAskArguments(args: unknown): AskInput {
+	// Return type is pi's prepareArguments contract: "the object you want
+	// validated". Payloads that cannot be repaired are returned unchanged so
+	// the strict schema produces the precise error instead of a mangled call.
+	if (!isPlainObject(args) || !Array.isArray(args.questions)) return args as AskInput;
+	return { questions: args.questions.map(normalizeAskQuestionArg) } as AskInput;
+}
+
+function normalizeAskQuestionArg(raw: unknown): unknown {
+	if (!isPlainObject(raw) || !Array.isArray(raw.options)) return raw;
+	const options: unknown[] = [];
+	let flaggedIndex: number | undefined;
+	raw.options.forEach((rawOption, index) => {
+		if (!isPlainObject(rawOption)) {
+			options.push(rawOption);
+			return;
+		}
+		const option: Record<string, unknown> = {};
+		if (typeof rawOption.label === "string") option.label = rawOption.label;
+		if (typeof rawOption.description === "string") option.description = rawOption.description;
+		if (typeof rawOption.preview === "string") option.preview = rawOption.preview;
+		if (rawOption.recommended === true && flaggedIndex === undefined) flaggedIndex = index;
+		options.push(option);
+	});
+	const question: Record<string, unknown> = {};
+	if (typeof raw.id === "string") question.id = raw.id;
+	if (typeof raw.question === "string") question.question = raw.question;
+	if (typeof raw.header === "string") question.header = raw.header;
+	question.options = options;
+	if (typeof raw.multi === "boolean") question.multi = raw.multi;
+	// An explicit question-level recommendation wins over embedded flags;
+	// embedded flags apply only when the question level has nothing repairable.
+	const recommended = repairRecommended(raw.recommended, options) ?? flaggedIndex;
+	if (recommended !== undefined) question.recommended = recommended;
+	return question;
+}
+
+/** Question-level `recommended` repairs; undefined = nothing repairable. */
+function repairRecommended(raw: unknown, options: unknown[]): number | undefined {
+	if (typeof raw === "number") return raw; // already canonical (out-of-range never matches a row)
+	if (raw === true) return options.length > 0 ? 0 : undefined;
+	if (typeof raw === "string") {
+		const exact = options.findIndex((o) => isPlainObject(o) && o.label === raw);
+		if (exact !== -1) return exact;
+		const needle = raw.trim().toLowerCase();
+		const loose = options.findIndex(
+			(o) =>
+				isPlainObject(o) && typeof o.label === "string" && o.label.trim().toLowerCase() === needle,
+		);
+		if (loose !== -1) return loose;
+	}
+	return undefined;
+}
+
 /** Parse + validate a serialized request (the child -> controller wire form). */
 export function parseAskRequest(raw: string | undefined): AskInput | undefined {
 	if (raw === undefined || raw.length === 0) return undefined;
