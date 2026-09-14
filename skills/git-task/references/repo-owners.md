@@ -23,9 +23,11 @@ Dispatch is strict and fail closed: a subagents-owned readiness probe (the last 
 
 A terminal run is announced as a completion message; the envelope is also available via query mode for the rest of the session.
 
-- `done` — the envelope carries the owner's product outcome in `result.status` plus its structured report (summary, verification, gaps, conflicts per SKILL.md).
+- `done` — the envelope carries the owner's product outcome in `result.status` plus its structured report (summary, verification, gaps, conflicts per SKILL.md). For a `done` product outcome the runtime additionally verifies the settled worktree after the child stopped: accessible git repository, current HEAD, clean tree (untracked non-ignored files count as dirt; ignored build output does not). A failed check downgrades the outcome to `blocked` with a `done_rejected_*` reason and no trusted `result`.
 - `partial` — deadline hit mid-run; carries `child_may_have_mutated_repo`. Inspect the worktree state before any repair decision.
-- `blocked` — refusal, failed readiness, or the report-recovery ladder exhausted; carries the reason. The child may still have mutated the repo.
+- `blocked` — refusal, failed readiness, the report-recovery ladder exhausted, or a rejected `done` from the settled-state check above; carries the reason. The child may still have mutated the repo.
+
+Every terminal outcome carries `git_facts` (branch, HEAD SHA, dirty paths) read mechanically by the runtime from the worktree after the child stopped — never ask the model which commit it produced or whether anything is left uncommitted; read `git_facts`.
 
 A terminal outcome retires the owner: the process is settled and its record keeps the original terminal status forever. Terminal states never re-enter work.
 

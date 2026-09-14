@@ -123,6 +123,14 @@ subagent runtime.
   (typebox-validated, atomic file handoff). Any later tool call invalidates
   the report — settlement accepts only fresh envelopes, so "finish by
   reporting" is mechanical.
+- **Settled-state verification (ADR-0003)**: a `done` product outcome is
+  accepted only when Git reads the worktree as settled after the child was
+  retired — accessible repository, current HEAD, clean tree (untracked
+  non-ignored files count as dirt; ignored build output does not). A failed
+  check settles the run `blocked` with a `done_rejected_*` reason and the
+  report envelope is withheld. Every terminal outcome carries runtime-read
+  `git_facts` (branch, HEAD SHA, dirty paths); Main never asks the model for
+  these facts.
 - **Deadline and ladder**: the deadline covers the whole run including report
   recovery. Settlement without a fresh envelope triggers up to 3 follow-ups;
   ladder exhausted before the deadline → `blocked`, deadline first →

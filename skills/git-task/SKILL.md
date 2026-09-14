@@ -40,7 +40,7 @@ Never invent a ticket. Resolve in order:
 
 Establish one managed worktree per repository that the task will write, through the task-workspace runtime; never treat the primary (source) checkout as the task's write target. Inspect the runtime's self-describing facts about the input repository and never mutate that input checkout. Handle ambiguity by asking, never by forcing.
 
-The primary checkout is never used for task-generated mutation: while a task workspace exists for a repository, the deterministic mutation guard blocks writes and bash mutations aimed outside the managed worktree, and primary-checkout commits are rejected. This is protection, not an obstacle to route around.
+The primary checkout is never used for task-generated mutation: while a task workspace exists for a repository, the deterministic mutation guard blocks tracked-file writes and mutating git commands aimed outside the managed worktree (typical routing mistakes — not a security boundary), and primary-checkout commits are rejected. This is protection, not an obstacle to route around.
 
 ## Canonical workspace and secondary lanes
 

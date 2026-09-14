@@ -40,6 +40,8 @@ Guarantees: the runtime never forces, resets, or detaches anything; the same tas
 
 ## Mutation guard (workspace relationship)
 
-While a task workspace exists for a repository, the extension intercepts every `write`, `edit`, and `bash` tool call and blocks mutations aimed outside the managed worktree (git invocations are classified fail closed). Raw `--no-verify` is blocked everywhere. This is the deterministic backing for the "primary checkout is not a write target" policy in SKILL.md; a guard block means the command was addressed at the wrong place, and the fix is to address the managed worktree.
+While a task workspace exists for a repository, the extension classifies the target path of every `write` and `edit` call, and scans every `bash` command for git invocations (classified fail closed). Blocked: tracked-file writes and mutating git commands aimed at the primary checkout; raw `--no-verify` is blocked everywhere.
 
-Primary-checkout commits are separately rejected by `checkpoint_commit` (see `skills/git-commit/references/checkpoint.md` for that contract).
+The bash scan classifies git invocations only. It is not a shell interpreter: non-git file mutations (sed, redirects, `tee`, interpreters, file copies) aimed at the primary checkout are not detected. Treat the guard as deterministic protection against typical accidental routing mistakes, not a security boundary.
+
+A guard block means the command was addressed at the wrong place, and the fix is to address the managed worktree. Primary-checkout commits are separately rejected by `checkpoint_commit` (see `skills/git-commit/references/checkpoint.md` for that contract).
