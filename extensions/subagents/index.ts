@@ -58,6 +58,7 @@ import {
 	type WorkspaceRunView,
 	type WorkspaceRuns,
 } from "./workspace-runs";
+import { renderSubagentCall, renderSubagentResult } from "./render";
 import { attachDelivery } from "./wiring";
 
 // =============================================================================
@@ -178,6 +179,8 @@ export default function (pi: ExtensionAPI) {
 			"If a workspace run failed or settled blocked, do not re-dispatch blindly: inspect its worktree — after dispatch there is no fallback, the repair path is a new workspace spawn whose task begins with inspecting current state.",
 		],
 		parameters: SubagentParams,
+		renderCall: renderSubagentCall,
+		renderResult: renderSubagentResult,
 
 		async execute(_toolCallId, params, signal, onUpdate, ctx) {
 			const rt = getRuntime(ctx.cwd);
