@@ -571,7 +571,7 @@ export function createWorkspaceRuns(
 	function buildStatusView(run: WorkspaceAgentRun, snap: AgentSnapshot): RunStatusView {
 		const now = Date.now();
 		return {
-			runId: run.agentId,
+			agentId: run.agentId,
 			agentId: run.agentId,
 			workspace: run.workspace,
 			state: run.state,

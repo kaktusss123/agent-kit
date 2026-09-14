@@ -354,10 +354,7 @@ async function driveToRunning(h: Harness, params: Record<string, unknown>, signa
 	for (let i = 0; i < 100 && h.spawned.length === 0; i++) await tick(20);
 	if (h.spawned.length === 0) throw new Error("dispatch never spawned a child");
 	const proc = h.lastProc();
-	confirmReadiness(proc, "task-workspace", {
-		tools: ["task_status", "ensure_task_repo", "checkpoint_commit", "remove_task_lane"],
-	});
-	confirmReadiness(proc, "workspace-reporting", { tools: ["report_result"] });
+	confirmReadiness(proc, { tools: ["task_status", "ensure_task_repo", "checkpoint_commit", "remove_task_lane", "report_result"] });
 	autoAcceptPrompt(proc);
 	await tick(40);
 	return { pending, proc };
@@ -465,7 +462,7 @@ describe("workspace run live updates", () => {
 			const ws = makeWorktree(h.taskRoot, "obs-refresh-ws");
 			const { pending } = await driveToRunning(h, { workspace: ws, task: "work" });
 			const count0 = h.updates.length;
-			await tick(1200); // cross the one-second elapsed boundary at 25ms cadence
+			await tick(2500); // cross two one-second elapsed boundaries at 25ms cadence
 			expect(h.updates.length).toBeGreaterThan(count0);
 			expect(new Set(h.updates.map((u) => u.text)).size).toBeGreaterThanOrEqual(2); // elapsed moved
 			// run semantics untouched: the registry still reports a running run

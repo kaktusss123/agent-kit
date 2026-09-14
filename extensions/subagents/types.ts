@@ -34,16 +34,17 @@ export interface SpawnOptions {
 	additionalExtensions?: string[];
 	/**
 	 * Readiness contract for the additional extensions: entry id -> tool names
-	 * the entry must report as registered. When set, the child's initial task
-	 * prompt is sent only after every listed entry confirmed readiness over
-	 * the extension UI protocol; otherwise the spawn fails with the child
-	 * killed and the task never reaching the model.
+	 * the entry must have registered. When set, the child's initial task
+	 * prompt is sent only after the readiness probe reported the child's
+	 * session tool set and every listed entry's required tools are present;
+	 * otherwise the spawn fails with the child killed and the task never
+	 * reaching the model.
 	 *
-	 * This map is also the child-side truth: it travels verbatim to THIS
-	 * spawn via the `PI_SUBAGENT_READINESS_CONTRACT` env var, which the
-	 * subagents-owned readiness probe observes (generic children never get
-	 * the env var). The child carries no global readiness policy.
-	 */
+	 * This contract stays MAIN-SIDE: the child carries no readiness policy —
+	 * the probe only reports the observed tool set, and the controller
+	 * validates it against this map. Generic children (no readiness entries)
+	 * are unaffected: they are spawned byte-identically and never probed.
+	 *//
 	readinessEntries?: Record<string, string[]>;
 	/**
 	 * Route this child's lifecycle events to the workspace layer instead of

@@ -1,5 +1,5 @@
 /**
- * Live operator observability for long-running workspace_agent calls:
+ * Live operator observability for long-running workspace-mode subagent spawns:
  * pure formatting of bounded child tool activity into the transient tool-call
  * progress view.
  *
@@ -72,7 +72,8 @@ function truncate(text: string, max: number): string {
 
 /** One point-in-time snapshot of a workspace run, ready to format. */
 export interface RunStatusView {
-	runId: string;
+	/** The owning subagent id — the single run identifier. */
+	agentId: string;
 	agentId: string;
 	workspace: string;
 	/** Workspace run state: running | waiting_input | settling | terminating. */
@@ -99,7 +100,7 @@ export interface RunStatusView {
  */
 export function formatRunStatus(v: RunStatusView): string {
 	const lines: string[] = [];
-	const head = [`RepoOwner ${v.runId}`];
+	const head = [`RepoOwner ${v.agentId}`];
 	lines.push(...head);
 	lines.push("");
 

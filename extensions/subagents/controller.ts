@@ -33,7 +33,7 @@ import {
 	type SpawnFn,
 } from "./rpc-child";
 import { defaultResultsDir, loadResult, saveResult, summarizeText } from "./result-store";
-import { parseReadinessPayload, READINESS_CONTRACT_ENV, type ReadinessPayload } from "./readiness";
+import { parseReadinessPayload, type ReadinessPayload } from "./readiness";
 import { ASK_WIRE_TITLE } from "./bridge-ask";
 import { formatAskRequestFlat, parseAskRequest, type AskInput } from "../ask/contract";
 import type {
@@ -123,8 +123,6 @@ interface AgentRecord {
 	retireRequested: boolean;
 	/** Readiness contract: entry id -> required tool names (handshake pending). */
 	readinessExpected: Map<string, string[]>;
-	/** Entry ids that confirmed readiness. */
-	readinessConfirmed: Set<string>;
 	readinessDone: boolean;
 	acceptTimer?: NodeJS.Timeout;
 	readinessTimer?: NodeJS.Timeout;
@@ -197,13 +195,11 @@ export class LocalSubagentRuntime {
 			PI_SUBAGENT_RESULTS_DIR: this.resultsDir,
 		};
 		const readinessEntries = opts.readinessEntries ?? {};
-		// The per-spawn readiness contract travels to the child via env: the
-		// subagents-owned readiness probe reports exactly the entries declared
-		// HERE (no global default on the child side). Generic children (no
-		// readiness entries) keep a byte-identical environment.
-		if (Object.keys(readinessEntries).length > 0) {
-			env[READINESS_CONTRACT_ENV] = JSON.stringify(readinessEntries);
-		}
+		// The readiness contract stays MAIN-SIDE (this spawn's readinessEntries);
+		// the child-side probe reports only the observed tool set, and the
+		// controller judges it against this map. No readiness data travels to
+		// the child: profiled and generic children get byte-identical
+		// environments.
 
 		const conn = new RpcChildConnection({
 			command: this.piInvocation.command,
@@ -237,7 +233,6 @@ export class LocalSubagentRuntime {
 			eventRoute: opts.eventRoute,
 			retireRequested: false,
 			readinessExpected: new Map(Object.entries(readinessEntries)),
-			readinessConfirmed: new Set(),
 			readinessDone: false,
 		};
 		this.records.set(id, record);
@@ -533,32 +528,29 @@ export class LocalSubagentRuntime {
 	}
 
 	/**
-	 * Readiness confirmation (profiled children only): a session_start handler
-	 * in an additional extension reported its identity and the tool set it
-	 * registered. Unknown entry → ignore; ok:false or missing required tools
-	 * → spawn fails with the child killed and the task prompt never sent
-	 * (dispatched:false, fail closed). All expected entries confirmed → the
-	 * task prompt is sent (dispatch point follows its acceptance).
+	 * Readiness report (profiled children only): the child-side probe
+	 * reported the tool set visible in the child session at session_start.
+	 * The controller validates it against THIS spawn's readiness contract:
+	 * any entry with missing required tools fails the spawn with the child
+	 * killed and the task prompt never sent (dispatched:false, fail closed).
+	 * All entries satisfied → the task prompt is sent (the dispatch point
+	 * follows its acceptance).
 	 */
 	private confirmReadiness(record: AgentRecord, payload: ReadinessPayload): void {
 		if (record.readinessDone || record.spawnSettled) return;
-		const entry = payload.entry;
-		if (!record.readinessExpected.has(entry)) return; // not a profiled entry; ignore
-		const required = record.readinessExpected.get(entry)!;
-		const missing = required.filter((t) => !payload.tools.includes(t));
-		if (payload.ok !== true || missing.length > 0) {
-			const detail = payload.ok !== true
-				? `entry "${entry}" reported failed initialization`
-				: `entry "${entry}" is missing required tools: ${missing.join(", ")}`;
-			this.failSpawn(record, `readiness handshake failed: ${detail}`, "SIGKILL");
+		if (record.readinessExpected.size === 0) return; // not a profiled spawn; ignore
+		const problems: string[] = [];
+		for (const [entry, required] of record.readinessExpected) {
+			const missing = required.filter((t) => !payload.tools.includes(t));
+			if (missing.length > 0) problems.push(`entry "${entry}" is missing required tools: ${missing.join(", ")}`);
+		}
+		if (problems.length > 0) {
+			this.failSpawn(record, `readiness handshake failed: ${problems.join("; ")}`, "SIGKILL");
 			return;
 		}
-		record.readinessConfirmed.add(entry);
-		if (record.readinessConfirmed.size === record.readinessExpected.size) {
-			record.readinessDone = true;
-			if (record.readinessTimer) clearTimeout(record.readinessTimer);
-			this.sendInitialPrompt(record);
-		}
+		record.readinessDone = true;
+		if (record.readinessTimer) clearTimeout(record.readinessTimer);
+		this.sendInitialPrompt(record);
 	}
 
 	private handleChildExit(record: AgentRecord, info: { code: number | null; signal: string | null }): void {

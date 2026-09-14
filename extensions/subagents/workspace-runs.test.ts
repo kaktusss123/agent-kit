@@ -151,10 +151,7 @@ async function driveToRunning(h: Harness, params: Record<string, unknown>, signa
 		);
 	}
 	const proc = h.lastProc();
-	confirmReadiness(proc, "task-workspace", {
-		tools: ["task_status", "ensure_task_repo", "checkpoint_commit", "remove_task_lane"],
-	});
-	confirmReadiness(proc, "workspace-reporting", { tools: ["report_result"] });
+	confirmReadiness(proc, { tools: ["task_status", "ensure_task_repo", "checkpoint_commit", "remove_task_lane", "report_result"] });
 	autoAcceptPrompt(proc);
 	await tick(20);
 	return { pending, proc };
@@ -561,10 +558,7 @@ describe("needs_input", () => {
 			const pending = dispatchCall(h, { workspace: ws, task: "t" });
 			for (let i = 0; i < 100 && h.harness.spawned.length === 0; i++) await tick(20);
 			const proc = h.lastProc();
-			confirmReadiness(proc, "task-workspace", {
-				tools: ["task_status", "ensure_task_repo", "checkpoint_commit", "remove_task_lane"],
-			});
-			confirmReadiness(proc, "workspace-reporting", { tools: ["report_result"] });
+			confirmReadiness(proc, { tools: ["task_status", "ensure_task_repo", "checkpoint_commit", "remove_task_lane", "report_result"] });
 			autoAcceptPrompt(proc);
 			await tick(20);
 			proc.writeToStdout({
@@ -605,10 +599,7 @@ describe("detach and cancel", () => {
 			const pending = dispatchCall(h, { workspace: ws, task: "t" }, ac.signal);
 			for (let i = 0; i < 100 && h.harness.spawned.length === 0; i++) await tick(20);
 			const proc = h.lastProc();
-			confirmReadiness(proc, "task-workspace", {
-				tools: ["task_status", "ensure_task_repo", "checkpoint_commit", "remove_task_lane"],
-			});
-			confirmReadiness(proc, "workspace-reporting", { tools: ["report_result"] });
+			confirmReadiness(proc, { tools: ["task_status", "ensure_task_repo", "checkpoint_commit", "remove_task_lane", "report_result"] });
 			autoAcceptPrompt(proc);
 			await tick(20);
 
@@ -738,10 +729,7 @@ describe("N2 deadline vs retire race", () => {
 			for (let i = 0; i < 100 && h.harness.spawned.length === 0; i++) await tick(20);
 			const proc = h.lastProc();
 			proc.ignoreSigterm = true;
-			confirmReadiness(proc, "task-workspace", {
-				tools: ["task_status", "ensure_task_repo", "checkpoint_commit", "remove_task_lane"],
-			});
-			confirmReadiness(proc, "workspace-reporting", { tools: ["report_result"] });
+			confirmReadiness(proc, { tools: ["task_status", "ensure_task_repo", "checkpoint_commit", "remove_task_lane", "report_result"] });
 			autoAcceptPrompt(proc);
 			await tick(30);
 			const agentId = h.agentId();
