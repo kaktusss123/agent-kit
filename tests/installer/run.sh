@@ -575,5 +575,56 @@ run_install
 	esac
 pass
 
+# ==============================================================================
+# T19: rules/AGENTS.md is installed as AGENTS.md at the Pi root and follows the
+# generic ownership model (status, prune-on-removal, uninstall)
+
+new_test "T19 root AGENTS.md file"
+use_path_empty
+make_kit "$SANDBOX/kit"
+	mkdir -p "$SANDBOX/kit/rules"
+	printf '# agent rules\n' > "$SANDBOX/kit/rules/AGENTS.md"
+run_install
+	assert_eq "$RC" 0 "exit code"
+	assert_link "$PI_ROOT/AGENTS.md" "$SANDBOX/kit/rules/AGENTS.md" "root AGENTS.md linked"
+	assert_eq "$(state_entries)" 7 "state records the root file"
+	OUT="$(AGENT_KIT_ROOT="$SANDBOX/kit" "$SANDBOX/kit/bin/agent-kit" status 2>&1)"
+	case "$OUT" in
+	*"7 managed — 7 up to date"*) : ;;
+	*) fail "status should report the root file up to date, got: $OUT" ;;
+	esac
+	# removing the file from the repo prunes the link through the same
+	# generic ownership path as any other entity
+	rm "$SANDBOX/kit/rules/AGENTS.md"
+run_install
+	assert_eq "$RC" 0 "reconcile install"
+	assert_no_file "$PI_ROOT/AGENTS.md" "root file pruned once gone from the repo"
+	assert_eq "$(state_entries)" 6 "state entry cleaned"
+run_uninstall
+	assert_eq "$RC" 0 "uninstall"
+	assert_no_file "$PI_ROOT/skills/alpha" "owned skill link removed"
+pass
+
+# ==============================================================================
+# T20: a real file at the AGENTS.md destination is a conflict, never overwritten
+
+new_test "T20 real AGENTS.md conflict"
+use_path_empty
+make_kit "$SANDBOX/kit"
+	mkdir -p "$SANDBOX/kit/rules" "$PI_ROOT"
+	printf '# agent rules\n' > "$SANDBOX/kit/rules/AGENTS.md"
+	printf 'mine\n' > "$PI_ROOT/AGENTS.md"
+run_install
+	assert_eq "$RC" 1 "conflict fails the install"
+	assert_eq "$(cat "$PI_ROOT/AGENTS.md")" "mine" "user file intact"
+	awk -F '\t' '$1 == "AGENTS.md"' "$STATE" | grep -q . && fail "conflicted root file must not be owned"
+	case "$OUT" in
+	*"not a symlink"*) : ;;
+	*) fail "should explain the real-file conflict" ;;
+	esac
+run_uninstall
+	assert_eq "$(cat "$PI_ROOT/AGENTS.md")" "mine" "user file survives uninstall"
+pass
+
 printf '\n%d passed, %d failed\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]

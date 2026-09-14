@@ -7,6 +7,7 @@
 #   skills/*     -> $PI_AGENT_DIR/skills/*
 #   extensions/* -> $PI_AGENT_DIR/extensions/*
 #   prompts/*    -> $PI_AGENT_DIR/prompts/*   (only if the category exists)
+#   rules/AGENTS.md -> $PI_AGENT_DIR/AGENTS.md   (only if the file exists)
 #
 # The repository layout IS the desired state: no manifests, no lists.
 # Entities are symlinked, never copied.
@@ -100,7 +101,8 @@ line_count() { # stdin -> number of non-empty lines
 #
 # The desired state: every top-level entry of each category, linked 1:1
 # by entry name. Categories absent from the repository simply contribute
-# nothing.
+# nothing. A single canonical root file (rules/AGENTS.md -> AGENTS.md)
+# follows the same philosophy.
 
 emit_category() { # <repo-dir> <dest-rel-dir>
 	local src="$1" rel="$2" e
@@ -111,10 +113,17 @@ emit_category() { # <repo-dir> <dest-rel-dir>
 	done
 }
 
+emit_root_file() { # <repo-file> <dest-rel> — one canonical file at the Pi root
+	local f="$1" rel="$2"
+	[ -f "$f" ] || return 0
+	printf '%s%s%s\n' "$rel" "$TAB" "$f"
+}
+
 entities() {
 	emit_category "$REPO/skills"     "skills"
 	emit_category "$REPO/extensions" "extensions"
 	emit_category "$REPO/prompts"    "prompts"
+	emit_root_file  "$REPO/rules/AGENTS.md" "AGENTS.md"
 }
 
 validate_entity() { # <dest-rel> <source-abs>
@@ -259,7 +268,7 @@ reconcile() { # exits 1 if conflicts were found
 
 	if [ "$(printf '%s\n' "$desired" | line_count)" -eq 0 ] && \
 	   [ "$(printf '%s' "$STATE_OWN" | line_count)" -eq 0 ]; then
-		msg "  nothing to install (no skills/extensions/prompts in this repository)"
+		msg "  nothing to install (no installable content in this repository)"
 		return 0
 	fi
 
@@ -517,7 +526,8 @@ usage() {
 agent-kit — install the personal Pi agent framework
 
 Usage:
-  agent-kit install     link skills/, extensions/, prompts/ into ~/.pi/agent
+  agent-kit install     link skills/, extensions/, prompts/, rules/AGENTS.md
+                        into ~/.pi/agent
   agent-kit uninstall   remove owned links from ~/.pi/agent
   agent-kit status      show link state and launcher ownership
   agent-kit help        this text

@@ -23,6 +23,9 @@ extensions/<name>/       Pi extensions: deterministic runtime mechanics
 prompts/                 тонкие Pi prompt templates — workflow entrypoints
                            /spec и /dev; связывают существующие skills,
                            а не дублируют их policy
+rules/AGENTS.md          канонический глобальный instructions-файл,
+                           единый источник ~/.pi/agent/AGENTS.md; присутствует,
+                           только когда файл существует
 bin/agent-kit            инсталлер (install / uninstall / status)
 tests/                   verification:
                            installer/ — ownership-семантика инсталлера
@@ -121,6 +124,7 @@ agent-kit uninstall
 skills/*     -> ~/.pi/agent/skills/*
 extensions/* -> ~/.pi/agent/extensions/*
 prompts/*    -> ~/.pi/agent/prompts/*   (если категория существует)
+rules/AGENTS.md -> ~/.pi/agent/AGENTS.md   (если файл существует)
 ```
 
 Установка — это symlinks из `~/.pi/agent` в этот checkout, никогда
@@ -192,7 +196,7 @@ ln -s ~/.local/lib/node_modules/@earendil-works/pi-coding-agent/node_modules/@ea
 ## Тесты
 
 ```sh
-tests/installer/run.sh    # 18 сценариев ownership-семантики и legacy-миграции
+tests/installer/run.sh    # 20 сценариев ownership-семантики и legacy-миграции
 tests/layout/run.sh       # retired-архитектура (shared/, runtimes/, markers,
                           # runtime-ветки в инсталлере) не возвращается
 tests/skills/run.sh       # SKILL.md, references, skill://-цели, stale-язык
@@ -203,7 +207,8 @@ bun test extensions       # юнит-тесты расширений
 checkout'ов, prune удалённых items (включая подменённую ссылку), нетронутость
 чужих ссылок и real-file конфликтов, corrupt/traversal state, пути с
 пробелами, launcher bootstrap/switch/ownership, legacy-миграция omp/opencode
-state, отказ от runtime-аргументов.
+state, отказ от runtime-аргументов, линк канонического AGENTS.md в корень
+Pi-каталога.
 
 ## Переезд со старой схемы
 
