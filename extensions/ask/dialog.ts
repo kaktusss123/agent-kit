@@ -31,6 +31,7 @@ import {
 	clampCursor,
 	currentQuestion,
 	type DialogState,
+	descriptionFor,
 	goBack,
 	initialState,
 	previewFor,
@@ -113,6 +114,8 @@ export class AskDialog implements Component {
 				scrollInfo: (t) => theme.fg("dim", t),
 				noMatch: (t) => theme.fg("warning", t),
 			},
+			// Widen the label column so recommended labels survive uncapped at 32.
+			{ minPrimaryColumnWidth: 20, maxPrimaryColumnWidth: 48 },
 		);
 		list.onSelect = (item) => this.onRowActivated(item);
 		list.setSelectedIndex(Math.min(this.state.cursor, Math.max(0, rows.length - 1)));
@@ -217,6 +220,11 @@ export class AskDialog implements Component {
 		lines.push(...this.questionLines(width, q.question));
 		lines.push("");
 		lines.push(...this.selectList.render(width));
+		const description = descriptionFor(this.state, this.questions);
+		if (description && description.trim().length > 0) {
+			lines.push("");
+			lines.push(...this.descriptionLines(width, description));
+		}
 		const preview = previewFor(this.state, this.questions);
 		if (preview && preview.trim().length > 0) {
 			lines.push("");
@@ -261,6 +269,13 @@ export class AskDialog implements Component {
 		return this.previewMd
 			.render(inner)
 			.map((line) => truncateToWidth(`   ${this.theme.fg("border", "│")} ${line}`, width));
+	}
+
+	private descriptionLines(width: number, description: string): string[] {
+		const inner = Math.max(8, width - 6);
+		return wrapTextWithAnsi(description, inner).map((line) =>
+			truncateToWidth(`   ${this.theme.fg("muted", line)}`, width),
+		);
 	}
 
 	private helpLine(width: number, help: string): string {

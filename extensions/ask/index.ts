@@ -52,22 +52,27 @@ export default function (pi: ExtensionAPI) {
 				container.addChild(new Text(theme.fg("warning", " ask — no questions"), 1, 0));
 			} else {
 				for (const q of questions) {
-					const meta = [q.multi ? "multi" : undefined, `${q.options.length} options`]
-						.filter(Boolean)
-						.join(" · ");
+					const meta = ` [${q.id}${q.header ? " · " + q.header : ""}${q.multi ? " · multi" : ""} · ${q.options.length} options]`;
 					container.addChild(
 						new Text(
-							` ${theme.fg("accent", theme.bold("Ask"))} ${theme.fg("muted", `[${q.id}]${meta}`)}`,
+							` ${theme.fg("accent", theme.bold("Ask"))} ${theme.fg("muted", meta)}`,
 							1,
 							0,
 						),
 					);
 					container.addChild(new Text(` ${theme.fg("toolOutput", q.question)}`, 1, 0));
-					for (const option of q.options) {
-						const mark = theme.fg("muted", option.multi ? "☐" : "○");
+					for (const [index, option] of q.options.entries()) {
+						const mark = theme.fg("muted", q.multi ? "☐" : "○");
+						const recommended =
+							q.recommended === index ? theme.fg("muted", " · recommended") : "";
 						container.addChild(
-							new Text(`   ${mark} ${theme.fg("toolOutput", option.label)}`, 1, 0),
+							new Text(`   ${mark} ${theme.fg("toolOutput", option.label)}${recommended}`, 1, 0),
 						);
+						if (option.description) {
+							container.addChild(
+								new Text(`     ${theme.fg("muted", option.description)}`, 1, 0),
+							);
+						}
 					}
 					if (q !== questions[questions.length - 1]) container.addChild(new Text("", 1, 0));
 				}
@@ -173,8 +178,10 @@ async function richDialogAsk(
 interface RenderQuestion {
 	id: string;
 	question: string;
+	header?: string;
 	multi?: boolean;
-	options: Array<{ label: string; multi?: boolean }>;
+	recommended?: number;
+	options: Array<{ label: string; description?: string }>;
 }
 
 function normalizeQuestions(raw: unknown): RenderQuestion[] {
@@ -184,18 +191,25 @@ function normalizeQuestions(raw: unknown): RenderQuestion[] {
 		if (!entry || typeof entry !== "object") continue;
 		const q = entry as Record<string, unknown>;
 		if (typeof q.id !== "string" || typeof q.question !== "string") continue;
-		const options: Array<{ label: string; multi?: boolean }> = [];
+		const options: Array<{ label: string; description?: string }> = [];
 		if (Array.isArray(q.options)) {
 			for (const option of q.options) {
 				if (option && typeof option === "object" && typeof (option as { label?: unknown }).label === "string") {
-					options.push({ label: (option as { label: string }).label });
+					options.push({
+						label: (option as { label: string }).label,
+						...(typeof (option as { description?: unknown }).description === "string"
+							? { description: (option as { description: string }).description }
+							: {}),
+					});
 				}
 			}
 		}
 		out.push({
 			id: q.id,
 			question: q.question,
+			...(typeof q.header === "string" ? { header: q.header } : {}),
 			...(q.multi === true ? { multi: true } : {}),
+			...(typeof q.recommended === "number" ? { recommended: q.recommended } : {}),
 			options,
 		});
 	}

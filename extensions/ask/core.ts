@@ -142,6 +142,15 @@ export function previewFor(state: DialogState, questions: AskQuestion[]): string
 	return question.options[row.optionIndex!]?.preview;
 }
 
+/** Description content of the currently highlighted option, if any. */
+export function descriptionFor(state: DialogState, questions: AskQuestion[]): string | undefined {
+	const question = currentQuestion(state, questions);
+	if (!question) return undefined;
+	const row = rowsFor(state, questions)[state.cursor];
+	if (row?.kind !== "option") return undefined;
+	return question.options[row.optionIndex!]?.description;
+}
+
 // ================================================================ movement
 
 export function clampCursor(state: DialogState, questions: AskQuestion[]): void {
