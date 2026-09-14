@@ -5,7 +5,10 @@
  *
  * Each agent is an independent pi process in `--mode rpc` running with
  * `--no-extensions -e <bridge>` so children get a minimal, controlled
- * environment (no recursive subagent spawning, no parent extension stack).
+ * environment (no parent extension stack; a generic child cannot spawn
+ * subagents at all — only a workspace worker carries the subagents index,
+ * and its nested spawns are plain helpers only: workspace ownership is
+ * created exclusively by the main session).
  *
  * Event flow (proven against pi 0.85.1):
  * - child `agent_start` -> authoritative run boundary: reset run-local state

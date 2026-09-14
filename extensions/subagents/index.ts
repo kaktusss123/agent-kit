@@ -195,6 +195,16 @@ export default function (pi: ExtensionAPI) {
 				switch (op) {
 					case "spawn": {
 						if (!params.task) return err("spawn requires `task`");
+						// Ownership nesting is flat: workspace owners are created
+						// exclusively by the main session. A child carrying
+						// PI_SUBAGENT_ID (a workspace worker) may spawn plain
+						// modelClass helpers but never another worktree owner —
+						// rejected here, before any process can start.
+						if (params.workspace && process.env.PI_SUBAGENT_ID) {
+							return err(
+								"workspace spawns can only be created by the main session: this worker cannot own another worktree — spawn plain `cwd` helpers instead",
+							);
+						}
 						if (params.workspace) {
 							// Workspace mode: the child owns a managed task worktree.
 							// Validation, profile, readiness, deadline, report

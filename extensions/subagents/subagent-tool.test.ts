@@ -196,6 +196,9 @@ describe("nested spawn from a workspace worker", () => {
 			"setInterval(() => {}, 1000);\n",
 		);
 		const prevAgentDir = process.env.PI_CODING_AGENT_DIR;
+		const prevWorkerId = process.env.PI_SUBAGENT_ID;
+		// the worker session carries its own subagent id
+		process.env.PI_SUBAGENT_ID = "sa-worker-followup";
 		const prevArgvOut = process.env.PI_ARGV_OUT;
 		const prevArgv1 = process.argv[1];
 		process.env.PI_CODING_AGENT_DIR = agentDir;
@@ -264,6 +267,8 @@ describe("nested spawn from a workspace worker", () => {
 			const res = await pending;
 			expect(res.isError).toBe(true); // the probe child is not an RPC peer
 		} finally {
+			if (prevWorkerId === undefined) delete process.env.PI_SUBAGENT_ID;
+			else process.env.PI_SUBAGENT_ID = prevWorkerId;
 			if (prevAgentDir === undefined) delete process.env.PI_CODING_AGENT_DIR;
 			else process.env.PI_CODING_AGENT_DIR = prevAgentDir;
 			if (prevArgvOut === undefined) delete process.env.PI_ARGV_OUT;
@@ -291,6 +296,9 @@ describe("nested spawn from a workspace worker", () => {
 			"setInterval(() => {}, 1000);\n",
 		);
 		const prevAgentDir = process.env.PI_CODING_AGENT_DIR;
+		const prevWorkerId = process.env.PI_SUBAGENT_ID;
+		// the worker session carries its own subagent id
+		process.env.PI_SUBAGENT_ID = "sa-worker-followup";
 		const prevArgvOut = process.env.PI_ARGV_OUT;
 		const prevArgv1 = process.argv[1];
 		process.env.PI_CODING_AGENT_DIR = agentDir;
@@ -353,6 +361,8 @@ describe("nested spawn from a workspace worker", () => {
 			// no grandchild was ever started for the refused class
 			expect(fs.existsSync(argvOut + ".second")).toBe(false);
 		} finally {
+			if (prevWorkerId === undefined) delete process.env.PI_SUBAGENT_ID;
+			else process.env.PI_SUBAGENT_ID = prevWorkerId;
 			if (prevAgentDir === undefined) delete process.env.PI_CODING_AGENT_DIR;
 			else process.env.PI_CODING_AGENT_DIR = prevAgentDir;
 			if (prevArgvOut === undefined) delete process.env.PI_ARGV_OUT;
@@ -374,6 +384,9 @@ describe("nested spawn from a workspace worker", () => {
 			"setInterval(() => {}, 1000);\n",
 		);
 		const prevAgentDir = process.env.PI_CODING_AGENT_DIR;
+		const prevWorkerId = process.env.PI_SUBAGENT_ID;
+		// the worker session carries its own subagent id
+		process.env.PI_SUBAGENT_ID = "sa-worker-followup";
 		const prevArgvOut = process.env.PI_ARGV_OUT;
 		const prevArgv1 = process.argv[1];
 		process.env.PI_CODING_AGENT_DIR = agentDir; // no stored classes: default must still work
@@ -421,6 +434,8 @@ describe("nested spawn from a workspace worker", () => {
 			}
 			await pending;
 		} finally {
+			if (prevWorkerId === undefined) delete process.env.PI_SUBAGENT_ID;
+			else process.env.PI_SUBAGENT_ID = prevWorkerId;
 			if (prevAgentDir === undefined) delete process.env.PI_CODING_AGENT_DIR;
 			else process.env.PI_CODING_AGENT_DIR = prevAgentDir;
 			if (prevArgvOut === undefined) delete process.env.PI_ARGV_OUT;
@@ -429,4 +444,78 @@ describe("nested spawn from a workspace worker", () => {
 			fs.rmSync(base, { recursive: true, force: true });
 		}
 	}, 15000);
+});
+
+describe("workspace spawn nesting is flat (fail closed)", () => {
+	test("a workspace worker cannot spawn another workspace owner — no process starts", async () => {
+		const base = fs.mkdtempSync(path.join(os.tmpdir(), "subagent-nestflat-test-"));
+		const argvOut = path.join(base, "grandchild-argv.json");
+		const probe = path.join(base, "argv-probe.js");
+		// If any grandchild process were spawned, it would record its argv here.
+		fs.writeFileSync(
+			probe,
+			"require('node:fs').writeFileSync(process.env.PI_ARGV_OUT, JSON.stringify({ argv: process.argv.slice(1), pid: process.pid }));\n" +
+			"setInterval(() => {}, 1000);\n",
+		);
+		const prevWorkerId = process.env.PI_SUBAGENT_ID;
+		const prevArgvOut = process.env.PI_ARGV_OUT;
+		const prevArgv1 = process.argv[1];
+		// Worker environment: carries its own subagent id.
+		process.env.PI_SUBAGENT_ID = "sa-worker-nestflat";
+		process.env.PI_ARGV_OUT = argvOut;
+		// Any child spawn would resolve to this probe and mark the argv file.
+		process.argv[1] = probe;
+
+		try {
+			const { pi, tools } = makePi();
+			registerExtension(pi);
+			const def = tools.get("subagent")!;
+			const ctx = {
+				cwd: base,
+				model: { provider: "zai", id: "glm-x" },
+				thinkingLevel: "high",
+				modelRegistry: { getAll: () => [{ provider: "zai", id: "glm-x", reasoning: true }] },
+			};
+			// Even with a plausible worktree path: rejected before validation,
+			// gates, readiness, or any process start.
+			const res = (await def.execute(
+				"tc-nf1",
+				{ op: "spawn", workspace: base, task: "own another worktree" },
+				undefined,
+				undefined,
+				ctx,
+			)) as { isError?: boolean; details: { error?: string } };
+			expect(res.isError).toBe(true);
+			expect(res.details.error).toContain("workspace spawns can only be created by the main session");
+
+			// The same verdict even for a path that cannot be a worktree:
+			// nesting is refused before workspace validation runs.
+			const res2 = (await def.execute(
+				"tc-nf2",
+				{ op: "spawn", workspace: "/definitely/not/a/worktree", task: "t" },
+				undefined,
+				undefined,
+				ctx,
+			)) as { isError?: boolean; details: { error?: string } };
+			expect(res2.isError).toBe(true);
+			expect(res2.details.error).toContain("main session");
+
+			// No grandchild process was ever started: the argv probe file —
+			// which any spawned child would have written immediately — does
+			// not exist after a generous wait.
+			await new Promise((r) => setTimeout(r, 600));
+			expect(fs.existsSync(argvOut)).toBe(false);
+
+			// (Plain modelClass helpers from the same worker keep working —
+			// proven by the nested tests above, which run with
+			// PI_SUBAGENT_ID set.)
+		} finally {
+			if (prevWorkerId === undefined) delete process.env.PI_SUBAGENT_ID;
+			else process.env.PI_SUBAGENT_ID = prevWorkerId;
+			if (prevArgvOut === undefined) delete process.env.PI_ARGV_OUT;
+			else process.env.PI_ARGV_OUT = prevArgvOut;
+			process.argv[1] = prevArgv1;
+			fs.rmSync(base, { recursive: true, force: true });
+		}
+	}, 20000);
 });
