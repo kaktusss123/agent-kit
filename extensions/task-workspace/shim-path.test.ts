@@ -12,6 +12,74 @@ import { join } from "node:path";
 import { expect, test } from "bun:test";
 import { resolveGitOnPath } from "./shim-path";
 
+test("resolveGitOnPath skips the excluded dir even when it is first on PATH", async () => {
+  const root = await mkdtemp(join(tmpdir(), "agent-kit-git-path-"));
+  try {
+    const shim = join(root, "shim");
+    const shimGit = join(shim, "git");
+    const bin = join(root, "bin");
+    const realGit = join(bin, "git");
+    await mkdir(shim);
+    await mkdir(bin);
+    await writeFile(shimGit, "#!/bin/sh\nexit 42\n");
+    await chmod(shimGit, 0o755);
+    await writeFile(realGit, "#!/bin/sh\nexit 0\n");
+    await chmod(realGit, 0o755);
+
+    const resolved = resolveGitOnPath(`${shim}:${bin}`, root, shim);
+
+    expect(resolved).toBe(realpathSync(realGit));
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("resolveGitOnPath matches the excluded dir through a symlink by real path", async () => {
+  const root = await mkdtemp(join(tmpdir(), "agent-kit-git-path-"));
+  try {
+    const shim = join(root, "shim");
+    const shimGit = join(shim, "git");
+    const shimLink = join(root, "shim-link");
+    const bin = join(root, "bin");
+    const realGit = join(bin, "git");
+    await mkdir(shim);
+    await mkdir(bin);
+    await writeFile(shimGit, "#!/bin/sh\nexit 42\n");
+    await chmod(shimGit, 0o755);
+    await writeFile(realGit, "#!/bin/sh\nexit 0\n");
+    await chmod(realGit, 0o755);
+    await symlink(shim, shimLink);
+
+    const resolved = resolveGitOnPath(`${shimLink}:${bin}`, root, shim);
+
+    expect(resolved).toBe(realpathSync(realGit));
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("resolveGitOnPath keeps first-match-wins without an excluded dir", async () => {
+  const root = await mkdtemp(join(tmpdir(), "agent-kit-git-path-"));
+  try {
+    const shim = join(root, "shim");
+    const shimGit = join(shim, "git");
+    const bin = join(root, "bin");
+    const realGit = join(bin, "git");
+    await mkdir(shim);
+    await mkdir(bin);
+    await writeFile(shimGit, "#!/bin/sh\nexit 42\n");
+    await chmod(shimGit, 0o755);
+    await writeFile(realGit, "#!/bin/sh\nexit 0\n");
+    await chmod(realGit, 0o755);
+
+    const resolved = resolveGitOnPath(`${shim}:${bin}`, root);
+
+    expect(resolved).toBe(realpathSync(shimGit));
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test("resolveGitOnPath freezes a relative PATH entry as an absolute real path", async () => {
   const root = await mkdtemp(join(tmpdir(), "agent-kit-git-path-"));
   try {

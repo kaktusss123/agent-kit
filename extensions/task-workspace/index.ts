@@ -86,7 +86,9 @@ const POLICY_PATH = join(SHIM_DIR, "policy.mjs");
 export function armGitShim(taskRoot: string) {
   return ({ command, cwd, env }: BashSpawnContext): BashSpawnContext => {
     try {
-      const realGit = env.PATH ? resolveGitOnPath(env.PATH, cwd) : null;
+      const realGit = env.PATH
+        ? resolveGitOnPath(env.PATH, cwd, SHIM_DIR)
+        : null;
       if (!realGit) return { command, cwd, env };
       return {
         command,
