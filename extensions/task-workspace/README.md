@@ -23,19 +23,31 @@ worktrees); no manifest files.
   secret-like paths, verifies paths inside the repo, enforces exact staging,
   requires hooks to run; `deferred_hook` allows controlled commit with
   deferred hook verification after a real external-prerequisite hook failure.
-- **Mutation guard** — `tool_call` interceptor classifying every git invocation
-  in bash commands (fail closed) and blocking `write`/`edit`/bash mutations
-  outside the managed task worktree.
+- **Mutation guard** — write/edit targets are classified by the `tool_call`
+  interceptor; bash git mutations are enforced where git executes: the bash
+  tool is overridden so each child gets a PATH shim (`shim/git`) that asks
+  the policy module (`shim/policy.mjs`) per real git invocation — local
+  mutations in managed and other linked worktrees pass, while mutations on
+  the primary checkout of a repo with managed worktrees are blocked (routing
+  failure), `--no-verify` everywhere, redirection via
+  `--git-dir`/`GIT_DIR` fails closed; read-only and `push` pass.
 
 ## Layout
 
 `index.ts` is the pi binding (ExtensionAPI tool registration, TypeBox
-schemas, result `details`); `task-root.ts` is the task-root resolution
-policy (`AGENT_TASK_ROOT` override → `~/.agent-kit/tasks` default); the
-remaining sibling modules (`flows.ts`, `git.ts`, `guard.ts`, `types.ts`) are a
-host-independent core that receives its task root explicitly and returns plain
-domain results. `core-isolation.test.ts` proves the core imports and runs
-with no host context.
+schemas, result `details`, and the bash tool override that arms the git
+PATH shim); `task-root.ts` is the task-root resolution policy
+(`AGENT_TASK_ROOT` override → `~/.agent-kit/tasks` default); the remaining
+sibling modules (`flows.ts`, `git.ts`, `guard.ts`, `shim-path.ts`, `types.ts`)
+are a host-independent core that receives its task root explicitly and returns
+plain domain results. `core-isolation.test.ts` proves the core imports and
+runs with no host context.
+
+`shim/` holds the git guard: `shim/git` (a dumb POSIX PATH shim),
+`shim/policy.mjs` (the routing policy, runnable under node or bun), and
+`shim/classify.mjs` (the shared subcommand/flag classification tables,
+re-exported by `guard.ts` — the single copy in the repository). The shim is
+committed executable; installs are symlinks, so the exec bit carries over.
 
 This directory is loaded as an additional extension entry by other consumers
 (e.g. child agent profiles); it must stay self-contained here — no imports

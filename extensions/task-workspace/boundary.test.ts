@@ -19,8 +19,11 @@ const ACTIVE_SOURCES = [
   "flows.ts",
   "git.ts",
   "guard.ts",
+  "shim-path.ts",
   "task-root.ts",
   "types.ts",
+  "shim/classify.mjs",
+  "shim/policy.mjs",
   "README.md",
 ];
 

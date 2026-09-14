@@ -1,0 +1,24 @@
+{
+  "compilerOptions": {
+    "allowImportingTsExtensions": true,
+    "allowJs": true,
+    "checkJs": false,
+    "module": "ESNext",
+    "moduleResolution": "Bundler",
+    "noEmit": true,
+    "skipLibCheck": true,
+    "strict": true,
+    "target": "ES2024",
+    "types": ["node"]
+  },
+  "include": [
+    "flows.ts",
+    "git.ts",
+    "guard.ts",
+    "index.ts",
+    "shim-path.ts",
+    "task-root.ts",
+    "types.ts",
+    "shim/*.mjs"
+  ]
+}

@@ -111,11 +111,6 @@ export function isTemporaryPath(p: string): boolean {
   return TEMPORARY_ROOT_RE.test(realpath(p));
 }
 
-export function hasTemporaryShellCwd(command: string): boolean {
-  return /(?:^|[;&|]\s*)cd\s+(?:"|')?\/(?:private\/)?tmp(?:\/|(?=["'\s;&|]|$))/.test(command);
-}
-
-
 export function isGitMetadataPath(root: string, target: string): boolean {
   const gitDir = join(root, ".git");
   return target === gitDir || target.startsWith(gitDir + "/");

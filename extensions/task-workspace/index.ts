@@ -12,20 +12,36 @@
  * produce the same directory. No manifest or naming migration exists; resolve
  * a real collision manually if one ever materializes.
  *
+ * Git mutation policy is enforced where git actually executes: the
+ * built-in bash tool is overridden with createBashTool + a spawnHook that
+ * prepends the PATH shim (./shim/git) to every bash child and points it
+ * at the policy module (./shim/policy.mjs). Every real git invocation
+ * then reports its post-`cd` cwd and exact argv to the policy. Mutations in
+ * managed or other linked worktrees pass; primary-checkout mutations block
+ * when managed worktrees exist. There is deliberately NO Bash parsing
+ * anywhere in agent-kit; write/edit calls keep their
+ * tool_call interception (guard.ts).
+ *
  * This file owns everything host-specific: ExtensionAPI tool registration,
  * TypeBox schemas, session-cwd translation, and the tool-result
  * representation (content JSON plus the structured `details` attachment).
  * The task root itself is not host-owned: it is resolved once per
  * registration by the task-root resolver in ./task-root.
  * The deterministic mechanics live in the sibling modules (flows.ts,
- * git.ts, guard.ts, types.ts) — a host-independent core that receives its
- * task root explicitly and returns plain domain results.
+ * git.ts, guard.ts, shim-path.ts, types.ts) — a host-independent core that
+ * receives its task root explicitly and returns plain domain results.
  *
  * This directory is loaded as an additional extension entry by other
  * consumers (e.g. child agent profiles); it must stay self-contained under
  * extensions/task-workspace/ — no imports from sibling extension directories.
  */
-import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import type {
+  BashSpawnContext,
+  ExtensionAPI,
+} from "@earendil-works/pi-coding-agent";
+import { createBashTool } from "@earendil-works/pi-coding-agent";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { Type as tb } from "typebox";
 import { resolveTaskRoot } from "./task-root";
 import {
@@ -34,10 +50,9 @@ import {
   removeTaskLane,
   taskStatus,
 } from "./flows";
-import {
-  guardManagedBashCommand,
-  guardManagedWriteTarget,
-} from "./guard";
+import { guardManagedWriteTarget } from "./guard";
+import { resolveGitOnPath } from "./shim-path";
+export { resolveGitOnPath } from "./shim-path";
 
 function respond(result: Record<string, unknown>, details?: unknown): {
   content: { type: "text"; text: string }[];
@@ -52,6 +67,43 @@ function respond(result: Record<string, unknown>, details?: unknown): {
 
 function errorResult(e: unknown): Record<string, unknown> {
   return { status: "error", message: (e as Error).message };
+}
+
+// ─── Bash git guard: PATH shim wiring ────────────────────────────────
+
+const EXTENSION_DIR = dirname(fileURLToPath(import.meta.url));
+const SHIM_DIR = join(EXTENSION_DIR, "shim");
+const POLICY_PATH = join(SHIM_DIR, "policy.mjs");
+
+/** Build the spawnHook for the overridden bash tool: arm the PATH shim for
+ *  each child. Real git is resolved from the ORIGINAL PATH before
+ *  prepending; if git or anything else cannot be resolved, the context is
+ *  returned unchanged (fail open — bash behaves stock). The returned env
+ *  is a NEW object built by pi from getShellEnv(); process.env of the pi
+ *  process is never mutated, so every extension-side child_process call
+ *  (git.ts, flows.ts) stays on the unmodified environment and never sees
+ *  the shim. */
+export function armGitShim(taskRoot: string) {
+  return ({ command, cwd, env }: BashSpawnContext): BashSpawnContext => {
+    try {
+      const realGit = env.PATH ? resolveGitOnPath(env.PATH, cwd) : null;
+      if (!realGit) return { command, cwd, env };
+      return {
+        command,
+        cwd,
+        env: {
+          ...env,
+          PATH: `${SHIM_DIR}:${env.PATH ?? ""}`,
+          AGENT_TASK_ROOT: taskRoot,
+          AGENT_KIT_REAL_GIT: realGit,
+          AGENT_KIT_POLICY_RUNTIME: process.execPath,
+          AGENT_KIT_POLICY: POLICY_PATH,
+        },
+      };
+    } catch {
+      return { command, cwd, env };
+    }
+  };
 }
 
 /**
@@ -104,6 +156,19 @@ export default function (pi: ExtensionAPI): void {
   // behavior equals module-load resolution); the core receives it explicitly
   // and never reads the environment itself.
   const TASK_ROOT = resolveTaskRoot();
+
+  // ─── bash tool override (git PATH shim) ──────────────────────────────
+  // Same contract and schema as the built-in bash tool (spread + execute
+  // delegation); the spawnHook prepends the git PATH shim to each child.
+  // When the session has no cwd the tool's construction cwd applies.
+  const bashTool = createBashTool(process.cwd(), {
+    spawnHook: armGitShim(TASK_ROOT),
+  });
+  pi.registerTool({
+    ...bashTool,
+    execute: (toolCallId, params, signal, onUpdate) =>
+      bashTool.execute(toolCallId, params, signal, onUpdate),
+  });
 
   // typebox is imported directly (vanilla pi has no pi.typebox injection)
   // ─── task_status ─────────────────────────────────────────────────────
@@ -255,6 +320,9 @@ export default function (pi: ExtensionAPI): void {
   });
 
   // ─── Mutation guard (tool_call interceptor) ──────────────────────────
+  // Write/edit targets only: bash git mutations are enforced where git
+  // executes, via the PATH shim armed above — no shell parsing here (or
+  // anywhere else in agent-kit).
   pi.on("tool_call", (event, ctx) => {
     if (event.toolName === "write" || event.toolName === "edit") {
       const input = event.input as Record<string, unknown>;
@@ -262,11 +330,6 @@ export default function (pi: ExtensionAPI): void {
         taskRoot: TASK_ROOT,
       });
     }
-
-    if (event.toolName !== "bash") return;
-    const input = event.input as Record<string, unknown>;
-    return guardManagedBashCommand(input.command as string | undefined, ctx.cwd, {
-      taskRoot: TASK_ROOT,
-    });
+    return;
   });
 }
