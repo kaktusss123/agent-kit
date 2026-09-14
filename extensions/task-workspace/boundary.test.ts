@@ -21,6 +21,8 @@ const ACTIVE_SOURCES = [
   "guard.ts",
   "task-root.ts",
   "types.ts",
+  "shim/classify.mjs",
+  "shim/policy.mjs",
   "README.md",
 ];
 

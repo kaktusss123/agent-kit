@@ -47,9 +47,12 @@ export type GitOperationClass =
   | "external-side-effect"
   | "ambiguous";
 
-export interface ParsedGitInvocation {
+/** Classification of one git invocation's real argv (after the `git`
+ *  command word and global-flag consumption). Produced by the shared
+ *  classifier in shim/classify.mjs; the repo dir itself is resolved by the
+ *  runtime policy from cwd + the -C chain, not represented here. */
+export interface GitInvocationClassification {
   subcommand: string;
-  repoRef: string | null; // -C <path> target, or null for the session cwd
   operationClass: GitOperationClass;
   mutating: boolean;
   noVerify: boolean;

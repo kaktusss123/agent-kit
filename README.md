@@ -94,9 +94,10 @@ mandatory: например, перед работой с task workspace — п�
 
 - **task-workspace** — managed task worktrees: `task_status`,
   `ensure_task_repo`, `remove_task_lane`, `checkpoint_commit` и mutation
-  guard. Ядро (`flows.ts`, `git.ts`, `guard.ts`, `types.ts`) host-independent
-  и тестируется без Pi (`core-isolation.test.ts`); второй real consumer у
-  него отсутствует, поэтому library-уровень не выделяется.
+  guard (PATH-shim для git в bash-сессиях: policy на реальном argv + cwd,
+  без парсинга shell). Ядро (`flows.ts`, `git.ts`, `guard.ts`, `types.ts`)
+  host-independent и тестируется без Pi (`core-isolation.test.ts`); второй
+  real consumer у него отсутствует, поэтому library-уровень не выделяется.
 - **subagents** — единый subagent runtime; workspace-режим того же `subagent`
   (RepoOwner-протокол: readiness handshake, deadline, terminal envelope,
   settled-state verification).

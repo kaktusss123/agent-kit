@@ -16,21 +16,25 @@ describe("task-workspace core host independence", () => {
     const guardCore = await import("./guard");
     const flowsCore = await import("./flows");
     const taskRootCore = await import("./task-root");
+    const classify = await import("./shim/classify.mjs");
 
     expect(typeof gitCore.classifyPath).toBe("function");
     expect(typeof gitCore.scanTaskWorkspaces).toBe("function");
-    expect(typeof guardCore.parseGitInvocations).toBe("function");
     expect(typeof guardCore.guardManagedWriteTarget).toBe("function");
+    expect(typeof guardCore.classifyGitInvocation).toBe("function");
     expect(typeof flowsCore.ensureTaskRepo).toBe("function");
     expect(typeof flowsCore.checkpointCommit).toBe("function");
     expect(typeof taskRootCore.resolveTaskRoot).toBe("function");
 
-    // Pure classification works with no host wiring at all.
-    expect(guardCore.parseGitInvocations("git status")[0]?.mutating).toBe(false);
-    expect(guardCore.parseGitInvocations("git push origin main")[0]?.operationClass).toBe(
-      "external-side-effect",
-    );
-    expect(guardCore.parseGitInvocations("git add -A")[0]?.mutating).toBe(true);
+    // Pure classification works with no host wiring at all: one invocation's
+    // real argv → verdict, from the SAME shared module the runtime policy
+    // (shim/policy.mjs) uses.
+    expect(guardCore.classifyGitInvocation(["status"]).mutating).toBe(false);
+    expect(
+      guardCore.classifyGitInvocation(["push", "origin", "main"]).operationClass,
+    ).toBe("external-side-effect");
+    expect(guardCore.classifyGitInvocation(["add", "-A"]).mutating).toBe(true);
+    expect(classify.classifyInvocationTokens("commit", ["-m", "x"]).mutating).toBe(true);
   });
 
   test("core sources never reference the pi SDK, host plumbing, or task-root policy", () => {

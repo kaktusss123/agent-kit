@@ -1,0 +1,70 @@
+#!/bin/sh
+# task-workspace git PATH shim — policy enforcement where git executes.
+#
+# The task-workspace extension prepends this directory to the PATH of every
+# bash-tool child, so PATH resolution reaches this script instead of the
+# real git binary. Dumb on purpose: NO git classification here. It captures
+# the real cwd and argv, asks the policy module for a verdict, then either
+# prints the policy's block reason and exits 1, or execs the real git in
+# this process (transparent stdio/exit-code/signal passthrough).
+#
+# Fail-open contract: without the guard environment (AGENT_KIT_REAL_GIT,
+# AGENT_KIT_POLICY_RUNTIME, AGENT_KIT_POLICY — e.g. this shim reached via a
+# PATH that was not set up by the extension) it execs the best-effort real
+# git with a short stderr note. Plain git must never become unusable.
+#
+# No daemon, no IPC, no persistent state, no hardcoded git path.
+
+guard_dir=$(CDPATH='' cd -- "$(dirname -- "$0")" && pwd -P)
+cwd=$(pwd -P)
+
+if [ -z "${AGENT_KIT_REAL_GIT:-}" ] || [ -z "${AGENT_KIT_POLICY_RUNTIME:-}" ] || [ -z "${AGENT_KIT_POLICY:-}" ]; then
+	# Fail OPEN: resolve real git from PATH, skipping this shim's own
+	# directory so the fallback cannot recurse into itself.
+	real_git=""
+	old_ifs=${IFS:-}
+	IFS=":"
+	for dir in $PATH; do
+		[ -n "$dir" ] || continue
+		[ "$dir" = "$guard_dir" ] && continue
+		if [ -x "$dir/git" ]; then
+			real_git="$dir/git"
+			break
+		fi
+	done
+	IFS=$old_ifs
+	if [ -n "$real_git" ]; then
+		printf '%s\n' "agent-kit git shim: guard environment missing; running unguarded git" >&2
+		exec "$real_git" "$@"
+	fi
+	printf '%s\n' "agent-kit git shim: guard environment missing and no real git found on PATH" >&2
+	exit 127
+fi
+
+# Ask the policy: one line, "ALLOW" or "BLOCK <reason>" (reason may be
+# multi-line). Policy stderr is noise; the verdict line is the contract.
+verdict_out=$("$AGENT_KIT_POLICY_RUNTIME" "$AGENT_KIT_POLICY" "$cwd" "$@" 2>/dev/null)
+verdict=${verdict_out%% *}
+if [ "$verdict" = "$verdict_out" ]; then
+	reason=""
+else
+	reason=${verdict_out#* }
+fi
+
+case "$verdict" in
+ALLOW)
+	exec "$AGENT_KIT_REAL_GIT" "$@"
+	;;
+BLOCK)
+	if [ -z "$reason" ]; then
+		reason="Blocked: the task-workspace guard blocked this git invocation."
+	fi
+	printf '%s\n' "$reason" >&2
+	exit 1
+	;;
+*)
+	# No parsable verdict (policy could not run): fail closed.
+	printf '%s\n' "Blocked: the task-workspace guard could not analyze this git invocation (no policy verdict) and fails closed. Run the command in the managed task worktree or report the blocker." >&2
+	exit 1
+	;;
+esac
