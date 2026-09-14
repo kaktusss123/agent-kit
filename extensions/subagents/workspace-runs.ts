@@ -580,6 +580,7 @@ export function createWorkspaceRuns(
 			pid: snap.pid,
 			model: snap.model,
 			thinking: snap.thinking,
+			stats: snap.stats,
 			sessionId: snap.sessionId,
 			sessionFile: snap.sessionFile,
 			activeTool: snap.activeTool,

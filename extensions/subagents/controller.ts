@@ -45,6 +45,7 @@ import type {
 	AgentResult,
 	AgentSnapshot,
 	AgentState,
+	SessionStats,
 	SpawnOptions,
 	SubagentModelEvent,
 	ToolActivity,
@@ -99,7 +100,8 @@ interface AgentRecord {
 	runError?: string;
 	/** Process-level failure (spawn, watchdog, unexpected exit). */
 	lastError?: string;
-	tokens?: AgentResult["tokens"];
+	/** Latest live session stats (tokens, cost, context fill); replaced wholesale on every report. */
+	stats?: SessionStats;
 	exitCode?: number | null;
 	signal?: string | null;
 	pendingQuestion?: { requestId: string; request: AskInput; question: string; askedAt: number };
@@ -437,15 +439,18 @@ export class LocalSubagentRuntime {
 				return;
 			}
 			if (cmd === "get_session_stats" && ev.success === true) {
-				const data = ev.data as
-					| { tokens?: { input?: number; output?: number; total?: number }; cost?: number }
-					| undefined;
+				const data = ev.data as SessionStats | undefined;
 				if (data?.tokens) {
-					record.tokens = {
-						input: data.tokens.input ?? 0,
-						output: data.tokens.output ?? 0,
-						total: data.tokens.total ?? 0,
-						cost: data.cost,
+					record.stats = {
+						tokens: {
+							input: data.tokens.input ?? 0,
+							output: data.tokens.output ?? 0,
+							total: data.tokens.total ?? 0,
+							...(typeof data.tokens.cacheRead === "number" ? { cacheRead: data.tokens.cacheRead } : {}),
+							...(typeof data.tokens.cacheWrite === "number" ? { cacheWrite: data.tokens.cacheWrite } : {}),
+						},
+						...(typeof data.cost === "number" ? { cost: data.cost } : {}),
+						...(data.contextUsage ? { contextUsage: data.contextUsage } : {}),
 					};
 				}
 				return;
@@ -465,6 +470,10 @@ export class LocalSubagentRuntime {
 					// provider error from an earlier retry attempt.
 					record.runError = undefined;
 				}
+				// Live stats refresh: every completed assistant message moves the
+				// cumulative token/cost/context numbers. Fire-and-forget — the
+				// response handler is command-keyed and replaces record.stats.
+				connGetStats(record);
 			}
 			return;
 		}
@@ -649,7 +658,7 @@ export class LocalSubagentRuntime {
 			model: record.model,
 			startedAt: record.startedAt,
 			endedAt: record.endedAt,
-			tokens: record.tokens,
+			tokens: statsToResultTokens(record.stats),
 			exitCode: record.exitCode,
 			signal: record.signal,
 		};
@@ -812,7 +821,7 @@ export class LocalSubagentRuntime {
 			model: record.model,
 			startedAt: record.startedAt,
 			endedAt: record.endedAt,
-			tokens: record.tokens,
+			tokens: statsToResultTokens(record.stats),
 			exitCode: record.exitCode,
 			signal: record.signal,
 		};
@@ -981,6 +990,9 @@ export class LocalSubagentRuntime {
 		if (record.recentActivity.length > RECENT_ACTIVITY_MAX) {
 			record.recentActivity.splice(0, record.recentActivity.length - RECENT_ACTIVITY_MAX);
 		}
+		// Tool-reported nested LLM usage does not produce an assistant
+		// message_end; refresh the live stats here as well (fire-and-forget).
+		connGetStats(record);
 	}
 
 	private pushEvent(record: AgentRecord, ev: SubagentModelEvent, opts?: { background?: boolean }): void {
@@ -1043,6 +1055,7 @@ export class LocalSubagentRuntime {
 			sessionId: record.sessionId,
 			pendingQuestion: record.pendingQuestion?.question,
 			lastError: record.lastError ?? record.runError,
+			stats: record.stats,
 			exitCode: record.exitCode,
 			signal: record.signal,
 			activeTool: newestActiveTool(record),
@@ -1067,6 +1080,12 @@ function connGetStats(record: AgentRecord): void {
 
 function connGetLastText(record: AgentRecord): void {
 	record.conn.send({ id: "ctl-last-text", type: "get_last_assistant_text" });
+}
+
+/** Project live stats onto the persisted result's token shape (cost rides along). */
+function statsToResultTokens(stats?: SessionStats): AgentResult["tokens"] {
+	if (!stats) return undefined;
+	return { input: stats.tokens.input, output: stats.tokens.output, total: stats.tokens.total, cost: stats.cost };
 }
 
 function eventToOutcome(ev: SubagentModelEvent): WaitOutcome {

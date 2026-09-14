@@ -22,8 +22,8 @@
  * this module stays hard-capped by its producer (controller/workspace layer).
  */
 import { homedir } from "node:os";
-import type { ToolActivity } from "./types";
-import { formatDuration } from "./delivery";
+import type { SessionStats, ToolActivity } from "./types";
+import { formatDuration, formatStatsBrief } from "./delivery";
 
 /**
  * Tool-aware argument exposure policy: tool name -> the argument keys that
@@ -167,6 +167,8 @@ export interface RunStatusView {
 	pid?: number;
 	model?: string;
 	thinking?: string;
+	/** Latest live child stats (cost, context fill); omitted until the first report. */
+	stats?: SessionStats;
 	sessionId?: string;
 	sessionFile?: string;
 	activeTool?: ToolActivity;
@@ -197,6 +199,8 @@ export function formatRunStatus(v: RunStatusView): string {
 	lines.push(`workspace  ${v.workspace}`);
 	const modelParts = [v.model, v.thinking].filter(Boolean);
 	if (modelParts.length > 0) lines.push(`model      ${modelParts.join(" · ")}`);
+	const statsBrief = v.stats ? formatStatsBrief(v.stats) : "";
+	if (statsBrief) lines.push(`stats      ${statsBrief}`);
 	const session = v.sessionId ?? v.sessionFile;
 	if (session) lines.push(`session    ${session}`);
 

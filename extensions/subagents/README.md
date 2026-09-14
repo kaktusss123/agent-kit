@@ -162,7 +162,9 @@ main session's model and thinking level.
   isolated). The view shows run identity (agentId/workspace), run state
   (`running | waiting_input | settling | terminating`, plus
   `report recovery n/3` while the ladder is active), elapsed time and
-  deadline left, pid, model/thinking, the child's session id, and the
+  deadline left, pid, model/thinking, live session stats (cumulative cost
+  and context-window fill, refreshed on every assistant message end and
+  tool end via `get_session_stats`), the child's session id, and the
   child's authoritative tool activity: `tool_execution_start` opens the
   current tool (name + a conservatively bounded argument preview from a
   tool-aware policy: bash/powershell → command, read/edit/write → path,

@@ -3,7 +3,14 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { LocalSubagentRuntime } from "./controller";
-import { formatModelEvent, formatResult, formatStatusList } from "./delivery";
+import {
+	formatLiveSnapshot,
+	formatModelEvent,
+	formatResult,
+	formatStatsBrief,
+	formatStatusList,
+	formatTokenCount,
+} from "./delivery";
 import {
 	autoAcceptPrompt,
 	createFakeSpawnFactory,
@@ -778,6 +785,77 @@ describe("regressions: error separation", () => {
 	});
 });
 
+describe("live session stats", () => {
+	test("assistant message_end refreshes stats; snapshot carries cost and context fill", async () => {
+		const { harness, runtime, cleanup } = makeRuntime();
+		try {
+			const { id, proc } = await spawnRunning(runtime, harness);
+			proc.writeToStdout({
+				type: "message_end",
+				message: { role: "assistant", stopReason: "end_turn" },
+			});
+			await tick(20);
+			// The message boundary triggered a fire-and-forget stats fetch.
+			const statsCmd = proc.commands.find((c) => c.type === "get_session_stats");
+			expect(statsCmd).toBeDefined();
+			proc.writeToStdout({
+				id: statsCmd!.id,
+				type: "response",
+				command: "get_session_stats",
+				success: true,
+				data: {
+					tokens: { input: 50000, output: 10000, total: 105000, cacheRead: 40000, cacheWrite: 5000 },
+					cost: 0.4231,
+					contextUsage: { tokens: 87481, contextWindow: 200000, percent: 44 },
+				},
+			});
+			await tick(20);
+			const snap = runtime.inspect(id)[0];
+			expect(snap.stats!.tokens).toMatchObject({ input: 50000, output: 10000, total: 105000 });
+			expect(snap.stats!.cost).toBe(0.4231);
+			expect(snap.stats!.contextUsage).toMatchObject({ tokens: 87481, contextWindow: 200000, percent: 44 });
+		} finally {
+			await runtime.shutdown();
+			cleanup();
+		}
+	});
+
+	test("tool_execution_end also refreshes stats (nested tool LLM usage)", async () => {
+		const { harness, runtime, cleanup } = makeRuntime();
+		try {
+			const { id, proc } = await spawnRunning(runtime, harness);
+			proc.writeToStdout({ type: "tool_execution_start", toolCallId: "t1", toolName: "bash", args: { command: "ls" } });
+			proc.writeToStdout({ type: "tool_execution_end", toolCallId: "t1", toolName: "bash" });
+			await tick(20);
+			expect(proc.commands.some((c) => c.type === "get_session_stats")).toBe(true);
+		} finally {
+			await runtime.shutdown();
+			cleanup();
+		}
+	});
+
+	test("stats survive across runs (session-cumulative), settle still persists tokens", async () => {
+		const { harness, runtime, cleanup } = makeRuntime();
+		try {
+			const { id, proc } = await spawnRunning(runtime, harness);
+			proc.writeToStdout({
+				type: "message_end",
+				message: { role: "assistant", stopReason: "end_turn" },
+			});
+			settleRun(proc, "done");
+			await tick(60);
+			const snap = runtime.inspect(id)[0];
+			expect(snap.state).toBe("completed");
+			expect(snap.stats).toBeDefined();
+			const result = await runtime.result(id);
+			expect(result!.tokens).toMatchObject({ input: 10, output: 5, total: 15, cost: 0.01 });
+		} finally {
+			await runtime.shutdown();
+			cleanup();
+		}
+	});
+});
+
 describe("delivery formatting", () => {
 	test("model events are compact and reference lazy result access", () => {
 		const text = formatModelEvent({
@@ -881,6 +959,70 @@ describe("delivery formatting", () => {
 		]);
 		const first = lines.split("\n")[0];
 		expect(first).toContain("run");
+	});
+
+	test("live snapshot carries cost and context fill when stats are known", () => {
+		const text = formatLiveSnapshot({
+			id: "sa-1-vpr5",
+			label: "agent-1-vpr5",
+			state: "running",
+			task: "t",
+			cwd: "/x",
+			alive: true,
+			startedAt: 1,
+			lastActivityAt: 2,
+			elapsedMs: 1_190_000,
+			stats: {
+				tokens: { input: 50000, output: 10000, total: 105000 },
+				cost: 0.4231,
+				contextUsage: { tokens: 87481, contextWindow: 200000, percent: 44 },
+			},
+			model: "openai-codex/gpt-5.6-sol",
+		});
+		const head = text.split("\n")[0]!;
+		expect(head).toContain("running · 19m50s");
+		expect(head).toContain("$0.4231");
+		expect(head).toContain("ctx 87.5k/200k (44%)");
+		expect(head).toContain("openai-codex/gpt-5.6-sol");
+		// Volatile spend data sits before the static model name.
+		expect(head.indexOf("$0.4231")).toBeLessThan(head.indexOf("openai-codex"));
+	});
+
+	test("live snapshot omits the stats segment entirely when nothing is known", () => {
+		const text = formatLiveSnapshot({
+			id: "sa-2",
+			label: "w",
+			state: "running",
+			task: "t",
+			cwd: "/x",
+			alive: true,
+			startedAt: 1,
+			lastActivityAt: 2,
+			elapsedMs: 5,
+		});
+		const head = text.split("\n")[0]!;
+		expect(head).not.toContain("$");
+		expect(head).not.toContain("ctx");
+	});
+
+	test("formatStatsBrief degrades gracefully on partial context data", () => {
+		expect(formatStatsBrief({ tokens: { input: 1, output: 1, total: 2 }, cost: 0.5 })).toBe("$0.5000");
+		// Null tokens/percent (right after compaction): nothing to show.
+		expect(
+			formatStatsBrief({ tokens: { input: 1, output: 1, total: 2 }, contextUsage: { tokens: null, contextWindow: 200000, percent: null } }),
+		).toBe("");
+		expect(
+			formatStatsBrief({ tokens: { input: 1, output: 1, total: 2 }, contextUsage: { tokens: 60000, contextWindow: 200000 } }),
+		).toBe("ctx 60k/200k");
+		expect(formatStatsBrief({ tokens: { input: 1, output: 1, total: 2 }, contextUsage: { percent: 30 } })).toBe("ctx 30%");
+	});
+
+	test("formatTokenCount uses compact human units", () => {
+		expect(formatTokenCount(874)).toBe("874");
+		expect(formatTokenCount(60000)).toBe("60k");
+		expect(formatTokenCount(87481)).toBe("87.5k");
+		expect(formatTokenCount(1_000_000)).toBe("1M");
+		expect(formatTokenCount(1_250_000)).toBe("1.3M");
 	});
 });
 
