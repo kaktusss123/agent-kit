@@ -217,6 +217,28 @@ describe("formatRunStatus", () => {
 		expect(formatRunStatus(view())).not.toContain("report recovery");
 	});
 
+	test("stats line shows cost and context fill between model and session", () => {
+		const text = formatRunStatus(
+			view({
+				stats: {
+					tokens: { input: 50000, output: 10000, total: 105000 },
+					cost: 0.4231,
+					contextUsage: { tokens: 87481, contextWindow: 200000, percent: 44 },
+				},
+			}),
+		);
+		expect(text).toContain("stats      $0.4231 · ctx 87.5k/200k (44%)");
+		const modelIdx = text.indexOf("model      ");
+		const statsIdx = text.indexOf("stats      ");
+		const sessionIdx = text.indexOf("session    ");
+		expect(statsIdx).toBeGreaterThan(modelIdx);
+		expect(statsIdx).toBeLessThan(sessionIdx);
+	});
+
+	test("stats line omitted until the first stats report", () => {
+		expect(formatRunStatus(view())).not.toContain("stats");
+	});
+
 	test("sections without data are omitted — never fabricated", () => {
 		const text = formatRunStatus(
 			view({ activeTool: undefined, recentActivity: undefined, sessionId: undefined, sessionFile: undefined }),

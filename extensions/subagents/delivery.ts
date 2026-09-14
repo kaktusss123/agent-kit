@@ -5,7 +5,7 @@
  * main context. Deliveries are a few compact lines; the full result lives in
  * the persisted result file, reachable via `subagent result`.
  */
-import type { AgentResult, AgentSnapshot, SubagentModelEvent } from "./types";
+import type { AgentResult, AgentSnapshot, SessionStats, SubagentModelEvent } from "./types";
 import { formatAskRequestJson, type AskInput } from "../ask/contract";
 
 /**
@@ -121,6 +121,40 @@ export function formatStatusList(snapshots: AgentSnapshot[], runViews?: Map<stri
 	return sorted.map((s) => formatSnapshot(s, runViews?.get(s.id))).join("\n");
 }
 
+/** Compact human token count ("874", "87.5k", "1.2M") for status views. */
+export function formatTokenCount(n: number): string {
+	if (n >= 1_000_000) return dropTenthsZero(`${(n / 1_000_000).toFixed(1)}M`);
+	if (n >= 1_000) return dropTenthsZero(`${(n / 1_000).toFixed(1)}k`);
+	return `${n}`;
+}
+
+function dropTenthsZero(text: string): string {
+	return text.includes(".0") ? text.replace(".0", "") : text;
+}
+
+/**
+ * Compact cost + context usage ("$0.4231 · ctx 87.5k/200k (44%)"). Parts the
+ * runtime does not know are omitted; an empty result means nothing is known
+ * yet and callers skip the segment entirely.
+ */
+export function formatStatsBrief(stats: SessionStats): string {
+	const parts: string[] = [];
+	if (stats.cost !== undefined) parts.push(`$${stats.cost.toFixed(4)}`);
+	const ctx = stats.contextUsage;
+	if (ctx) {
+		if (typeof ctx.tokens === "number") {
+			let text = ctx.contextWindow
+				? `${formatTokenCount(ctx.tokens)}/${formatTokenCount(ctx.contextWindow)}`
+				: formatTokenCount(ctx.tokens);
+			if (typeof ctx.percent === "number") text += ` (${ctx.percent}%)`;
+			parts.push(`ctx ${text}`);
+		} else if (typeof ctx.percent === "number") {
+			parts.push(`ctx ${ctx.percent}%`);
+		}
+	}
+	return parts.join(" · ");
+}
+
 export function formatResult(result: AgentResult): string {
 	const lines = [
 		`subagent ${result.id} “${result.label}” — ${result.status}`,
@@ -155,6 +189,8 @@ function oneLine(text: string, max = 160): string {
  */
 export function formatLiveSnapshot(s: AgentSnapshot): string {
 	const head = [`subagent ${s.id} “${s.label}”`, s.state, formatDuration(s.elapsedMs)];
+	const statsBrief = s.stats ? formatStatsBrief(s.stats) : "";
+	if (statsBrief) head.push(statsBrief);
 	if (s.model) head.push(s.model);
 	if (!s.alive) head.push("(process exited)");
 	const lines = [head.join(" · ")];

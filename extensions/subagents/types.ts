@@ -44,7 +44,7 @@ export interface SpawnOptions {
 	 * the probe only reports the observed tool set, and the controller
 	 * validates it against this map. Generic children (no readiness entries)
 	 * are unaffected: they are spawned byte-identically and never probed.
-	 *//
+	 */
 	readinessEntries?: Record<string, string[]>;
 	/**
 	 * Route this child's lifecycle events to the workspace layer instead of
@@ -70,6 +70,20 @@ export interface PendingQuestion {
 	/** Compact flat rendering for status/snapshot display. */
 	question: string;
 	askedAt: number;
+}
+
+/**
+ * Latest session stats reported by the child's `get_session_stats` RPC:
+ * cumulative token usage, cost, and the current context-window estimate the
+ * child itself uses for compaction and footer display. Refreshed live during
+ * runs (assistant `message_end` / `tool_execution_end`), so status views can
+ * show real spend and context fill while the child still works.
+ */
+export interface SessionStats {
+	tokens: { input: number; output: number; total: number; cacheRead?: number; cacheWrite?: number };
+	cost?: number;
+	/** Context-window estimate; `tokens`/`percent` are null right after compaction. */
+	contextUsage?: { tokens?: number | null; contextWindow?: number; percent?: number | null };
 }
 
 /**
@@ -106,6 +120,8 @@ export interface AgentSnapshot {
 	lastError?: string;
 	exitCode?: number | null;
 	signal?: string | null;
+	/** Latest live session stats (tokens, cost, context fill); absent until the first report. */
+	stats?: SessionStats;
 	/** Tool currently executing in the child (newest start while several run in parallel). */
 	activeTool?: ToolActivity;
 	/** Most recently finished tools, oldest first, hard-capped (status telemetry, not a log). */
