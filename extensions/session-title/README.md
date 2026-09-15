@@ -3,8 +3,9 @@
 Names a session from its first user message so the terminal tab shows the
 task, not just the project folder. On the first prompt of a TUI session it
 asks a cheap model for a concise title and applies it via
-`pi.setSessionName()`; pi already renders the session name in the OSC 0
-terminal title (`π - <name> - <cwd>`).
+`pi.setSessionName()`. In TUI mode the extension owns the OSC 0 terminal
+title: it paints the bare session name and overrides pi's composed
+`π - <name> - <cwd>` format; clearing the name restores pi's default.
 
 ## Model selection
 

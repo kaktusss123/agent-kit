@@ -2,9 +2,10 @@
  * session-title — name the session from its first user message.
  *
  * On the first prompt of a TUI session, asks a cheap model for a concise task
- * title and sets it via pi.setSessionName(). pi already renders the session
- * name in the terminal title ("π - <name> - <cwd>"), so Warp/iTerm tabs show
- * what the session is about instead of the bare project folder name.
+ * title and sets it via pi.setSessionName(). In TUI mode the extension also
+ * owns the terminal title: it paints the bare session name (no "π - <name> -
+ * <cwd>" composition), so Warp/iTerm tabs show exactly what the session is
+ * about. Clearing the name restores pi's default composed title.
  *
  * Best-effort by contract: failures (no auth, model errors, timeouts) are
  * silent, the run is never delayed — generation happens off the turn path —
@@ -28,9 +29,23 @@ const TITLE_MAX_TOKENS = 300;
 export default function sessionTitleExtension(pi: ExtensionAPI): void {
 	let attempted = false;
 
-	pi.on("session_start", () => {
+	pi.on("session_start", (_event, ctx) => {
 		// /new, /resume, /fork rebind the session — the next first prompt names it.
 		attempted = false;
+		// After /resume or /fork of a named session, pi init has already painted
+		// its composed title and no session_info_changed fires — override now.
+		const name = pi.getSessionName();
+		if (ctx.mode === "tui" && name) ctx.ui.setTitle(name);
+	});
+
+	pi.on("session_info_changed", (_event, ctx) => {
+		const name = pi.getSessionName();
+		if (ctx.mode !== "tui" || !name) return; // Cleared: leave pi's default title.
+		ctx.ui.setTitle(name);
+		// pi's own handler recomposes the three-part title from this same event
+		// and relative handler order is not guaranteed — re-assert once on a
+		// macrotask so the bare name deterministically wins.
+		setTimeout(() => ctx.ui.setTitle(name), 0);
 	});
 
 	pi.on("before_agent_start", (event, ctx) => {
