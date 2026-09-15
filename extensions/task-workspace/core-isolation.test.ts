@@ -45,8 +45,13 @@ describe("task-workspace core host independence", () => {
     const hostPlumbing =
       /\bExtensionAPI\b|\bExtensionContext\b|registerTool|\btypebox\b|\bpi\.on\b|\bctx\.cwd\b/;
     const taskRootPolicy = /AGENT_TASK_ROOT|process\.env/;
+    // index.ts (extension wiring) and render.ts (TUI card rendering) are
+    // host-facing by design: importing the pi SDK is their job, like every
+    // other extension's render.ts. The host-free invariant covers the core
+    // modules only.
+    const hostFacing = new Set(["index.ts", "render.ts"]);
     for (const file of readdirSync(CORE_DIR).filter(
-      (f) => f.endsWith(".ts") && !f.endsWith(".test.ts") && f !== "index.ts",
+      (f) => f.endsWith(".ts") && !f.endsWith(".test.ts") && !hostFacing.has(f),
     )) {
       const src = readFileSync(join(CORE_DIR, file), "utf8");
       expect(

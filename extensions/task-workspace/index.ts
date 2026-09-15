@@ -51,6 +51,19 @@ import {
   taskStatus,
 } from "./flows";
 import { guardManagedWriteTarget } from "./guard";
+import {
+  renderCheckpointCommitCall,
+  renderCheckpointCommitResult,
+  renderEnsureTaskRepoCall,
+  renderEnsureTaskRepoResult,
+  renderRemoveTaskLaneCall,
+  renderRemoveTaskLaneResult,
+  renderTaskStatusCall,
+  renderTaskStatusResult,
+  type RenderOptions,
+  type TaskStatusResultLike,
+  type ToolResultLike,
+} from "./render";
 import { resolveGitOnPath } from "./shim-path";
 export { resolveGitOnPath } from "./shim-path";
 
@@ -192,6 +205,9 @@ export default function (pi: ExtensionAPI): void {
         return respond(errorResult(e));
       }
     },
+    renderCall: (args, theme) => renderTaskStatusCall(args as { path?: string }, theme),
+    renderResult: (result, options, theme) =>
+      renderTaskStatusResult(result as TaskStatusResultLike, options as RenderOptions, theme),
   });
 
   // ─── ensure_task_repo ────────────────────────────────────────────────
@@ -235,6 +251,9 @@ export default function (pi: ExtensionAPI): void {
         return respond(errorResult(e));
       }
     },
+    renderCall: (args, theme) => renderEnsureTaskRepoCall(args as { branch?: string; slot?: string }, theme),
+    renderResult: (result, options, theme) =>
+      renderEnsureTaskRepoResult(result as ToolResultLike, options as RenderOptions, theme),
   });
 
   // ─── remove_task_lane ────────────────────────────────────────────────
@@ -259,6 +278,9 @@ export default function (pi: ExtensionAPI): void {
         return respond(errorResult(e));
       }
     },
+    renderCall: (args, theme) => renderRemoveTaskLaneCall(args as { task?: string; path?: string }, theme),
+    renderResult: (result, options, theme) =>
+      renderRemoveTaskLaneResult(result as ToolResultLike, options as RenderOptions, theme),
   });
 
   // ─── checkpoint_commit ───────────────────────────────────────────────
@@ -319,6 +341,9 @@ export default function (pi: ExtensionAPI): void {
         return respond(errorResult(e));
       }
     },
+    renderCall: (args, theme) => renderCheckpointCommitCall(args as { repo?: string; message?: string }, theme),
+    renderResult: (result, options, theme) =>
+      renderCheckpointCommitResult(result as ToolResultLike, options as RenderOptions, theme),
   });
 
   // ─── Mutation guard (tool_call interceptor) ──────────────────────────

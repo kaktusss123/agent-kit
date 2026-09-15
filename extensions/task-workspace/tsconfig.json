@@ -16,6 +16,7 @@
     "git.ts",
     "guard.ts",
     "index.ts",
+    "render.ts",
     "shim-path.ts",
     "task-root.ts",
     "types.ts",
