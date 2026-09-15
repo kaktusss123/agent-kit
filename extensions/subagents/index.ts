@@ -140,6 +140,30 @@ export default function (pi: ExtensionAPI) {
 		return runs;
 	}
 
+	// Proxy propagation: proxy-toggle emits "proxy-changed" after the user
+	// flips the machine preference; every live child gets the bridge's `proxy`
+	// command over the existing RPC link and reports the ack count back so
+	// /proxy status can show it. Children spawned later pick the preference up
+	// at their own session_start (bridge applies proxy-state.json).
+	pi.events?.on?.("proxy-changed", (data) => {
+		const enabled = (data as { enabled?: boolean } | null)?.enabled === true;
+		const rt = runtime;
+		if (!rt) {
+			pi.events.emit("proxy-push-result", { enabled, acked: 0, total: 0 });
+			return;
+		}
+		rt.pushProxyPreference(enabled)
+			.then(({ acked, total }) => pi.events.emit("proxy-push-result", { enabled, acked, total }))
+			.catch((err) =>
+				pi.events.emit("proxy-push-result", {
+					enabled,
+					acked: 0,
+					total: 0,
+					error: err instanceof Error ? err.message : String(err),
+				}),
+			);
+	});
+
 	pi.on("session_shutdown", async () => {
 		// Main session is gone: owned children must not become orphans.
 		if (runtime) {

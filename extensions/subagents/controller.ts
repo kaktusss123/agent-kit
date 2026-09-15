@@ -684,6 +684,39 @@ export class LocalSubagentRuntime {
 	}
 
 	/**
+	 * Push the machine proxy preference to every live child by invoking the
+	 * bridge's `proxy` command over the existing RPC prompt path. Fire per
+	 * child with the normal dispatch timeout; a slow or dead child simply does
+	 * not ack (children self-heal to the persisted preference on their next
+	 * model request). Returns how many live children acknowledged.
+	 */
+	async pushProxyPreference(enabled: boolean): Promise<{ acked: number; total: number }> {
+		const message = enabled ? "/proxy on" : "/proxy off";
+		let acked = 0;
+		let total = 0;
+		for (const record of this.records.values()) {
+			if (record.conn.exit) continue;
+			total++;
+			const id = `proxy-${++LocalSubagentRuntime.idCounter}`;
+			try {
+				const resp = await new Promise<Record<string, unknown>>((resolve, reject) => {
+					const timer = setTimeout(() => {
+						record.dispatchWaiters.delete(id);
+						reject(new Error("proxy push not acknowledged in time"));
+					}, this.dispatchTimeoutMs);
+					timer.unref?.();
+					record.dispatchWaiters.set(id, resolve);
+					this.conn(record).send({ id, type: "prompt", message });
+				});
+				if (resp.success === true) acked++;
+			} catch {
+				// Unacked child keeps running; it converges on its next request.
+			}
+		}
+		return { acked, total };
+	}
+
+	/**
 	 * Deliver new input via `prompt` + `streamingBehavior`: pi atomically
 	 * picks queueing vs a fresh run from the session's real state — no stale
 	 * local copy.
