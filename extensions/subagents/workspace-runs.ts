@@ -498,16 +498,22 @@ export function createWorkspaceRuns(
 
 	function notifyCompleted(run: WorkspaceAgentRun): void {
 		const o = run.terminal!;
+		// The outer status is the DELIVERY outcome ("done" = the child settled
+		// and reported); the product status lives only in envelope.status. When
+		// they diverge, the status line must say so or the compact event would
+		// advertise a partial/blocked product as a plain "done".
+		const reportStatus = o.result && o.result.status !== o.status ? ` (report: ${o.result.status})` : "";
+		const statusLabel = `${o.status}${reportStatus}`;
 		const lines = [
 			`[subagent completed] ${run.agentId} — workspace run`,
 			`workspace: ${run.workspace}`,
 		];
 		if (o.gitFacts) {
 			lines.push(
-				`${o.status} · ${o.gitFacts.branch || "(detached)"} @ ${o.gitFacts.headSha.slice(0, 7)} · ${formatDirty(o.gitFacts.dirty)}`,
+				`${statusLabel} · ${o.gitFacts.branch || "(detached)"} @ ${o.gitFacts.headSha.slice(0, 7)} · ${formatDirty(o.gitFacts.dirty)}`,
 			);
 		} else {
-			lines.push(o.status);
+			lines.push(statusLabel);
 		}
 		// Compact delivery (see delivery.ts): the summary IS the report; the
 		// full envelope stays persisted, reachable via op=result below.

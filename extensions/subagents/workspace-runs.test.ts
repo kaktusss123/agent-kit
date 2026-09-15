@@ -518,6 +518,10 @@ describe("settled-state verification (A3)", () => {
 			expect(res.details).toMatchObject({ status: "done", child_may_have_mutated_repo: false });
 			expect((res.details.result as Envelope).status).toBe("partial");
 			expect(res.details.git_facts).toBeDefined();
+			// Delivery status is done, but the compact event must surface the
+			// partial product instead of advertising a plain "done".
+			const note = h.messages.find((m) => String(m.message.content).includes("[subagent completed]"));
+			expect(String(note?.message.content)).toContain("done (report: partial) · feat/a3-partial-ws @");
 		} finally {
 			await h.runtime.shutdown();
 			h.cleanup();
@@ -535,6 +539,9 @@ describe("settled-state verification (A3)", () => {
 			expect(res.details).toMatchObject({ status: "done" });
 			expect((res.details.result as Envelope).status).toBe("blocked");
 			expect(res.details.git_facts).toBeDefined();
+			// Same masking for a blocked product delivered over a done settle.
+			const note = h.messages.find((m) => String(m.message.content).includes("[subagent completed]"));
+			expect(String(note?.message.content)).toContain("done (report: blocked) · feat/a3-blockedenv-ws @");
 		} finally {
 			await h.runtime.shutdown();
 			h.cleanup();

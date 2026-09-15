@@ -28,6 +28,8 @@ const TITLE_MAX_TOKENS = 300;
 
 export default function sessionTitleExtension(pi: ExtensionAPI): void {
 	let attempted = false;
+	// Single pending re-assert handle: a newer event supersedes the old timer.
+	let titleTimer: NodeJS.Timeout | undefined;
 
 	pi.on("session_start", (_event, ctx) => {
 		// /new, /resume, /fork rebind the session — the next first prompt names it.
@@ -39,13 +41,21 @@ export default function sessionTitleExtension(pi: ExtensionAPI): void {
 	});
 
 	pi.on("session_info_changed", (_event, ctx) => {
+		// A newer event supersedes any pending re-assert: drop it, reschedule.
+		if (titleTimer) clearTimeout(titleTimer);
 		const name = pi.getSessionName();
 		if (ctx.mode !== "tui" || !name) return; // Cleared: leave pi's default title.
 		ctx.ui.setTitle(name);
 		// pi's own handler recomposes the three-part title from this same event
 		// and relative handler order is not guaranteed — re-assert once on a
-		// macrotask so the bare name deterministically wins.
-		setTimeout(() => ctx.ui.setTitle(name), 0);
+		// macrotask so the bare name deterministically wins. The name is re-read
+		// at fire time: clearing or renaming while the macrotask is pending must
+		// not repaint the stale captured value.
+		titleTimer = setTimeout(() => {
+			titleTimer = undefined;
+			const fresh = pi.getSessionName();
+			if (fresh) ctx.ui.setTitle(fresh);
+		}, 0);
 	});
 
 	pi.on("before_agent_start", (event, ctx) => {
