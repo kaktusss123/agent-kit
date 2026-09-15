@@ -101,6 +101,13 @@ mandatory: например, перед работой с task workspace — п�
 - **subagents** — единый subagent runtime; workspace-режим того же `subagent`
   (RepoOwner-протокол: readiness handshake, deadline, terminal envelope,
   settled-state verification).
+- **proxy-toggle** — машинная proxy-preference для окружения Pi
+  (`/proxy on|off|status`). По умолчанию выключен: свежая машина без
+  `proxy-state.json` работает напрямую, включать нужно только на
+  корпоративной машине за ai-proxy. Состояние — `~/.pi/agent/proxy-state.json`;
+  применяется в каждом Pi-процессе (Main и subagent-дети), bash-дети остаются
+  прямыми, NO_PROXY-хосты не проксируются. Для TLS через MITM-прокси нужен
+  `corp-ca.pem` в agent dir.
 - **ask** — структурные вопросы модели к пользователю/владельцу сессии.
 - **todo**, **continue-shortcut**, **agent-events**, **web-search**,
   **perf-stats**, **footer** — task list, shortcut, events/статусы, поиск,
