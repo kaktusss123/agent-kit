@@ -157,11 +157,17 @@ function dirtyText(dirty: DirtyState): string {
 
 function renderOutcomeCard(outcome: WorkspaceRunOutcome, expanded: boolean, theme: Theme): Component {
 	const lines: string[] = [];
-	const style = OUTCOME_STYLES[outcome.status] ?? OUTCOME_STYLES.running!;
+	// Outer status is the DELIVERY outcome; envelope.status is the product
+	// status. On divergence the header shows both and takes the reported
+	// status's glyph/color, so a partial/blocked product never paints green.
+	const reportedStyle =
+		outcome.result && outcome.result.status !== outcome.status ? OUTCOME_STYLES[outcome.result.status] : undefined;
+	const style = reportedStyle ?? OUTCOME_STYLES[outcome.status] ?? OUTCOME_STYLES.running!;
+	const statusText = reportedStyle ? `${outcome.status} (report: ${outcome.result!.status})` : outcome.status;
 	const dot = theme.fg("dim", " · ");
 
 	const header = [
-		theme.fg(style.color, `${style.glyph} ${outcome.status}`),
+		theme.fg(style.color, `${style.glyph} ${statusText}`),
 		theme.fg("muted", `owner-${basename(forDisplay(outcome.workspace))}`),
 	];
 	if (outcome.agentId) header.push(theme.fg("dim", `(${outcome.agentId})`));

@@ -40,14 +40,22 @@ function makeEnv() {
 	const base = fs.mkdtempSync(path.join(os.tmpdir(), "subagent-tool-test-"));
 	const taskRootRaw = path.join(base, "tasks");
 	fs.mkdirSync(taskRootRaw, { recursive: true });
-	const previous = process.env.AGENT_TASK_ROOT;
+	const previousTaskRoot = process.env.AGENT_TASK_ROOT;
 	process.env.AGENT_TASK_ROOT = fs.realpathSync(taskRootRaw);
+	// These tests drive the MAIN session's tool surface. The ownership gate
+	// keys off the ambient PI_SUBAGENT_ID, and this suite can itself run
+	// inside a pi workspace subagent (where that variable is set) — pin it
+	// away so the main-session gates are the ones under test. The nested
+	// spawn tests below set their own worker id and do not use makeEnv.
+	const previousWorkerId = process.env.PI_SUBAGENT_ID;
+	delete process.env.PI_SUBAGENT_ID;
 	return {
 		base,
 		taskRoot: fs.realpathSync(taskRootRaw),
 		restore() {
-			if (previous === undefined) delete process.env.AGENT_TASK_ROOT;
-			else process.env.AGENT_TASK_ROOT = previous;
+			if (previousTaskRoot === undefined) delete process.env.AGENT_TASK_ROOT;
+			else process.env.AGENT_TASK_ROOT = previousTaskRoot;
+			if (previousWorkerId !== undefined) process.env.PI_SUBAGENT_ID = previousWorkerId;
 			fs.rmSync(base, { recursive: true, force: true });
 		},
 	};

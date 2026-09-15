@@ -28,6 +28,26 @@ import { createWorkspaceRuns, type WorkspaceRuns } from "./workspace-runs";
 
 const tick = (ms = 20) => new Promise((r) => setTimeout(r, ms));
 
+/**
+ * Await the ACTUAL delivery of a matching pi message (the production event)
+ * instead of sampling the mailbox once after a fixed sleep: the settle chain
+ * (retire + real-git settled-state reads in readGitState) takes a
+ * machine-dependent ~200ms+, so a fixed tick() is a race.
+ */
+async function waitForMessage(
+	messages: Harness["messages"],
+	predicate: (m: Harness["messages"][number]) => boolean,
+	deadlineMs = 5000,
+): Promise<Harness["messages"][number] | undefined> {
+	const step = 10;
+	for (let waited = 0; ; waited += step) {
+		const found = messages.find(predicate);
+		if (found) return found;
+		if (waited >= deadlineMs) return undefined;
+		await tick(step);
+	}
+}
+
 // ------------------------------------------------- part A: controller level
 
 interface RtHarness {
@@ -467,7 +487,7 @@ describe("workspace run live updates", () => {
 			expect(h.updates.some((u) => u.text.includes("▸ bash · bun test extensions/subagents"))).toBe(true);
 			proc.writeToStdout({ type: "tool_execution_end", toolCallId: "t1", toolName: "bash" });
 			await tick(60);
-			expect(h.updates.some((u) => / {2}\d+s · bash · bun test extensions\/subagents/.test(u.text))).toBe(true);
+			expect(h.updates.some((u) => / {2}bash · bun test extensions\/subagents · \d+s/.test(u.text))).toBe(true);
 
 			writeEnvelope(h, h.agentId());
 			settleRun(proc, "finished");
@@ -543,8 +563,9 @@ describe("workspace run live updates", () => {
 			await h.runtime.respond(h.agentId(), "yes");
 			writeEnvelope(h, h.agentId());
 			settleRun(h.lastProc(), "finished after answer");
-			await tick(120);
-			const done = h.messages.find((m) => String(m.message.content ?? "").includes("[subagent completed]"));
+			const done = await waitForMessage(h.messages, (m) =>
+				String(m.message.content ?? "").includes("[subagent completed]"),
+			);
 			expect(done).toBeDefined();
 		} finally {
 			await h.runtime.shutdown();
@@ -570,8 +591,9 @@ describe("workspace run live updates", () => {
 			const agentId = h.agentId();
 			writeEnvelope(h, agentId);
 			settleRun(h.lastProc(), "finished while detached");
-			await tick(120);
-			const done = h.messages.find((m) => String(m.message.content ?? "").includes("[subagent completed]"));
+			const done = await waitForMessage(h.messages, (m) =>
+				String(m.message.content ?? "").includes("[subagent completed]"),
+			);
 			expect(done).toBeDefined();
 		} finally {
 			await h.runtime.shutdown();

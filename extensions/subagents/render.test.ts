@@ -178,6 +178,30 @@ describe("renderSubagentResult — workspace outcome card", () => {
 		expect(text).not.toContain("gaps:");
 	});
 
+	test("partial report over a done settle shows the report segment in the reported status color", () => {
+		const text = lines(
+			renderSubagentResult(
+				{ details: outcome({ status: "done", result: envelope({ status: "partial" }) }) },
+				{ expanded: false, isPartial: false },
+				theme,
+			),
+		);
+		// Fake-theme markers expose the color decision: reported partial wins.
+		expect(text).toContain("[warning]◐ done (report: partial)[/warning]");
+		expect(text).not.toContain("[success]✓ done[/success]");
+	});
+
+	test("blocked report over a done settle shows the report segment in the error color", () => {
+		const text = lines(
+			renderSubagentResult(
+				{ details: outcome({ status: "done", result: envelope({ status: "blocked" }) }) },
+				{ expanded: false, isPartial: false },
+				theme,
+			),
+		);
+		expect(text).toContain("[error]✗ done (report: blocked)[/error]");
+	});
+
 	test("collapsed summary is capped", () => {
 		const long = outcome({ result: envelope({ summary: "y".repeat(400) }) });
 		const summaryLine = renderLines(renderSubagentResult({ details: long }, { expanded: false, isPartial: false }, theme))

@@ -13,6 +13,7 @@ import { spawnSync } from "node:child_process";
 import { chmodSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
+import { resolveGitOnPath } from "../shim-path";
 import { createGuardFixture, type GuardFixture } from "./fixture";
 
 const SHIM_PATH = join(import.meta.dir, "git");
@@ -23,7 +24,9 @@ let fx: GuardFixture;
 beforeAll(async () => {
   chmodSync(SHIM_PATH, 0o755);
   fx = await createGuardFixture("agent-kit-matrix-");
-});
+  // Fixture setup spawns dozens of guarded git invocations (measured
+  // ~3.5s warm); the 5s default leaves no headroom on a loaded machine.
+}, 30_000);
 
 afterAll(async () => {
   if (fx) await fx.destroy();
@@ -110,8 +113,11 @@ fi
 let segments: Record<string, string> = {};
 
 beforeAll(() => {
-  const realGit = spawnSync("sh", ["-c", "command -v git"], { encoding: "utf8" })
-    .stdout.trim();
+  // Shim-aware real-git resolution, exactly how the extension arms the
+  // guard: `command -v git` under a guarded session resolves to a shim
+  // copy, and ALLOW segments would exec the shim forever.
+  const realGit = resolveGitOnPath(process.env.PATH ?? "");
+  if (!realGit) throw new Error("real git not found on PATH");
   const env: Record<string, string> = {};
   for (const [k, v] of Object.entries(process.env)) {
     if (v !== undefined && !k.startsWith("AGENT_KIT_") && k !== "AGENT_TASK_ROOT") {
@@ -138,7 +144,9 @@ beforeAll(() => {
   if (Object.keys(segments).length === 0) {
     throw new Error(`matrix script produced no segments; output:\n${out}`);
   }
-});
+  // The script runs ~20 guarded git invocations through shim + policy
+  // (measured multiple seconds); the 5s default leaves no headroom.
+}, 30_000);
 
 const seg = (name: string): string => {
   const s = segments[name];

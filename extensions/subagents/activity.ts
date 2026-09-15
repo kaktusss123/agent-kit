@@ -190,7 +190,7 @@ export interface RunStatusView {
  *   RepoOwner <id> · <state> · <elapsed> · deadline <d>[ · report recovery n/m]
  *   [<workspace basename> · <model> · <thinking> · <stats>]   — when known
  *   [▸ <tool>[ · <summary>][ · <age>]]                        — active tool
- *   [  <age> · <tool>[ · <summary>]]× ≤3                      — recent tools
+ *   [  <tool>[ · <summary>] · <age>]× ≤3                      — finished tools, newest first
  *
  * The duplicated agent id, pid/session rows, full workspace path, blank
  * separators and "current"/"recent" headers of the old card are gone: the
@@ -220,9 +220,14 @@ export function formatRunStatus(v: RunStatusView): string {
 		lines.push(`▸ ${parts.join(" · ")}`);
 	}
 
-	for (const entry of (v.recentActivity ?? []).slice(0, RECENT_MAX)) {
-		const parts = [formatDuration(Math.max(0, v.now - entry.startedAt)), entry.name];
+	// Top-down timeline: the producer appends finishes chronologically and trims
+	// from the front, so the tail holds the newest entries — take it, then read
+	// newest-first, directly under the active tool. Age counts from the finish
+	// (`endedAt`), falling back to `startedAt` when no end was recorded.
+	for (const entry of (v.recentActivity ?? []).slice(-RECENT_MAX).reverse()) {
+		const parts = [entry.name];
 		if (entry.summary) parts.push(truncate(entry.summary, RECENT_SUMMARY_MAX));
+		parts.push(formatDuration(Math.max(0, v.now - (entry.endedAt ?? entry.startedAt))));
 		lines.push(`  ${parts.join(" · ")}`);
 	}
 

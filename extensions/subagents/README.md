@@ -162,7 +162,10 @@ main session's model and thinking level.
 - **Terminal lifecycle**: terminal outcomes `retire()` the child — kill the
   settled process while preserving the terminal record (never `cancelled`).
   Completion is announced through the shared `[subagent completed]` event
-  channel with workspace fields; the terminal outcome stays queryable via
+  channel with workspace fields — a few compact lines (status folded with
+  the runtime-read branch/HEAD/dirty facts, the report summary, and
+  check/scope metrics), never the raw envelope JSON; the terminal outcome
+  stays queryable via
   `subagent op=result id=<agentId>` for the rest of the session. Runs are
   identified by their agentId; there is no separate run-id namespace.
 - **Model pinning**: the child runs with the main session's resolved model

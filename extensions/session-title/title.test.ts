@@ -2,6 +2,7 @@ import { afterEach, describe, expect, test } from "bun:test";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import {
 	buildTitlePrompt,
 	modelClassesFile,
@@ -60,6 +61,108 @@ describe("sanitizeTitle", () => {
 		expect(sanitizeTitle("")).toBeUndefined();
 		expect(sanitizeTitle("   \n  ")).toBeUndefined();
 		expect(sanitizeTitle('"""')).toBeUndefined();
+	});
+});
+
+/** Minimal capture harness: registered handlers plus a fake TUI context. */
+describe("terminal title wiring", () => {
+	interface Harness {
+		titles: string[];
+		setName(value: string | undefined): void;
+		fire(event: string, payload: unknown, mode?: "tui" | "rpc"): void;
+	}
+
+	function load(sessionName: string | undefined): Harness {
+		const titles: string[] = [];
+		let name = sessionName;
+		const handlers = new Map<string, Array<(event: unknown, ctx: ExtensionContext) => unknown>>();
+		const pi = {
+			on: (event: string, cb: (event: unknown, ctx: ExtensionContext) => unknown) => {
+				const list = handlers.get(event) ?? [];
+				list.push(cb as never);
+				handlers.set(event, list);
+			},
+			getSessionName: () => name,
+		} as unknown as ExtensionAPI;
+		// eslint-disable-next-line @typescript-eslint/no-require-imports
+		(require("./index.ts").default as (pi: ExtensionAPI) => void)(pi);
+		const ctx = {
+			mode: "tui",
+			ui: { setTitle: (title: string) => titles.push(title) },
+		} as unknown as ExtensionContext;
+		return {
+			titles,
+			setName(value: string | undefined) {
+				name = value;
+			},
+			fire(event, payload, mode = "tui") {
+				handlers.get(event)?.[0]?.(payload, { ...ctx, mode });
+			},
+		};
+	}
+
+	const macro = () => new Promise((resolve) => setTimeout(resolve, 0));
+	const renamed = { type: "session_info_changed", name: "Fix flaky login" };
+
+	test("session_info_changed sets the bare title, then re-asserts on a macrotask", async () => {
+		const ext = load("Fix flaky login");
+		ext.fire("session_info_changed", renamed);
+		expect(ext.titles).toEqual(["Fix flaky login"]);
+		await macro(); // pi's own handler may repaint the composed title in between.
+		expect(ext.titles).toEqual(["Fix flaky login", "Fix flaky login"]);
+	});
+
+	test("cleared session name leaves pi's default title alone", async () => {
+		const ext = load(undefined);
+		ext.fire("session_info_changed", { type: "session_info_changed", name: undefined });
+		await macro();
+		expect(ext.titles).toEqual([]);
+	});
+
+	test("clearing the name before the macrotask does not repaint the stale title", async () => {
+		const ext = load("Fix flaky login");
+		ext.fire("session_info_changed", renamed);
+		expect(ext.titles).toEqual(["Fix flaky login"]);
+		ext.setName(undefined); // User cleared while the re-assert was pending.
+		await macro();
+		expect(ext.titles).toEqual(["Fix flaky login"]); // pi's default title stays.
+	});
+
+	test("renaming before the macrotask repaints the fresh name", async () => {
+		const ext = load("Fix flaky login");
+		ext.fire("session_info_changed", renamed);
+		ext.setName("Renamed mid-flight");
+		await macro();
+		expect(ext.titles).toEqual(["Fix flaky login", "Renamed mid-flight"]);
+	});
+
+	test("a newer event supersedes the pending re-assert instead of stacking paints", async () => {
+		const ext = load("Fix flaky login");
+		ext.fire("session_info_changed", renamed);
+		ext.fire("session_info_changed", renamed);
+		await macro();
+		// Two immediate paints plus exactly ONE surviving re-assert (not two).
+		expect(ext.titles).toEqual(["Fix flaky login", "Fix flaky login", "Fix flaky login"]);
+	});
+
+	test("session_start of a named session overrides pi's composed title immediately", () => {
+		const ext = load("Fix flaky login");
+		ext.fire("session_start", { type: "session_start", reason: "resume" });
+		expect(ext.titles).toEqual(["Fix flaky login"]);
+	});
+
+	test("session_start without a name does not touch the title", () => {
+		const ext = load(undefined);
+		ext.fire("session_start", { type: "session_start", reason: "new" });
+		expect(ext.titles).toEqual([]);
+	});
+
+	test("non-tui modes never set the title", async () => {
+		const ext = load("Fix flaky login");
+		ext.fire("session_start", { type: "session_start", reason: "resume" }, "rpc");
+		ext.fire("session_info_changed", renamed, "rpc");
+		await macro();
+		expect(ext.titles).toEqual([]);
 	});
 });
 
