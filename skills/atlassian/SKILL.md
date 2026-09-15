@@ -29,8 +29,9 @@ with a 400 JQL parse error. Direction defaults to DESC:
 
     jira issue list --jql 'assignee = currentUser() AND sprint in openSprints() AND statusCategory != Done' --order-by priority --raw
 
-Use dedicated sprint commands when they are simpler than JQL; sprint commands
-need an explicit board (`--board <name>` or `-B`).
+Use dedicated sprint commands when they are simpler than JQL. They use the
+default board (Data Platform team board, id 1669); pass `-B <board-name-or-id>`
+for a different board.
 
 If syntax is uncertain, inspect `jira --help` or the relevant subcommand help.
 
