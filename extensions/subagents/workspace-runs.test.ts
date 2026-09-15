@@ -160,14 +160,24 @@ async function driveToRunning(h: Harness, params: Record<string, unknown>, signa
 function writeEnvelope(
 	h: Harness,
 	agentId: string,
-	opts?: { stale?: boolean; status?: Envelope["status"]; generation?: number },
+	opts?: {
+		stale?: boolean;
+		status?: Envelope["status"];
+		generation?: number;
+		summary?: string;
+		changed_scope?: string[];
+		verification?: Envelope["verification"];
+		gaps?: string[];
+		contractConflicts?: string[];
+	},
 ): void {
 	const envelope: Envelope = {
 		status: opts?.status ?? "done",
-		summary: "all good",
-		changed_scope: ["f.md"],
-		verification: [{ check: "bun test", result: "pass" }],
-		gaps: [],
+		summary: opts?.summary ?? "all good",
+		changed_scope: opts?.changed_scope ?? ["f.md"],
+		verification: opts?.verification ?? [{ check: "bun test", result: "pass" }],
+		gaps: opts?.gaps ?? [],
+		...(opts?.contractConflicts ? { contract_conflicts: opts.contractConflicts } : {}),
 	};
 	const record = {
 		agentId,
@@ -254,10 +264,18 @@ describe("happy path", () => {
 				child_may_have_mutated_repo: false,
 			});
 			expect((res.details.result as Envelope).summary).toBe("all good");
-			// terminal notification was sent once, with the full envelope
+			// terminal notification was sent once, in the compact event shape
 			expect(h.messages).toHaveLength(1);
-			expect(String(h.messages[0]!.message.content)).toContain("[subagent completed]");
-			expect(String(h.messages[0]!.message.content)).toContain("\"summary\":\"all good\"");
+			const note = String(h.messages[0]!.message.content);
+			expect(note).toContain("[subagent completed]");
+			expect(note).toContain("summary: all good");
+			expect(note).toContain("✓ 1/1 checks · scope: f.md");
+			expect(note).toContain(`details via subagent op=result id=${agentId}`);
+			// no raw envelope JSON, no duplicate identity/status/git lines
+			expect(note).not.toContain("\"summary\"");
+			expect(note).not.toContain("agentId: ");
+			expect(note).not.toContain("status: done");
+			expect(note).not.toContain("git: ");
 			// child retired: process dead, record keeps completed
 			await tick(30);
 			expect(proc.closed).toBe(true);
@@ -267,6 +285,105 @@ describe("happy path", () => {
 			const view = h.runs.runView(agentId)!;
 			expect(view.terminal).toMatchObject({ status: "done" });
 			expect((view.terminal!.result as Envelope).verification[0]).toMatchObject({ result: "pass" });
+		} finally {
+			await h.runtime.shutdown();
+			h.cleanup();
+		}
+	});
+});
+
+describe("completion event shape", () => {
+	test("envelope JSON never appears in the event; summary + metrics + pointer do", async () => {
+		const h = makeLayer();
+		try {
+			const ws = makeWorktree(h.taskRoot, "compact-ws");
+			const { pending, proc } = await driveToRunning(h, { workspace: ws, task: "work it" });
+			const agentId = h.agentId();
+			writeEnvelope(h, agentId, {
+				summary: "s".repeat(500), // the summary IS the report: kept whole
+				changed_scope: ["a.md", "b.md", "c.md", "d.md"], // > 2 → collapsed
+				verification: [
+					{ check: "one", result: "pass" },
+					{ check: "two", result: "pass" },
+				],
+			});
+			settleRun(proc, "did the work");
+			await pending;
+
+			expect(h.messages).toHaveLength(1);
+			const note = String(h.messages[0]!.message.content);
+			// summary delivered verbatim, never truncated into a JSON dump
+			expect(note).toContain(`summary: ${"s".repeat(500)}`);
+			expect(note).not.toContain(JSON.stringify({ status: "done" }));
+			expect(note).not.toContain("\"changed_scope\"");
+			// counts + collapsed scope names, mirroring the render.ts card
+			expect(note).toContain("✓ 2/2 checks · scope: a.md, b.md +2 more");
+			expect(note).toContain(`details via subagent op=result id=${agentId}`);
+			// identity/status/git live only in the folded lines
+			expect(note).not.toContain("agentId: ");
+			expect(note).not.toContain("git: ");
+		} finally {
+			await h.runtime.shutdown();
+			h.cleanup();
+		}
+	});
+
+	test("blocked without envelope: reason + flag only, no summary/metrics lines", async () => {
+		const h = makeLayer();
+		try {
+			const ws = makeWorktree(h.taskRoot, "noenv-ws");
+			const { pending, proc } = await driveToRunning(h, { workspace: ws, task: "t", timeout_ms: 600000 });
+			// exhaust the report ladder → blocked, no envelope at all
+			for (let i = 0; i < 4; i++) {
+				await settleRun(proc, `s${i}`);
+				await tick(80);
+			}
+			const res = await pending;
+			expect(res.details).toMatchObject({ status: "blocked", reason: "no_valid_report" });
+
+			const note = h.messages.find((m) => String(m.message.content).includes("[subagent completed]"));
+			expect(note).toBeDefined();
+			const text = String(note!.message.content);
+			expect(text).toMatch(/blocked · feat\/noenv-ws @ [0-9a-f]{7} · clean/);
+			expect(text).toContain("reason: no_valid_report");
+			expect(text).toContain("child_may_have_mutated_repo: true");
+			expect(text).not.toContain("summary:");
+			expect(text).not.toMatch(/[✓✗] \d+\/\d+ checks/);
+			expect(text).not.toContain("gaps:");
+			expect(text).toContain(`details via subagent op=result id=`);
+		} finally {
+			await h.runtime.shutdown();
+			h.cleanup();
+		}
+	});
+
+	test("gaps and contract conflicts render as their own lines; partial glyph on a failed check", async () => {
+		const h = makeLayer();
+		try {
+			const ws = makeWorktree(h.taskRoot, "gaps-ws");
+			const { pending, proc } = await driveToRunning(h, { workspace: ws, task: "t" });
+			const agentId = h.agentId();
+			writeEnvelope(h, agentId, {
+				status: "partial",
+				summary: "mostly there",
+				changed_scope: ["x.md", "y.md"], // ≤ 2 → joined without a tail
+				verification: [
+					{ check: "ok check", result: "pass" },
+					{ check: "bad check", result: "fail" },
+				],
+				gaps: ["cleanup pending", "docs not updated"],
+				contractConflicts: ["branch policy vs task", "hook policy vs spec"],
+			});
+			settleRun(proc, "reported partial");
+			await pending;
+
+			const note = h.messages.find((m) => String(m.message.content).includes("[subagent completed]"));
+			const text = String(note!.message.content);
+			expect(text).toContain("summary: mostly there");
+			expect(text).toContain("✗ 1/2 checks · scope: x.md, y.md");
+			expect(text).toContain("gaps: cleanup pending; docs not updated");
+			expect(text).toContain("contract conflicts: branch policy vs task; hook policy vs spec");
+			expect(text).toContain(`details via subagent op=result id=${agentId}`);
 		} finally {
 			await h.runtime.shutdown();
 			h.cleanup();
@@ -289,10 +406,11 @@ describe("settled-state verification (A3)", () => {
 			expect(facts.branch).toBe("feat/a3-clean-ws");
 			expect(facts.headSha).toBe(execFileSync("git", ["-C", ws, "rev-parse", "HEAD"], { encoding: "utf8" }).trim());
 			expect(facts.dirty).toMatchObject({ staged: [], unstaged: [] });
-			// the completion notification carries the same objective facts
+			// the completion notification folds the objective facts into the
+			// status line
 			const note = h.messages.find((m) => String(m.message.content).includes("[subagent completed]"));
-			expect(String(note?.message.content)).toContain("branch=feat/a3-clean-ws");
-			expect(String(note?.message.content)).toContain("dirty=clean");
+			const sha = execFileSync("git", ["-C", ws, "rev-parse", "HEAD"], { encoding: "utf8" }).trim();
+			expect(String(note?.message.content)).toContain(`done · feat/a3-clean-ws @ ${sha.slice(0, 7)} · clean`);
 		} finally {
 			await h.runtime.shutdown();
 			h.cleanup();
@@ -359,6 +477,9 @@ describe("settled-state verification (A3)", () => {
 			expect(res.details.result).toBeUndefined();
 			expect(String(res.details.reason)).toContain("done_rejected_unreadable_git_state");
 			expect(res.details.git_facts).toBeUndefined();
+			// unreadable git → no facts → the event carries a plain status line
+			const note = h.messages.find((m) => String(m.message.content).includes("[subagent completed]"));
+			expect(String(note?.message.content)).toContain("\nblocked\n");
 		} finally {
 			await h.runtime.shutdown();
 			h.cleanup();
@@ -511,7 +632,10 @@ describe("deadline", () => {
 			expect(proc.closed).toBe(true);
 			// no completion notification for the deadline outcome? It IS sent:
 			expect(h.messages).toHaveLength(1);
-			expect(String(h.messages[0]!.message.content)).toContain("status: partial");
+			const note = String(h.messages[0]!.message.content);
+			expect(note).toMatch(/partial · feat\/deadline-ws @ [0-9a-f]{7} · clean/);
+			expect(note).toContain("reason: deadline");
+			expect(note).not.toContain("summary:");
 		} finally {
 			await h.runtime.shutdown();
 			h.cleanup();
@@ -804,7 +928,7 @@ describe("N2 deadline vs retire race", () => {
 			expect(h.runtime.inspect(agentId)[0]!.state).toBe("completed");
 			// exactly one completion notification, no partial/cancel noise
 			const completions = h.messages.filter(
-				(m) => m.message.customType === "subagent-event" && String(m.message.content).includes("status: done"),
+				(m) => m.message.customType === "subagent-event" && String(m.message.content).includes("done · feat/race-ws"),
 			);
 			expect(completions.length).toBe(1);
 		} finally {

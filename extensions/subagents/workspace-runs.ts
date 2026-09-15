@@ -500,17 +500,32 @@ export function createWorkspaceRuns(
 		const o = run.terminal!;
 		const lines = [
 			`[subagent completed] ${run.agentId} — workspace run`,
-			`agentId: ${run.agentId}`,
 			`workspace: ${run.workspace}`,
-			`status: ${o.status}`,
 		];
 		if (o.gitFacts) {
 			lines.push(
-				`git: branch=${o.gitFacts.branch || "(detached)"} head=${o.gitFacts.headSha} dirty=${formatDirty(o.gitFacts.dirty)}`,
+				`${o.status} · ${o.gitFacts.branch || "(detached)"} @ ${o.gitFacts.headSha.slice(0, 7)} · ${formatDirty(o.gitFacts.dirty)}`,
 			);
+		} else {
+			lines.push(o.status);
 		}
-		if (o.status === "done" && o.result) {
-			lines.push(`result: ${JSON.stringify(o.result)}`);
+		// Compact delivery (see delivery.ts): the summary IS the report; the
+		// full envelope stays persisted, reachable via op=result below.
+		const env = o.result;
+		if (env) {
+			lines.push(`summary: ${env.summary}`);
+			const total = env.verification.length;
+			const passed = env.verification.filter((c) => c.result === "pass").length;
+			let metrics = `${total > 0 && passed === total ? "✓" : "✗"} ${passed}/${total} checks`;
+			if (env.changed_scope.length > 0) {
+				metrics += ` · scope: ${env.changed_scope.slice(0, 2).join(", ")}`;
+				if (env.changed_scope.length > 2) metrics += ` +${env.changed_scope.length - 2} more`;
+			}
+			lines.push(metrics);
+			if (env.gaps.length > 0) lines.push(`gaps: ${env.gaps.join("; ")}`);
+			if (env.contract_conflicts && env.contract_conflicts.length > 0) {
+				lines.push(`contract conflicts: ${env.contract_conflicts.join("; ")}`);
+			}
 		}
 		if (o.reason) lines.push(`reason: ${o.reason}`);
 		if (o.childMayHaveMutatedRepo) lines.push(`child_may_have_mutated_repo: true`);
