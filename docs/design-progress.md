@@ -11,8 +11,8 @@
 | A3 | Done | Runtime-проверка settled состояния при `done` (чистое дерево и HEAD после остановки child) и объективные `git_facts` в терминальном результате. [ADR-0003](adr/adr-0003.md); реализация — workspace run layer в [`../extensions/subagents/workspace-runs.ts`](../extensions/subagents/workspace-runs.ts). |
 | A4 | Done | Единая поверхность субагентов: `workspace_agent` слит в `subagent` как workspace spawn mode; RepoOwner protocol задокументирован в [`../skills/git-task/references/repo-owners.md`](../skills/git-task/references/repo-owners.md). Без отдельного ADR: решение отражено примечанием в ADR-0003 и реализацией (PR #13, #20). |
 | A5 | Done | Crash recovery без durable Run: смерть Main → EOF завершает RepoOwner; восстановление = Pi session resume + новый RepoOwner по состоянию Git/worktree/artifacts. [ADR-0004](adr/adr-0004.md). |
-| A6 | Next | Headless Pi. |
+| A6 | Done | Headless Pi: штатный `pi --mode rpc` покрывает запуск, управление, `ask`, отмену, наблюдение и восстановление Main-сессии; RepoOwner работает без изменений. Новый runtime, daemon, event journal или RPC-протокол не введены. [ADR-0005](adr/adr-0005.md). |
 
-Next: A6 — headless Pi
+Next: A7 — T3 Code research
 
-> A6 должен исследовать минимальный способ управлять обычной Pi-сессией без TUI; не следует заранее вводить durable Run runtime, daemon или control-plane abstractions.
+> A7 исследует слой над `pi --mode rpc` для удалённого управления: agent node, reconnect между node и control plane, доставка событий, веб-интерфейс. Локальный headless-интерфейс решён в A6 (ADR-0005); локальные runtime-сущности не вводить.
