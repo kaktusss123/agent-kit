@@ -1017,6 +1017,17 @@ describe("delivery formatting", () => {
 		expect(formatStatsBrief({ tokens: { input: 1, output: 1, total: 2 }, contextUsage: { percent: 30 } })).toBe("ctx 30%");
 	});
 
+	test("formatStatsBrief rounds ctx percent: integer ≥10, one decimal below, no float noise", () => {
+		const brief = (percent: number): string =>
+			formatStatsBrief({ tokens: { input: 1, output: 1, total: 2 }, contextUsage: { percent } });
+		expect(brief(2.0608999999999997)).toBe("ctx 2%");
+		expect(brief(0.44)).toBe("ctx 0.4%");
+		expect(brief(44.0)).toBe("ctx 44%");
+		// First decimal digit kept when non-zero; ".0" dropped when zero.
+		expect(brief(2.1)).toBe("ctx 2.1%");
+		expect(brief(2.04)).toBe("ctx 2%");
+	});
+
 	test("formatTokenCount uses compact human units", () => {
 		expect(formatTokenCount(874)).toBe("874");
 		expect(formatTokenCount(60000)).toBe("60k");

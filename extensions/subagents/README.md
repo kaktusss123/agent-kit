@@ -24,6 +24,17 @@ the main process. No daemon, no shared hub.
   Detached workspace runs deliver their completion through the same channel.
 - **`/subagents` command**: compact live status table; `/subagents kill-all`
   terminates everything.
+- **Tool card rendering** (`render.ts`): the `subagent` tool defines custom
+  `renderCall`/`renderResult` for the transcript. The call renders as one
+  line (`subagent <op>` plus workspace/label/task or agent id); results
+  render as a compact card for workspace terminal outcomes (status glyph,
+  `owner-<worktree>` with agent id, `branch @ sha`, tree cleanliness from
+  runtime-read Git facts, envelope summary with a checks/scope metrics line;
+  expanded view adds per-check results, scope, gaps, contract conflicts, and
+  dirty paths). Rendering is display-only: `execute()` return values (content
+  and details — the model-facing context) are never modified; errors,
+  live wait snapshots, and plain management-op outputs pass through as
+  sanitized text.
 
 ## Context discipline
 
