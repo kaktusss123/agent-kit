@@ -487,7 +487,7 @@ describe("workspace run live updates", () => {
 			expect(h.updates.some((u) => u.text.includes("▸ bash · bun test extensions/subagents"))).toBe(true);
 			proc.writeToStdout({ type: "tool_execution_end", toolCallId: "t1", toolName: "bash" });
 			await tick(60);
-			expect(h.updates.some((u) => / {2}\d+s · bash · bun test extensions\/subagents/.test(u.text))).toBe(true);
+			expect(h.updates.some((u) => / {2}bash · bun test extensions\/subagents · \d+s/.test(u.text))).toBe(true);
 
 			writeEnvelope(h, h.agentId());
 			settleRun(proc, "finished");

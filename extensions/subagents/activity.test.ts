@@ -202,16 +202,16 @@ describe("formatRunStatus", () => {
 			"RepoOwner sa-1-q625 · running · 10m39s · deadline 4m21s",
 			"agent-kit · zai/glm-5.3-flash · high · $0.4231 · ctx 87.5k/200k (44%)",
 			"▸ bash · bun test extensions/subagents · 18s",
-			"  1m5s · edit · extensions/subagents/readiness.ts",
-			"  30s · edit · extensions/subagents/reporting-bridge.ts",
+			"  edit · extensions/subagents/reporting-bridge.ts · 29s",
+			"  edit · extensions/subagents/readiness.ts · 1m4s",
 		]);
 	});
 
-	test("hard cap by construction: head + meta + current + at most 3 recent", () => {
-		const entry = (name: string, ageMs: number): ToolActivity => ({
+	test("hard cap by construction: head + meta + current + at most 3 recent (newest kept)", () => {
+		const entry = (name: string, sinceEndMs: number): ToolActivity => ({
 			name,
-			startedAt: BASE_NOW - ageMs,
-			endedAt: BASE_NOW - ageMs + 1,
+			startedAt: BASE_NOW - sinceEndMs - 1_000,
+			endedAt: BASE_NOW - sinceEndMs,
 		});
 		const text = formatRunStatus(
 			view({
@@ -226,8 +226,10 @@ describe("formatRunStatus", () => {
 		);
 		const lines = text.split("\n");
 		expect(lines).toHaveLength(6); // 1 head + 1 meta + 1 current + 3 recent
-		expect(text).not.toContain("grep");
-		expect(text).not.toContain("write");
+		// Over cap: the OLDEST entries are dropped, the newest 3 render newest-first.
+		expect(text).not.toContain("read");
+		expect(text).not.toContain("edit");
+		expect(lines.slice(3)).toEqual(["  write · 50s", "  grep · 1m0s", "  bash · 1m10s"]);
 	});
 
 	test("optional segments omitted — view never fabricates, never emits blank lines", () => {
@@ -289,7 +291,7 @@ describe("formatRunStatus", () => {
 		expect(text.split("\n")[2]).toBe("▸ bash · 1m5s");
 	});
 
-	test("recent ages are relative to now; summaries shortened for the list", () => {
+	test("recent age counts from endedAt and sits at the END of the row", () => {
 		const text = formatRunStatus(
 			view({
 				recentActivity: [
@@ -297,7 +299,14 @@ describe("formatRunStatus", () => {
 				],
 			}),
 		);
-		expect(text.split("\n")[3]).toBe(`  2s · edit · ${"x".repeat(48)}…`);
+		expect(text.split("\n")[3]).toBe(`  edit · ${"x".repeat(48)}… · 1s`);
+	});
+
+	test("recent age falls back to startedAt when endedAt is absent", () => {
+		const text = formatRunStatus(
+			view({ recentActivity: [{ name: "bash", startedAt: BASE_NOW - 5_000 }] }),
+		);
+		expect(text.split("\n")[3]).toBe("  bash · 5s");
 	});
 
 	test("type shape: recent entries expose endedAt only (ToolActivity contract)", () => {
