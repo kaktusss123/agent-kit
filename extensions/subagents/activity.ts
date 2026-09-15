@@ -15,8 +15,8 @@
  *   worktree path prefix. All matching is literal and pure string work; the
  *   formatted view stays workspace-aware via the run's own workspace line.
  * - formatRunStatus: render one point-in-time view of a workspace run
- *   (identity, lifecycle state, elapsed/deadline, session, current tool,
- *   bounded recent activity) as compact plain text for onUpdate.
+ *   (identity, lifecycle state, elapsed/deadline, workspace/model/stats meta,
+ *   current tool, bounded recent activity) as compact plain text for onUpdate.
  *
  * This is status telemetry, not a log: every collection that flows through
  * this module stays hard-capped by its producer (controller/workspace layer).
@@ -47,6 +47,8 @@ const TOOL_SUMMARY_POLICY: Record<string, readonly string[]> = {
 /** Hard cap for a summary line (current view); recent entries get a shorter cap. */
 const SUMMARY_MAX = 72;
 const RECENT_SUMMARY_MAX = 48;
+/** Recent activity rows rendered under the active tool. */
+const RECENT_MAX = 3;
 
 /** Evaluated once; home-relative paths are collapsed to `~/...` summaries. */
 const HOME = homedir();
@@ -164,11 +166,13 @@ export interface RunStatusView {
 	ladder?: { step: number; max: number };
 	elapsedMs: number;
 	deadlineMsLeft?: number;
+	/** Known to the runtime; NOT rendered by the compact card (visible via op=status). */
 	pid?: number;
 	model?: string;
 	thinking?: string;
 	/** Latest live child stats (cost, context fill); omitted until the first report. */
 	stats?: SessionStats;
+	/** Known to the runtime; NOT rendered by the compact card (visible via op=status). */
 	sessionId?: string;
 	sessionFile?: string;
 	activeTool?: ToolActivity;
@@ -179,50 +183,54 @@ export interface RunStatusView {
 
 /**
  * Compact operator view of a running RepoOwner, rendered into the tool call
- * via onUpdate. Plain text, no ANSI, no JSON. Sections without data are
- * omitted — the view only ever states what the runtime actually knows.
+ * via onUpdate. Plain text, no ANSI, no JSON. Optional segments are omitted —
+ * the view only ever states what the runtime actually knows.
+ *
+ * Layout, hard-capped at 1 + 1 + 1 + 3 lines by construction:
+ *   RepoOwner <id> · <state> · <elapsed> · deadline <d>[ · report recovery n/m]
+ *   [<workspace basename> · <model> · <thinking> · <stats>]   — when known
+ *   [▸ <tool>[ · <summary>][ · <age>]]                        — active tool
+ *   [  <age> · <tool>[ · <summary>]]× ≤3                      — recent tools
+ *
+ * The duplicated agent id, pid/session rows, full workspace path, blank
+ * separators and "current"/"recent" headers of the old card are gone: the
+ * tool call header already shows the workspace, `subagent op=status` carries
+ * the full details, and the renderer owns any trailing hints.
  */
 export function formatRunStatus(v: RunStatusView): string {
 	const lines: string[] = [];
-	const head = [`RepoOwner ${v.agentId}`];
-	lines.push(...head);
-	lines.push("");
 
-	const stateParts = [v.state, formatDuration(v.elapsedMs)];
-	if (v.deadlineMsLeft !== undefined) stateParts.push(`deadline ${formatDuration(v.deadlineMsLeft)}`);
-	if (v.ladder && v.ladder.step > 0) stateParts.push(`report recovery ${v.ladder.step}/${v.ladder.max}`);
-	lines.push(stateParts.join(" · "));
+	const head = [`RepoOwner ${v.agentId}`, v.state, formatDuration(v.elapsedMs)];
+	if (v.deadlineMsLeft !== undefined) head.push(`deadline ${formatDuration(v.deadlineMsLeft)}`);
+	if (v.ladder && v.ladder.step > 0) head.push(`report recovery ${v.ladder.step}/${v.ladder.max}`);
+	lines.push(head.join(" · "));
 
-	const agentParts = [v.agentId];
-	if (v.pid !== undefined) agentParts.push(`pid ${v.pid}`);
-	lines.push(`agent      ${agentParts.join(" · ")}`);
-	lines.push(`workspace  ${v.workspace}`);
-	const modelParts = [v.model, v.thinking].filter(Boolean);
-	if (modelParts.length > 0) lines.push(`model      ${modelParts.join(" · ")}`);
-	const statsBrief = v.stats ? formatStatsBrief(v.stats) : "";
-	if (statsBrief) lines.push(`stats      ${statsBrief}`);
-	const session = v.sessionId ?? v.sessionFile;
-	if (session) lines.push(`session    ${session}`);
+	const meta = [
+		v.workspace ? basename(v.workspace) : "",
+		v.model,
+		v.thinking,
+		v.stats ? formatStatsBrief(v.stats) : "",
+	].filter(Boolean);
+	if (meta.length > 0) lines.push(meta.join(" · "));
 
 	if (v.activeTool) {
-		lines.push("");
-		lines.push("current");
-		const age = formatDuration(Math.max(0, v.now - v.activeTool.startedAt));
 		const parts = [v.activeTool.name];
 		if (v.activeTool.summary) parts.push(v.activeTool.summary);
-		parts.push(age);
+		parts.push(formatDuration(Math.max(0, v.now - v.activeTool.startedAt)));
+		lines.push(`▸ ${parts.join(" · ")}`);
+	}
+
+	for (const entry of (v.recentActivity ?? []).slice(0, RECENT_MAX)) {
+		const parts = [formatDuration(Math.max(0, v.now - entry.startedAt)), entry.name];
+		if (entry.summary) parts.push(truncate(entry.summary, RECENT_SUMMARY_MAX));
 		lines.push(`  ${parts.join(" · ")}`);
 	}
 
-	if (v.recentActivity && v.recentActivity.length > 0) {
-		lines.push("");
-		lines.push("recent");
-		for (const entry of v.recentActivity) {
-			const parts = [entry.name];
-			if (entry.summary) parts.push(truncate(entry.summary, RECENT_SUMMARY_MAX));
-			lines.push(`  ${parts.join(" · ")}`);
-		}
-	}
-
 	return lines.join("\n");
+}
+
+/** Last path segment: the worktree directory name shown in the meta row. */
+function basename(path: string): string {
+	const idx = path.lastIndexOf("/");
+	return idx >= 0 ? path.slice(idx + 1) : path;
 }

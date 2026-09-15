@@ -403,9 +403,11 @@ describe("workspace run live updates", () => {
 			const agentId = h.agentId();
 			expect(first).toMatch(/RepoOwner sa-\d+-[0-9a-z]+/);
 			expect(first).toContain(agentId);
-			expect(first).toContain(ws);
+			// meta row shows the workspace basename, not the full path
+			expect(first).toContain(path.basename(ws));
+			expect(first).not.toContain(ws);
 			expect(first).toContain("running");
-			expect(first).toContain("model      zai/glm-x · low");
+			expect(first).toContain("zai/glm-x · low");
 			// updates are progress UI, not context traffic: no custom messages
 			expect(h.messages).toHaveLength(0);
 
@@ -419,7 +421,7 @@ describe("workspace run live updates", () => {
 		}
 	});
 
-	test("T3: session id appears in updates while the child is still running", async () => {
+	test("T3: session id is learned while running but no longer painted into updates", async () => {
 		const h = makeLayer();
 		try {
 			const ws = makeWorktree(h.taskRoot, "obs-session-ws");
@@ -435,7 +437,10 @@ describe("workspace run live updates", () => {
 				data: { sessionFile: "/tmp/obs-session.jsonl", sessionId: "obs-session-42" },
 			});
 			await tick(60);
-			expect(h.updates.some((u) => u.text.includes("session    obs-session-42"))).toBe(true);
+			// the card no longer renders session rows; op=status carries them
+			expect(h.updates.length).toBeGreaterThanOrEqual(1);
+			expect(h.updates.some((u) => u.text.includes("obs-session-42"))).toBe(false);
+			// the loop survived processing the get_state response
 
 			writeEnvelope(h, h.agentId());
 			settleRun(proc, "finished");
@@ -459,10 +464,10 @@ describe("workspace run live updates", () => {
 				args: { command: "bun test extensions/subagents" },
 			});
 			await tick(60);
-			expect(h.updates.some((u) => u.text.includes("current\n  bash · bun test extensions/subagents"))).toBe(true);
+			expect(h.updates.some((u) => u.text.includes("▸ bash · bun test extensions/subagents"))).toBe(true);
 			proc.writeToStdout({ type: "tool_execution_end", toolCallId: "t1", toolName: "bash" });
 			await tick(60);
-			expect(h.updates.some((u) => u.text.includes("recent\n  bash · bun test extensions/subagents"))).toBe(true);
+			expect(h.updates.some((u) => / {2}\d+s · bash · bun test extensions\/subagents/.test(u.text))).toBe(true);
 
 			writeEnvelope(h, h.agentId());
 			settleRun(proc, "finished");

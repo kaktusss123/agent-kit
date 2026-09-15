@@ -133,6 +133,18 @@ function dropTenthsZero(text: string): string {
 }
 
 /**
+ * Display a context-fill percent without float noise: integer at 10%+,
+ * otherwise one decimal digit with a trailing ".0" dropped
+ * ("44%", "2%", "2.1%", "0.4%" — never "2.0608999999999997%").
+ */
+function formatPercent(percent: number): string {
+	if (percent >= 10) return `${Math.round(percent)}%`;
+	// Keep the first decimal digit rather than rounding to nearest, so float
+	// dust collapses predictably (2.0608999… → "2.0" → "2%").
+	return `${dropTenthsZero(percent.toFixed(2).slice(0, -1))}%`;
+}
+
+/**
  * Compact cost + context usage ("$0.4231 · ctx 87.5k/200k (44%)"). Parts the
  * runtime does not know are omitted; an empty result means nothing is known
  * yet and callers skip the segment entirely.
@@ -146,10 +158,10 @@ export function formatStatsBrief(stats: SessionStats): string {
 			let text = ctx.contextWindow
 				? `${formatTokenCount(ctx.tokens)}/${formatTokenCount(ctx.contextWindow)}`
 				: formatTokenCount(ctx.tokens);
-			if (typeof ctx.percent === "number") text += ` (${ctx.percent}%)`;
+			if (typeof ctx.percent === "number") text += ` (${formatPercent(ctx.percent)})`;
 			parts.push(`ctx ${text}`);
 		} else if (typeof ctx.percent === "number") {
-			parts.push(`ctx ${ctx.percent}%`);
+			parts.push(`ctx ${formatPercent(ctx.percent)}`);
 		}
 	}
 	return parts.join(" · ");

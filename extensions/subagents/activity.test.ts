@@ -170,10 +170,25 @@ function view(overrides?: Partial<RunStatusView>): RunStatusView {
 		model: "zai/glm-5.3-flash",
 		thinking: "high",
 		sessionId: "0199abcd",
+		stats: {
+			tokens: { input: 50000, output: 10000, total: 105000 },
+			cost: 0.4231,
+			contextUsage: { tokens: 87481, contextWindow: 200000, percent: 44 },
+		},
 		activeTool: { name: "bash", summary: "bun test extensions/subagents", startedAt: BASE_NOW - 18_000 },
 		recentActivity: [
-			{ name: "edit", summary: "extensions/subagents/readiness.ts", startedAt: 1, endedAt: 2 },
-			{ name: "edit", summary: "extensions/subagents/reporting-bridge.ts", startedAt: 3, endedAt: 4 },
+			{
+				name: "edit",
+				summary: "extensions/subagents/readiness.ts",
+				startedAt: BASE_NOW - 65_000,
+				endedAt: BASE_NOW - 64_000,
+			},
+			{
+				name: "edit",
+				summary: "extensions/subagents/reporting-bridge.ts",
+				startedAt: BASE_NOW - 30_000,
+				endedAt: BASE_NOW - 29_000,
+			},
 		],
 		now: BASE_NOW,
 		...overrides,
@@ -181,77 +196,81 @@ function view(overrides?: Partial<RunStatusView>): RunStatusView {
 }
 
 describe("formatRunStatus", () => {
-	test("identity block: run, state, elapsed, deadline, agent, workspace, model, session", () => {
+	test("full snapshot: head, meta, active tool, recent — compact lines, exact layout", () => {
 		const text = formatRunStatus(view({ deadlineMsLeft: 261_000 }));
-		expect(text).toContain("RepoOwner sa-1-q625");
-		expect(text).toContain("running · 10m39s · deadline 4m21s");
-		expect(text).toContain("agent      sa-1-q625 · pid 18432");
-		expect(text).toContain("workspace  /home/vlad/.agent-kit/tasks/t1/agent-kit");
-		expect(text).toContain("model      zai/glm-5.3-flash · high");
-		expect(text).toContain("session    0199abcd");
+		expect(text.split("\n")).toEqual([
+			"RepoOwner sa-1-q625 · running · 10m39s · deadline 4m21s",
+			"agent-kit · zai/glm-5.3-flash · high · $0.4231 · ctx 87.5k/200k (44%)",
+			"▸ bash · bun test extensions/subagents · 18s",
+			"  1m5s · edit · extensions/subagents/readiness.ts",
+			"  30s · edit · extensions/subagents/reporting-bridge.ts",
+		]);
 	});
 
-	test("current tool with name, summary and live age", () => {
-		const text = formatRunStatus(view());
-		expect(text).toContain("current\n  bash · bun test extensions/subagents · 18s");
-	});
-
-	test("recent activity rendered oldest-first, summaries shortened for the list", () => {
+	test("hard cap by construction: head + meta + current + at most 3 recent", () => {
+		const entry = (name: string, ageMs: number): ToolActivity => ({
+			name,
+			startedAt: BASE_NOW - ageMs,
+			endedAt: BASE_NOW - ageMs + 1,
+		});
 		const text = formatRunStatus(
 			view({
 				recentActivity: [
-					{ name: "edit", summary: "x".repeat(80), startedAt: 1, endedAt: 2 },
-					{ name: "bash", summary: "bun test", startedAt: 3, endedAt: 4 },
+					entry("read", 90_000),
+					entry("edit", 80_000),
+					entry("bash", 70_000),
+					entry("grep", 60_000),
+					entry("write", 50_000),
 				],
 			}),
 		);
-		expect(text).toContain("recent");
-		expect(text).toContain(`edit · ${"x".repeat(48)}…`);
-		expect(text).toContain("bash · bun test");
-		// recent entries carry no elapsed suffix
-		expect(text).not.toMatch(/bun test · \d+s/);
+		const lines = text.split("\n");
+		expect(lines).toHaveLength(6); // 1 head + 1 meta + 1 current + 3 recent
+		expect(text).not.toContain("grep");
+		expect(text).not.toContain("write");
 	});
 
-	test("report recovery ladder surfaced only when active", () => {
-		expect(formatRunStatus(view({ ladder: { step: 2, max: 3 } }))).toContain("report recovery 2/3");
+	test("optional segments omitted — view never fabricates, never emits blank lines", () => {
+		const text = formatRunStatus(
+			view({
+				workspace: "",
+				model: undefined,
+				thinking: undefined,
+				stats: undefined,
+				activeTool: undefined,
+				recentActivity: undefined,
+			}),
+		);
+		expect(text).toBe("RepoOwner sa-1-q625 · running · 10m39s");
+		expect(text).not.toContain("\n\n");
+	});
+
+	test("meta row degrades to the known segments only", () => {
+		const text = formatRunStatus(view({ model: undefined, thinking: undefined, stats: undefined }));
+		expect(text.split("\n")[1]).toBe("agent-kit");
+	});
+
+	test("report recovery ladder appended to the head line only when active", () => {
+		const withLadder = formatRunStatus(view({ ladder: { step: 2, max: 3 } }));
+		expect(withLadder.split("\n")[0]).toBe("RepoOwner sa-1-q625 · running · 10m39s · report recovery 2/3");
 		expect(formatRunStatus(view())).not.toContain("report recovery");
 	});
 
-	test("stats line shows cost and context fill between model and session", () => {
-		const text = formatRunStatus(
-			view({
-				stats: {
-					tokens: { input: 50000, output: 10000, total: 105000 },
-					cost: 0.4231,
-					contextUsage: { tokens: 87481, contextWindow: 200000, percent: 44 },
-				},
-			}),
-		);
-		expect(text).toContain("stats      $0.4231 · ctx 87.5k/200k (44%)");
-		const modelIdx = text.indexOf("model      ");
-		const statsIdx = text.indexOf("stats      ");
-		const sessionIdx = text.indexOf("session    ");
-		expect(statsIdx).toBeGreaterThan(modelIdx);
-		expect(statsIdx).toBeLessThan(sessionIdx);
+	test("no stats yet: no cost or context segment anywhere", () => {
+		const text = formatRunStatus(view({ stats: undefined }));
+		expect(text).not.toContain("$");
+		expect(text).not.toContain("ctx ");
 	});
 
-	test("stats line omitted until the first stats report", () => {
-		expect(formatRunStatus(view())).not.toContain("stats");
-	});
-
-	test("sections without data are omitted — never fabricated", () => {
-		const text = formatRunStatus(
-			view({ activeTool: undefined, recentActivity: undefined, sessionId: undefined, sessionFile: undefined }),
-		);
+	test("removal contract: no pid, session, full workspace path, headers or blanks", () => {
+		const text = formatRunStatus(view());
+		expect(text).not.toContain("pid");
+		expect(text).not.toContain("18432");
+		expect(text).not.toContain("0199abcd");
+		expect(text).not.toContain("/home/vlad");
 		expect(text).not.toContain("current");
 		expect(text).not.toContain("recent");
-		expect(text).not.toContain("session");
-	});
-
-	test("sessionFile is the fallback when no sessionId is known", () => {
-		expect(formatRunStatus(view({ sessionId: undefined, sessionFile: "/s.jsonl" }))).toContain(
-			"session    /s.jsonl",
-		);
+		expect(text).not.toContain("\n\n");
 	});
 
 	test("plain text only: no ANSI escapes, no JSON braces", () => {
@@ -262,12 +281,23 @@ describe("formatRunStatus", () => {
 	});
 
 	test("waiting_input state renders truthfully", () => {
-		expect(formatRunStatus(view({ state: "waiting_input" }))).toMatch(/^RepoOwner sa-1-q625\n\nwaiting_input · /);
+		expect(formatRunStatus(view({ state: "waiting_input" }))).toMatch(/^RepoOwner sa-1-q625 · waiting_input · /);
 	});
 
 	test("age of the active tool uses the injected clock", () => {
 		const text = formatRunStatus(view({ activeTool: { name: "bash", startedAt: BASE_NOW - 65_000 } }));
-		expect(text).toContain("bash · 1m5s");
+		expect(text.split("\n")[2]).toBe("▸ bash · 1m5s");
+	});
+
+	test("recent ages are relative to now; summaries shortened for the list", () => {
+		const text = formatRunStatus(
+			view({
+				recentActivity: [
+					{ name: "edit", summary: "x".repeat(80), startedAt: BASE_NOW - 2_000, endedAt: BASE_NOW - 1_000 },
+				],
+			}),
+		);
+		expect(text.split("\n")[3]).toBe(`  2s · edit · ${"x".repeat(48)}…`);
 	});
 
 	test("type shape: recent entries expose endedAt only (ToolActivity contract)", () => {
