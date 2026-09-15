@@ -29,6 +29,26 @@ import {
 
 const tick = (ms = 30) => new Promise((r) => setTimeout(r, ms));
 
+/**
+ * Await the ACTUAL delivery of a matching pi message (the production event)
+ * instead of sampling the mailbox once after a fixed sleep: the settle chain
+ * (retire + real-git settled-state reads in readGitState) takes a
+ * machine-dependent ~200ms+, so a fixed tick() is a race.
+ */
+async function waitForMessage(
+	messages: Harness["messages"],
+	predicate: (m: Harness["messages"][number]) => boolean,
+	deadlineMs = 5000,
+): Promise<Harness["messages"][number] | undefined> {
+	const step = 10;
+	for (let waited = 0; ; waited += step) {
+		const found = messages.find(predicate);
+		if (found) return found;
+		if (waited >= deadlineMs) return undefined;
+		await tick(step);
+	}
+}
+
 interface Harness {
 	runtime: LocalSubagentRuntime;
 	harness: ReturnType<typeof createFakeSpawnFactory>;
@@ -759,8 +779,8 @@ describe("detach and cancel", () => {
 			// the run finishes on its own
 			writeEnvelope(h, agentId);
 			settleRun(proc, "finished while detached");
-			await tick(80);
-			const done = h.messages.find(
+			const done = await waitForMessage(
+				h.messages,
 				(m) => m.message.customType === "subagent-event" && String(m.message.content).includes("[subagent completed]"),
 			);
 			expect(done).toBeDefined(); // completion notification still arrives
