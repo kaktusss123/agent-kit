@@ -6,9 +6,11 @@
  * absent. Fixture under $HOME/.cache, mirroring the policy tests.
  */
 import { spawnSync } from "node:child_process";
-import { chmodSync, readFileSync } from "node:fs";
+import { chmodSync, copyFileSync, readFileSync } from "node:fs";
+import { mkdir } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
+import { resolveGitOnPath } from "../shim-path";
 import { createGuardFixture, type GuardFixture } from "./fixture";
 
 const SHIM_PATH = join(import.meta.dir, "git");
@@ -56,13 +58,17 @@ describe("shim subprocess: block", () => {
 
   beforeAll(async () => {
     chmodSync(SHIM_PATH, 0o755);
-    const realGit = spawnSync("sh", ["-c", "command -v git"], {
-      encoding: "utf8",
-    }).stdout.trim();
+    // Resolve real git the way the extension arms it (shim-aware):
+    // under a guarded session `command -v git` resolves to a shim copy,
+    // and arming that as AGENT_KIT_REAL_GIT makes allowed commands exec
+    // the shim forever instead of real git.
+    const realGit = resolveGitOnPath(process.env.PATH ?? "");
     if (!realGit) throw new Error("real git not found on PATH");
     fx = await createGuardFixture("agent-kit-shim-block-");
     shimEnv = buildEnv(fx, realGit, true);
-  });
+    // Fixture setup spawns dozens of guarded git invocations (measured
+    // ~3.5s warm); the 5s default leaves no headroom on a loaded machine.
+  }, 30_000);
 
   afterAll(async () => {
     if (fx) await fx.destroy();
@@ -92,13 +98,12 @@ describe("shim subprocess: transparent passthrough on allow", () => {
 
   beforeAll(async () => {
     chmodSync(SHIM_PATH, 0o755);
-    const realGit = spawnSync("sh", ["-c", "command -v git"], {
-      encoding: "utf8",
-    }).stdout.trim();
+    const realGit = resolveGitOnPath(process.env.PATH ?? "");
     if (!realGit) throw new Error("real git not found on PATH");
     fx = await createGuardFixture("agent-kit-shim-pass-");
     shimEnv = buildEnv(fx, realGit, true);
-  });
+    // Same budget rationale as the block fixture above.
+  }, 30_000);
 
   afterAll(async () => {
     if (fx) await fx.destroy();
@@ -152,13 +157,22 @@ describe("shim subprocess: fail open without the guard environment", () => {
 
   beforeAll(async () => {
     chmodSync(SHIM_PATH, 0o755);
-    const realGit = spawnSync("sh", ["-c", "command -v git"], {
-      encoding: "utf8",
-    }).stdout.trim();
+    const realGit = resolveGitOnPath(process.env.PATH ?? "");
     if (!realGit) throw new Error("real git not found on PATH");
     fx = await createGuardFixture("agent-kit-shim-open-");
     shimEnv = buildEnv(fx, realGit, false);
-  });
+    // Deterministic nested-guard shape: a SECOND shim copy sits ahead of
+    // the fixture shim on PATH (the ambient PATH of a guarded session
+    // already carries one). Pre-fix, the fail-open scan skipped only its
+    // own dir, so the two copies ping-ponged forever instead of running
+    // real git.
+    const secondShimDir = join(fx.root, "second-shim");
+    await mkdir(secondShimDir, { recursive: true });
+    copyFileSync(SHIM_PATH, join(secondShimDir, "git"));
+    chmodSync(join(secondShimDir, "git"), 0o755);
+    shimEnv.PATH = `${secondShimDir}:${shimEnv.PATH}`;
+    // Same budget rationale as the block fixture above.
+  }, 30_000);
 
   afterAll(async () => {
     if (fx) await fx.destroy();
@@ -183,7 +197,8 @@ describe("shim script hygiene", () => {
   beforeAll(async () => {
     chmodSync(SHIM_PATH, 0o755);
     fx = await createGuardFixture("agent-kit-shim-hygiene-");
-  });
+    // Same budget rationale as the block fixture above.
+  }, 30_000);
 
   afterAll(async () => {
     if (fx) await fx.destroy();

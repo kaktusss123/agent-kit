@@ -27,7 +27,11 @@ if [ -z "${AGENT_KIT_REAL_GIT:-}" ] || [ -z "${AGENT_KIT_POLICY_RUNTIME:-}" ] ||
 	for dir in $PATH; do
 		[ -n "$dir" ] || continue
 		[ "$dir" = "$guard_dir" ] && continue
-		if [ -x "$dir/git" ]; then
+		# Other task-workspace shim copies are skipped too: nested guarded
+		# sessions put several shim dirs on PATH, and skipping only this
+		# one would let the fallback ping-pong between shim copies forever
+		# instead of reaching real git.
+		if [ -x "$dir/git" ] && ! grep -qs 'task-workspace git PATH shim' "$dir/git"; then
 			real_git="$dir/git"
 			break
 		fi
