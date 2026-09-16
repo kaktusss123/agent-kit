@@ -60,6 +60,38 @@ plain-text answer resumes the same child tool call. There is deliberately no
 answer timeout: an unresolved decision surfaces as a cancellation (runtime
 cancel/deadline/shutdown), never as an instruction to guess.
 
+## External controller read (`agentkit-status`)
+
+One model-free, read-only command for an EXTERNAL RPC controller (no LLM turn,
+no session writes, no runtime instantiation for an empty read):
+
+- **Invocation**: RPC `prompt "/agentkit-status <area>"` with area
+  `subagents | task | all` (default `all`). Executed immediately, even while
+  main is streaming.
+- **Wire transport**: the structured payload rides the standard extension UI
+  input dialog with the wire title `agentkit:status` (same transport as the
+  child `ask` dialog): `extension_ui_request {method:"input",
+  title:"agentkit:status", placeholder:"<JSON payload>", timeout:15000}`.
+- **Payload shape**: `{"v":1,"area":"<area>","data":{...}}` —
+  `subagents` → `data:{agents:[agentDetail,...]}` (exactly the `subagent
+  op=status` mapping via the shared `agentDetailView()` helper; empty list if
+  the runtime was never started), `task` → `data:{task:<taskStatus result>}`
+  (the `task_status` tool's structured result for the session cwd), `all` →
+  both keys. Unknown area → `{"v":1,"area":...,"error":"..."}` over the same
+  dialog path.
+- **Controller answer**: `{id, "cancelled": true}` — there is nothing to
+  answer; the dialog resolves and the read is done. The controller never
+  forwards this dialog to a user.
+- **Timeout semantics**: the dialog carries a finite `timeout: 15000` (ms).
+  With no controller answer the dialog auto-dismisses and the read terminates
+  with no side effects (fail closed) — it never hangs.
+- **Non-RPC modes**: a brief `notify` pointing at `/subagents`; no blocking
+  interactive workflow.
+
+Live wire verification: `node live/status-verify.mjs` (real `pi --mode rpc`
+with this worktree loaded explicitly; discovery, model-free reads, live
+plain/workspace child state, `op=status` cross-check, no-controller timeout).
+
 ## Child environment
 
 `pi --mode rpc --no-extensions -e bridge.ts` — no parent extension stack.
