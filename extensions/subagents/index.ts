@@ -33,6 +33,10 @@
  *   a fresh run when idle. The child transcript never enters main context.
  *   Detached workspace runs deliver their completion through the same channel.
  * - `/subagents` command: compact live status table.
+ * - `agentkit-status` command: model-free, read-only structured status for an
+ *   external RPC controller (areas subagents | task | all). The payload rides
+ *   the standard extension UI input dialog under the wire title
+ *   `agentkit:status`; see README ("External controller read").
  *
  * Escalation uses the standard RPC extension UI protocol: the child bridge's
  * `ask` tool (the canonical question contract, see ../ask/contract.ts) blocks
@@ -60,6 +64,9 @@ import {
 } from "./workspace-runs";
 import { renderSubagentCall, renderSubagentResult } from "./render";
 import { attachDelivery } from "./wiring";
+import { taskStatus } from "../task-workspace/flows";
+import { resolveTaskRoot } from "../task-workspace/task-root";
+import type { AgentSnapshot } from "./types";
 
 // =============================================================================
 // Configuration
@@ -288,12 +295,7 @@ export default function (pi: ExtensionAPI) {
 							if (v) views.set(s.id, v);
 						}
 						return ok(formatStatusList(snaps, views), {
-							agents: snaps.map((s) => {
-								const view = views.get(s.id);
-								return view
-									? { ...clipSnapshot(s), run: { workspace: view.workspace, state: view.state, ...(view.terminal ? { status: view.terminal.status } : {}), deadlineMsLeft: view.deadlineMsLeft, ...(view.ladder ? { ladder: view.ladder } : {}) } }
-									: clipSnapshot(s);
-							}),
+							agents: snaps.map((s) => agentDetailView(s, views.get(s.id))),
 						});
 					}
 					case "steer": {
@@ -415,6 +417,58 @@ export default function (pi: ExtensionAPI) {
 		},
 	});
 
+	// ------------------------------------ external controller read (RPC)
+
+	// Read-only structured status for an EXTERNAL RPC controller (A8 seam):
+	// the payload rides the standard extension UI input dialog, keyed by wire
+	// title exactly like the child `ask` dialog. The controller matches the
+	// title, parses the JSON placeholder, and answers `cancelled` (there is
+	// nothing to answer); the finite timeout makes the read fail closed when
+	// no controller is listening. Model-free by construction: no LLM turn, no
+	// session writes, and the runtime is never instantiated just to answer an
+	// empty read.
+	const STATUS_WIRE_TITLE = "agentkit:status";
+	const STATUS_TIMEOUT_MS = 15000;
+
+	pi.registerCommand("agentkit-status", {
+		description:
+			"Structured live status for an external RPC controller (model-free read; args: subagents | task | all, default all)",
+		getArgumentCompletions: (prefix) => {
+			const items = ["subagents", "task", "all"].map((v) => ({ value: v, label: v }));
+			const filtered = items.filter((i) => i.value.startsWith(prefix));
+			return filtered.length > 0 ? filtered : null;
+		},
+		handler: async (args, ctx) => {
+			const area = args.trim() || "all";
+			const payload: Record<string, unknown> = { v: 1, area };
+			if (area === "subagents" || area === "task" || area === "all") {
+				const data: Record<string, unknown> = {};
+				if (area === "subagents" || area === "all") {
+					// `runtime ? inspect : []`: the read must not start the runtime.
+					data.agents = (runtime ? runtime.inspect() : []).map((s) => agentDetailView(s, runs?.runView(s.id)));
+				}
+				if (area === "task" || area === "all") {
+					data.task = await taskStatus({}, ctx.cwd, { taskRoot: resolveTaskRoot() });
+				}
+				payload.data = data;
+			} else {
+				payload.error = `unknown area: ${area} (subagents | task | all)`;
+			}
+			if (ctx.mode === "rpc") {
+				// Wire transport: the payload is the dialog placeholder; the
+				// controller answers cancelled. Timeout keeps the read finite.
+				await ctx.ui.input(STATUS_WIRE_TITLE, JSON.stringify(payload), { timeout: STATUS_TIMEOUT_MS });
+			} else if (typeof payload.error === "string") {
+				ctx.ui.notify(`agentkit-status: ${payload.error}`, "error");
+			} else {
+				ctx.ui.notify(
+					"agentkit-status serves external RPC controllers; use /subagents for a human-readable view.",
+					"info",
+				);
+			}
+		},
+	});
+
 	// --------------------------------------------------------------- command
 
 	pi.registerCommand("subagents", {
@@ -461,4 +515,26 @@ function err(text: string) {
 
 function clipSnapshot(s: ReturnType<LocalSubagentRuntime["inspect"]>[number]) {
 	return { ...s, task: s.task.length > 200 ? `${s.task.slice(0, 200)}…` : s.task };
+}
+
+/**
+ * One agent's structured status detail: the clipped snapshot plus, for a
+ * run-owned (workspace) agent, a compact view of its run. The single mapping
+ * behind `subagent op=status` and the `agentkit-status` command, so the two
+ * surfaces cannot drift; exposes only fields the existing status builders
+ * already expose (full terminal outcomes stay on `subagent op=result`).
+ */
+export function agentDetailView(s: AgentSnapshot, view?: WorkspaceRunView) {
+	return view
+		? {
+				...clipSnapshot(s),
+				run: {
+					workspace: view.workspace,
+					state: view.state,
+					...(view.terminal ? { status: view.terminal.status } : {}),
+					deadlineMsLeft: view.deadlineMsLeft,
+					...(view.ladder ? { ladder: view.ladder } : {}),
+				},
+			}
+		: clipSnapshot(s);
 }
