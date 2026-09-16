@@ -23,8 +23,12 @@ import {
 } from "./title";
 
 /** One attempt per session: no retry loop, no re-naming on later messages. */
-const TITLE_TIMEOUT_MS = 20_000;
-const TITLE_MAX_TOKENS = 300;
+// Thinking models (cloudru Qwen3.5) ignore reasoning_effort and always emit a
+// long reasoning block before the title: observed 1.7k-2.3k completion tokens
+// and ~35 s wall time per naming call. The cap must fit the whole reasoning +
+// answer; unused budget costs nothing (billing is by generated tokens).
+const TITLE_TIMEOUT_MS = 120_000;
+const TITLE_MAX_TOKENS = 8192;
 
 export default function sessionTitleExtension(pi: ExtensionAPI): void {
 	let attempted = false;
