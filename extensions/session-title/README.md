@@ -25,7 +25,7 @@ every naming call reuses it.
   generation) is respected; the name is re-checked immediately before writing.
 - **One attempt per session.** No retry loop, no re-naming on later messages;
   the attempt flag resets on `/new`, `/resume`, `/fork`.
-- **Silent failures.** Missing auth, model errors, aborts, and the 20 s
+- **Silent failures.** Missing auth, model errors, aborts, and the 120 s
   timeout leave the session unnamed and are never surfaced as errors.
 - **TUI only.** `-p`, json, and rpc modes never trigger naming.
 
