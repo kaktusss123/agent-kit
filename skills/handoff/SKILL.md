@@ -14,10 +14,12 @@ Preserve the minimum state needed to continue correctly:
 - constraints and non-goals;
 - work completed and current artifact/repo state;
 - verification already run and exact results;
+- the exact verified invocation and required environment when continuation depends on them, preferably in a durable script or config instead of prose;
+- a safe derivation recipe for every secret or environment-bound value, never a placeholder that a cold agent cannot resolve;
 - unresolved questions or blockers;
 - next concrete actions.
 
-Separate facts from hypotheses. Do not preserve dead exploratory branches unless they explain a trap the next agent might repeat.
+Separate facts from hypotheses. Record known traps only when they prevent repeated failure. Do not preserve other dead exploratory branches.
 
 Do not claim tool results from memory when the transcript does not support them.
 

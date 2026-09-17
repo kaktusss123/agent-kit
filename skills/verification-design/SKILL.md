@@ -30,11 +30,17 @@ Do not use:
 - snapshots that cannot fail on the requested behavior;
 - manual inspection when a cheap deterministic check exists.
 
+A negative or blocking conclusion needs a positive control through the same probe path when feasible. Prove that the probe can observe a known-success case before trusting its failure result.
+
+Treat a command or tool failure, timeout, or malformed response as probe failure, not product success. If the harness cannot observe the claim, record the check as `NOT_RUN` or blocked and state why.
+
+Verify the complete user-visible contract relevant to the claim, not one convenient field. For tabular results, this means status, columns or schema, and rows.
+
 If deterministic verification is unavailable, say exactly what remains manual and why.
 
 ## Output
 
-Produce a compact verification contract:
+Produce a compact, evidence-oriented verification contract:
 - check name;
 - where it runs;
 - exact command or procedure;
