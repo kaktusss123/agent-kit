@@ -37,7 +37,7 @@ import {
 	resolvePiInvocation,
 	type SpawnFn,
 } from "./rpc-child";
-import { defaultResultsDir, loadResult, saveResult, summarizeText } from "./result-store";
+import { defaultResultsDir, loadResult, saveResult, sumSessionCost, summarizeText } from "./result-store";
 import { parseReadinessPayload, type ReadinessPayload } from "./readiness";
 import { ASK_WIRE_TITLE } from "./bridge-ask";
 import { formatAskRequestFlat, parseAskRequest, type AskInput } from "../ask/contract";
@@ -79,6 +79,10 @@ export interface ControllerOptions {
 	dispatchTimeoutMs?: number;
 	/** Max time to wait for the readiness handshake of profiled children. */
 	readinessTimeoutMs?: number;
+	/** Main session file persisted into results (per-session cost attribution). */
+	parentSession?: string;
+	/** Called whenever this session's subagent cost total changes. */
+	onCostChange?: (total: number) => void;
 }
 
 interface AgentRecord {
@@ -155,6 +159,13 @@ export class LocalSubagentRuntime {
 	private readonly dispatchTimeoutMs: number;
 	private readonly readinessTimeoutMs: number;
 	private readonly workspaceListeners = new Set<(ev: SubagentModelEvent) => void>();
+	/** Main session file written into persisted results (cost attribution). */
+	private readonly parentSession?: string;
+	private readonly onCostChange?: (total: number) => void;
+	/** Cost of results already on disk for this session when the runtime started (resume). */
+	private readonly persistedBaseCost: number;
+	/** Latest cumulative cost reported per agent; the live part of the session total. */
+	private readonly countedCost = new Map<string, number>();
 
 	constructor(opts: ControllerOptions) {
 		this.defaultCwd = opts.defaultCwd;
@@ -167,6 +178,11 @@ export class LocalSubagentRuntime {
 		this.startTimeoutMs = opts.startTimeoutMs ?? 30000;
 		this.dispatchTimeoutMs = opts.dispatchTimeoutMs ?? 10000;
 		this.readinessTimeoutMs = opts.readinessTimeoutMs ?? 15000;
+		this.parentSession = opts.parentSession;
+		this.onCostChange = opts.onCostChange;
+		this.persistedBaseCost = this.parentSession
+			? sumSessionCost(this.resultsDir, this.parentSession)
+			: 0;
 	}
 
 	// ------------------------------------------------------------------ spawn
@@ -454,6 +470,10 @@ export class LocalSubagentRuntime {
 						...(typeof data.cost === "number" ? { cost: data.cost } : {}),
 						...(data.contextUsage ? { contextUsage: data.contextUsage } : {}),
 					};
+					if (typeof data.cost === "number") {
+						this.countedCost.set(record.id, data.cost);
+						this.notifyCostChange();
+					}
 				}
 				return;
 			}
@@ -663,6 +683,7 @@ export class LocalSubagentRuntime {
 			tokens: statsToResultTokens(record.stats),
 			exitCode: record.exitCode,
 			signal: record.signal,
+			...(this.parentSession ? { parentSession: this.parentSession } : {}),
 		};
 		try {
 			saveResult(result, this.resultsDir);
@@ -859,6 +880,7 @@ export class LocalSubagentRuntime {
 			tokens: statsToResultTokens(record.stats),
 			exitCode: record.exitCode,
 			signal: record.signal,
+			...(this.parentSession ? { parentSession: this.parentSession } : {}),
 		};
 	}
 
@@ -933,6 +955,19 @@ export class LocalSubagentRuntime {
 	/** Results dir used for persisted results and envelope records (shared with children via env). */
 	getResultsDir(): string {
 		return this.resultsDir;
+	}
+
+	/**
+	 * Session subagent cost total: results already on disk for this session
+	 * (resume base) plus the latest cumulative cost reported by every agent
+	 * of the live runtime. Children settled in this runtime are counted from
+	 * memory only — their results were written after the base was computed.
+	 */
+	private notifyCostChange(): void {
+		if (!this.onCostChange) return;
+		let total = this.persistedBaseCost;
+		for (const cost of this.countedCost.values()) total += cost;
+		this.onCostChange(total);
 	}
 
 	onEvent(cb: (ev: SubagentModelEvent) => void): () => void {

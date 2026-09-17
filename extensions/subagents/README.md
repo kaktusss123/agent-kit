@@ -43,6 +43,11 @@ event message; the full final result, session location, timestamps, token
 usage, and failure reason live in a persisted result file
 (`$PI_CODING_AGENT_DIR/subagents/results/<id>.json`, default
 `~/.pi/agent/subagents/results/`), fetched lazily via `subagent op=result`.
+Each result also carries `parentSession` (the spawning main session file), so
+a session's subagent spend survives a resume: the runtime sums results
+attributed to the current session (resume base) plus live per-child stats and
+emits the full total on the `subagents:cost` extension event; the footer
+extension subscribes and renders the session's grand total.
 
 ## Escalation (`ask`)
 

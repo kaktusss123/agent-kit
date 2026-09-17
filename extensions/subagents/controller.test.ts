@@ -21,7 +21,12 @@ import {
 import { loadResult } from "./result-store";
 import type { SubagentModelEvent } from "./types";
 
-function makeRuntime(opts?: { killGraceMs?: number; dispatchTimeoutMs?: number }) {
+function makeRuntime(opts?: {
+	killGraceMs?: number;
+	dispatchTimeoutMs?: number;
+	parentSession?: string;
+	onCostChange?: (total: number) => void;
+}) {
 	const harness = createFakeSpawnFactory();
 	const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "subagents-test-"));
 	const events: SubagentModelEvent[] = [];
@@ -34,6 +39,8 @@ function makeRuntime(opts?: { killGraceMs?: number; dispatchTimeoutMs?: number }
 		killGraceMs: opts?.killGraceMs ?? 50,
 		startTimeoutMs: 2000,
 		dispatchTimeoutMs: opts?.dispatchTimeoutMs ?? 2000,
+		...(opts?.parentSession ? { parentSession: opts.parentSession } : {}),
+		...(opts?.onCostChange ? { onCostChange: opts.onCostChange } : {}),
 	});
 	runtime.onEvent((ev) => events.push(ev));
 	const cleanup = () => fs.rmSync(tmp, { recursive: true, force: true });
@@ -56,6 +63,33 @@ async function spawnRunning(
 }
 
 const tick = (ms = 30) => new Promise((r) => setTimeout(r, ms));
+
+/**
+ * Trigger a live stats report and answer it with the given cumulative cost:
+ * fires the child's assistant `message_end` (drives connGetStats), waits for
+ * the `get_session_stats` command, responds. Commands are consumed (like
+ * settleRun's drain) because fetches reuse the fixed id `ctl-stats`.
+ */
+async function respondLiveStats(proc: FakeRpcProcess, cost: number): Promise<void> {
+	proc.writeToStdout({ type: "message_end", message: { role: "assistant", stopReason: "endTurn" } });
+	for (let i = 0; i < 100; i++) {
+		const idx = proc.commands.findIndex((c) => c.type === "get_session_stats");
+		if (idx >= 0) {
+			const cmd = proc.commands[idx];
+			proc.commands.splice(idx, 1);
+			proc.writeToStdout({
+				id: cmd.id,
+				type: "response",
+				command: "get_session_stats",
+				success: true,
+				data: { tokens: { input: 10, output: 5, total: 15 }, cost },
+			});
+			return;
+		}
+		await tick(5);
+	}
+	throw new Error("no get_session_stats command arrived");
+}
 
 // Canonical child ask wire format: title "ask", placeholder = JSON payload.
 const askPayload = (id: string, question: string, extra: Record<string, unknown> = {}) =>
@@ -1121,6 +1155,104 @@ describe("structured canonical ask (portable-ask contract)", () => {
 			expect(responses[0]).toMatchObject({ id: "ui-1", value: "first answer" });
 			expect(responses[1]).toMatchObject({ id: "ui-2", value: "second answer" });
 			expect(runtime.inspect(id)[0].state).toBe("running");
+		} finally {
+			await runtime.shutdown();
+			cleanup();
+		}
+	});
+});
+
+describe("LocalSubagentRuntime cost rollup", () => {
+	test("emits live per-child cost totals (cumulative set, not additive)", async () => {
+		const totals: number[] = [];
+		const { harness, runtime, cleanup } = makeRuntime({ onCostChange: (t) => totals.push(t) });
+		try {
+			const { proc } = await spawnRunning(runtime, harness);
+			await respondLiveStats(proc, 0.42);
+			await tick(5);
+			expect(totals).toEqual([0.42]);
+			// Child stats are cumulative per child: a later report REPLACES the
+			// child's contribution instead of stacking on top of it.
+			await respondLiveStats(proc, 0.5);
+			await tick(5);
+			expect(totals).toEqual([0.42, 0.5]);
+		} finally {
+			await runtime.shutdown();
+			cleanup();
+		}
+	});
+
+	test("attributes persisted results to the parent session and recounts after resume", async () => {
+		const totalsA: number[] = [];
+		const { harness, runtime, tmp, cleanup } = makeRuntime({
+			parentSession: "/sessions/main.jsonl",
+			onCostChange: (t) => totalsA.push(t),
+		});
+		try {
+			const { id, proc } = await spawnRunning(runtime, harness);
+			settleRun(proc, "done");
+			await tick(60);
+			// settle-time stats fetch reports the fake's 0.01 and persists it
+			expect(totalsA[totalsA.length - 1]).toBeCloseTo(0.01, 10);
+			const persisted = await runtime.result(id);
+			expect(persisted?.parentSession).toBe("/sessions/main.jsonl");
+
+			// Resume: a fresh runtime over the same results dir counts the
+			// persisted base plus new live children — no double counting.
+			const totalsB: number[] = [];
+			const harnessB = createFakeSpawnFactory();
+			const runtimeB = new LocalSubagentRuntime({
+				defaultCwd: tmp,
+				resultsDir: tmp,
+				piCommand: { command: "node", args: ["/fake/pi-cli.js"] },
+				bridgePath: "/fake/bridge.ts",
+				spawnFn: harnessB.spawnFn,
+				killGraceMs: 50,
+				startTimeoutMs: 2000,
+				dispatchTimeoutMs: 2000,
+				parentSession: "/sessions/main.jsonl",
+				onCostChange: (t) => totalsB.push(t),
+			});
+			try {
+				const pending = runtimeB.spawn({ task: "more", label: "lab2" });
+				await tick(5);
+				const proc2 = harnessB.spawned[harnessB.spawned.length - 1];
+				autoAcceptPrompt(proc2);
+				await pending;
+				await respondLiveStats(proc2, 0.02);
+				await tick(5);
+				expect(totalsB[totalsB.length - 1]).toBeCloseTo(0.03, 10);
+			} finally {
+				await runtimeB.shutdown();
+			}
+
+			// A different parent session never sees foreign spend.
+			const totalsC: number[] = [];
+			const harnessC = createFakeSpawnFactory();
+			const runtimeC = new LocalSubagentRuntime({
+				defaultCwd: tmp,
+				resultsDir: tmp,
+				piCommand: { command: "node", args: ["/fake/pi-cli.js"] },
+				bridgePath: "/fake/bridge.ts",
+				spawnFn: harnessC.spawnFn,
+				killGraceMs: 50,
+				startTimeoutMs: 2000,
+				dispatchTimeoutMs: 2000,
+				parentSession: "/sessions/other.jsonl",
+				onCostChange: (t) => totalsC.push(t),
+			});
+			try {
+				const pending = runtimeC.spawn({ task: "else", label: "lab3" });
+				await tick(5);
+				const proc3 = harnessC.spawned[harnessC.spawned.length - 1];
+				autoAcceptPrompt(proc3);
+				await pending;
+				await respondLiveStats(proc3, 0.02);
+				await tick(5);
+				expect(totalsC[totalsC.length - 1]).toBeCloseTo(0.02, 10);
+			} finally {
+				await runtimeC.shutdown();
+			}
 		} finally {
 			await runtime.shutdown();
 			cleanup();

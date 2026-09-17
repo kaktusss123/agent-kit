@@ -36,6 +36,33 @@ export function loadResult(agentId: string, dir: string): AgentResult | null {
 	}
 }
 
+/**
+ * Sum persisted subagent spend attributed to one parent session
+ * (`result.parentSession === parentSession`). Used to reconstruct a
+ * session's subagent cost after a resume, when the in-memory runtime is
+ * gone and only the result files remain. Unreadable entries contribute
+ * nothing.
+ */
+export function sumSessionCost(dir: string, parentSession: string): number {
+	let entries: string[];
+	try {
+		entries = fs.readdirSync(dir);
+	} catch {
+		return 0;
+	}
+	let total = 0;
+	for (const name of entries) {
+		if (!name.endsWith(".json")) continue; // also excludes saveResult's .tmp files
+		try {
+			const result = JSON.parse(fs.readFileSync(path.join(dir, name), "utf8")) as AgentResult;
+			if (result.parentSession === parentSession) total += result.tokens?.cost ?? 0;
+		} catch {
+			// corrupt/partial file: skip, never break the rollup
+		}
+	}
+	return total;
+}
+
 /** Derive a one-line summary from the child's final assistant text. */
 export function summarizeText(finalText: string | undefined, max = 240): string {
 	if (!finalText) return "(no final text)";
