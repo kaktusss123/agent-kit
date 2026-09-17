@@ -13,9 +13,13 @@ worktrees); no manifest files.
   list each managed task workspace with canonical-or-lane kind, slot, path,
   branch, HEAD, upstream, classification, dirty paths, and artifacts.
 - **`ensure_task_repo`** — attach a source repo to the task workspace as a git
-  worktree. Reuses existing worktrees, creates new ones from local/remote
-  branches, or fetches and creates from the remote default. Protected default
-  development branches (`main`, `master`, `develop`) are refused as task
+  worktree. Reuses existing worktrees, attaches existing local branches before
+  considering remotes, or fetches and creates from remote branches/defaults. A
+  local-only repository can create a task branch from an explicit local
+  `base_ref`; without one it returns `base_selection_required`. When remote
+  resolution is needed, explicit remote names must match a configured remote;
+  existing local branches ignore the remote because it is irrelevant. Protected
+  default development branches (`main`, `master`, `develop`) are refused as task
   branches. Never forces, resets, or detaches.
 - **`remove_task_lane`** — safely remove one clean secondary lane from its
   managed task workspace (canonical worktrees rejected; non-force only).

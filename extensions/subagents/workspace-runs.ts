@@ -61,6 +61,7 @@ import type { AskInput } from "../ask/contract";
 const LADDER_MAX = 3;
 
 const DEFAULT_DEADLINE_MS = 600000;
+const MIN_FINALIZATION_RESERVE_MS = 30000;
 
 /** Live status refresh cadence: modest — a few seconds, not a spinner. */
 const STATUS_REFRESH_MS = 3000;
@@ -775,6 +776,9 @@ export function createWorkspaceRuns(
 		try {
 			snap = await R(args.cwd).spawn({
 				task,
+				// Only the prompt sent to this child receives the runtime-owned
+				// deadline instructions. Controller records keep `task` canonical.
+				initialPrompt: repoOwnerPrompt(task, deadlineMs),
 				label: `owner-${base}`,
 				cwd: realWorkspace,
 				model: `${args.model.provider}/${args.model.id}`,
@@ -947,6 +951,27 @@ export function createWorkspaceRuns(
 }
 
 // -------------------------------------------------------------------- helpers
+
+/** Add deterministic time-budget instructions only to the dispatched prompt. */
+function repoOwnerPrompt(task: string, deadlineMs: number): string {
+	const reserveMs = Math.min(
+		deadlineMs,
+		Math.max(MIN_FINALIZATION_RESERVE_MS, deadlineMs * 0.2),
+	);
+	const finalizationStartsAtMs = Math.max(0, deadlineMs - reserveMs);
+	const seconds = (milliseconds: number): string =>
+		Number((milliseconds / 1000).toFixed(3)).toString();
+	return (
+		`${task}\n\n` +
+		`Runtime budget (enforced):\n` +
+		`- Hard deadline: ${seconds(deadlineMs)} seconds.\n` +
+		`- Finalization reserve: ${seconds(reserveMs)} seconds ` +
+		`(starts ${seconds(finalizationStartsAtMs)} seconds after dispatch).\n` +
+		`At the reserve boundary, stop starting new scope, commit coherent work, ` +
+		`run only checks that fit, and call report_result with status partial rather ` +
+		`than letting the deadline kill a mid-change worktree.`
+	);
+}
 
 /**
  * Objective state of the workspace, read mechanically from Git.

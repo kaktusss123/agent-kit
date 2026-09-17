@@ -23,16 +23,16 @@ Inputs the model chooses deliberately:
 - `branch` — task branch name; the canonical call's task identity. With `slot`, the lane's own branch.
 - `source_path` — the source git repository to attach.
 - `base_ref` — only per the base-selection policy in SKILL.md; omit otherwise.
-- `remote` — only when auto-detection is wrong or ambiguous.
+- `remote` — only when remote resolution is needed and auto-detection is wrong or ambiguous. Then an explicit name must identify a configured remote. Existing local task branches ignore it because no remote is involved.
 - `task` + `slot` — secondary lane inside the canonical workspace; `task` is required with `slot` and ignored otherwise.
 
 Meaningful results and the required reaction:
 
 - `reused`, `attached`, `created`, `created_from_remote` → proceed. The result carries self-describing `inputRepo` facts (input path, git root, classification, branch, HEAD, dirty state). The input checkout is read-only for the task — never commit, reset, or fetch into it.
-- `base_selection_required`, `remote_selection_required` → the runtime refuses to guess product branching semantics; ask the user (see SKILL.md) and retry with an explicit value.
+- `base_selection_required`, `remote_selection_required` → the runtime refuses to guess product branching semantics; ask the user (see SKILL.md) and retry with an explicit value. For a local-only repository with no task branch, `base_selection_required` names the missing local `base_ref`; supplying it creates without a fetch.
 - `branch_in_use` → another worktree already holds the branch; report which one and ask. Never force, detach, or remove it.
 
-Guarantees: the runtime never forces, resets, or detaches anything; the same task identity resolves to the same workspace location for every session; protected default development branches (`main`, `master`, `develop`) are refused as task branches — canonical and lane calls alike — before anything is created or changed; all state lives in git (branches + worktrees), so there are no manifest files to corrupt or migrate.
+Guarantees: an existing local task branch is attached before remote selection or fetch; the runtime never forces, resets, or detaches anything; the same task identity resolves to the same workspace location for every session; protected default development branches (`main`, `master`, `develop`) are refused as task branches — canonical and lane calls alike — before anything is created or changed; all state lives in git (branches + worktrees), so there are no manifest files to corrupt or migrate.
 
 ## Secondary lanes
 
