@@ -18,7 +18,7 @@ For sibling PRs/MRs from the same epic, migration, or repeated change pattern, d
 
 ## Title
 
-Follow the repository's established title convention. If it uses Conventional Commits with a ticket identifier, prefer this shape:
+Follow the repository's established title convention for structure: type prefix, ticket placement, capitalization, closing lines. Title language follows the default language rule: Russian unless the user explicitly requests otherwise. If the convention uses Conventional Commits with a ticket identifier, prefer this shape:
 
 ```text
 feat(EVODP-11877): generate public API contract as OpenAPI v3
@@ -167,9 +167,9 @@ If a reference project contains a bug that this change avoids, normally describe
 
 ## Language and terminology
 
-Follow explicit user or repository conventions first.
+Write titles and descriptions in Russian by default. Use another language only when the user explicitly requests it for a specific PR/MR, repository, or organization. Repository language conventions do not override this default.
 
-For sibling PRs/MRs, use one language across the set unless repository conventions require otherwise. If no convention is available, use the user's language.
+For sibling PRs/MRs, use one language across the set: the explicitly requested language, or Russian.
 
 Keep exact command names, file names, versions, identifiers, paths, and measured numbers when they materially help review. Use one term consistently for the same concept throughout the description.
 
