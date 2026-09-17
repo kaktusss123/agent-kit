@@ -9,8 +9,8 @@
 * If an English term is necessary, introduce it once with a Russian explanation, then prefer the Russian form.
 * Code, identifiers, comments, docstrings, test names, and code examples MUST remain in English.
 * Repository documentation follows the repository's existing language convention unless it is specifically written for user review.
-* Commit messages, branch names, labels, commands, and status text MAY be in English when natural.
-* PR/MR titles, descriptions, and review comments on GitHub/GitLab default to Russian unless the user explicitly requests another language for a task, repository, or organization.
+* Commit messages, branch names, PR/MR titles, labels, commands, and status text MAY be in English when natural.
+* PR/MR descriptions and review comments on GitHub/GitLab default to Russian unless the user explicitly requests another language for a task, repository, or organization.
 
 ## Communication
 
