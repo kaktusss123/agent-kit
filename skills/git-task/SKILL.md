@@ -66,7 +66,9 @@ Research subagents are bounded helpers: one explicit question, one boundary, rea
 
 Main is the task controller: it owns task intent, user decisions, orchestration, review, and integration. Repository mutation is performed by RepoOwners rooted in managed task worktrees — for one writable repository dispatch exactly one RepoOwner; for several, one per repository. The execution model is the same at any repo count; what scales is the number of owners, not the workflow.
 
-When implementation begins, reuse the existing canonical worktrees and load the task's `SPEC.md` when present. Dispatch owners as parallel calls when repositories are independent, in dependency order otherwise, treating a contract-fixing checkpoint (implementation + local verification yielded) as the barrier before dependents mutate against it. Owners work strictly inside their own worktrees and return contract conflicts to Main instead of resolving them silently. Main does not edit task repositories itself.
+When implementation begins, reuse the existing canonical worktrees and load the task's `SPEC.md` when present. Before dispatch, fit each owner's scope to its deadline and leave time for a candidate commit plus post-commit verification. If the assignment cannot fit, reduce or sequence the scope instead of relying on the hard cutoff. Pass the chosen `deadlineSec`; the runtime adds the finalization budget to the child prompt, so Main must not duplicate it in the canonical task.
+
+Dispatch owners as parallel calls when repositories are independent, in dependency order otherwise, treating a contract-fixing checkpoint (implementation + local verification yielded) as the barrier before dependents mutate against it. Owners work strictly inside their own worktrees and return contract conflicts to Main instead of resolving them silently. Main does not edit task repositories itself.
 
 Late escalation: Main keeps ownership of the repository whose owner already ran; dispatch an owner only for the newly discovered repository. If the discovery changes the cross-repo contract or architecture, update the specification before further mutation — no ceremonial restart.
 

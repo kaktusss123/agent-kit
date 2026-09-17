@@ -263,6 +263,35 @@ describe("pre-dispatch gates (fail closed)", () => {
 	});
 });
 
+describe("RepoOwner dispatch budget", () => {
+	test.each([
+		{ timeoutMs: 600000, reserveSeconds: 120, finalizationStartsAt: 480 },
+		{ timeoutMs: 100000, reserveSeconds: 30, finalizationStartsAt: 70 },
+	])(
+		"augments only the initial child prompt for a $timeoutMs ms deadline",
+		async ({ timeoutMs, reserveSeconds, finalizationStartsAt }) => {
+			const h = makeLayer();
+			try {
+				const ws = makeWorktree(h.taskRoot, `budget-${timeoutMs}-ws`);
+				const task = "Implement the requested slice.";
+				const { proc } = await driveToRunning(h, { workspace: ws, task, timeout_ms: timeoutMs });
+				const prompt = proc.commands.find((c) => c.type === "prompt" && c.id === "spawn-prompt");
+
+				expect(prompt?.message).toBe(
+					`${task}\n\n` +
+						`Runtime budget (enforced):\n` +
+						`- Hard deadline: ${timeoutMs / 1000} seconds.\n` +
+						`- Finalization reserve: ${reserveSeconds} seconds (starts ${finalizationStartsAt} seconds after dispatch).\n` +
+						`At the reserve boundary, stop starting new scope, commit coherent work, run only checks that fit, and call report_result with status partial rather than letting the deadline kill a mid-change worktree.`,
+				);
+			} finally {
+				await h.runtime.shutdown();
+				h.cleanup();
+			}
+		},
+	);
+});
+
 describe("happy path", () => {
 	test("fresh envelope settles done: result delivered, child retired, notified, queryable", async () => {
 		const h = makeLayer();

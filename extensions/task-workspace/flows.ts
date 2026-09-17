@@ -224,32 +224,7 @@ export async function ensureTaskRepo(
     }
   }
 
-  // 5. Resolve remote
-  let remote = params.remote;
-  if (!remote) {
-    const remoteList = await git(sourceRoot, "remote");
-    if (!remoteList.ok) {
-      return {
-        status: "error",
-        message: "No remotes configured in source repo",
-      };
-    }
-    const remotes = remoteList.stdout
-      .split("\n")
-      .filter((r) => r);
-    if (remotes.includes("origin")) {
-      remote = "origin";
-    } else if (remotes.length === 1) {
-      remote = remotes[0];
-    } else {
-      return {
-        status: "remote_selection_required",
-        remotes,
-      };
-    }
-  }
-
-  // 6. Branch resolution
+  // 5. A local task branch needs no remote selection or network access.
   const localRef = await git(
     sourceRoot,
     "show-ref",
@@ -319,66 +294,107 @@ export async function ensureTaskRepo(
       headSha,
     };
   }
-  // 6b. Local absent — one required successful fetch of the chosen
-  // remote, then resolve against the refreshed refs. Fail closed on
-  // fetch failure: stale remote refs never materialize a task branch.
-  const fetchRes = await git(
-    sourceRoot,
-    "fetch",
-    "--prune",
-    "--no-prune-tags",
-    remote,
-  );
-  if (!fetchRes.ok) {
+
+  // 6. The task branch is absent. Resolve and validate a remote only now;
+  // local-only repositories can create directly from an explicit local base.
+  const remoteList = await git(sourceRoot, "remote");
+  if (!remoteList.ok) {
     return {
       status: "error",
-      message: `Fetch of ${remote} failed; refusing to create task branch from stale refs: ${fetchRes.stderr.trim()}`,
+      message: `Failed to list configured remotes: ${remoteList.stderr.trim()}`,
     };
   }
-  const remoteRef = await git(
-    sourceRoot,
-    "show-ref",
-    "--verify",
-    `refs/remotes/${remote}/${params.branch}`,
-  );
-  if (remoteRef.ok) {
-    const remoteSha = remoteRef.stdout.split(/\s+/)[0];
-    await mkdir(ws, { recursive: true });
-    const add = await git(
-      sourceRoot,
-      "worktree",
-      "add",
-      "--track",
-      "-b",
-      params.branch,
-      target,
-      `${remote}/${params.branch}`,
-    );
-    if (!add.ok) {
+  const remotes = remoteList.stdout.split("\n").filter((r) => r);
+  let remote: string | undefined;
+  if (params.remote) {
+    if (!remotes.includes(params.remote)) {
       return {
         status: "error",
-        message: `Failed to create worktree from remote: ${add.stderr}`,
+        message: `Unknown remote ${params.remote}; configured remotes: ${remotes.length > 0 ? remotes.join(", ") : "none"}`,
       };
     }
-    const inputRepo = await getInputRepoFacts(sourceAbs, sourceRoot, cwd, opts.taskRoot);
-    const headSha = await getRepoSha(target);
+    remote = params.remote;
+  } else if (remotes.includes("origin")) {
+    remote = "origin";
+  } else if (remotes.length === 1) {
+    remote = remotes[0];
+  } else if (remotes.length > 1) {
     return {
-      status: "created_from_remote",
-      task: identity,
-      worktree: target,
-      kind: params.slot ? "lane" : "canonical",
-      slot: params.slot ?? null,
-      branch: params.branch,
-      branchSource: "remote",
-      upstream: `${remote}/${params.branch}`,
-      remoteSha,
-      base: null,
-      inputRepo,
-      headSha,
+      status: "remote_selection_required",
+      remotes,
+    };
+  } else if (!params.base_ref) {
+    return {
+      status: "base_selection_required",
+      reason:
+        "The task branch is absent and the source repository has no remotes; pass an explicit local base_ref.",
+      remotes: [],
     };
   }
 
-  // 6c. Both absent — base selection
+  // 6b. With a remote, perform one required successful fetch, then resolve
+  // against refreshed refs. Fail closed on fetch failure: stale remote refs
+  // never materialize a task branch.
+  if (remote) {
+    const fetchRes = await git(
+      sourceRoot,
+      "fetch",
+      "--prune",
+      "--no-prune-tags",
+      remote,
+    );
+    if (!fetchRes.ok) {
+      return {
+        status: "error",
+        message: `Fetch of ${remote} failed; refusing to create task branch from stale refs: ${fetchRes.stderr.trim()}`,
+      };
+    }
+    const remoteRef = await git(
+      sourceRoot,
+      "show-ref",
+      "--verify",
+      `refs/remotes/${remote}/${params.branch}`,
+    );
+    if (remoteRef.ok) {
+      const remoteSha = remoteRef.stdout.split(/\s+/)[0];
+      await mkdir(ws, { recursive: true });
+      const add = await git(
+        sourceRoot,
+        "worktree",
+        "add",
+        "--track",
+        "-b",
+        params.branch,
+        target,
+        `${remote}/${params.branch}`,
+      );
+      if (!add.ok) {
+        return {
+          status: "error",
+          message: `Failed to create worktree from remote: ${add.stderr}`,
+        };
+      }
+      const inputRepo = await getInputRepoFacts(sourceAbs, sourceRoot, cwd, opts.taskRoot);
+      const headSha = await getRepoSha(target);
+      return {
+        status: "created_from_remote",
+        task: identity,
+        worktree: target,
+        kind: params.slot ? "lane" : "canonical",
+        slot: params.slot ?? null,
+        branch: params.branch,
+        branchSource: "remote",
+        upstream: `${remote}/${params.branch}`,
+        remoteSha,
+        base: null,
+        inputRepo,
+        headSha,
+      };
+    }
+  }
+
+  // 6c. The task branch is absent locally and on the selected remote, or the
+  // repository is local-only — resolve the requested/default base.
   let baseSha: string;
   let baseRef: string;
 
@@ -393,8 +409,17 @@ export async function ensureTaskRepo(
     baseSha = baseRes.stdout;
     baseRef = params.base_ref;
   } else {
-    // Refs were already refreshed by the required fetch in 6b; base
-    // selection must not trigger a second fetch for the same decision.
+    // No explicit base reaches this branch only when a remote was selected.
+    // Refs were already refreshed by the required fetch in 6b; base selection
+    // must not trigger a second fetch for the same decision.
+    if (!remote) {
+      return {
+        status: "base_selection_required",
+        reason:
+          "The task branch is absent and the source repository has no remotes; pass an explicit local base_ref.",
+        remotes: [],
+      };
+    }
     // Determine remote default branch
     const symRef = await git(
       sourceRoot,

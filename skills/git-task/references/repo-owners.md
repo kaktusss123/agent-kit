@@ -7,7 +7,8 @@ Deterministic contract of workspace-mode `subagent` spawns (subagents extension,
 `subagent op=spawn workspace=<worktree> task=<assignment> deadlineSec=<seconds>` runs a RepoOwner: an independent agent process rooted in a managed task worktree. The child inherits the main session model; `modelClass` does not apply to workspace spawns (plain `cwd` spawns keep it).
 
 - `workspace` — the absolute managed worktree path from `ensure_task_repo`; the owner works with relative paths there and sees the repository's own project instructions.
-- `task` — the complete owner assignment: intent, applicable contract artifacts (e.g. SPEC.md), the worker report contract from SKILL.md, and the instruction to change only this repository.
+- `task` — the complete owner assignment: intent, applicable contract artifacts (e.g. SPEC.md), the worker report contract from SKILL.md, and the instruction to change only this repository. The registry retains this canonical text unchanged.
+- `deadlineSec` — the hard runtime deadline. The runtime appends a budget block only to the dispatched child prompt. It states the deadline and a finalization reserve equal to 20% of the duration, with a 30-second minimum, and tells the owner to stop new scope at that boundary, commit coherent work, run only checks that fit, and report `partial` instead of being killed mid-change.
 - The call blocks until a terminal outcome (`done`, `partial`, `blocked`) or `needs_input`.
 
 Dispatch is strict and fail closed: a subagents-owned readiness probe (the last profile entry in the child) confirms initialization from the child's actual session tool set before the task prompt reaches a model; any refusal kills the child with `dispatched: false` and the task is never sent. After the prompt is accepted there is no automatic fallback — an abort detaches and the run keeps going; repair is a fresh dispatch.
