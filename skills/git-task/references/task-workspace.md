@@ -23,7 +23,7 @@ Inputs the model chooses deliberately:
 - `branch` — task branch name; the canonical call's task identity. With `slot`, the lane's own branch.
 - `source_path` — the source git repository to attach.
 - `base_ref` — only per the base-selection policy in SKILL.md; omit otherwise.
-- `remote` — only when auto-detection is wrong or ambiguous. An explicit name must identify a configured remote.
+- `remote` — only when remote resolution is needed and auto-detection is wrong or ambiguous. Then an explicit name must identify a configured remote. Existing local task branches ignore it because no remote is involved.
 - `task` + `slot` — secondary lane inside the canonical workspace; `task` is required with `slot` and ignored otherwise.
 
 Meaningful results and the required reaction:

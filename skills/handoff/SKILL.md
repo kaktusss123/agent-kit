@@ -15,7 +15,7 @@ Preserve the minimum state needed to continue correctly:
 - work completed and current artifact/repo state;
 - verification already run and exact results;
 - the exact verified invocation and required environment when continuation depends on them, preferably in a durable script or config instead of prose;
-- a safe derivation recipe for every secret or environment-bound value, never a placeholder that a cold agent cannot resolve;
+- the authoritative source and safe retrieval or derivation procedure for required secret or environment-bound values, without recording secret values or leaving placeholders that a cold agent cannot resolve;
 - unresolved questions or blockers;
 - next concrete actions.
 

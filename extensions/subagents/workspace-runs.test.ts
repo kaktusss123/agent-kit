@@ -267,6 +267,7 @@ describe("RepoOwner dispatch budget", () => {
 	test.each([
 		{ timeoutMs: 600000, reserveSeconds: 120, finalizationStartsAt: 480 },
 		{ timeoutMs: 100000, reserveSeconds: 30, finalizationStartsAt: 70 },
+		{ timeoutMs: 1000, reserveSeconds: 1, finalizationStartsAt: 0 },
 	])(
 		"augments only the initial child prompt for a $timeoutMs ms deadline",
 		async ({ timeoutMs, reserveSeconds, finalizationStartsAt }) => {
@@ -284,6 +285,7 @@ describe("RepoOwner dispatch budget", () => {
 						`- Finalization reserve: ${reserveSeconds} seconds (starts ${finalizationStartsAt} seconds after dispatch).\n` +
 						`At the reserve boundary, stop starting new scope, commit coherent work, run only checks that fit, and call report_result with status partial rather than letting the deadline kill a mid-change worktree.`,
 				);
+				expect(h.runtime.inspect(h.agentId())[0]!.task).toBe(task);
 			} finally {
 				await h.runtime.shutdown();
 				h.cleanup();

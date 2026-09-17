@@ -16,8 +16,10 @@ export type AgentState =
 	| "cancelled";
 
 export interface SpawnOptions {
-	/** Initial task prompt for the child agent. */
+	/** Canonical task stored in controller records and results. */
 	task: string;
+	/** Optional child-only initial prompt; defaults to the canonical task. */
+	initialPrompt?: string;
 	/** Short human/model-friendly name shown in status and session name. */
 	label?: string;
 	/** Working directory for the child process (resolved against main cwd). */

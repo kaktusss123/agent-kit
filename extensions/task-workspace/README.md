@@ -16,9 +16,10 @@ worktrees); no manifest files.
   worktree. Reuses existing worktrees, attaches existing local branches before
   considering remotes, or fetches and creates from remote branches/defaults. A
   local-only repository can create a task branch from an explicit local
-  `base_ref`; without one it returns `base_selection_required`. Explicit remote
-  names must match a configured remote. Protected default development branches
-  (`main`, `master`, `develop`) are refused as task
+  `base_ref`; without one it returns `base_selection_required`. When remote
+  resolution is needed, explicit remote names must match a configured remote;
+  existing local branches ignore the remote because it is irrelevant. Protected
+  default development branches (`main`, `master`, `develop`) are refused as task
   branches. Never forces, resets, or detaches.
 - **`remove_task_lane`** — safely remove one clean secondary lane from its
   managed task workspace (canonical worktrees rejected; non-force only).

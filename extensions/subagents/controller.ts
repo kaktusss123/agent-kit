@@ -85,6 +85,7 @@ interface AgentRecord {
 	id: string;
 	label: string;
 	task: string;
+	initialPrompt: string;
 	cwd: string;
 	model?: string;
 	thinking?: string;
@@ -220,6 +221,7 @@ export class LocalSubagentRuntime {
 			id,
 			label,
 			task: opts.task,
+			initialPrompt: opts.initialPrompt ?? opts.task,
 			cwd,
 			model: opts.model,
 			thinking: opts.thinking,
@@ -302,7 +304,7 @@ export class LocalSubagentRuntime {
 			}
 		}, this.startTimeoutMs);
 		record.acceptTimer.unref?.();
-		this.conn(record).send({ id: "spawn-prompt", type: "prompt", message: record.task });
+		this.conn(record).send({ id: "spawn-prompt", type: "prompt", message: record.initialPrompt });
 	}
 
 	private clearSpawnTimers(record: AgentRecord): void {

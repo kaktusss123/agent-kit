@@ -32,7 +32,7 @@ Do not use:
 
 A negative or blocking conclusion needs a positive control through the same probe path when feasible. Prove that the probe can observe a known-success case before trusting its failure result.
 
-Treat a command or tool failure, timeout, or malformed response as probe failure, not product success. If the harness cannot observe the claim, record the check as `NOT_RUN` or blocked and state why.
+Treat a command or tool failure, malformed response, or unclassified timeout as probe failure, not product success. A timeout counts as product evidence only when it is the explicitly expected observable, the probe is bounded, and a same-path positive control succeeds. If the harness cannot observe the claim, record the check as `NOT_RUN` or blocked and state why.
 
 Verify the complete user-visible contract relevant to the claim, not one convenient field. For tabular results, this means status, columns or schema, and rows.
 

@@ -775,9 +775,10 @@ export function createWorkspaceRuns(
 		let snap: AgentSnapshot;
 		try {
 			snap = await R(args.cwd).spawn({
-				// The registry keeps `task` canonical below. Only the prompt sent to
-				// this child receives the runtime-owned deadline instructions.
-				task: repoOwnerPrompt(task, deadlineMs),
+				task,
+				// Only the prompt sent to this child receives the runtime-owned
+				// deadline instructions. Controller records keep `task` canonical.
+				initialPrompt: repoOwnerPrompt(task, deadlineMs),
 				label: `owner-${base}`,
 				cwd: realWorkspace,
 				model: `${args.model.provider}/${args.model.id}`,
@@ -953,7 +954,10 @@ export function createWorkspaceRuns(
 
 /** Add deterministic time-budget instructions only to the dispatched prompt. */
 function repoOwnerPrompt(task: string, deadlineMs: number): string {
-	const reserveMs = Math.max(MIN_FINALIZATION_RESERVE_MS, deadlineMs * 0.2);
+	const reserveMs = Math.min(
+		deadlineMs,
+		Math.max(MIN_FINALIZATION_RESERVE_MS, deadlineMs * 0.2),
+	);
 	const finalizationStartsAtMs = Math.max(0, deadlineMs - reserveMs);
 	const seconds = (milliseconds: number): string =>
 		Number((milliseconds / 1000).toFixed(3)).toString();
