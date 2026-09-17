@@ -149,6 +149,8 @@ export interface AgentResult {
 	tokens?: { input: number; output: number; total: number; cost?: number };
 	exitCode?: number | null;
 	signal?: string | null;
+	/** Main session file that spawned this agent; enables per-session cost rollup. */
+	parentSession?: string;
 }
 
 /** Model-visible runtime events. Everything noisier stays telemetry-only. */

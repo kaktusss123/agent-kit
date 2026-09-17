@@ -62,6 +62,19 @@ function fmtWindow(n: number | undefined): string {
 	return `${Math.round(n / 1000)}k`;
 }
 
+/**
+ * Cost display parts: main-session cost plus, when subagents spent money,
+ * the grand total (main + all session subagents) shown in parentheses.
+ * Threshold mirrors the footer's cost visibility (>= half a cent).
+ */
+export function costParts(main: number, subagents: number): { main: string | null; grand: string | null } {
+	const showMain = main >= 0.005 || subagents >= 0.005;
+	return {
+		main: showMain ? main.toFixed(2) : null,
+		grand: subagents >= 0.005 ? (main + subagents).toFixed(2) : null,
+	};
+}
+
 interface TurnStats {
 	input: number;
 	output: number;
@@ -120,6 +133,20 @@ export default function (pi: ExtensionAPI) {
 	let active = false; // footer currently installed
 	let userDisabled = false; // user explicitly turned it off
 	let activeTui: any;
+	/** Latest subagent cost total for this session (live runtime + persisted results). */
+	let subagentCost = 0;
+
+	// The subagents extension owns the number and emits the full total on
+	// every change (session_start persisted sum, live per-child stats). We
+	// only cache and repaint. Pre-startup events (emitted before this
+	// extension loads) are covered by the session_start emission.
+	pi.events?.on?.("subagents:cost", (data: unknown) => {
+		const total = (data as { total?: unknown } | null)?.total;
+		if (typeof total === "number" && Number.isFinite(total) && total !== subagentCost) {
+			subagentCost = total;
+			if (active) activeTui?.requestRender();
+		}
+	});
 
 	function installFooter(ctx: any) {
 		active = true;
@@ -164,8 +191,13 @@ export default function (pi: ExtensionAPI) {
 					const pathPart = theme.fg("muted", `${ICON.folder} ${shortPath}`);
 					const branch = footerData.getGitBranch();
 					const git = branch ? theme.fg("muted", `${ICON.branch} ${branch}`) : "";
-					const cost =
-						stats.cost >= 0.005 ? theme.fg("warning", `$${stats.cost.toFixed(2)}`) : "";
+					const costs = costParts(stats.cost, subagentCost);
+					const cost = costs.main
+						? theme.fg(
+								"warning",
+								`$${costs.main}${costs.grand ? DIM(` ($${costs.grand})`) : ""}`,
+						  )
+						: "";
 					const sep = DIM(" ▸ ");
 					const left = [dot, model + think, pathPart, git, cost].filter(Boolean).join(sep);
 

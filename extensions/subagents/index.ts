@@ -49,6 +49,7 @@ import { StringEnum } from "@earendil-works/pi-ai";
 import { Type } from "typebox";
 import { LocalSubagentRuntime } from "./controller";
 import { resolveSpawnPair, type SpawnModelClass } from "./spawn-model";
+import { defaultResultsDir, sumSessionCost } from "./result-store";
 import {
 	formatAskRequestBlock,
 	formatLiveSnapshot,
@@ -131,10 +132,16 @@ const SubagentParams = Type.Object({
 export default function (pi: ExtensionAPI) {
 	let runtime: LocalSubagentRuntime | null = null;
 	let runs: WorkspaceRuns | null = null;
+	/** Main session file for result attribution; set on session_start and lazily on tool entry. */
+	let parentSessionFile: string | undefined;
 
 	function getRuntime(ctxCwd?: string): LocalSubagentRuntime {
 		if (!runtime) {
-			runtime = new LocalSubagentRuntime({ defaultCwd: ctxCwd ?? process.cwd() });
+			runtime = new LocalSubagentRuntime({
+				defaultCwd: ctxCwd ?? process.cwd(),
+				parentSession: parentSessionFile,
+				onCostChange: (total) => pi.events.emit("subagents:cost", { total }),
+			});
 			attachDelivery(pi, runtime);
 		}
 		return runtime;
@@ -146,6 +153,20 @@ export default function (pi: ExtensionAPI) {
 		}
 		return runs;
 	}
+
+	// Cost rollup: before the runtime exists, reconstruct this session's
+	// settled subagent spend from persisted results (resume case — the live
+	// runtime and its in-memory counters are gone). Once the runtime exists
+	// it owns the total and emits `subagents:cost` itself; consumers (footer)
+	// repaint on the event. Never starts the runtime: no results dir, no read.
+	pi.on("session_start", async (_event, ctx) => {
+		parentSessionFile =
+			(ctx.sessionManager as { getSessionFile?: () => string | undefined } | undefined)?.getSessionFile?.() ??
+			parentSessionFile;
+		if (runtime || !parentSessionFile) return;
+		const total = sumSessionCost(defaultResultsDir(), parentSessionFile);
+		if (total > 0) pi.events.emit("subagents:cost", { total });
+	});
 
 	// Proxy propagation: proxy-toggle emits "proxy-changed" after the user
 	// flips the machine preference; every live child gets the bridge's `proxy`
@@ -214,6 +235,9 @@ export default function (pi: ExtensionAPI) {
 		renderResult: renderSubagentResult,
 
 		async execute(_toolCallId, params, signal, onUpdate, ctx) {
+			parentSessionFile =
+				(ctx.sessionManager as { getSessionFile?: () => string | undefined } | undefined)?.getSessionFile?.() ??
+				parentSessionFile;
 			const rt = getRuntime(ctx.cwd);
 			const op = params.op;
 			// Cross-tool allow-list for workspace-owned children: their lifecycle
