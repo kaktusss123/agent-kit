@@ -82,6 +82,17 @@ run_uninstall() { # sets OUT and RC
 	return 0
 }
 
+run_update() { # sets OUT and RC
+	if OUT="$(AGENT_KIT_ROOT="$SANDBOX/kit" "$SANDBOX/kit/bin/agent-kit" update 2>&1)"; then RC=0; else RC=$?; fi
+	[ "$VERBOSE" = 1 ] && printf '%s\n' "$OUT"
+	return 0
+}
+
+git_commit_all() { # <repo> <message> — commit every change with a fixed identity
+	git -C "$1" add -A
+	git -C "$1" -c user.email=agent-kit@test -c user.name=agent-kit commit -qm "$2"
+}
+
 # --- sandbox -----------------------------------------------------------------
 
 new_test() { # <name>
@@ -624,6 +635,85 @@ run_install
 	esac
 run_uninstall
 	assert_eq "$(cat "$PI_ROOT/AGENTS.md")" "mine" "user file survives uninstall"
+pass
+
+# ==============================================================================
+# T21: update fast-forwards the checkout and reconciles links to the new tree
+
+new_test "T21 update fast-forward and reconcile"
+make_kit "$SANDBOX/seed"
+git -C "$SANDBOX/seed" init -q -b main
+git_commit_all "$SANDBOX/seed" init
+git init --bare -q -b main "$SANDBOX/origin.git"
+git -C "$SANDBOX/seed" push -q "$SANDBOX/origin.git" main
+git clone -q "$SANDBOX/origin.git" "$SANDBOX/kit"
+run_install_from "$SANDBOX/kit"
+	assert_eq "$RC" 0 "install from cloned checkout"
+	assert_link "$PI_ROOT/skills/alpha" "$SANDBOX/kit/skills/alpha" "alpha linked before update"
+# a new entity lands upstream while the checkout stays behind
+mkdir -p "$SANDBOX/seed/skills/gamma"
+echo "# gamma" > "$SANDBOX/seed/skills/gamma/SKILL.md"
+git_commit_all "$SANDBOX/seed" "add gamma"
+git -C "$SANDBOX/seed" push -q "$SANDBOX/origin.git" main
+run_update
+	assert_eq "$RC" 0 "update succeeds"
+	[ "$(git -C "$SANDBOX/kit" rev-parse HEAD)" = "$(git -C "$SANDBOX/seed" rev-parse HEAD)" ] || fail "checkout should sit at the pushed upstream commit"
+	assert_link "$PI_ROOT/skills/gamma" "$SANDBOX/kit/skills/gamma" "new entity linked by the update reconcile"
+# nothing new upstream: still clean, reconcile idempotent
+run_update
+	assert_eq "$RC" 0 "update without new commits succeeds"
+pass
+
+# ==============================================================================
+# T22: update refuses to clobber a diverged checkout and changes nothing
+
+new_test "T22 update refuses a diverged checkout"
+make_kit "$SANDBOX/seed"
+git -C "$SANDBOX/seed" init -q -b main
+git_commit_all "$SANDBOX/seed" init
+git init --bare -q -b main "$SANDBOX/origin.git"
+git -C "$SANDBOX/seed" push -q "$SANDBOX/origin.git" main
+git clone -q "$SANDBOX/origin.git" "$SANDBOX/kit"
+run_install_from "$SANDBOX/kit"
+# upstream moves one way, the checkout moves the other
+mkdir -p "$SANDBOX/seed/skills/gamma"
+echo "# gamma" > "$SANDBOX/seed/skills/gamma/SKILL.md"
+git_commit_all "$SANDBOX/seed" "add gamma upstream"
+git -C "$SANDBOX/seed" push -q "$SANDBOX/origin.git" main
+mkdir -p "$SANDBOX/kit/skills/delta"
+echo "# delta" > "$SANDBOX/kit/skills/delta/SKILL.md"
+git_commit_all "$SANDBOX/kit" "add delta locally"
+run_update
+	assert_eq "$RC" 2 "diverged checkout fails the update"
+	assert_no_file "$PI_ROOT/skills/gamma" "upstream entity not linked on failed update"
+	assert_no_file "$PI_ROOT/skills/delta" "local-only entity never linked"
+	assert_link "$PI_ROOT/skills/alpha" "$SANDBOX/kit/skills/alpha" "existing links untouched"
+	case "$OUT" in
+	*"resolve it manually"*) : ;;
+	*) fail "should explain the pull failure, got: $OUT" ;;
+	esac
+pass
+
+# ==============================================================================
+# T23: update fails cleanly without a git checkout or without an upstream
+
+new_test "T23 update without checkout or upstream"
+use_path_empty
+make_kit "$SANDBOX/kit"
+run_update
+	assert_eq "$RC" 2 "plain directory fails the update"
+	case "$OUT" in
+	*"is not a git checkout"*) : ;;
+	*) fail "should explain the missing checkout, got: $OUT" ;;
+	esac
+git -C "$SANDBOX/kit" init -q
+git_commit_all "$SANDBOX/kit" init
+run_update
+	assert_eq "$RC" 2 "repository without upstream fails the update"
+	case "$OUT" in
+	*"has no upstream"*) : ;;
+	*) fail "should explain the missing upstream, got: $OUT" ;;
+	esac
 pass
 
 printf '\n%d passed, %d failed\n' "$PASS" "$FAIL"

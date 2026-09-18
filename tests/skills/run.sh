@@ -120,7 +120,14 @@ for prompt in "$SELF_DIR"/prompts/*.md; do
 			missing=1
 		fi
 	done < <(grep -ohE 'skill://[A-Za-z0-9-]+' "$prompt" | sed 's|^skill://||')
-	if [ "$missing" -eq 0 ] && grep -q 'skill://' "$prompt"; then
+	# Workflow entrypoints must bind canonical skills; a prompt may declare
+	# itself standalone in the frontmatter (pure text transformation, no
+	# skill policy). Standalone prompts keep target validation but are not
+	# required to reference anything.
+	standalone="$(awk 'NR == 1 && $0 != "---" { exit 1 } NR > 1 { if ($0 == "---") exit; print }' "$prompt" | sed -n '/^standalone:[[:space:]]*true[[:space:]]*$/p')"
+	if [ -n "$standalone" ]; then
+		ok "$name: standalone (no skill binding required)"
+	elif [ "$missing" -eq 0 ] && grep -q 'skill://' "$prompt"; then
 		ok "$name: all skill:// targets exist"
 	elif [ "$missing" -eq 0 ]; then
 		bad "$name: references no canonical skill"

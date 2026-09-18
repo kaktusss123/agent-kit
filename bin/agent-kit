@@ -32,6 +32,7 @@
 #
 # Usage:
 #   agent-kit install
+#   agent-kit update
 #   agent-kit uninstall
 #   agent-kit status
 #
@@ -521,6 +522,33 @@ cmd_uninstall() {
 	return 0
 }
 
+# --- update -----------------------------------------------------------------------
+#
+# Bring the active checkout up to date and reconcile the managed links to
+# the new tree in one command. Deliberately thin: git's own semantics for
+# pull --ff-only (never clobbers a diverged or dirty checkout), then the
+# same reconcile as install.
+
+cmd_update() {
+	if ! git -C "$REPO" rev-parse --git-dir >/dev/null 2>&1; then
+		die "update: $REPO is not a git checkout; there is nothing to pull"
+	fi
+	local branch upstream
+	branch="$(git -C "$REPO" rev-parse --abbrev-ref HEAD 2>/dev/null || true)"
+	if [ -z "$branch" ] || [ "$branch" = "HEAD" ]; then
+		die "update: $REPO is in detached HEAD state; switch to a branch first"
+	fi
+	upstream="$(git -C "$REPO" rev-parse --abbrev-ref --symbolic-full-name '@{upstream}' 2>/dev/null || true)"
+	if [ -z "$upstream" ]; then
+		die "update: branch '$branch' has no upstream; nothing to pull"
+	fi
+	msg "Updating $REPO ($branch from $upstream):"
+	if ! git -C "$REPO" pull --ff-only; then
+		die "update: 'git pull --ff-only' failed in $REPO; resolve it manually, then re-run 'agent-kit update'"
+	fi
+	cmd_install
+}
+
 usage() {
 	cat <<'EOF'
 agent-kit — install the personal Pi agent framework
@@ -528,6 +556,7 @@ agent-kit — install the personal Pi agent framework
 Usage:
   agent-kit install     link skills/, extensions/, prompts/, rules/AGENTS.md
                         into ~/.pi/agent
+  agent-kit update      git pull --ff-only in this checkout, then reconcile
   agent-kit uninstall   remove owned links from ~/.pi/agent
   agent-kit status      show link state and launcher ownership
   agent-kit help        this text
@@ -545,8 +574,9 @@ EOF
 case "${1:-}" in
 install)   shift; [ $# -eq 0 ] || die "agent-kit manages a single runtime; '${1:-}' is not a valid argument (see: agent-kit help)"; cmd_install ;;
 uninstall) shift; [ $# -eq 0 ] || die "agent-kit manages a single runtime; '${1:-}' is not a valid argument (see: agent-kit help)"; cmd_uninstall ;;
+update)    shift; [ $# -eq 0 ] || die "update takes no arguments (see: agent-kit help)"; cmd_update ;;
 status)    shift; [ $# -eq 0 ] || die "status takes no arguments (see: agent-kit help)"; status ;;
 -h|--help|help) usage ;;
 "")        usage ;;
-*)         die "unknown command '$1' (try: install, uninstall, status, help)" ;;
+*)         die "unknown command '$1' (try: install, uninstall, update, status, help)" ;;
 esac
