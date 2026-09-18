@@ -72,24 +72,30 @@ describe("provider-extensions", () => {
 		expect(entries).toEqual([path.join(pkg.installedPath!, "single.ts")]);
 	});
 
-	test("packageExtensionEntries falls back: extensions/ dir, then the package dir itself", () => {
-		// No pi.extensions in the manifest, extensions/ dir exists.
-		const withDir = makePackage({ manifest: { name: "pkg" }, extensionsDirWith: ["x.ts"] });
-		expect(packageExtensionEntries(withDir.installedPath!)).toEqual([path.join(withDir.installedPath!, "extensions")]);
+	test("packageExtensionEntries falls back to the package ROOT (a -e directory is a single file)", () => {
+		// Manifest-less package with an extensions/ dir: the ROOT, never the dir.
+		const withDir = makePackage({ manifest: { name: "pkg" }, extensionsDirWith: ["provider.ts"] });
+		expect(packageExtensionEntries(withDir.installedPath!)).toEqual([withDir.installedPath]);
 
 		// Neither manifest entry nor extensions/ dir: the package dir itself.
 		const bare = makePackage({ manifest: { name: "pkg" } });
 		expect(packageExtensionEntries(bare.installedPath!)).toEqual([bare.installedPath]);
 
-		// Broken/absent manifest with extensions/ dir still resolves the dir.
-		const broken = makePackage({ manifest: null, extensionsDirWith: ["x.ts"] });
-		expect(packageExtensionEntries(broken.installedPath!)).toEqual([path.join(broken.installedPath!, "extensions")]);
+		// Broken/absent manifest with extensions/ dir: still the ROOT.
+		const broken = makePackage({ manifest: null, extensionsDirWith: ["provider.ts"] });
+		expect(packageExtensionEntries(broken.installedPath!)).toEqual([broken.installedPath]);
 	});
 
 	test("packageExtensionEntries: declared entries that do not exist are not passed", () => {
 		const pkg = makePackage({ manifest: { pi: { extensions: ["./nope.ts"] } }, extensionsDirWith: ["y.ts"] });
-		// All declared entries missing → falls back to the extensions/ dir.
-		expect(packageExtensionEntries(pkg.installedPath!)).toEqual([path.join(pkg.installedPath!, "extensions")]);
+		// All declared entries missing → falls back to the package ROOT.
+		expect(packageExtensionEntries(pkg.installedPath!)).toEqual([pkg.installedPath]);
+	});
+
+	test("resolver: manifest-less package with extensions/provider.ts yields the package root", () => {
+		const pkg = makePackage({ manifest: { name: "pkg" }, extensionsDirWith: ["provider.ts"] });
+		const resolved = resolveProviderExtensions("cloudru/Qwen/Qwen3.5", facts(["cloudru"], [pkg]));
+		expect(resolved).toEqual({ kind: "ok", entries: [pkg.installedPath] });
 	});
 
 	test("not needed: provider not in the extension-registered set (builtin or unknown)", () => {

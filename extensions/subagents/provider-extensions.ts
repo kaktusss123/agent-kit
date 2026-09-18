@@ -43,6 +43,22 @@ export interface ProviderExtensionFacts {
 	listPackages: () => ConfiguredPackageRef[];
 }
 
+/**
+ * Live parent facts captured from the extension ctx beside the model
+ * registry. They bound the PROJECT scope of package enumeration.
+ */
+export interface ParentRuntimeFacts {
+	/** The parent's cwd at refresh time (project scope for settings/packages). */
+	cwd: string;
+	/**
+	 * `ctx.isProjectTrusted()`. False ⇒ pi must not read the project's
+	 * settings at all, so its `packages` never reach a child `-e` (untrusted
+	 * content must not become local code execution). User-scope packages are
+	 * unaffected.
+	 */
+	projectTrusted: boolean;
+}
+
 export type ProviderExtensionResolution =
 	| { kind: "not-needed" }
 	| { kind: "ok"; entries: string[] }
@@ -70,15 +86,17 @@ export function modelProvider(model: string | undefined): string {
  * Extension entries a child `-e` can load from one installed package,
  * mirroring pi's package resource resolution: `package.json` →
  * `pi.extensions: string[]` (paths resolved against the installed package
- * root, existing files only); fallback for manifest-less packages: the
- * `extensions/` directory if it exists, else the package directory itself.
+ * root, existing files only). Every other shape — manifest missing or
+ * unreadable, declared entries that do not exist, manifest-less packages —
+ * falls back to the package directory itself.
  *
  * Live-verified nuance (acceptance smoke): pi loads a `-e` DIRECTORY as an
- * extension in its own right (entry-file lookup inside it), so a manifest
- * entry that resolves to a directory (the common `"./extensions"` shape)
- * must NOT be passed directly — the package ROOT is passed instead, and pi
- * resolves its own manifest exactly like it does for discovery. File
- * entries are passed as-is.
+ * extension in its own right (entry-file lookup inside it), so a directory
+ * must NEVER be the entry — neither a manifest entry that resolves to a
+ * directory (the common `"./extensions"` shape) nor the package's own
+ * `extensions/` directory. The package ROOT is passed instead, and pi
+ * resolves its own manifest/discovery exactly like it does for discovery.
+ * File entries are passed as-is.
  */
 export function packageExtensionEntries(installedPath: string): string[] {
 	let entries: unknown;
@@ -115,10 +133,13 @@ export function packageExtensionEntries(installedPath: string): string[] {
 			return declared;
 		}
 		// Declared but nothing exists on disk: treat like a broken manifest and
-		// fall through to the directory fallbacks (mirrors pi's tolerance).
+		// fall through to the package-root fallback (mirrors pi's tolerance).
 	}
-	const extensionsDir = path.join(installedPath, "extensions");
-	if (fs.existsSync(extensionsDir)) return [extensionsDir];
+	// No usable manifest-declared entries (missing/unreadable manifest, or it
+	// declares nothing that exists): the package ROOT is the entry. A `-e`
+	// directory is loaded as a single extension file — passing the package's
+	// own `extensions/` directory here would kill the child with
+	// "module not found"; the root lets pi resolve its own discovery.
 	return fs.existsSync(installedPath) ? [installedPath] : [];
 }
 

@@ -224,13 +224,24 @@ function settingsFilePath(): string {
 }
 
 /**
+ * Pi strips a leading UTF-8 BOM before JSON.parse when loading settings
+ * (`stripBom` in its settings loading) — mirror it, so a BOM-prefixed
+ * settings.json keeps its `httpIdleTimeoutMs` instead of silently falling
+ * back to the 300s default.
+ */
+function stripUtf8Bom(content: string): string {
+	return content.startsWith("\uFEFF") ? content.slice(1) : content;
+}
+
+/**
  * Read `httpIdleTimeoutMs` from the pi settings file directly (same pattern
- * as proxy-state.json — no private pi imports). Missing file, unparsable
- * JSON, missing or invalid setting → the pi default (300s); "disabled" → 0.
+ * as proxy-state.json — no private pi imports). Leading UTF-8 BOM stripped
+ * like pi does. Missing file, unparsable JSON, missing or invalid setting →
+ * the pi default (300s); "disabled" → 0.
  */
 export function readHttpIdleTimeoutMs(): number {
 	try {
-		const raw = JSON.parse(fs.readFileSync(settingsFilePath(), "utf8"));
+		const raw = JSON.parse(stripUtf8Bom(fs.readFileSync(settingsFilePath(), "utf8")));
 		return httpIdleTimeoutMsFromSettings(raw);
 	} catch {
 		return DEFAULT_HTTP_IDLE_TIMEOUT_MS;

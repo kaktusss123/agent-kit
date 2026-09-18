@@ -160,6 +160,18 @@ describe("proxy-lib transport parity (pi 0.85.1 configureHttpDispatcher)", () =>
 		});
 	});
 
+	test("readHttpIdleTimeoutMs strips a leading UTF-8 BOM like pi's settings loading", () => {
+		withAgentDir((dir) => {
+			// A BOM makes raw JSON.parse throw → silent 300s fallback (the
+			// original proxy bug would resurface for this user).
+			fs.writeFileSync(
+				path.join(dir, "settings.json"),
+				"\uFEFF" + JSON.stringify({ httpIdleTimeoutMs: 1_200_000 }),
+			);
+			expect(readHttpIdleTimeoutMs()).toBe(1_200_000);
+		});
+	});
+
 	test("readHttpIdleTimeoutMs falls back to the default when settings.json is missing", () => {
 		withAgentDir(() => {
 			expect(readHttpIdleTimeoutMs()).toBe(DEFAULT_HTTP_IDLE_TIMEOUT_MS);
