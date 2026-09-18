@@ -1,5 +1,6 @@
 ---
 description: Restate the previous response more clearly and simply
+standalone: true
 ---
 
 Restate your previous response in plain human language.
