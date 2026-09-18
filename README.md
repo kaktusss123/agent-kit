@@ -112,6 +112,14 @@ mandatory: например, перед работой с task workspace — п�
 - **todo**, **continue-shortcut**, **agent-events**, **web-search**,
   **perf-stats**, **footer** — task list, shortcut, events/статусы, поиск,
   производительность, кастомный footer.
+- **update-check** — одноразовый toast при старте сессии, когда активный
+  checkout отстаёт от своего upstream (лучший эффект — как родное уведомление
+  pi о новой версии). Сеть трогает не чаще раза в `CHECK_INTERVAL_MS` (6 ч)
+  на машину, состояние — `~/.local/state/agent-kit/update-check.json`; пока
+  кэш говорит «outdated», напоминание повторяется на каждом старте без сети,
+  а после `agent-kit update` (сдвинулся HEAD) уходит в свежую проверку.
+  Все неудачи (оффлайн, недоступный remote, не-git checkout) молчаливы и
+  сессию никогда не задерживают.
 
 `footer.ts` раньше назывался `omp-footer.ts`; имя отражало происхождение
 визуального дизайна, а не назначение — расширение переименовано.
@@ -121,9 +129,16 @@ mandatory: например, перед работой с task workspace — п�
 ```sh
 ./bin/agent-kit install      # из checkout'а; после этого доступно как agent-kit
 agent-kit install            # reconcile
+agent-kit update             # git pull --ff-only в этом checkout + reconcile
 agent-kit status
 agent-kit uninstall
 ```
+
+`agent-kit update` — одна команда обновления: `git pull --ff-only` в активном
+checkout'е и затем обычный reconcile. Diverged checkout или отсутствие
+upstream ссылки не ломают: pull отказывает, инсталлер не запускается.
+Это терминальная команда: из pi-сессий мутирующий git в primary checkout может
+блокировать bash git guard — и это осознанно.
 
 Инсталлер обслуживает ровно один runtime — Pi. Аргументов вида
 `install <runtime>`, autodetection бинарей и runtime marker-файлов больше
