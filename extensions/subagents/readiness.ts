@@ -56,6 +56,15 @@ export const TASK_WORKSPACE_ENTRY_ID = "task-workspace";
 export const SUBAGENTS_ENTRY_ID = "subagents";
 
 /**
+ * Entry id of the base web-search extension every child carries (base
+ * profile: bridge + web-search, controller-owned). Declared here so the
+ * RepoOwner readiness contract can require the tool the base must provide —
+ * a missing/broken base entry fails the dispatch instead of reaching the
+ * model as a silently reduced child.
+ */
+export const WEB_SEARCH_ENTRY_ID = "web-search";
+
+/**
  * The RepoOwner readiness contract — the canonical declared default for the
  * entry id -> required tools mapping, owned here (the controller's profile
  * contract), never by the capability extensions themselves.
@@ -66,6 +75,8 @@ export const SUBAGENTS_ENTRY_ID = "subagents";
  * nothing — they must not know they are profiled.
  */
 export const PROFILE_READINESS: Record<string, string[]> = {
+	// Base profile (every child, controller-owned): web_search must be present.
+	[WEB_SEARCH_ENTRY_ID]: ["web_search"],
 	[TASK_WORKSPACE_ENTRY_ID]: [
 		"task_status",
 		"ensure_task_repo",

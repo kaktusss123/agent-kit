@@ -94,6 +94,7 @@ function makeLayer(layerOpts?: {
 		resultsDir: tmp,
 		piCommand: { command: "node", args: ["/fake/pi-cli.js"] },
 		bridgePath: "/fake/bridge.ts",
+		webSearchPath: "/fake/web-search.ts",
 		spawnFn: harness.spawnFn,
 		killGraceMs: layerOpts?.killGraceMs ?? 50,
 		startTimeoutMs: 2000,

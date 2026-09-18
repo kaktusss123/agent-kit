@@ -67,6 +67,8 @@ export interface ControllerOptions {
 	piCommand?: { command: string; args: string[] };
 	/** Bridge extension file loaded into every child via `-e`. */
 	bridgePath?: string;
+	/** Base web-search extension entry loaded into every child via `-e` (tests override). */
+	webSearchPath?: string;
 	/** Results directory override (tests); defaults to the pi agent dir. */
 	resultsDir?: string;
 	/** Injected spawn (tests). */
@@ -151,6 +153,7 @@ export class LocalSubagentRuntime {
 
 	private readonly piInvocation: { command: string; args: string[] };
 	private readonly bridgePath: string;
+	private readonly webSearchPath: string;
 	private readonly spawnFn?: SpawnFn;
 	private readonly defaultCwd: string;
 	private readonly resultsDir: string;
@@ -172,6 +175,8 @@ export class LocalSubagentRuntime {
 		this.piInvocation = opts.piCommand ?? resolvePiInvocation();
 		this.bridgePath =
 			opts.bridgePath ?? path.join(moduleDirname(), "bridge.ts");
+		this.webSearchPath =
+			opts.webSearchPath ?? path.join(moduleDirname(), "..", "web-search", "index.ts");
 		this.spawnFn = opts.spawnFn;
 		this.resultsDir = opts.resultsDir ?? defaultResultsDir();
 		this.killGraceMs = opts.killGraceMs ?? 3000;
@@ -200,11 +205,16 @@ export class LocalSubagentRuntime {
 			...this.piInvocation.args,
 			"--mode", "rpc",
 			"--no-extensions",
+			// Base profile: bridge (ask/proxy plumbing) + web_search. Every child
+			// gets both; `--no-extensions` keeps discovery off, so the base is the
+			// only capability source for generic children.
 			"-e", this.bridgePath,
+			"-e", this.webSearchPath,
 		];
 		// Per-spawn profile: extra extension entries are loaded into this child
-		// only (`-e` is repeatable; `--no-extensions` keeps CLI paths). Generic
-		// children (no additionalExtensions) are byte-identical to before.
+		// only (`-e` is repeatable; `--no-extensions` keeps CLI paths). Profile
+		// entries keep their order (reporting-bridge before task-workspace,
+		// readiness probe last) — the base never perturbs it.
 		for (const ext of opts.additionalExtensions ?? []) {
 			args.push("-e", ext);
 		}

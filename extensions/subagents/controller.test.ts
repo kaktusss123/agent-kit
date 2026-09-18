@@ -35,6 +35,7 @@ function makeRuntime(opts?: {
 		resultsDir: tmp,
 		piCommand: { command: "node", args: ["/fake/pi-cli.js"] },
 		bridgePath: "/fake/bridge.ts",
+		webSearchPath: "/fake/web-search.ts",
 		spawnFn: harness.spawnFn,
 		killGraceMs: opts?.killGraceMs ?? 50,
 		startTimeoutMs: 2000,
@@ -109,6 +110,9 @@ describe("LocalSubagentRuntime.spawn", () => {
 			expect(proc.spec.args).toContain("--no-extensions");
 			const bridgeIdx = proc.spec.args.indexOf("-e");
 			expect(proc.spec.args[bridgeIdx + 1]).toBe("/fake/bridge.ts");
+			// Base profile: web_search rides along right after the bridge for
+			// every child (plain and RepoOwner alike).
+			expect(proc.spec.args[proc.spec.args.indexOf("-e", bridgeIdx + 1) + 1]).toBe("/fake/web-search.ts");
 			const prompt = proc.commands.find((c) => c.type === "prompt");
 			expect(prompt).toBeDefined();
 			expect(prompt!.message).toBe("do things");
