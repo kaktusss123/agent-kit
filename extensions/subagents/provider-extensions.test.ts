@@ -53,13 +53,23 @@ describe("provider-extensions", () => {
 		expect(modelProvider(undefined)).toBe("");
 	});
 
-	test("packageExtensionEntries resolves pi.extensions against the installed path", () => {
+	test("directory manifest entries resolve to the package ROOT (pi loads its own manifest)", () => {
 		const pkg = makePackage({
 			manifest: { name: "pkg", pi: { extensions: ["./extensions", "./missing-dir"] } },
 			extensionsDirWith: ["cloudru-provider.ts"],
 		});
+		// Live-verified: `-e <resolved dir>` fails with "module not found" —
+		// pi treats a -e directory as an extension in its own right. The
+		// package root is the only reliable entry for directory entries.
 		const entries = packageExtensionEntries(pkg.installedPath!);
-		expect(entries).toEqual([path.join(pkg.installedPath!, "extensions")]);
+		expect(entries).toEqual([pkg.installedPath]);
+	});
+
+	test("file manifest entries are passed as exact file paths", () => {
+		const pkg = makePackage({ manifest: { name: "pkg", pi: { extensions: ["./single.ts"] } }, extensionsDirWith: ["x.ts"] });
+		fs.writeFileSync(path.join(pkg.installedPath!, "single.ts"), "// ext\n");
+		const entries = packageExtensionEntries(pkg.installedPath!);
+		expect(entries).toEqual([path.join(pkg.installedPath!, "single.ts")]);
 	});
 
 	test("packageExtensionEntries falls back: extensions/ dir, then the package dir itself", () => {
@@ -94,7 +104,7 @@ describe("provider-extensions", () => {
 		const resolved = resolveProviderExtensions("cloudru/Qwen/Qwen3.5", facts(["cloudru", "llama.cpp"], [pkg]));
 		expect(resolved).toEqual({
 			kind: "ok",
-			entries: [path.join(pkg.installedPath!, "extensions")],
+			entries: [pkg.installedPath],
 		});
 	});
 
@@ -117,9 +127,7 @@ describe("provider-extensions", () => {
 
 	test("requireProviderExtensions throws ProviderExtensionError only for the missing case", () => {
 		const pkg = makePackage({ extensionsDirWith: ["p.ts"] });
-		expect(requireProviderExtensions("cloudru/m", facts(["cloudru"], [pkg]))).toEqual([
-			path.join(pkg.installedPath!, "extensions"),
-		]);
+		expect(requireProviderExtensions("cloudru/m", facts(["cloudru"], [pkg]))).toEqual([pkg.installedPath]);
 		expect(requireProviderExtensions("zai/g", facts(["cloudru"], [])).length).toBe(0);
 
 		expect(() => requireProviderExtensions("cloudru/m", facts(["cloudru"], []))).toThrow(ProviderExtensionError);

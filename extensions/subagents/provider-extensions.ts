@@ -67,11 +67,18 @@ export function modelProvider(model: string | undefined): string {
 }
 
 /**
- * Extension entry paths contributed by one installed package, mirroring pi's
- * package resource resolution: `package.json` → `pi.extensions: string[]`
- * (paths resolved against the installed package root, existing files only);
- * fallback for manifest-less packages: the `extensions/` directory if it
- * exists, else the package directory itself.
+ * Extension entries a child `-e` can load from one installed package,
+ * mirroring pi's package resource resolution: `package.json` →
+ * `pi.extensions: string[]` (paths resolved against the installed package
+ * root, existing files only); fallback for manifest-less packages: the
+ * `extensions/` directory if it exists, else the package directory itself.
+ *
+ * Live-verified nuance (acceptance smoke): pi loads a `-e` DIRECTORY as an
+ * extension in its own right (entry-file lookup inside it), so a manifest
+ * entry that resolves to a directory (the common `"./extensions"` shape)
+ * must NOT be passed directly — the package ROOT is passed instead, and pi
+ * resolves its own manifest exactly like it does for discovery. File
+ * entries are passed as-is.
  */
 export function packageExtensionEntries(installedPath: string): string[] {
 	let entries: unknown;
@@ -84,7 +91,7 @@ export function packageExtensionEntries(installedPath: string): string[] {
 		entries = undefined;
 	}
 	if (Array.isArray(entries)) {
-		const resolved = entries
+		const declared = entries
 			.filter((e): e is string => typeof e === "string" && e.trim().length > 0)
 			.map((rel) => path.resolve(installedPath, rel))
 			.filter((p) => {
@@ -94,7 +101,19 @@ export function packageExtensionEntries(installedPath: string): string[] {
 					return false;
 				}
 			});
-		if (resolved.length > 0) return resolved;
+		if (declared.length > 0) {
+			// Any directory entry (the common `"./extensions"` shape): the package
+			// root is the only reliable -e — pi applies its own package loader.
+			const hasDir = declared.some((p) => {
+				try {
+					return fs.statSync(p).isDirectory();
+				} catch {
+					return false;
+				}
+			});
+			if (hasDir) return [installedPath];
+			return declared;
+		}
 		// Declared but nothing exists on disk: treat like a broken manifest and
 		// fall through to the directory fallbacks (mirrors pi's tolerance).
 	}
