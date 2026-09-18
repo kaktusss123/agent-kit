@@ -39,6 +39,7 @@ import {
 	type EnvelopeRecord,
 } from "./envelope";
 import { PROFILE_READINESS } from "./readiness";
+import { ProviderExtensionError } from "./provider-extensions";
 import {
 	expandPath,
 	getRepoBranch,
@@ -824,6 +825,13 @@ export function createWorkspaceRuns(
 			});
 		} catch (e) {
 			const message = e instanceof Error ? e.message : String(e);
+			// Missing provider extension: fail fast BEFORE any process existed.
+			// blocked, not unsupported — the profile itself is fine; the requested
+			// model cannot run on this machine until the provider package is
+			// installed. dispatched:false, nothing was spawned.
+			if (e instanceof ProviderExtensionError) {
+				return fail("blocked", workspace, message);
+			}
 			// An abort before the task prompt was accepted means no process
 			// and no task — blocked, dispatched:false. (If acceptance won the
 			// race, spawn resolved and the signal's ownership moved to the

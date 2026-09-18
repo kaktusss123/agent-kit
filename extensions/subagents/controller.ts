@@ -37,6 +37,7 @@ import {
 	resolvePiInvocation,
 	type SpawnFn,
 } from "./rpc-child";
+import { ProviderExtensionError } from "./provider-extensions";
 import { defaultResultsDir, loadResult, saveResult, sumSessionCost, summarizeText } from "./result-store";
 import { parseReadinessPayload, type ReadinessPayload } from "./readiness";
 import { ASK_WIRE_TITLE } from "./bridge-ask";
@@ -69,6 +70,15 @@ export interface ControllerOptions {
 	bridgePath?: string;
 	/** Base web-search extension entry loaded into every child via `-e` (tests override). */
 	webSearchPath?: string;
+	/**
+	 * Parent-side provider-extension resolution for the child model
+	 * ("provider/id"). Returns local extension entry paths to load via `-e`, or
+	 * throws ProviderExtensionError when the model's provider is
+	 * extension-registered in this session but no installed package provides
+	 * entries (fail fast: no process is created). Wired by the host extension
+	 * from live parent facts; tests inject fakes.
+	 */
+	providerResolution?: (model: string) => string[];
 	/** Results directory override (tests); defaults to the pi agent dir. */
 	resultsDir?: string;
 	/** Injected spawn (tests). */
@@ -154,6 +164,7 @@ export class LocalSubagentRuntime {
 	private readonly piInvocation: { command: string; args: string[] };
 	private readonly bridgePath: string;
 	private readonly webSearchPath: string;
+	private readonly providerResolution?: (model: string) => string[];
 	private readonly spawnFn?: SpawnFn;
 	private readonly defaultCwd: string;
 	private readonly resultsDir: string;
@@ -177,6 +188,7 @@ export class LocalSubagentRuntime {
 			opts.bridgePath ?? path.join(moduleDirname(), "bridge.ts");
 		this.webSearchPath =
 			opts.webSearchPath ?? path.join(moduleDirname(), "..", "web-search", "index.ts");
+		this.providerResolution = opts.providerResolution;
 		this.spawnFn = opts.spawnFn;
 		this.resultsDir = opts.resultsDir ?? defaultResultsDir();
 		this.killGraceMs = opts.killGraceMs ?? 3000;
@@ -192,14 +204,29 @@ export class LocalSubagentRuntime {
 
 	// ------------------------------------------------------------------ spawn
 
-	spawn(opts: SpawnOptions): Promise<AgentSnapshot> {
-		if (this.shutDown) return Promise.reject(new Error("runtime is shut down"));
+	/**
+	 * Async so EVERY failure path (including the pre-spawn provider
+	 * resolution) reaches callers as a rejected promise — never a synchronous
+	 * throw from a method typed `Promise<...>`.
+	 */
+	async spawn(opts: SpawnOptions): Promise<AgentSnapshot> {
+		if (this.shutDown) throw new Error("runtime is shut down");
 		if (opts.signal?.aborted) {
-			return Promise.reject(new Error("aborted before dispatch"));
+			throw new Error("aborted before dispatch");
 		}
 		const id = `sa-${++LocalSubagentRuntime.idCounter}-${Math.random().toString(36).slice(2, 6)}`;
 		const cwd = path.resolve(this.defaultCwd, opts.cwd ?? ".");
 		const label = opts.label?.trim() || `agent-${id.slice(3, 11)}`;
+
+		// Provider propagation (common spawn path: Main -> plain, Main ->
+		// RepoOwner, RepoOwner -> plain). A child model whose provider is
+		// extension-registered in this session needs the provider's extension
+		// entries passed explicitly (`--no-extensions` children would die before
+		// RPC with `Model "..." not found`). Resolution is read-only; a needed-
+		// but-missing provider fails fast here, BEFORE process creation.
+		const providerEntries = opts.model && this.providerResolution
+			? this.providerResolution(opts.model)
+			: [];
 
 		const args = [
 			...this.piInvocation.args,
@@ -210,6 +237,10 @@ export class LocalSubagentRuntime {
 			// only capability source for generic children.
 			"-e", this.bridgePath,
 			"-e", this.webSearchPath,
+			// Provider entries sit between the base and the profile entries so the
+			// RepoOwner handler order (reporting-bridge first, readiness last)
+			// stays untouched regardless of how many packages resolve.
+			...providerEntries.flatMap((entry) => ["-e", entry]),
 		];
 		// Per-spawn profile: extra extension entries are loaded into this child
 		// only (`-e` is repeatable; `--no-extensions` keeps CLI paths). Profile

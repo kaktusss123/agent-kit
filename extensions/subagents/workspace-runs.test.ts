@@ -192,7 +192,7 @@ async function driveToRunning(
 		);
 	}
 	const proc = h.lastProc();
-	confirmReadiness(proc, { tools: ["task_status", "ensure_task_repo", "checkpoint_commit", "remove_task_lane", "report_result", "subagent"] });
+	confirmReadiness(proc, { tools: ["web_search", "task_status", "ensure_task_repo", "checkpoint_commit", "remove_task_lane", "report_result", "subagent"] });
 	autoAcceptPrompt(proc);
 	await tick(20);
 	return { pending, proc };
@@ -761,7 +761,7 @@ describe("needs_input", () => {
 			const pending = dispatchCall(h, { workspace: ws, task: "t" });
 			for (let i = 0; i < 100 && h.harness.spawned.length === 0; i++) await tick(20);
 			const proc = h.lastProc();
-			confirmReadiness(proc, { tools: ["task_status", "ensure_task_repo", "checkpoint_commit", "remove_task_lane", "report_result", "subagent"] });
+			confirmReadiness(proc, { tools: ["web_search", "task_status", "ensure_task_repo", "checkpoint_commit", "remove_task_lane", "report_result", "subagent"] });
 			autoAcceptPrompt(proc);
 			await tick(20);
 			proc.writeToStdout({
@@ -802,7 +802,7 @@ describe("detach and cancel", () => {
 			const pending = dispatchCall(h, { workspace: ws, task: "t" }, ac.signal);
 			for (let i = 0; i < 100 && h.harness.spawned.length === 0; i++) await tick(20);
 			const proc = h.lastProc();
-			confirmReadiness(proc, { tools: ["task_status", "ensure_task_repo", "checkpoint_commit", "remove_task_lane", "report_result", "subagent"] });
+			confirmReadiness(proc, { tools: ["web_search", "task_status", "ensure_task_repo", "checkpoint_commit", "remove_task_lane", "report_result", "subagent"] });
 			autoAcceptPrompt(proc);
 			await tick(20);
 
@@ -988,6 +988,46 @@ describe("startup failure classification (A2c)", () => {
 	});
 });
 
+describe("provider propagation fail-fast (R2)", () => {
+	test("needed-but-missing provider \u2192 blocked, dispatched:false, no process", async () => {
+		const h = makeLayer();
+		// Rebind the layer's runtime resolution: construct an isolated layer
+		// whose runtime fails spawn with the provider error (as index.ts wires
+		// it when no installed package provides the child model's provider).
+		const { LocalSubagentRuntime: RT } = await import("./controller");
+		const { ProviderExtensionError } = await import("./provider-extensions");
+		const runtime2 = new RT({
+			defaultCwd: h.tmp,
+			resultsDir: h.tmp,
+			piCommand: { command: "node", args: ["/fake/pi-cli.js"] },
+			bridgePath: "/fake/bridge.ts",
+			webSearchPath: "/fake/web-search.ts",
+			spawnFn: h.harness.spawnFn,
+			startTimeoutMs: 2000,
+			readinessTimeoutMs: 5000,
+			providerResolution: () => {
+				throw new ProviderExtensionError(
+					'cannot spawn child for model "cloudru/Qwen/Qwen3.5": provider "cloudru" is registered by an extension in this session, but no configured, installed package provides its extension entries. Install the provider package (pi install <package-source>) or pick a model from a builtin provider.',
+				);
+			},
+		});
+		const runs2 = createWorkspaceRuns(h.pi, () => runtime2);
+		try {
+			const ws = makeWorktree(h.taskRoot, "r2-provider-ws");
+			const res = await runs2.spawnRun({
+				workspace: ws,
+				task: "t",
+				model: { provider: "cloudru", id: "Qwen/Qwen3.5" },
+			});
+			expect(res.details).toMatchObject({ status: "blocked", dispatched: false });
+			expect(String(res.details.reason)).toContain("pi install <package-source>");
+			expect(h.harness.spawned).toHaveLength(0);
+		} finally {
+			h.cleanup();
+		}
+	}, 20000);
+});
+
 describe("static preflight (A2b)", () => {
 	test("broken profile entrypoint \u2192 unsupported, dispatched:false, no process", async () => {
 		const h = makeLayer({ profileEntries: () => ["/definitely/missing/profile-entry.ts"] });
@@ -1050,7 +1090,7 @@ describe("N1 profile order and sequential report", () => {
 			// everything EXCEPT the nested subagent tool: the subagents entry
 			// is unsatisfied → the task must never reach this child's model.
 			confirmReadiness(proc, {
-				tools: ["task_status", "ensure_task_repo", "checkpoint_commit", "remove_task_lane", "report_result", "task"],
+				tools: ["web_search", "task_status", "ensure_task_repo", "checkpoint_commit", "remove_task_lane", "report_result", "task"],
 			});
 			// spawnRun surfaces the readiness failure as an unsupported result
 			// (dispatched:false) — the classification of a broken profile.
@@ -1078,7 +1118,7 @@ describe("N2 deadline vs retire race", () => {
 			for (let i = 0; i < 100 && h.harness.spawned.length === 0; i++) await tick(20);
 			const proc = h.lastProc();
 			proc.ignoreSigterm = true;
-			confirmReadiness(proc, { tools: ["task_status", "ensure_task_repo", "checkpoint_commit", "remove_task_lane", "report_result", "subagent"] });
+			confirmReadiness(proc, { tools: ["web_search", "task_status", "ensure_task_repo", "checkpoint_commit", "remove_task_lane", "report_result", "subagent"] });
 			autoAcceptPrompt(proc);
 			await tick(30);
 			const agentId = h.agentId();

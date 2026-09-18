@@ -3,6 +3,7 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { LocalSubagentRuntime } from "./controller";
+import { ProviderExtensionError } from "./provider-extensions";
 import {
 	formatLiveSnapshot,
 	formatModelEvent,
@@ -1257,6 +1258,102 @@ describe("LocalSubagentRuntime cost rollup", () => {
 			} finally {
 				await runtimeC.shutdown();
 			}
+		} finally {
+			await runtime.shutdown();
+			cleanup();
+		}
+	});
+});
+
+describe("provider propagation (common spawn path)", () => {
+	function makeProviderRuntime(providerResolution?: (model: string) => string[]) {
+		const harness = createFakeSpawnFactory();
+		const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "subagents-provider-test-"));
+		const runtime = new LocalSubagentRuntime({
+			defaultCwd: tmp,
+			resultsDir: tmp,
+			piCommand: { command: "node", args: ["/fake/pi-cli.js"] },
+			bridgePath: "/fake/bridge.ts",
+			webSearchPath: "/fake/web-search.ts",
+			spawnFn: harness.spawnFn,
+			killGraceMs: 50,
+			startTimeoutMs: 2000,
+			dispatchTimeoutMs: 2000,
+			...(providerResolution ? { providerResolution } : {}),
+		});
+		const cleanup = () => fs.rmSync(tmp, { recursive: true, force: true });
+		return { harness, runtime, cleanup };
+	}
+
+	test("resolved provider entries land between the base and the profile entries", async () => {
+		const { harness, runtime, cleanup } = makeProviderRuntime((model) =>
+			model.startsWith("cloudru/") ? ["/pkg/cloudru/extensions"] : [],
+		);
+		try {
+			const pending = runtime.spawn({
+				task: "t",
+				label: "p",
+				model: "cloudru/Qwen/Qwen3.5",
+				additionalExtensions: ["/ext/reporting-bridge.ts", "/ext/readiness-probe.ts"],
+			});
+			await tick(5);
+			const proc = harness.spawned[harness.spawned.length - 1];
+			autoAcceptPrompt(proc);
+			await pending;
+			const args = proc.spec.args;
+			const exts = args.map((a, i) => (a === "-e" ? args[i + 1] : null)).filter(Boolean);
+			expect(exts).toEqual([
+				"/fake/bridge.ts",
+				"/fake/web-search.ts",
+				"/pkg/cloudru/extensions",
+				"/ext/reporting-bridge.ts",
+				"/ext/readiness-probe.ts",
+			]);
+			expect(args).toContain("--no-extensions");
+		} finally {
+			await runtime.shutdown();
+			cleanup();
+		}
+	});
+
+	test("needed-but-missing provider fails fast BEFORE process creation", async () => {
+		const { harness, runtime, cleanup } = makeProviderRuntime(() => {
+			throw new ProviderExtensionError("cannot spawn child for model \"cloudru/m\": provider \"cloudru\" ... pi install");
+		});
+		try {
+			await expect(
+				runtime.spawn({ task: "t", label: "p", model: "cloudru/m" }),
+			).rejects.toThrow(ProviderExtensionError);
+			expect(harness.spawned).toHaveLength(0);
+		} finally {
+			await runtime.shutdown();
+			cleanup();
+		}
+	});
+
+	test("no model or not-needed provider: resolver is not consulted, argv unchanged", async () => {
+		let calls = 0;
+		const { harness, runtime, cleanup } = makeProviderRuntime(() => {
+			calls++;
+			return [];
+		});
+		try {
+			const pending = runtime.spawn({ task: "t", label: "a" });
+			await tick(5);
+			autoAcceptPrompt(harness.spawned[0]);
+			await pending;
+			expect(calls).toBe(0);
+			expect(harness.spawned[0].spec.args).not.toContain("cloudru");
+
+			const pending2 = runtime.spawn({ task: "t2", label: "b", model: "zai/glm" });
+			await tick(5);
+			autoAcceptPrompt(harness.spawned[1]);
+			await pending2;
+			expect(calls).toBe(1);
+			const exts = harness.spawned[1].spec.args
+				.map((a, i) => (a === "-e" ? harness.spawned[1].spec.args[i + 1] : null))
+				.filter(Boolean);
+			expect(exts).toEqual(["/fake/bridge.ts", "/fake/web-search.ts"]);
 		} finally {
 			await runtime.shutdown();
 			cleanup();

@@ -45,10 +45,13 @@
  * the same child tool call.
  */
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import { DefaultPackageManager, SettingsManager } from "@earendil-works/pi-coding-agent";
 import { StringEnum } from "@earendil-works/pi-ai";
 import { Type } from "typebox";
 import { LocalSubagentRuntime } from "./controller";
 import { resolveSpawnPair, type SpawnModelClass } from "./spawn-model";
+import { requireProviderExtensions } from "./provider-extensions";
+import { resolveAgentDir } from "../proxy/proxy-lib";
 import { defaultResultsDir, sumSessionCost } from "./result-store";
 import { ownDeliveryInFlight } from "./steering-wake";
 import type { WaitOutcome } from "./types";
@@ -133,6 +136,40 @@ const SubagentParams = Type.Object({
 // Wiring
 // =============================================================================
 
+/**
+ * Latest session model registry — the parent-side fact for provider
+ * propagation (R2). Refreshed at every tool entry and session_start; a spawn
+ * always runs inside a tool handler, so the snapshot is fresh when the
+ * controller resolves the child's provider entries.
+ */
+let parentRegistry: { getRegisteredProviderIds(): readonly string[] } | undefined;
+
+/**
+ * Resolve the provider extension entries a child needs for `model`
+ * ("provider/id") from LIVE parent facts: the session registry decides
+ * whether the provider is extension-registered at all; pi's public package
+ * manager enumerates configured packages read-only (`listConfiguredPackages`:
+ * no install, no update, no network) and only installed packages contribute
+ * local entry paths. Needed-but-missing throws ProviderExtensionError before
+ * any process exists.
+ */
+function resolveChildProviderEntries(model: string): string[] {
+	return requireProviderExtensions(model, {
+		registeredProviderIds:
+			typeof parentRegistry?.getRegisteredProviderIds === "function"
+				? parentRegistry.getRegisteredProviderIds()
+				: [],
+		listPackages: () => {
+			const agentDir = resolveAgentDir();
+			return new DefaultPackageManager({
+				cwd: process.cwd(),
+				agentDir,
+				settingsManager: SettingsManager.create(process.cwd(), agentDir),
+			}).listConfiguredPackages();
+		},
+	});
+}
+
 export default function (pi: ExtensionAPI) {
 	let runtime: LocalSubagentRuntime | null = null;
 	let runs: WorkspaceRuns | null = null;
@@ -144,6 +181,7 @@ export default function (pi: ExtensionAPI) {
 			runtime = new LocalSubagentRuntime({
 				defaultCwd: ctxCwd ?? process.cwd(),
 				parentSession: parentSessionFile,
+				providerResolution: resolveChildProviderEntries,
 				onCostChange: (total) => pi.events.emit("subagents:cost", { total }),
 			});
 			attachDelivery(pi, runtime);
@@ -164,6 +202,7 @@ export default function (pi: ExtensionAPI) {
 	// it owns the total and emits `subagents:cost` itself; consumers (footer)
 	// repaint on the event. Never starts the runtime: no results dir, no read.
 	pi.on("session_start", async (_event, ctx) => {
+		parentRegistry = ctx.modelRegistry;
 		parentSessionFile =
 			(ctx.sessionManager as { getSessionFile?: () => string | undefined } | undefined)?.getSessionFile?.() ??
 			parentSessionFile;
@@ -240,6 +279,7 @@ export default function (pi: ExtensionAPI) {
 		renderResult: renderSubagentResult,
 
 		async execute(_toolCallId, params, signal, onUpdate, ctx) {
+			parentRegistry = ctx.modelRegistry;
 			parentSessionFile =
 				(ctx.sessionManager as { getSessionFile?: () => string | undefined } | undefined)?.getSessionFile?.() ??
 				parentSessionFile;
