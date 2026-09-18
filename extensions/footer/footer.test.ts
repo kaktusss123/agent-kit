@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { costParts } from "./footer";
+import { costParts } from "./index";
 
 describe("costParts", () => {
 	test("main-only cost below subagent threshold shows no parentheses", () => {
