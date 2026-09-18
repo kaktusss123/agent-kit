@@ -1,12 +1,26 @@
 /**
- * Tests for the shared proxy state helpers (no undici / no pi runtime needed:
- * dispatcher installation is exercised by the proxy harness instead).
+ * Tests for the shared proxy state helpers and the pi-parity transport
+ * option building (no undici installation: dispatcher installation is
+ * exercised by the proxy harness instead; factories are tested against
+ * EventEmitter fakes).
  */
 import { describe, expect, test } from "bun:test";
 import * as fs from "node:fs";
+import { EventEmitter } from "node:events";
 import * as os from "node:os";
 import * as path from "node:path";
-import { readProxyState, resolveAgentDir, writeProxyState } from "./proxy-lib";
+import {
+	DEFAULT_HTTP_IDLE_TIMEOUT_MS,
+	httpIdleTimeoutMsFromSettings,
+	parseHttpIdleTimeoutMs,
+	piTransportOptions,
+	readHttpIdleTimeoutMs,
+	readProxyState,
+	resolveAgentDir,
+	undiciFactories,
+	withUndiciErrorListener,
+	writeProxyState,
+} from "./proxy-lib";
 
 function withAgentDir(fn: (dir: string) => void): void {
 	const dir = fs.mkdtempSync(path.join(os.tmpdir(), "proxy-lib-test-"));
@@ -60,6 +74,124 @@ describe("proxy-lib state", () => {
 			const state = readProxyState();
 			expect(state.enabled).toBe(true);
 			expect(state.url).toBe("http://ai-proxy.idp.cloud.ru:8080");
+		});
+	});
+});
+
+describe("proxy-lib transport parity (pi 0.85.1 configureHttpDispatcher)", () => {
+	describe("parseHttpIdleTimeoutMs (pi parseHttpIdleTimeoutMs mirror)", () => {
+		test("numbers: finite >= 0 pass floored, negatives/NaN/Infinity invalid", () => {
+			expect(parseHttpIdleTimeoutMs(1_200_000)).toBe(1_200_000);
+			expect(parseHttpIdleTimeoutMs(1500.9)).toBe(1500);
+			expect(parseHttpIdleTimeoutMs(0)).toBe(0);
+			expect(parseHttpIdleTimeoutMs(-1)).toBeUndefined();
+			expect(parseHttpIdleTimeoutMs(Number.NaN)).toBeUndefined();
+			expect(parseHttpIdleTimeoutMs(Number.POSITIVE_INFINITY)).toBeUndefined();
+		});
+
+		test('strings: "disabled" → 0, numeric strings parse, others invalid', () => {
+			expect(parseHttpIdleTimeoutMs("disabled")).toBe(0);
+			expect(parseHttpIdleTimeoutMs("DISABLED")).toBe(0);
+			expect(parseHttpIdleTimeoutMs(" disabled ")).toBe(0);
+			expect(parseHttpIdleTimeoutMs("600")).toBe(600);
+			expect(parseHttpIdleTimeoutMs("abc")).toBeUndefined();
+			expect(parseHttpIdleTimeoutMs("")).toBeUndefined();
+		});
+
+		test("non-string non-number values are invalid", () => {
+			expect(parseHttpIdleTimeoutMs(undefined)).toBeUndefined();
+			expect(parseHttpIdleTimeoutMs(null)).toBeUndefined();
+			expect(parseHttpIdleTimeoutMs(true)).toBeUndefined();
+			expect(parseHttpIdleTimeoutMs({})).toBeUndefined();
+		});
+	});
+
+	describe("httpIdleTimeoutMsFromSettings (timeout source)", () => {
+		test("configured timeout is used", () => {
+			expect(httpIdleTimeoutMsFromSettings({ httpIdleTimeoutMs: 1_200_000 })).toBe(1_200_000);
+			expect(httpIdleTimeoutMsFromSettings({ httpIdleTimeoutMs: "600" })).toBe(600);
+		});
+
+		test('"disabled" → 0 and 0 passes through as-is (no int32-max conversion)', () => {
+			expect(httpIdleTimeoutMsFromSettings({ httpIdleTimeoutMs: "disabled" })).toBe(0);
+			expect(httpIdleTimeoutMsFromSettings({ httpIdleTimeoutMs: 0 })).toBe(0);
+		});
+
+		test("missing or invalid setting → pi default 300s", () => {
+			expect(httpIdleTimeoutMsFromSettings(undefined)).toBe(DEFAULT_HTTP_IDLE_TIMEOUT_MS);
+			expect(httpIdleTimeoutMsFromSettings({})).toBe(DEFAULT_HTTP_IDLE_TIMEOUT_MS);
+			expect(httpIdleTimeoutMsFromSettings({ httpIdleTimeoutMs: "nonsense" })).toBe(DEFAULT_HTTP_IDLE_TIMEOUT_MS);
+			expect(httpIdleTimeoutMsFromSettings({ httpIdleTimeoutMs: -5 })).toBe(DEFAULT_HTTP_IDLE_TIMEOUT_MS);
+			expect(DEFAULT_HTTP_IDLE_TIMEOUT_MS).toBe(300_000);
+		});
+	});
+
+	test("readHttpIdleTimeoutMs reads settings.json from the pi agent dir", () => {
+		withAgentDir((dir) => {
+			fs.writeFileSync(path.join(dir, "settings.json"), JSON.stringify({ httpIdleTimeoutMs: 1_200_000 }));
+			expect(readHttpIdleTimeoutMs()).toBe(1_200_000);
+			fs.writeFileSync(path.join(dir, "settings.json"), JSON.stringify({ httpIdleTimeoutMs: "disabled" }));
+			expect(readHttpIdleTimeoutMs()).toBe(0);
+			fs.writeFileSync(path.join(dir, "settings.json"), "{not json");
+			expect(readHttpIdleTimeoutMs()).toBe(DEFAULT_HTTP_IDLE_TIMEOUT_MS);
+		});
+	});
+
+	test("readHttpIdleTimeoutMs falls back to the default when settings.json is missing", () => {
+		withAgentDir(() => {
+			expect(readHttpIdleTimeoutMs()).toBe(DEFAULT_HTTP_IDLE_TIMEOUT_MS);
+		});
+	});
+
+	test("piTransportOptions mirrors the pi dispatcher option block", () => {
+		expect(piTransportOptions(1_200_000)).toEqual({
+			allowH2: false,
+			proxyTunnel: true,
+			headersTimeout: 1_200_000,
+			bodyTimeout: 1_200_000,
+			connect: { autoSelectFamilyAttemptTimeout: 2_000 },
+		});
+		// 0 ("disabled") passes through unchanged.
+		expect(piTransportOptions(0).headersTimeout).toBe(0);
+		expect(piTransportOptions(0).bodyTimeout).toBe(0);
+	});
+
+	test("withUndiciErrorListener attaches an error listener to EventEmitters only", () => {
+		const emitter = new EventEmitter();
+		withUndiciErrorListener(emitter);
+		expect(emitter.listenerCount("error")).toBe(1);
+		// Must not throw when an error is emitted (listener swallows it).
+		expect(() => emitter.emit("error", new Error("boom"))).not.toThrow();
+
+		const plain = { on: () => {} };
+		expect(withUndiciErrorListener(plain)).toBe(plain);
+	});
+
+	describe("undiciFactories (pooled client error listeners)", () => {
+		class FakeClient extends EventEmitter {}
+		class FakePool extends EventEmitter {}
+		const factories = undiciFactories({
+			Client: FakeClient as unknown as new (origin: string, opts?: Record<string, unknown>) => unknown,
+			Pool: FakePool as unknown as new (origin: string, opts?: Record<string, unknown>) => unknown,
+		});
+
+		test("clientFactory builds an error-listened Client", () => {
+			const client = factories.clientFactory("http://origin", { headersTimeout: 5 }) as EventEmitter;
+			expect(client).toBeInstanceOf(FakeClient);
+			expect(client.listenerCount("error")).toBe(1);
+		});
+
+		test("factory: connections === 1 → single Client; otherwise Pool wired with clientFactory", () => {
+			const single = factories.factory("http://origin", { connections: 1 }) as EventEmitter;
+			expect(single).toBeInstanceOf(FakeClient);
+			expect(single.listenerCount("error")).toBe(1);
+
+			const pooled = factories.factory("http://origin", { connections: 4 }) as unknown as {
+				listenerCount(ev: string): number;
+				constructor: { name: string };
+			};
+			expect(pooled).toBeInstanceOf(FakePool);
+			expect(pooled.listenerCount("error")).toBe(1);
 		});
 	});
 });
