@@ -167,4 +167,10 @@ export type WaitOutcome =
 	| { status: "failed"; reason: string }
 	| { status: "cancelled" }
 	| { status: "needs_input"; question: string; request?: AskInput }
-	| { status: "timeout"; state: AgentState };
+	| { status: "timeout"; state: AgentState }
+	/**
+	 * Steering wake (tool layer only, never produced by the controller): the
+	 * blocking wait was released because the user sent a message; the child
+	 * keeps running and its completion still arrives as a background event.
+	 */
+	| { status: "released"; state: AgentState };

@@ -14,11 +14,16 @@
  */
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { formatModelEvent } from "./delivery";
+import { markOwnDelivery } from "./steering-wake";
 import type { LocalSubagentRuntime } from "./controller";
 
 export function attachDelivery(pi: ExtensionAPI, runtime: LocalSubagentRuntime): void {
 	runtime.onEvent((ev) => {
 		const text = formatModelEvent(ev);
+		// Own delivery: open the suppression window BEFORE enqueueing so a
+		// concurrently polling steering wake never mistakes this message for
+		// user input (see ./steering-wake).
+		markOwnDelivery();
 		pi.sendMessage(
 			{
 				customType: SUBAGENT_EVENT_TYPE,

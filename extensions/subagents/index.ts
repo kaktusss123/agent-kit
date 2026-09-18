@@ -50,6 +50,8 @@ import { Type } from "typebox";
 import { LocalSubagentRuntime } from "./controller";
 import { resolveSpawnPair, type SpawnModelClass } from "./spawn-model";
 import { defaultResultsDir, sumSessionCost } from "./result-store";
+import { ownDeliveryInFlight } from "./steering-wake";
+import type { WaitOutcome } from "./types";
 import {
 	formatAskRequestBlock,
 	formatLiveSnapshot,
@@ -80,6 +82,8 @@ const CONFIG = {
 	workspaceDeadlineSec: 600,
 	/** Live progress refresh cadence for blocking waits. */
 	liveStatusRefreshMs: 3000,
+	/** Steering wake poll cadence: a user message should release the wait within ~half a second. */
+	steeringWakePollMs: 450,
 };
 
 // =============================================================================
@@ -213,6 +217,7 @@ export default function (pi: ExtensionAPI) {
 			"background. Workspace spawn (workspace=<managed task worktree>) starts a child that OWNS that worktree:",
 			"the call blocks until a terminal outcome (done/partial/blocked) or needs_input, with live progress in the",
 			"tool call, an enforced deadline, and a structured report envelope (the child must finish by reporting).",
+			"A user message sent while the call blocks detaches it early; the run continues and completion arrives via event.",
 			"Ops: spawn, status, steer (redirect a running child), follow_up (queue work for after the current run),",
 			"wait (block until completed/failed/needs_input; plain spawns only — a workspace spawn already blocks),",
 			"result (fetch the full persisted result; workspace runs return the report envelope + Git facts), respond",
@@ -223,7 +228,7 @@ export default function (pi: ExtensionAPI) {
 		promptGuidelines: [
 			"Use subagent op=spawn to delegate self-contained work that does not need your direct involvement, especially parallelizable or exploratory tasks.",
 			"spawn (plain cwd) returns immediately; keep working or spawn more agents, then use subagent op=wait to block for a specific child when you need its outcome.",
-			"Workspace spawn: dispatch independent repo owners in parallel with multiple subagent calls with workspace=<worktree> in one block. The call blocks until a terminal outcome; its JSON carries the protocol outcome in `status`, and the owner's product outcome lives in `result.status` (present only when status is done).",
+			"Workspace spawn: dispatch independent repo owners in parallel with multiple subagent calls with workspace=<worktree> in one block. The call blocks until a terminal outcome; its JSON carries the protocol outcome in `status`, and the owner's product outcome lives in `result.status` (present only when status is done). If the user sends a message while the call blocks, it detaches early (run continues; completion arrives via event) — handle the user's message then, and use op=cancel only if they asked to stop.",
 			"Workspace runs inherit the main session model — do not pass modelClass with workspace (it is rejected). Plain children pick a model class per spawn: omit modelClass or use \"default\" for ordinary delegated work; \"cheap\" for high-volume scouting, extraction, classification, and broad parallel research; \"smart\" for critical review, difficult reasoning, and explicit escalation. Configure cheap/smart via /model-class <class> set.",
 			"Workspace terminal results include runtime-read `git_facts` (branch, HEAD SHA, dirty paths) — never ask the model for these; trust `git_facts` over any textual self-report about repository state.",
 			"When a child reports needs_input, first try to resolve the request from your own conversation and task context — do not ask the user again for information that is already known.",
@@ -282,6 +287,8 @@ export default function (pi: ExtensionAPI) {
 								deadlineSec: params.deadlineSec,
 								signal,
 								onUpdate,
+								hasPendingMessages:
+									typeof ctx.hasPendingMessages === "function" ? () => ctx.hasPendingMessages() : undefined,
 								model: ctx.model,
 								thinkingLevel: ctx.thinkingLevel,
 								cwd: ctx.cwd,
@@ -344,6 +351,21 @@ export default function (pi: ExtensionAPI) {
 						// bounded recent activity) into the tool call. Display-only;
 						// the child transcript stays isolated.
 						let progressTimer: ReturnType<typeof setInterval> | undefined;
+						// Steering wake: while blocked, a pending user message (steering
+						// or follow-up) releases this call early — the child keeps
+						// running and its completion still arrives as the usual
+						// background event, or Main re-issues wait. Plain children have
+						// no detach/ownership concept, so this is a release, not a
+						// detach. Own deliveries are suppressed via ./steering-wake.
+						const pendingProbe =
+							typeof ctx.hasPendingMessages === "function" ? () => ctx.hasPendingMessages() : undefined;
+						// The wake abort only RELEASES the runtime waiter (its timeout-
+						// shaped outcome is discarded) — it must not surface to the
+						// switch below as a timeout.
+						const wakeAbort = new AbortController();
+						const onToolAbort = () => wakeAbort.abort();
+						signal?.addEventListener("abort", onToolAbort, { once: true });
+						let wakeTimer: ReturnType<typeof setInterval> | undefined;
 						try {
 							if (onUpdate) {
 								const emit = () => {
@@ -358,9 +380,40 @@ export default function (pi: ExtensionAPI) {
 								progressTimer = setInterval(emit, CONFIG.liveStatusRefreshMs);
 								progressTimer.unref?.();
 							}
-							const outcome = await rt.wait(id, {
-								timeoutMs: (params.timeoutSec ?? CONFIG.waitTimeoutSec) * 1000,
-								signal,
+							const outcome = await new Promise<WaitOutcome>((resolve, reject) => {
+								let done = false;
+								const finish = (o: WaitOutcome) => {
+									if (done) return;
+									done = true;
+									if (wakeTimer) {
+										clearInterval(wakeTimer);
+										wakeTimer = undefined;
+									}
+									resolve(o);
+								};
+								// rt.wait is async: unknown/workspace ids reject the promise
+								// (never a sync throw) — forward the rejection so the tool
+								// surfaces it exactly like a bare await would.
+								rt.wait(id, {
+									timeoutMs: (params.timeoutSec ?? CONFIG.waitTimeoutSec) * 1000,
+									signal: wakeAbort.signal,
+								}).then(finish, reject);
+								if (!pendingProbe) return;
+								wakeTimer = setInterval(() => {
+									if (ownDeliveryInFlight()) return;
+									try {
+										if (!pendingProbe()) return;
+									} catch {
+										return; // a broken probe must never break the wait
+									}
+									// Release the runtime waiter FIRST so it cannot
+									// consume the completion event that belongs to
+									// the background delivery; then report the release.
+									wakeAbort.abort();
+									const snap = rt.inspect(id)[0];
+									finish({ status: "released", state: snap?.state ?? "running" });
+								}, CONFIG.steeringWakePollMs);
+								wakeTimer.unref?.();
 							});
 							switch (outcome.status) {
 								case "completed":
@@ -387,13 +440,24 @@ export default function (pi: ExtensionAPI) {
 										`wait timed out; subagent ${id} is still ${outcome.state}. It keeps running in the background.`,
 										{ wait: outcome },
 									);
+								case "released":
+									return ok(
+										[
+											`wait released: the user sent a message while Main was blocked on subagent ${id}.`,
+											`The subagent is still ${outcome.state} and keeps running in the background; its completion`,
+											`still arrives as the usual [subagent ...] event, or re-issue op=wait.`,
+										].join("\n"),
+										{ wait: outcome },
+									);
 							}
 							break;
 						} finally {
-							// The progress loop dies on EVERY exit: outcome, timeout,
-							// abort, and thrown errors. No leaked timers, no updates
-							// after the tool call settled.
+							// The progress and wake loops die on EVERY exit: outcome,
+							// timeout, abort, wake, and thrown errors. No leaked timers,
+							// no updates after the tool call settled.
 							if (progressTimer) clearInterval(progressTimer);
+							if (wakeTimer) clearInterval(wakeTimer);
+							signal?.removeEventListener("abort", onToolAbort);
 						}
 					}
 					case "result": {

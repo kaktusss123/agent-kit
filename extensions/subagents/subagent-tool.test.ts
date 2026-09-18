@@ -63,6 +63,27 @@ function makeEnv() {
 
 const CTX = { cwd: "/tmp", thinkingLevel: "low" };
 
+/**
+ * Minimal RPC child for wait tests: accepts the initial prompt and opens a
+ * run, then stays alive until killed. Speaks just enough pi RPC for the
+ * controller to treat it as a running plain child.
+ */
+const RPC_PROBE_SOURCE =
+	"let buf = '';" +
+	"process.stdin.on('data', (c) => {" +
+	"buf += c.toString();" +
+	"let i;" +
+	"while ((i = buf.indexOf('\\n')) !== -1) {" +
+	"const line = buf.slice(0, i); buf = buf.slice(i + 1);" +
+	"let cmd; try { cmd = JSON.parse(line); } catch { continue; }" +
+	"if (cmd.type === 'prompt') {" +
+	"process.stdout.write(JSON.stringify({ id: cmd.id, type: 'response', command: 'prompt', success: true }) + '\\n');" +
+	"process.stdout.write(JSON.stringify({ type: 'agent_start' }) + '\\n');" +
+	"}" +
+	"}" +
+	"});" +
+	"setInterval(() => {}, 1000);\n";
+
 describe("subagent tool surface", () => {
 	test("registers one tool with both spawn modes in the schema", () => {
 		const { pi, tools } = makePi();
@@ -449,6 +470,68 @@ describe("nested spawn from a workspace worker", () => {
 			if (prevArgvOut === undefined) delete process.env.PI_ARGV_OUT;
 			else process.env.PI_ARGV_OUT = prevArgvOut;
 			process.argv[1] = prevArgv1;
+			fs.rmSync(base, { recursive: true, force: true });
+		}
+	}, 15000);
+});
+
+	describe("plain wait steering wake", () => {
+	test("pending user message releases a blocking wait early; the child keeps running", async () => {
+		const base = fs.mkdtempSync(path.join(os.tmpdir(), "subagent-wait-wake-test-"));
+		const probe = path.join(base, "rpc-probe.js");
+		fs.writeFileSync(probe, RPC_PROBE_SOURCE);
+		const prevArgv1 = process.argv[1];
+		const prevWorkerId = process.env.PI_SUBAGENT_ID;
+		// resolvePiInvocation picks up process.argv[1] (.js) as the pi entry,
+		// so the runtime spawns the probe instead of a real pi; a worker id
+		// would flip the main-session gates, so pin it away like makeEnv does.
+		process.argv[1] = probe;
+		delete process.env.PI_SUBAGENT_ID;
+		try {
+			const { pi, tools } = makePi();
+			registerExtension(pi);
+			const def = tools.get("subagent")!;
+			let pendingUser = false;
+			const ctx = {
+				cwd: base,
+				model: { provider: "zai", id: "glm-x" },
+				thinkingLevel: "low",
+				modelRegistry: { getAll: () => [{ provider: "zai", id: "glm-x", reasoning: true }] },
+				hasPendingMessages: () => pendingUser,
+			};
+			const spawnRes = (await def.execute(
+				"tc-w0",
+				{ op: "spawn", task: "long background work" },
+				undefined,
+				undefined,
+				ctx,
+			)) as { details: { snapshot?: { id: string } } };
+			const id = spawnRes.details.snapshot!.id;
+
+			// block on the child, then queue a user message: the wake poll
+			// (450ms cadence) must release the wait well before its 30s cap
+			const waitPromise = def.execute("tc-w1", { op: "wait", id, timeoutSec: 30 }, undefined, undefined, ctx) as Promise<{
+				content: Array<{ text: string }>;
+				details: { wait: { status: string; state?: string } };
+			}>;
+			await new Promise((r) => setTimeout(r, 150));
+			pendingUser = true;
+			const res = await waitPromise;
+			expect(res.details.wait).toMatchObject({ status: "released", state: "running" });
+			expect(res.content[0]!.text).toContain("wait released");
+			expect(res.content[0]!.text).toContain("keeps running");
+
+			// the child was NOT killed: still running, still waitable
+			const status = (await def.execute("tc-w2", { op: "status", id }, undefined, undefined, ctx)) as {
+				details: { agents: Array<{ state: string }> };
+			};
+			expect(status.details.agents[0]!.state).toBe("running");
+
+			// cleanup: terminate the probe child
+			await def.execute("tc-w3", { op: "cancel", id }, undefined, undefined, ctx);
+		} finally {
+			process.argv[1] = prevArgv1;
+			if (prevWorkerId !== undefined) process.env.PI_SUBAGENT_ID = prevWorkerId;
 			fs.rmSync(base, { recursive: true, force: true });
 		}
 	}, 15000);
