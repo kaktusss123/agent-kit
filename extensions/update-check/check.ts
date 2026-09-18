@@ -16,7 +16,7 @@ import { mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { dirname } from "node:path";
 
 /** Re-check the network at most this often while the cache says up to date. */
-export const CHECK_INTERVAL_MS = 6 * 60 * 60 * 1000;
+export const CHECK_INTERVAL_MS = 60 * 60 * 1000;
 
 export type UpdateStatus = "up-to-date" | "outdated";
 
