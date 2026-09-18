@@ -51,6 +51,7 @@ import type { DirtyState } from "../task-workspace/types";
 import { resolveTaskRoot } from "../task-workspace/task-root";
 import { formatRunStatus, type RunStatusView } from "./activity";
 import { formatNeedsInputBody } from "./delivery";
+import { markOwnDelivery, ownDeliveryInFlight } from "./steering-wake";
 import type { AgentSnapshot, SubagentModelEvent } from "./types";
 import type { LocalSubagentRuntime } from "./controller";
 import type { AskInput } from "../ask/contract";
@@ -65,6 +66,20 @@ const MIN_FINALIZATION_RESERVE_MS = 30000;
 
 /** Live status refresh cadence: modest — a few seconds, not a spinner. */
 const STATUS_REFRESH_MS = 3000;
+
+/** Steering wake poll cadence: a user message should detach within ~half a second. */
+const STEERING_WAKE_POLL_MS = 450;
+
+/** Reason returned when a pending user message detached the blocking spawn call. */
+const STEERING_WAKE_REASON =
+	"detached because the user sent a message while Main was waiting; the run continues under its deadline — " +
+	"completion arrives as a [subagent completed] event or via subagent op=result; handle the user's message now; " +
+	"use subagent op=cancel if the user asked to stop";
+
+/** Reason returned when the main abort detached the blocking spawn call. */
+const ABORT_DETACH_REASON =
+	"detached by main abort; the run continues under its deadline — " +
+	"completion arrives as a [subagent completed] event or via subagent op=result";
 
 // ================================================================ run model
 
@@ -197,6 +212,14 @@ export interface WorkspaceSpawnArgs {
 	model?: { provider: string; id: string };
 	thinkingLevel?: string;
 	cwd?: string;
+	/**
+	 * Pending-message probe of the main session (pi ExtensionContext).
+	 * While the blocking wait is in progress, a truthy probe detaches the call
+	 * with the steering-wake reason so Main handles the queued user message;
+	 * the run continues under its deadline. Own deliveries are suppressed via
+	 * ./steering-wake. Never consulted before dispatch acceptance.
+	 */
+	hasPendingMessages?: () => boolean;
 }
 
 /** Tool-shaped result of a workspace spawn (JSON content + structured details). */
@@ -213,6 +236,8 @@ export interface WorkspaceRunsOptions {
 	profileEntries?: () => string[];
 	/** Live status refresh interval override (tests: fast cadence). */
 	statusRefreshMs?: number;
+	/** Steering wake poll interval override (tests: fast cadence). */
+	steeringWakePollMs?: number;
 }
 
 /** RepoOwner policy surface for workspace-mode subagent spawns. */
@@ -257,6 +282,7 @@ export function createWorkspaceRuns(
 	// layout itself.
 	const taskRoot = resolveTaskRoot();
 	const statusRefreshMs = opts?.statusRefreshMs ?? STATUS_REFRESH_MS;
+	const steeringWakePollMs = opts?.steeringWakePollMs ?? STEERING_WAKE_POLL_MS;
 
 	/** The bound runtime (events and settlement only run after a dispatch bound it). */
 	const rt = (): LocalSubagentRuntime => {
@@ -474,6 +500,10 @@ export function createWorkspaceRuns(
 			`details via subagent op=result id=${run.agentId}`,
 		];
 		try {
+			// Own delivery: open the suppression window BEFORE enqueueing so a
+			// concurrently polling steering wake never mistakes this message
+			// for user input (see ./steering-wake).
+			markOwnDelivery();
 			pi.sendMessage(
 				{
 					customType: "subagent-event",
@@ -538,6 +568,10 @@ export function createWorkspaceRuns(
 		if (o.childMayHaveMutatedRepo) lines.push(`child_may_have_mutated_repo: true`);
 		lines.push(`details via subagent op=result id=${run.agentId}`);
 		try {
+			// Own delivery: open the suppression window BEFORE enqueueing so a
+			// concurrently polling steering wake never mistakes this message
+			// for user input (see ./steering-wake).
+			markOwnDelivery();
 			pi.sendMessage(
 				{
 					customType: "subagent-event",
@@ -743,7 +777,7 @@ export function createWorkspaceRuns(
 	// -------------------------------------------------------- spawn (dispatch)
 
 	async function spawnRun(args: WorkspaceSpawnArgs): Promise<WorkspaceToolResult> {
-		const { workspace, task, signal, onUpdate } = args;
+		const { workspace, task, signal, onUpdate, hasPendingMessages } = args;
 		const deadlineMs = Math.max(1000, (args.deadlineSec ?? DEFAULT_DEADLINE_MS / 1000) * 1000);
 		// Pre-dispatch gate 1: model pinning — no silent defaults. Workspace
 		// children inherit the main session model (modelClass does not apply).
@@ -830,6 +864,10 @@ export function createWorkspaceRuns(
 
 		// Blocking wait: terminal or needs_input. Abort = detach (the run
 		// keeps going; completion arrives as an event / via op=status|result).
+		// A pending user message (steering wake) detaches too, with its own
+		// reason; wokeBySteering distinguishes the two detach causes.
+		let wokeBySteering = false;
+		let wakeTimer: ReturnType<typeof setInterval> | undefined;
 		try {
 			const waitOutcome = await new Promise<"settled" | "needs_input" | "detached">((resolve) => {
 				const w = (outcome: "settled" | "needs_input" | "detached") => {
@@ -845,11 +883,45 @@ export function createWorkspaceRuns(
 				const onAbort = () => w("detached");
 				function cleanup() {
 					signal?.removeEventListener("abort", onAbort);
+					if (wakeTimer) {
+						clearInterval(wakeTimer);
+						wakeTimer = undefined;
+					}
 				}
 				signal?.addEventListener("abort", onAbort, { once: true });
 				// The abort may have fired while spawn was still resolving
 				// (acceptance won the race): detach immediately.
-				if (signal?.aborted) w("detached");
+				if (signal?.aborted) {
+					w("detached");
+					return;
+				}
+				// Steering wake: armed only HERE, after dispatch acceptance —
+				// polling only matters while this call blocks. ANY pending user
+				// message (steering or follow-up) resolves the call as a detach
+				// so the agent loop reaches a turn boundary, delivers the queued
+				// text, and Main stays responsive; the run continues under its
+				// deadline and its terminal outcome arrives as the usual
+				// background delivery. Follow-up waking too is accepted
+				// semantics: the queue kind is not observable from here, and any
+				// queued text deserves a turn boundary. Own deliveries (wiring
+				// events, notifyCompleted/notifyNeedsInput) must not wake: the
+				// shared marker in ./steering-wake suppresses the window around
+				// each own enqueue. A settle that raced the poll wins cleanly:
+				// cleanup() kills this timer, and finish() resolving the waiter
+				// first makes a later w() a no-op with the terminal outcome
+				// returned instead.
+				if (!hasPendingMessages) return;
+				wakeTimer = setInterval(() => {
+					if (ownDeliveryInFlight()) return;
+					try {
+						if (!hasPendingMessages()) return;
+					} catch {
+						return; // a broken probe must never break the wait
+					}
+					wokeBySteering = true;
+					w("detached");
+				}, steeringWakePollMs);
+				wakeTimer.unref?.();
 			});
 
 			if (waitOutcome === "detached") {
@@ -862,15 +934,19 @@ export function createWorkspaceRuns(
 					deadlineMsLeft: Math.max(0, run.deadline - Date.now()),
 					...(run.terminal
 						? {}
-						: { reason: "detached by main abort; the run continues under its deadline — completion arrives as a [subagent completed] event or via subagent op=result" }),
+						: { reason: wokeBySteering ? STEERING_WAKE_REASON : ABORT_DETACH_REASON }),
 				});
 			}
 			return ok(runOutcome(run));
 		} finally {
 			// The progress loop dies on EVERY exit: terminal, needs_input,
 			// detach, and thrown errors. No leaked timers, no updates after the
-			// tool call settled.
+			// tool call settled. The steering-wake poll dies with it.
 			stopLiveStatus(run);
+			if (wakeTimer) {
+				clearInterval(wakeTimer);
+				wakeTimer = undefined;
+			}
 		}
 	}
 

@@ -16,6 +16,15 @@ the main process. No daemon, no shared hub.
   with the same live progress, an enforced deadline, and the report-envelope
   contract (see the workspace section below). Management ops work uniformly
   for both modes.
+- **Steering wake**: while a blocking call is in progress (a workspace spawn
+  or a plain `wait`), any queued user message releases the call early so the
+  agent loop reaches a turn boundary and Main stays responsive. A workspace
+  spawn detaches (the run continues under its deadline; completion arrives
+  via the background event); a plain `wait` returns a truthful `released`
+  outcome while the child keeps running. The extension's own background
+  deliveries never trigger the wake: every own `sendMessage` opens a short
+  suppression window (see `steering-wake.ts`) that the pending-check
+  consults.
 - **Background delivery**: when a child reaches `completed`, `failed`, or
   `needs_input`, the main model receives a few compact lines via
   `pi.sendMessage({ deliverAs: "steer", triggerTurn: true })`. Pi 0.85.1

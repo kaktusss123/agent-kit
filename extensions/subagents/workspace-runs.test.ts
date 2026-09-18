@@ -20,6 +20,8 @@ import {
 	settleRun,
 } from "./fake-rpc";
 import { envelopeFileName, type Envelope } from "./envelope";
+import { resetOwnDeliveryMark, setOwnDeliveryWindowMs } from "./steering-wake";
+import { attachDelivery } from "./wiring";
 import {
 	createWorkspaceRuns,
 	defaultProfileEntries,
@@ -56,12 +58,17 @@ interface Harness {
 	tmp: string;
 	taskRoot: string;
 	messages: Array<{ message: Record<string, unknown>; options?: Record<string, unknown> }>;
+	pi: ExtensionAPI;
 	cleanup(): void;
 	agentId(): string;
 	lastProc(): FakeRpcProcess;
 }
 
-function makeLayer(layerOpts?: { profileEntries?: () => string[]; killGraceMs?: number }): Harness {
+function makeLayer(layerOpts?: {
+	profileEntries?: () => string[];
+	killGraceMs?: number;
+	steeringWakePollMs?: number;
+}): Harness {
 	const harness = createFakeSpawnFactory();
 	const base = fs.mkdtempSync(path.join(os.tmpdir(), "wsagent-test-"));
 	const tmp = path.join(base, "results");
@@ -102,6 +109,7 @@ function makeLayer(layerOpts?: { profileEntries?: () => string[]; killGraceMs?: 
 		tmp,
 		taskRoot,
 		messages,
+		pi,
 		cleanup() {
 			if (previousGeneric === undefined) delete process.env.AGENT_TASK_ROOT;
 			else process.env.AGENT_TASK_ROOT = previousGeneric;
@@ -139,13 +147,20 @@ function makeWorktree(taskRoot: string, name: string): string {
 
 const CTX = { model: { provider: "zai", id: "glm-x" }, thinkingLevel: "low", cwd: "/tmp" };
 
-function dispatchCall(h: Harness, params: Record<string, unknown>, signal?: AbortSignal, ctxOverride?: unknown) {
+function dispatchCall(
+	h: Harness,
+	params: Record<string, unknown>,
+	signal?: AbortSignal,
+	ctxOverride?: unknown,
+	hasPendingMessages?: () => boolean,
+) {
 	const ctx = (ctxOverride ?? CTX) as { model?: { provider: string; id: string }; thinkingLevel?: string; cwd?: string };
 	return h.runs.spawnRun({
 		workspace: params.workspace as string,
 		task: params.task as string,
 		deadlineSec: params.timeout_ms !== undefined ? (params.timeout_ms as number) / 1000 : undefined,
 		signal,
+		hasPendingMessages,
 		model: ctx.model,
 		thinkingLevel: ctx.thinkingLevel,
 		cwd: ctx.cwd,
@@ -153,8 +168,13 @@ function dispatchCall(h: Harness, params: Record<string, unknown>, signal?: Abor
 }
 
 /** Drive a dispatch to a running child: confirm readiness, accept the prompt. */
-async function driveToRunning(h: Harness, params: Record<string, unknown>, signal?: AbortSignal) {
-	const pending = dispatchCall(h, params, signal);
+async function driveToRunning(
+	h: Harness,
+	params: Record<string, unknown>,
+	signal?: AbortSignal,
+	hasPendingMessages?: () => boolean,
+) {
+	const pending = dispatchCall(h, params, signal, undefined, hasPendingMessages);
 	// Wait for the child process: validation runs real git, which can take a
 	// few hundred ms on macOS before the spawn happens.
 	for (let i = 0; i < 100 && h.harness.spawned.length === 0; i++) {
@@ -788,7 +808,7 @@ describe("detach and cancel", () => {
 			ac.abort(); // main abort AFTER dispatch — detach, not cancel
 			const res = await pending;
 			expect(res.details).toMatchObject({ dispatched: true, state: "running" });
-			expect(String(res.details.reason)).toContain("detached");
+			expect(String(res.details.reason)).toContain("detached by main abort");
 			const { agentId } = res.details as { agentId: string };
 			expect(h.runtime.inspect(agentId)[0]!.alive).toBe(true); // NOT cancelled
 
@@ -852,6 +872,100 @@ describe("detach and cancel", () => {
 			h.cleanup();
 		}
 	});
+});
+
+describe("steering wake (pending-message detach)", () => {
+	test("pending user message detaches the blocking dispatch: steering-wake reason; child survives; completion still delivered", async () => {
+		const h = makeLayer({ steeringWakePollMs: 15 });
+		try {
+			// cold marker: a previous test's own deliveries must not suppress
+			// this wake
+			resetOwnDeliveryMark();
+			const ws = makeWorktree(h.taskRoot, "wake-ws");
+			const { pending, proc } = await driveToRunning(h, { workspace: ws, task: "t" }, undefined, () => true);
+			const agentId = h.agentId();
+
+			const res = await pending;
+			expect(res.details).toMatchObject({ status: "running", dispatched: true, state: "running" });
+			const reason = String(res.details.reason);
+			expect(reason).toContain("user sent a message");
+			expect(reason).toContain("op=cancel");
+			// the detach is NOT a cancel: the child keeps running
+			expect(h.runtime.inspect(agentId)![0]!.alive).toBe(true);
+			expect(proc.closed).toBe(false);
+			// detached: no completion delivery yet
+			expect(h.messages).toHaveLength(0);
+
+			// the run still settles on its own and delivers the background completion
+			writeEnvelope(h, agentId);
+			settleRun(proc, "finished after the wake");
+			const done = await waitForMessage(
+				h.messages,
+				(m) => m.message.customType === "subagent-event" && String(m.message.content).includes("[subagent completed]"),
+			);
+			expect(done).toBeDefined();
+			expect(h.runs.runView(agentId)!.terminal).toMatchObject({ status: "done" });
+		} finally {
+			await h.runtime.shutdown();
+			h.cleanup();
+		}
+	}, 10000);
+
+	test("own delivery (generic child completing during the wait) does not detach the workspace wait", async () => {
+		setOwnDeliveryWindowMs(150); // keep the suppression window short for the test
+		const h = makeLayer({ steeringWakePollMs: 15 });
+		try {
+			// production delivery path: generic child events enqueue own
+			// [subagent ...] messages (and mark the suppression window)
+			attachDelivery(h.pi, h.runtime);
+			resetOwnDeliveryMark();
+			const ws = makeWorktree(h.taskRoot, "own-wake-ws");
+			let pendingUser = false;
+			const { pending, proc } = await driveToRunning(h, { workspace: ws, task: "t" }, undefined, () => pendingUser);
+			const agentId = h.agentId();
+
+			// a generic (non-workspace) child completes in the background:
+			// wiring enqueues its own delivery, opening the suppression window
+			const genericPending = h.runtime.spawn({ task: "background child", cwd: h.tmp });
+			// the spawn resolves only after the prompt is accepted: arm the
+			// auto-accept as soon as the process exists
+			for (let i = 0; i < 100 && h.harness.spawned.length < 2; i++) await tick(20);
+			const genericProc = h.harness.spawned[h.harness.spawned.length - 1]!;
+			autoAcceptPrompt(genericProc);
+			const generic = (await genericPending).id;
+			await tick(20);
+			settleRun(genericProc, "generic done");
+			const note = await waitForMessage(
+				h.messages,
+				(m) => (m.message.details as { agentId?: string; kind?: string } | undefined)?.agentId === generic &&
+					(m.message.details as { kind?: string } | undefined)?.kind === "completed",
+			);
+			expect(note).toBeDefined(); // own delivery enqueued
+
+			// worst case for the wake: pending messages are reported NOW (as a
+			// pi build that counts own deliveries would). Within the window the
+			// own delivery must NOT detach the workspace wait.
+			pendingUser = true;
+			const stillBlocked = await Promise.race([
+				pending.then(() => "woke" as const),
+				tick(60).then(() => "blocked" as const),
+			]);
+			expect(stillBlocked).toBe("blocked");
+
+			// window open or not, once the pending check clears the wait stays
+			// healthy and settles normally on the workspace child's completion
+			pendingUser = false;
+			writeEnvelope(h, agentId);
+			settleRun(proc, "workspace done");
+			const res = await pending;
+			expect(res.details).toMatchObject({ status: "done" });
+		} finally {
+			setOwnDeliveryWindowMs(2000);
+			resetOwnDeliveryMark();
+			await h.runtime.shutdown();
+			h.cleanup();
+		}
+	}, 10000);
 });
 
 describe("startup failure classification (A2c)", () => {
