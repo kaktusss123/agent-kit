@@ -95,3 +95,9 @@ export function updateMessage(upstream?: string): string {
 	const where = upstream ? ` (behind ${upstream})` : "";
 	return `agent-kit: update available${where} — run 'agent-kit update'`;
 }
+
+/** Reminder for an active checkout left on a non-default branch: names the
+ *  branch and gives the exact switch-back-and-update command. */
+export function offMainMessage(branch: string, def: string, repo: string): string {
+	return `agent-kit: active checkout is on '${branch}', not ${def} — run: git -C ${repo} switch ${def} && agent-kit update`;
+}

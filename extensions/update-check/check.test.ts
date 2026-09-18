@@ -5,6 +5,7 @@ import { afterEach, describe, expect, test } from "bun:test";
 import {
 	CHECK_INTERVAL_MS,
 	decide,
+	offMainMessage,
 	parseLsRemote,
 	readUpdateState,
 	updateMessage,
@@ -103,6 +104,14 @@ describe("updateMessage", () => {
 		expect(updateMessage()).toBe("agent-kit: update available — run 'agent-kit update'");
 		expect(updateMessage("origin/main")).toBe(
 			"agent-kit: update available (behind origin/main) — run 'agent-kit update'",
+		);
+	});
+});
+
+describe("offMainMessage", () => {
+	test("names branch, default and the exact switch-back command", () => {
+		expect(offMainMessage("feat/update_check", "main", "/srv/kit")).toBe(
+			"agent-kit: active checkout is on 'feat/update_check', not main — run: git -C /srv/kit switch main && agent-kit update",
 		);
 	});
 });

@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, expect, test } from "bun:test";
 import { readUpdateState } from "./check";
-import { findCheckout, runUpdateCheck } from "./index";
+import { findCheckout, runOffMainCheck, runUpdateCheck } from "./index";
 
 let dir: string;
 
@@ -98,6 +98,27 @@ test("full lifecycle: check, skip, outdated toast, cached toast, refresh after p
 	expect(await run(repo, file, toasts, now)).toEqual({ ran: true, outdated: false, notified: false });
 	expect(toasts).toHaveLength(2);
 	expect(readUpdateState(file)?.status).toBe("up-to-date");
+});
+
+test("off-main check reminds on a non-default branch only", async () => {
+	const { repo, toasts } = setup();
+
+	// On the default branch: silent.
+	expect(await runOffMainCheck(repo, (m) => toasts.push(m))).toBe(false);
+	expect(toasts).toEqual([]);
+
+	// A feature branch is exactly the forgotten-worktree case: remind, and
+	// the message carries the copy-pasteable switch-back command.
+	execFileSync("git", ["-C", repo, "switch", "-q", "-c", "feat/forgot"]);
+	expect(await runOffMainCheck(repo, (m) => toasts.push(m))).toBe(true);
+	expect(toasts).toHaveLength(1);
+	expect(toasts[0]).toContain("'feat/forgot'");
+	expect(toasts[0]).toContain("switch main && agent-kit update");
+
+	// Detached HEAD: out of scope, silent.
+	execFileSync("git", ["-C", repo, "checkout", "-q", "--detach"]);
+	expect(await runOffMainCheck(repo, (m) => toasts.push(m))).toBe(false);
+	expect(toasts).toHaveLength(1);
 });
 
 test("repository without an upstream stays silent and caches nothing", async () => {

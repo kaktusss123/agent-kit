@@ -1,6 +1,12 @@
 /**
- * update-check — one-shot toast when the active agent-kit checkout is
- * behind its upstream, mirroring pi's own "new version released" notice.
+ * update-check — one-shot toasts about the state of the active agent-kit
+ * checkout, mirroring pi's own "new version released" notice:
+ *
+ * - behind its upstream — network check (git ls-remote), throttled and
+ *   cached as described below;
+ * - left on a non-default branch, e.g. after `agent-kit install` from a
+ *   task worktree the user forgot to switch back from — local-only check,
+ *   repeats on every session start until the branch is switched back.
  *
  * Contract (best-effort, like session-title): never delays the session,
  * silent on every failure (offline, unreachable remote, non-git checkout).
@@ -24,6 +30,7 @@ import { promisify } from "node:util";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import {
 	decide,
+	offMainMessage,
 	parseLsRemote,
 	readUpdateState,
 	updateMessage,
@@ -138,12 +145,34 @@ export async function runUpdateCheck(
 	return outcome;
 }
 
+/** Reminder when the active checkout sits on a non-default branch — e.g.
+ *  after `agent-kit install` from a task worktree the user forgot to switch
+ *  back. Local-only (no network), so it can repeat on every session start.
+ *  Returns true when a reminder was shown. */
+export async function runOffMainCheck(
+	repo: string,
+	notify: (message: string) => void,
+): Promise<boolean> {
+	const branch = (await git(repo, ["rev-parse", "--abbrev-ref", "HEAD"], LOCAL_TIMEOUT_MS))?.trim();
+	if (!branch || branch === "HEAD") return false; // detached HEAD: out of scope
+	const ref = (
+		await git(repo, ["symbolic-ref", "--short", "refs/remotes/origin/HEAD"], LOCAL_TIMEOUT_MS)
+	)?.trim();
+	const slash = ref ? ref.indexOf("/") : -1;
+	if (!ref || slash <= 0) return false; // default branch unknown: stay silent
+	const def = ref.slice(slash + 1);
+	if (branch === def) return false;
+	notify(offMainMessage(branch, def, repo));
+	return true;
+}
+
 export default function updateCheckExtension(pi: ExtensionAPI): void {
 	pi.on("session_start", (_event, ctx) => {
 		if (!ctx.hasUI) return; // fire-and-forget toasts only where a UI exists
 		const repo = findCheckout(fileURLToPath(import.meta.url));
 		if (repo === null) return;
-		// Fire-and-forget: session_start must never wait on the network.
+		// Fire-and-forget: session_start must never wait on git or the network.
+		void runOffMainCheck(repo, (message) => ctx.ui.notify(message, "warning")).catch(() => {});
 		void runUpdateCheck(repo, {
 			file: stateFile(),
 			now: () => Date.now(),
