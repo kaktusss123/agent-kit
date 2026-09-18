@@ -45,10 +45,17 @@
  * the same child tool call.
  */
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import { DefaultPackageManager, SettingsManager } from "@earendil-works/pi-coding-agent";
 import { StringEnum } from "@earendil-works/pi-ai";
 import { Type } from "typebox";
 import { LocalSubagentRuntime } from "./controller";
 import { resolveSpawnPair, type SpawnModelClass } from "./spawn-model";
+import {
+	requireProviderExtensions,
+	type ConfiguredPackageRef,
+	type ParentRuntimeFacts,
+} from "./provider-extensions";
+import { resolveAgentDir } from "../proxy/proxy-lib";
 import { defaultResultsDir, sumSessionCost } from "./result-store";
 import { ownDeliveryInFlight } from "./steering-wake";
 import type { WaitOutcome } from "./types";
@@ -133,6 +140,106 @@ const SubagentParams = Type.Object({
 // Wiring
 // =============================================================================
 
+/**
+ * How the parent enumerates configured packages. Injectable so wiring tests
+ * can assert the cwd/trust threading without touching pi's real managers.
+ */
+export interface PackageManagerWiring {
+	agentDir(): string;
+	createSettingsManager(cwd: string, agentDir: string, options: { projectTrusted: boolean }): unknown;
+	createPackageManager(options: {
+		cwd: string;
+		agentDir: string;
+		settingsManager: unknown;
+	}): { listConfiguredPackages(): ConfiguredPackageRef[] };
+}
+
+const realPackageManagerWiring: PackageManagerWiring = {
+	agentDir: resolveAgentDir,
+	createSettingsManager: (cwd, agentDir, options) => SettingsManager.create(cwd, agentDir, options),
+	createPackageManager: (options) =>
+		new DefaultPackageManager({
+			cwd: options.cwd,
+			agentDir: options.agentDir,
+			settingsManager: options.settingsManager as SettingsManager,
+		}),
+};
+
+/**
+ * listPackages callback bound to the LIVE parent facts (cwd + project trust
+ * captured from the same ctx as the model registry). The options object
+ * mirrors pi's `SettingsManagerCreateOptions`: an untrusted project's
+ * settings are not read at all, so its `packages` can never flow into a
+ * child `-e` (that would be local code execution of untrusted content);
+ * user-scope packages are unaffected.
+ */
+export function makeParentPackageLister(
+	parent: ParentRuntimeFacts,
+	wiring: PackageManagerWiring = realPackageManagerWiring,
+): () => ConfiguredPackageRef[] {
+	return () => {
+		const agentDir = wiring.agentDir();
+		return wiring
+			.createPackageManager({
+				cwd: parent.cwd,
+				agentDir,
+				settingsManager: wiring.createSettingsManager(parent.cwd, agentDir, {
+					projectTrusted: parent.projectTrusted,
+				}),
+			})
+			.listConfiguredPackages();
+	};
+}
+
+/**
+ * Latest session model registry — the parent-side fact for provider
+ * propagation (R2) — plus the live parent facts that must travel with it.
+ * Refreshed at every tool entry and session_start; a spawn always runs inside
+ * a tool handler, so the snapshot is fresh when the controller resolves the
+ * child's provider entries.
+ */
+let parentRegistry: { getRegisteredProviderIds(): readonly string[] } | undefined;
+let parentFacts: ParentRuntimeFacts = { cwd: process.cwd(), projectTrusted: true };
+
+/**
+ * Capture the parent-side facts from the live extension ctx: the registry,
+ * the ctx cwd of this moment, and the project trust state. cwd/trust MUST
+ * come from the same ctx as the registry — a session rebind can move the
+ * session to another project, and enumeration against a stale cwd would read
+ * the wrong project's packages. Trust defaults to true when a ctx predates
+ * the probe (mirrors pi's `options.projectTrusted ?? true`).
+ */
+function refreshParentFacts(ctx: {
+	cwd: string;
+	modelRegistry: { getRegisteredProviderIds(): readonly string[] } | undefined;
+	isProjectTrusted?: () => boolean;
+}): void {
+	parentRegistry = ctx.modelRegistry;
+	parentFacts = {
+		cwd: ctx.cwd,
+		projectTrusted: typeof ctx.isProjectTrusted === "function" ? ctx.isProjectTrusted() : true,
+	};
+}
+
+/**
+ * Resolve the provider extension entries a child needs for `model`
+ * ("provider/id") from LIVE parent facts: the session registry decides
+ * whether the provider is extension-registered at all; pi's public package
+ * manager enumerates configured packages read-only (`listConfiguredPackages`:
+ * no install, no update, no network) and only installed packages contribute
+ * local entry paths. Needed-but-missing throws ProviderExtensionError before
+ * any process exists.
+ */
+function resolveChildProviderEntries(model: string): string[] {
+	return requireProviderExtensions(model, {
+		registeredProviderIds:
+			typeof parentRegistry?.getRegisteredProviderIds === "function"
+				? parentRegistry.getRegisteredProviderIds()
+				: [],
+		listPackages: makeParentPackageLister(parentFacts),
+	});
+}
+
 export default function (pi: ExtensionAPI) {
 	let runtime: LocalSubagentRuntime | null = null;
 	let runs: WorkspaceRuns | null = null;
@@ -144,6 +251,7 @@ export default function (pi: ExtensionAPI) {
 			runtime = new LocalSubagentRuntime({
 				defaultCwd: ctxCwd ?? process.cwd(),
 				parentSession: parentSessionFile,
+				providerResolution: resolveChildProviderEntries,
 				onCostChange: (total) => pi.events.emit("subagents:cost", { total }),
 			});
 			attachDelivery(pi, runtime);
@@ -164,6 +272,7 @@ export default function (pi: ExtensionAPI) {
 	// it owns the total and emits `subagents:cost` itself; consumers (footer)
 	// repaint on the event. Never starts the runtime: no results dir, no read.
 	pi.on("session_start", async (_event, ctx) => {
+		refreshParentFacts(ctx);
 		parentSessionFile =
 			(ctx.sessionManager as { getSessionFile?: () => string | undefined } | undefined)?.getSessionFile?.() ??
 			parentSessionFile;
@@ -240,6 +349,7 @@ export default function (pi: ExtensionAPI) {
 		renderResult: renderSubagentResult,
 
 		async execute(_toolCallId, params, signal, onUpdate, ctx) {
+			refreshParentFacts(ctx);
 			parentSessionFile =
 				(ctx.sessionManager as { getSessionFile?: () => string | undefined } | undefined)?.getSessionFile?.() ??
 				parentSessionFile;

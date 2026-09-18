@@ -32,6 +32,7 @@ function makeRuntime(extra?: { readinessTimeoutMs?: number }) {
 		resultsDir: tmp,
 		piCommand: { command: "node", args: ["/fake/pi-cli.js"] },
 		bridgePath: "/fake/bridge.ts",
+		webSearchPath: "/fake/web-search.ts",
 		spawnFn: harness.spawnFn,
 		killGraceMs: 50,
 		startTimeoutMs: 2000,
@@ -73,7 +74,7 @@ describe("per-spawn additionalExtensions", () => {
 			const { pending, proc } = await spawnProfiled(runtime, harness);
 			const args = proc.spec.args;
 			const exts = args.map((a, i) => (a === "-e" ? args[i + 1] : null)).filter(Boolean);
-			expect(exts).toEqual(["/fake/bridge.ts", "/ext/task-workspace/index.ts", "/ext/subagents/reporting-bridge.ts"]);
+			expect(exts).toEqual(["/fake/bridge.ts", "/fake/web-search.ts", "/ext/task-workspace/index.ts", "/ext/subagents/reporting-bridge.ts"]);
 			expect(args).toContain("--no-extensions");
 			expect(args[args.indexOf("--name") + 1]).toBe("subagent:owner-x");
 			// No readiness data travels to the child: the contract stays
@@ -94,7 +95,8 @@ describe("per-spawn additionalExtensions", () => {
 			await tick(5);
 			const proc = harness.spawned[0];
 			const exts = proc.spec.args.map((a, i) => (a === "-e" ? proc.spec.args[i + 1] : null)).filter(Boolean);
-			expect(exts).toEqual(["/fake/bridge.ts"]);
+			// The base profile (bridge + web_search) is the whole generic child.
+			expect(exts).toEqual(["/fake/bridge.ts", "/fake/web-search.ts"]);
 			// Byte-identical environment: the readiness contract never travels
 			// to children (generic or profiled) — nothing to assert here beyond
 			// the argv identity above.

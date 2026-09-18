@@ -3,6 +3,7 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { LocalSubagentRuntime } from "./controller";
+import { ProviderExtensionError } from "./provider-extensions";
 import {
 	formatLiveSnapshot,
 	formatModelEvent,
@@ -24,6 +25,7 @@ import type { SubagentModelEvent } from "./types";
 function makeRuntime(opts?: {
 	killGraceMs?: number;
 	dispatchTimeoutMs?: number;
+	startTimeoutMs?: number;
 	parentSession?: string;
 	onCostChange?: (total: number) => void;
 }) {
@@ -35,9 +37,10 @@ function makeRuntime(opts?: {
 		resultsDir: tmp,
 		piCommand: { command: "node", args: ["/fake/pi-cli.js"] },
 		bridgePath: "/fake/bridge.ts",
+		webSearchPath: "/fake/web-search.ts",
 		spawnFn: harness.spawnFn,
 		killGraceMs: opts?.killGraceMs ?? 50,
-		startTimeoutMs: 2000,
+		startTimeoutMs: opts?.startTimeoutMs ?? 2000,
 		dispatchTimeoutMs: opts?.dispatchTimeoutMs ?? 2000,
 		...(opts?.parentSession ? { parentSession: opts.parentSession } : {}),
 		...(opts?.onCostChange ? { onCostChange: opts.onCostChange } : {}),
@@ -109,6 +112,9 @@ describe("LocalSubagentRuntime.spawn", () => {
 			expect(proc.spec.args).toContain("--no-extensions");
 			const bridgeIdx = proc.spec.args.indexOf("-e");
 			expect(proc.spec.args[bridgeIdx + 1]).toBe("/fake/bridge.ts");
+			// Base profile: web_search rides along right after the bridge for
+			// every child (plain and RepoOwner alike).
+			expect(proc.spec.args[proc.spec.args.indexOf("-e", bridgeIdx + 1) + 1]).toBe("/fake/web-search.ts");
 			const prompt = proc.commands.find((c) => c.type === "prompt");
 			expect(prompt).toBeDefined();
 			expect(prompt!.message).toBe("do things");
@@ -127,6 +133,60 @@ describe("LocalSubagentRuntime.spawn", () => {
 			await expect(pending).rejects.toThrow(/exited before accepting/);
 			await tick(5);
 			expect(events.some((e) => e.kind === "failed")).toBe(true);
+		} finally {
+			await runtime.shutdown();
+			cleanup();
+		}
+	});
+
+	test("startup failure surfaces a bounded stderr tail with the real cause (R3)", async () => {
+		const { harness, runtime, cleanup } = makeRuntime();
+		try {
+			const pending = runtime.spawn({ task: "x" });
+			await tick(5);
+			const proc = harness.spawned[0];
+			// Simulate pi's startup diagnostics on stderr, then the early death.
+			proc.writeToStderr("Warning: No models match pattern \"cloudru/...\"\n");
+			proc.writeToStderr('Error: Model "cloudru/Qwen/Qwen3.5" not found. Use --list-models to see available models.\n');
+			proc.close(1, null);
+			try {
+				await pending;
+				throw new Error("expected spawn failure");
+			} catch (e) {
+				const msg = (e as Error).message;
+				expect(msg).toContain("child exited before accepting the prompt (code 1, signal null)");
+				expect(msg).toContain("child stderr (tail):");
+				expect(msg).toContain('Error: Model "cloudru/Qwen/Qwen3.5" not found');
+			}
+		} finally {
+			await runtime.shutdown();
+			cleanup();
+		}
+	});
+
+	test("stderr excerpt is capped at ~2000 chars (last lines kept)", async () => {
+		const { harness, runtime, cleanup } = makeRuntime();
+		try {
+			const pending = runtime.spawn({ task: "x" });
+			await tick(5);
+			const proc = harness.spawned[0];
+			proc.writeToStderr("x".repeat(5000) + "\nLAST-LINE-MARKER\n");
+			proc.close(1, null);
+			await expect(pending).rejects.toThrow(/LAST-LINE-MARKER/);
+		} finally {
+			await runtime.shutdown();
+			cleanup();
+		}
+	});
+
+	test("accept-timeout failure carries the stderr tail too", async () => {
+		const { harness, runtime, cleanup } = makeRuntime({ startTimeoutMs: 80 });
+		try {
+			const pending = runtime.spawn({ task: "x" });
+			await tick(5);
+			harness.spawned[0].writeToStderr("Error: Extension path does not exist\n");
+			await expect(pending).rejects.toThrow(/did not accept the initial prompt in time/);
+			await expect(pending).rejects.toThrow(/Extension path does not exist/);
 		} finally {
 			await runtime.shutdown();
 			cleanup();
@@ -1253,6 +1313,102 @@ describe("LocalSubagentRuntime cost rollup", () => {
 			} finally {
 				await runtimeC.shutdown();
 			}
+		} finally {
+			await runtime.shutdown();
+			cleanup();
+		}
+	});
+});
+
+describe("provider propagation (common spawn path)", () => {
+	function makeProviderRuntime(providerResolution?: (model: string) => string[]) {
+		const harness = createFakeSpawnFactory();
+		const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "subagents-provider-test-"));
+		const runtime = new LocalSubagentRuntime({
+			defaultCwd: tmp,
+			resultsDir: tmp,
+			piCommand: { command: "node", args: ["/fake/pi-cli.js"] },
+			bridgePath: "/fake/bridge.ts",
+			webSearchPath: "/fake/web-search.ts",
+			spawnFn: harness.spawnFn,
+			killGraceMs: 50,
+			startTimeoutMs: 2000,
+			dispatchTimeoutMs: 2000,
+			...(providerResolution ? { providerResolution } : {}),
+		});
+		const cleanup = () => fs.rmSync(tmp, { recursive: true, force: true });
+		return { harness, runtime, cleanup };
+	}
+
+	test("resolved provider entries land between the base and the profile entries", async () => {
+		const { harness, runtime, cleanup } = makeProviderRuntime((model) =>
+			model.startsWith("cloudru/") ? ["/pkg/cloudru/extensions"] : [],
+		);
+		try {
+			const pending = runtime.spawn({
+				task: "t",
+				label: "p",
+				model: "cloudru/Qwen/Qwen3.5",
+				additionalExtensions: ["/ext/reporting-bridge.ts", "/ext/readiness-probe.ts"],
+			});
+			await tick(5);
+			const proc = harness.spawned[harness.spawned.length - 1];
+			autoAcceptPrompt(proc);
+			await pending;
+			const args = proc.spec.args;
+			const exts = args.map((a, i) => (a === "-e" ? args[i + 1] : null)).filter(Boolean);
+			expect(exts).toEqual([
+				"/fake/bridge.ts",
+				"/fake/web-search.ts",
+				"/pkg/cloudru/extensions",
+				"/ext/reporting-bridge.ts",
+				"/ext/readiness-probe.ts",
+			]);
+			expect(args).toContain("--no-extensions");
+		} finally {
+			await runtime.shutdown();
+			cleanup();
+		}
+	});
+
+	test("needed-but-missing provider fails fast BEFORE process creation", async () => {
+		const { harness, runtime, cleanup } = makeProviderRuntime(() => {
+			throw new ProviderExtensionError("cannot spawn child for model \"cloudru/m\": provider \"cloudru\" ... pi install");
+		});
+		try {
+			await expect(
+				runtime.spawn({ task: "t", label: "p", model: "cloudru/m" }),
+			).rejects.toThrow(ProviderExtensionError);
+			expect(harness.spawned).toHaveLength(0);
+		} finally {
+			await runtime.shutdown();
+			cleanup();
+		}
+	});
+
+	test("no model or not-needed provider: resolver is not consulted, argv unchanged", async () => {
+		let calls = 0;
+		const { harness, runtime, cleanup } = makeProviderRuntime(() => {
+			calls++;
+			return [];
+		});
+		try {
+			const pending = runtime.spawn({ task: "t", label: "a" });
+			await tick(5);
+			autoAcceptPrompt(harness.spawned[0]);
+			await pending;
+			expect(calls).toBe(0);
+			expect(harness.spawned[0].spec.args).not.toContain("cloudru");
+
+			const pending2 = runtime.spawn({ task: "t2", label: "b", model: "zai/glm" });
+			await tick(5);
+			autoAcceptPrompt(harness.spawned[1]);
+			await pending2;
+			expect(calls).toBe(1);
+			const exts = harness.spawned[1].spec.args
+				.map((a, i) => (a === "-e" ? harness.spawned[1].spec.args[i + 1] : null))
+				.filter(Boolean);
+			expect(exts).toEqual(["/fake/bridge.ts", "/fake/web-search.ts"]);
 		} finally {
 			await runtime.shutdown();
 			cleanup();
