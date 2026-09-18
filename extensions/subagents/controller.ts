@@ -154,6 +154,15 @@ interface AgentRecord {
 
 const ASK_TOOL = "ask";
 
+/**
+ * Bounded stderr excerpt surfaced in startup-failure messages. The
+ * connection keeps the full 8000-char tail for diagnostics; the surfaced
+ * reason carries only the last ~2000 chars so the model-facing error stays
+ * readable while still showing the real cause (e.g. `Error: Model ... not
+ * found` from a child that died before RPC).
+ */
+const STDERR_SURFACE_MAX = 2000;
+
 export class LocalSubagentRuntime {
 	private readonly records = new Map<string, AgentRecord>();
 	private readonly listeners = new Set<(ev: SubagentModelEvent) => void>();
@@ -330,7 +339,7 @@ export class LocalSubagentRuntime {
 			// handshake, so a broken/missing extension can never reach the model.
 			record.readinessTimer = setTimeout(() => {
 				if (record.readinessDone || record.spawnSettled) return;
-				this.failSpawn(record, "readiness handshake did not complete in time", "SIGKILL");
+				this.failSpawn(record, `readiness handshake did not complete in time${stderrExcerpt(record)}`, "SIGKILL");
 			}, this.readinessTimeoutMs);
 			record.readinessTimer.unref?.();
 		} else {
@@ -355,7 +364,7 @@ export class LocalSubagentRuntime {
 		if (record.spawnSettled || record.conn.exit) return;
 		record.acceptTimer = setTimeout(() => {
 			if (!record.spawnSettled) {
-				record.lastError = "child did not accept the initial prompt in time";
+				record.lastError = `child did not accept the initial prompt in time${stderrExcerpt(record)}`;
 				this.finishWithFailure(record, record.lastError);
 				this.conn(record).kill("SIGKILL");
 			}
@@ -640,7 +649,9 @@ export class LocalSubagentRuntime {
 		record.pendingQuestion = undefined;
 		if (!record.spawnSettled) {
 			record.spawnSettled = true;
-			record.lastError = record.lastError ?? `child exited before accepting the prompt (code ${info.code}, signal ${info.signal})`;
+			record.lastError =
+				record.lastError ??
+				`child exited before accepting the prompt (code ${info.code}, signal ${info.signal})${stderrExcerpt(record)}`;
 			for (const w of record.spawnWaiters.splice(0)) w(false);
 			this.finishWithFailure(record, record.lastError);
 			return;
@@ -1179,6 +1190,18 @@ export class LocalSubagentRuntime {
 
 function agentRef(record: AgentRecord): string {
 	return record.id;
+}
+
+/**
+ * Bounded excerpt of the child stderr tail for a startup-failure reason.
+ * Whitespace-trimmed; empty when the child said nothing on stderr, so
+ * success paths and quiet failures are unchanged.
+ */
+function stderrExcerpt(record: AgentRecord): string {
+	const tail = record.conn.stderr.trim();
+	if (!tail) return "";
+	const excerpt = tail.length > STDERR_SURFACE_MAX ? `…${tail.slice(-STDERR_SURFACE_MAX)}` : tail;
+	return `\nchild stderr (tail):\n${excerpt}`;
 }
 
 function connGetState(record: AgentRecord, id = "ctl-state"): void {

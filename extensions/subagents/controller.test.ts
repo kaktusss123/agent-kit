@@ -25,6 +25,7 @@ import type { SubagentModelEvent } from "./types";
 function makeRuntime(opts?: {
 	killGraceMs?: number;
 	dispatchTimeoutMs?: number;
+	startTimeoutMs?: number;
 	parentSession?: string;
 	onCostChange?: (total: number) => void;
 }) {
@@ -39,7 +40,7 @@ function makeRuntime(opts?: {
 		webSearchPath: "/fake/web-search.ts",
 		spawnFn: harness.spawnFn,
 		killGraceMs: opts?.killGraceMs ?? 50,
-		startTimeoutMs: 2000,
+		startTimeoutMs: opts?.startTimeoutMs ?? 2000,
 		dispatchTimeoutMs: opts?.dispatchTimeoutMs ?? 2000,
 		...(opts?.parentSession ? { parentSession: opts.parentSession } : {}),
 		...(opts?.onCostChange ? { onCostChange: opts.onCostChange } : {}),
@@ -132,6 +133,60 @@ describe("LocalSubagentRuntime.spawn", () => {
 			await expect(pending).rejects.toThrow(/exited before accepting/);
 			await tick(5);
 			expect(events.some((e) => e.kind === "failed")).toBe(true);
+		} finally {
+			await runtime.shutdown();
+			cleanup();
+		}
+	});
+
+	test("startup failure surfaces a bounded stderr tail with the real cause (R3)", async () => {
+		const { harness, runtime, cleanup } = makeRuntime();
+		try {
+			const pending = runtime.spawn({ task: "x" });
+			await tick(5);
+			const proc = harness.spawned[0];
+			// Simulate pi's startup diagnostics on stderr, then the early death.
+			proc.writeToStderr("Warning: No models match pattern \"cloudru/...\"\n");
+			proc.writeToStderr('Error: Model "cloudru/Qwen/Qwen3.5" not found. Use --list-models to see available models.\n');
+			proc.close(1, null);
+			try {
+				await pending;
+				throw new Error("expected spawn failure");
+			} catch (e) {
+				const msg = (e as Error).message;
+				expect(msg).toContain("child exited before accepting the prompt (code 1, signal null)");
+				expect(msg).toContain("child stderr (tail):");
+				expect(msg).toContain('Error: Model "cloudru/Qwen/Qwen3.5" not found');
+			}
+		} finally {
+			await runtime.shutdown();
+			cleanup();
+		}
+	});
+
+	test("stderr excerpt is capped at ~2000 chars (last lines kept)", async () => {
+		const { harness, runtime, cleanup } = makeRuntime();
+		try {
+			const pending = runtime.spawn({ task: "x" });
+			await tick(5);
+			const proc = harness.spawned[0];
+			proc.writeToStderr("x".repeat(5000) + "\nLAST-LINE-MARKER\n");
+			proc.close(1, null);
+			await expect(pending).rejects.toThrow(/LAST-LINE-MARKER/);
+		} finally {
+			await runtime.shutdown();
+			cleanup();
+		}
+	});
+
+	test("accept-timeout failure carries the stderr tail too", async () => {
+		const { harness, runtime, cleanup } = makeRuntime({ startTimeoutMs: 80 });
+		try {
+			const pending = runtime.spawn({ task: "x" });
+			await tick(5);
+			harness.spawned[0].writeToStderr("Error: Extension path does not exist\n");
+			await expect(pending).rejects.toThrow(/did not accept the initial prompt in time/);
+			await expect(pending).rejects.toThrow(/Extension path does not exist/);
 		} finally {
 			await runtime.shutdown();
 			cleanup();
