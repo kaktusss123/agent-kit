@@ -34,7 +34,10 @@
  * installing a dispatcher without them silently degrades pi's configured
  * timeout (long buffered responses die at 300s with UND_ERR_HEADERS_TIMEOUT).
  * This module therefore rebuilds the same transport options for BOTH proxy
- * states (ON and OFF). COUPLING: the option set mirrors pi 0.85.1 and must be
+ * states (ON and OFF) and — exactly like pi — wraps the installed top-level
+ * dispatcher and every pooled client in `withUndiciErrorListener` (undici
+ * Dispatcher is an EventEmitter; an unhandled internal "error" would crash
+ * the process). COUPLING: the option set mirrors pi 0.85.1 and must be
  * revisited whenever pi or its undici copy is upgraded.
  *
  * The undici copy used to build dispatchers is resolved from the running pi
@@ -67,7 +70,7 @@ export const DEFAULT_HTTP_IDLE_TIMEOUT_MS = 300_000;
 /** Pi: Node's 250ms default can kill valid connection attempts on high-latency routes. */
 const AUTO_SELECT_FAMILY_ATTEMPT_TIMEOUT_MS = 2_000;
 
-type UndiciModule = {
+export type UndiciModule = {
 	EnvHttpProxyAgent: new (opts: Record<string, unknown>) => unknown;
 	Agent: new (opts?: Record<string, unknown>) => unknown;
 	Client: new (origin: string, opts?: Record<string, unknown>) => unknown;
@@ -158,6 +161,15 @@ export function undiciFactories(undici: Pick<UndiciModule, "Client" | "Pool">): 
 }
 
 let undiciPromise: Promise<UndiciModule> | undefined;
+
+/**
+ * Test seam: install a fake undici module (used by applyProxyPreference's
+ * dispatcher construction) without touching resolution. Pass undefined to
+ * restore normal resolution. Unit tests only.
+ */
+export function setUndiciForTesting(undici: UndiciModule | undefined): void {
+	undiciPromise = undici ? Promise.resolve(undici) : undefined;
+}
 
 /** createRequire anchored at the running pi entry (symlinks resolved). */
 function piRequire(): NodeJS.Require | undefined {
@@ -271,7 +283,11 @@ export async function applyProxyPreference(): Promise<ProxyState> {
 	let agent: unknown;
 	if (state.enabled && state.url) {
 		const ca = loadCorpCa();
-		agent = new undici.EnvHttpProxyAgent({
+		// Pi wraps the top-level dispatcher itself (withUndiciErrorListener
+		// before setGlobalDispatcher) — mirror that in BOTH branches, not just
+		// the pooled clients. Wrap-then-store keeps the object identity, so
+		// dispatcherMatchesPreference's installed-agent comparison still works.
+		agent = withUndiciErrorListener(new undici.EnvHttpProxyAgent({
 			httpProxy: state.url,
 			httpsProxy: state.url,
 			...transport,
@@ -280,14 +296,14 @@ export async function applyProxyPreference(): Promise<ProxyState> {
 			...(ca ? { requestTls: { ca }, connect: { ...transport.connect, ca } } : {}),
 			clientFactory: factories.clientFactory,
 			factory: factories.factory,
-		});
+		}));
 	} else {
-		agent = new undici.Agent({
+		agent = withUndiciErrorListener(new undici.Agent({
 			...transport,
 			// Same origin-dispatcher shape as Agent's default (Client when
 			// connections === 1, else Pool of error-listened clients).
 			factory: factories.factory,
-		});
+		}));
 	}
 	(globalThis as Record<symbol, unknown>)[GLOBAL_DISPATCHER] = agent;
 	installed = { enabled: state.enabled, agent };

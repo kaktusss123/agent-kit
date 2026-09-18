@@ -10,13 +10,17 @@ import { EventEmitter } from "node:events";
 import * as os from "node:os";
 import * as path from "node:path";
 import {
+	applyProxyPreference,
 	DEFAULT_HTTP_IDLE_TIMEOUT_MS,
+	dispatcherMatchesPreference,
 	httpIdleTimeoutMsFromSettings,
 	parseHttpIdleTimeoutMs,
 	piTransportOptions,
 	readHttpIdleTimeoutMs,
 	readProxyState,
 	resolveAgentDir,
+	setUndiciForTesting,
+	type UndiciModule,
 	undiciFactories,
 	withUndiciErrorListener,
 	writeProxyState,
@@ -28,6 +32,20 @@ function withAgentDir(fn: (dir: string) => void): void {
 	process.env.PI_CODING_AGENT_DIR = dir;
 	try {
 		fn(dir);
+	} finally {
+		if (prev === undefined) delete process.env.PI_CODING_AGENT_DIR;
+		else process.env.PI_CODING_AGENT_DIR = prev;
+		fs.rmSync(dir, { recursive: true, force: true });
+	}
+}
+
+/** Async variant of withAgentDir for the applyProxyPreference tests. */
+async function withAgentDirAsync(fn: (dir: string) => Promise<void>): Promise<void> {
+	const dir = fs.mkdtempSync(path.join(os.tmpdir(), "proxy-lib-test-"));
+	const prev = process.env.PI_CODING_AGENT_DIR;
+	process.env.PI_CODING_AGENT_DIR = dir;
+	try {
+		await fn(dir);
 	} finally {
 		if (prev === undefined) delete process.env.PI_CODING_AGENT_DIR;
 		else process.env.PI_CODING_AGENT_DIR = prev;
@@ -79,6 +97,11 @@ describe("proxy-lib state", () => {
 });
 
 describe("proxy-lib transport parity (pi 0.85.1 configureHttpDispatcher)", () => {
+	// EventEmitter fakes standing in for undici dispatcher classes.
+	class FakeClient extends EventEmitter {}
+	class FakePool extends EventEmitter {}
+	class FakeEnvHttpProxyAgent extends EventEmitter {}
+	class FakeAgent extends EventEmitter {}
 	describe("parseHttpIdleTimeoutMs (pi parseHttpIdleTimeoutMs mirror)", () => {
 		test("numbers: finite >= 0 pass floored, negatives/NaN/Infinity invalid", () => {
 			expect(parseHttpIdleTimeoutMs(1_200_000)).toBe(1_200_000);
@@ -168,8 +191,6 @@ describe("proxy-lib transport parity (pi 0.85.1 configureHttpDispatcher)", () =>
 	});
 
 	describe("undiciFactories (pooled client error listeners)", () => {
-		class FakeClient extends EventEmitter {}
-		class FakePool extends EventEmitter {}
 		const factories = undiciFactories({
 			Client: FakeClient as unknown as new (origin: string, opts?: Record<string, unknown>) => unknown,
 			Pool: FakePool as unknown as new (origin: string, opts?: Record<string, unknown>) => unknown,
@@ -192,6 +213,68 @@ describe("proxy-lib transport parity (pi 0.85.1 configureHttpDispatcher)", () =>
 			};
 			expect(pooled).toBeInstanceOf(FakePool);
 			expect(pooled.listenerCount("error")).toBe(1);
+		});
+	});
+
+	// The helper is covered above; these tests cover the applyProxyPreference
+	// wiring itself: the TOP-LEVEL dispatcher this module installs (proxy ON
+	// and OFF) must carry the unhandled-"error" listener, mirroring pi's
+	// `withUndiciErrorListener(new undici.EnvHttpProxyAgent({...}))` install.
+	describe("applyProxyPreference (top-level dispatcher wiring)", () => {
+		function installFakeUndici(): void {
+			const fake = {
+				EnvHttpProxyAgent: FakeEnvHttpProxyAgent,
+				Agent: FakeAgent,
+				Client: FakeClient,
+				Pool: FakePool,
+			} as unknown as UndiciModule;
+			setUndiciForTesting(fake);
+		}
+
+		async function installedDispatcher(): Promise<EventEmitter> {
+			await applyProxyPreference();
+			const current = (globalThis as Record<symbol, unknown>)[
+				Symbol.for("undici.globalDispatcher.2")
+			];
+			expect(current).toBeInstanceOf(EventEmitter);
+			return current as EventEmitter;
+		}
+
+		test("proxy ON: installed EnvHttpProxyAgent carries an error listener and keeps identity", async () => {
+			await withAgentDirAsync(async (dir) => {
+				fs.writeFileSync(
+					path.join(dir, "proxy-state.json"),
+					JSON.stringify({ enabled: true, url: "http://127.0.0.1:8802" }),
+				);
+				installFakeUndici();
+				try {
+					const dispatcher = await installedDispatcher();
+					expect(dispatcher).toBeInstanceOf(FakeEnvHttpProxyAgent);
+					expect(dispatcher.listenerCount("error")).toBe(1);
+					// Swallowed, not thrown (the crash the listener defends against).
+					expect(() => dispatcher.emit("error", new Error("boom"))).not.toThrow();
+					// Wrap-then-store: the installed object is the tracked one.
+					expect(dispatcherMatchesPreference(true)).toBe(true);
+				} finally {
+					setUndiciForTesting(undefined);
+				}
+			});
+		});
+
+		test("proxy OFF: installed Agent carries an error listener too", async () => {
+			await withAgentDirAsync(async (dir) => {
+				fs.writeFileSync(path.join(dir, "proxy-state.json"), JSON.stringify({ enabled: false }));
+				installFakeUndici();
+				try {
+					const dispatcher = await installedDispatcher();
+					expect(dispatcher).toBeInstanceOf(FakeAgent);
+					expect(dispatcher.listenerCount("error")).toBe(1);
+					expect(() => dispatcher.emit("error", new Error("boom"))).not.toThrow();
+					expect(dispatcherMatchesPreference(false)).toBe(true);
+				} finally {
+					setUndiciForTesting(undefined);
+				}
+			});
 		});
 	});
 });
