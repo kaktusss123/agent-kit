@@ -1,0 +1,306 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta name="color-scheme" content="dark" />
+  <title>Interactive evidence explorer pattern</title>
+  <style>
+    :root {
+      --bg: #050505;
+      --surface: #111113;
+      --text: #f3f2ef;
+      --muted: #aaa7af;
+      --rule: #29292c;
+      --track: #1b1b1e;
+      --accent: #9b8cff;
+      --max: 1440px;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      background: var(--bg);
+      color: var(--text);
+      font-family: ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      line-height: 1.5;
+      -webkit-font-smoothing: antialiased;
+    }
+    button, input, select { font: inherit; color: inherit; }
+    .page {
+      width: min(var(--max), calc(100vw - 64px));
+      margin: 0 auto;
+      padding: 54px 0 72px;
+    }
+    h1 { margin: 0; font-size: clamp(28px, 3vw, 40px); letter-spacing: -0.03em; }
+    .dek { max-width: 900px; margin: 16px 0 0; color: var(--muted); font-size: 17px; }
+    .controls {
+      display: grid;
+      grid-template-columns: minmax(180px, 260px) minmax(220px, 280px) minmax(240px, 1fr) auto;
+      gap: 30px;
+      align-items: end;
+      margin-top: 38px;
+    }
+    .field { min-width: 0; }
+    .field label, .range-label {
+      display: block;
+      margin-bottom: 8px;
+      color: #d4d1d8;
+      font-size: 14px;
+      font-weight: 600;
+    }
+    select, input[type="search"], .reset {
+      width: 100%;
+      min-height: 50px;
+      border: 1px solid #3a3a3e;
+      border-radius: 2px;
+      background: var(--surface);
+      padding: 0 14px;
+      outline: none;
+    }
+    .reset { width: auto; padding: 0 20px; cursor: pointer; font-weight: 650; }
+    select:focus, input:focus, button:focus-visible { border-color: var(--accent); outline: 2px solid color-mix(in srgb, var(--accent) 45%, transparent); outline-offset: 2px; }
+    .range-head { display: flex; gap: 6px; align-items: baseline; margin-bottom: 6px; }
+    .range-value { color: var(--accent); font-weight: 700; font-variant-numeric: tabular-nums; }
+    input[type="range"] { width: 100%; accent-color: var(--accent); }
+    .summary {
+      display: flex;
+      justify-content: space-between;
+      gap: 24px;
+      margin: 26px 0 18px;
+      color: #d3d0d7;
+      font-variant-numeric: tabular-nums;
+    }
+    .summary .hint { color: var(--muted); }
+    .table-wrap { overflow-x: auto; }
+    table { width: 100%; border-collapse: collapse; min-width: 760px; }
+    th, td { padding: 15px 12px; border-bottom: 1px solid var(--rule); vertical-align: middle; }
+    th { color: var(--muted); text-align: left; font-size: 13px; font-weight: 600; }
+    th.num, td.num { text-align: right; }
+    td.num { font-variant-numeric: tabular-nums; font-weight: 650; }
+    .toggle {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      border: 0;
+      background: transparent;
+      padding: 0;
+      cursor: pointer;
+      font-weight: 650;
+      text-align: left;
+    }
+    .chev { width: 12px; color: var(--text); transition: transform 120ms ease; }
+    .toggle[aria-expanded="true"] .chev { transform: rotate(90deg); }
+    .bar { width: 100%; max-width: 240px; height: 8px; background: var(--track); }
+    .bar > span { display: block; height: 100%; background: var(--accent); }
+    .detail-row[hidden] { display: none; }
+    .detail-row td { padding: 0 12px 18px 32px; color: var(--muted); }
+    .detail-grid { display: grid; grid-template-columns: minmax(0, 1fr) minmax(220px, .7fr); gap: 28px; padding-top: 12px; }
+    .detail-grid strong { color: var(--text); }
+    .empty { padding: 34px 12px; color: var(--muted); text-align: center; }
+    @media (max-width: 900px) {
+      .controls { grid-template-columns: 1fr 1fr; }
+      .reset { width: 100%; }
+    }
+    @media (max-width: 640px) {
+      .page { width: calc(100vw - 38px); padding-top: 28px; }
+      .controls { grid-template-columns: 1fr; gap: 18px; }
+      .summary { flex-direction: column; gap: 6px; }
+    }
+    @media (prefers-reduced-motion: reduce) {
+      .chev { transition: none; }
+    }
+  </style>
+</head>
+<body>
+  <main class="page">
+    <h1>Explore the signals</h1>
+    <p class="dek">This is a reusable interaction pattern, not a report template. Replace the sample dataset and labels with real evidence.</p>
+
+    <form class="controls" id="filters">
+      <div class="field">
+        <label for="group">Primary group</label>
+        <select id="group" name="group">
+          <option value="all">All groups</option>
+          <option value="quality">Quality</option>
+          <option value="scope">Scope</option>
+          <option value="workflow">Workflow</option>
+        </select>
+      </div>
+
+      <div class="field">
+        <div class="range-head">
+          <label class="range-label" for="threshold">Confidence threshold</label>
+          <output class="range-value" id="threshold-value" for="threshold">0.80</output>
+        </div>
+        <input id="threshold" name="threshold" type="range" min="0.50" max="0.95" step="0.05" value="0.80" />
+      </div>
+
+      <div class="field">
+        <label for="search">Find a signal</label>
+        <input id="search" name="search" type="search" placeholder="e.g. scope, failure, workflow" autocomplete="off" />
+      </div>
+
+      <button class="reset" id="reset" type="reset">Reset</button>
+    </form>
+
+    <div class="summary">
+      <div id="summary" aria-live="polite">0 signals</div>
+      <div class="hint">Open a row to inspect its rule and evidence.</div>
+    </div>
+
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr>
+            <th>Signal and rule</th>
+            <th class="num">Items</th>
+            <th class="num">Share</th>
+            <th>Share of selected items</th>
+          </tr>
+        </thead>
+        <tbody id="rows"></tbody>
+      </table>
+    </div>
+  </main>
+
+  <script>
+    (() => {
+      const source = [
+        { id: "correction", name: "User corrects the agent", group: "quality", score: 0.91, count: 116, rule: "User explicitly states that a previous answer, implementation, or assumption is wrong.", evidence: "Use this row for concise examples or links to the underlying evidence." },
+        { id: "fix-fails", name: "A fix still fails", group: "quality", score: 0.87, count: 47, rule: "A proposed fix is followed by evidence that the original failure remains.", evidence: "Expanded rows should explain the rule rather than repeat the row label." },
+        { id: "scope-expands", name: "Scope expands", group: "scope", score: 0.93, count: 249, rule: "Work grows beyond the requested task without a concrete requirement paying for the extra scope.", evidence: "Show representative evidence, changed files, or a short rationale here." },
+        { id: "scope-reduced", name: "Scope is reduced", group: "scope", score: 0.84, count: 120, rule: "The task is deliberately narrowed after complexity or unnecessary work is identified.", evidence: "Details remain inline so the reader keeps table context." },
+        { id: "verification", name: "User asks for verification", group: "workflow", score: 0.89, count: 144, rule: "The user explicitly requests tests, evidence, validation, or a check against the running system.", evidence: "A report could link directly to test logs or captured screenshots." },
+        { id: "permission", name: "Waiting or permission friction", group: "workflow", score: 0.74, count: 32, rule: "Progress pauses for approval or information that could plausibly have been resolved without interruption.", evidence: "Low-confidence rows disappear when the threshold is raised." },
+        { id: "blocker", name: "Agent reports a blocker", group: "workflow", score: 0.82, count: 146, rule: "The agent reports an external dependency or missing capability that prevents progress.", evidence: "Use exact source wording when the rule itself is under review." },
+        { id: "complexity", name: "User rejects complexity", group: "scope", score: 0.94, count: 145, rule: "The user objects to unnecessary abstraction, machinery, or scope.", evidence: "The proportional bar is deliberately secondary to the exact count." }
+      ];
+
+      const initial = { group: "all", threshold: 0.80, search: "" };
+      const state = { ...initial };
+      const group = document.querySelector("#group");
+      const threshold = document.querySelector("#threshold");
+      const thresholdValue = document.querySelector("#threshold-value");
+      const search = document.querySelector("#search");
+      const filters = document.querySelector("#filters");
+      const rows = document.querySelector("#rows");
+      const summary = document.querySelector("#summary");
+
+      function selected() {
+        const query = state.search.trim().toLowerCase();
+        return source.filter((item) => {
+          const groupMatches = state.group === "all" || item.group === state.group;
+          const scoreMatches = item.score >= state.threshold;
+          const textMatches = !query || `${item.name} ${item.rule}`.toLowerCase().includes(query);
+          return groupMatches && scoreMatches && textMatches;
+        });
+      }
+
+      function cell(tag, className, text) {
+        const el = document.createElement(tag);
+        if (className) el.className = className;
+        if (text !== undefined) el.textContent = text;
+        return el;
+      }
+
+      function render() {
+        const visible = selected();
+        const total = visible.reduce((sum, item) => sum + item.count, 0);
+        const maxCount = Math.max(1, ...visible.map((item) => item.count));
+        rows.replaceChildren();
+
+        if (visible.length === 0) {
+          const tr = document.createElement("tr");
+          const td = cell("td", "empty", "No signals match these filters.");
+          td.colSpan = 4;
+          tr.append(td);
+          rows.append(tr);
+        }
+
+        for (const item of visible) {
+          const tr = document.createElement("tr");
+          const nameTd = document.createElement("td");
+          const toggle = cell("button", "toggle");
+          toggle.type = "button";
+          toggle.setAttribute("aria-expanded", "false");
+          toggle.setAttribute("aria-controls", `detail-${item.id}`);
+          const chev = cell("span", "chev", "▶");
+          chev.setAttribute("aria-hidden", "true");
+          toggle.append(chev, document.createTextNode(item.name));
+          nameTd.append(toggle);
+
+          const countTd = cell("td", "num", String(item.count));
+          const share = total ? (item.count / total) * 100 : 0;
+          const shareTd = cell("td", "num", `${share.toFixed(1)}%`);
+          const barTd = document.createElement("td");
+          const bar = cell("div", "bar");
+          const fill = document.createElement("span");
+          fill.style.width = `${(item.count / maxCount) * 100}%`;
+          fill.setAttribute("aria-hidden", "true");
+          bar.append(fill);
+          barTd.append(bar);
+          tr.append(nameTd, countTd, shareTd, barTd);
+
+          const detailTr = cell("tr", "detail-row");
+          detailTr.id = `detail-${item.id}`;
+          detailTr.hidden = true;
+          const detailTd = document.createElement("td");
+          detailTd.colSpan = 4;
+          const detail = cell("div", "detail-grid");
+          const rule = document.createElement("div");
+          const ruleTitle = cell("strong", "", "Rule");
+          const ruleText = document.createElement("p");
+          ruleText.textContent = item.rule;
+          rule.append(ruleTitle, ruleText);
+          const evidence = document.createElement("div");
+          const evidenceTitle = cell("strong", "", "Evidence note");
+          const evidenceText = document.createElement("p");
+          evidenceText.textContent = item.evidence;
+          evidence.append(evidenceTitle, evidenceText);
+          detail.append(rule, evidence);
+          detailTd.append(detail);
+          detailTr.append(detailTd);
+
+          toggle.addEventListener("click", () => {
+            const next = toggle.getAttribute("aria-expanded") !== "true";
+            toggle.setAttribute("aria-expanded", String(next));
+            detailTr.hidden = !next;
+          });
+
+          rows.append(tr, detailTr);
+        }
+
+        const groupLabel = state.group === "all" ? "all groups" : state.group;
+        summary.textContent = `${visible.length} signals · ${total} selected items · ${groupLabel} · threshold ${state.threshold.toFixed(2)}`;
+        thresholdValue.value = state.threshold.toFixed(2);
+        thresholdValue.textContent = state.threshold.toFixed(2);
+      }
+
+      group.addEventListener("change", () => {
+        state.group = group.value;
+        render();
+      });
+      threshold.addEventListener("input", () => {
+        const value = Number.parseFloat(threshold.value);
+        state.threshold = Number.isFinite(value) ? Math.min(0.95, Math.max(0.50, value)) : initial.threshold;
+        render();
+      });
+      search.addEventListener("input", () => {
+        state.search = search.value;
+        render();
+      });
+      filters.addEventListener("reset", () => {
+        requestAnimationFrame(() => {
+          Object.assign(state, initial);
+          group.value = initial.group;
+          threshold.value = initial.threshold.toFixed(2);
+          search.value = initial.search;
+          render();
+        });
+      });
+
+      render();
+    })();
+  </script>
+</body>
+</html>
