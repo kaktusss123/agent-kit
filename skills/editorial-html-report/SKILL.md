@@ -17,6 +17,7 @@ Create one standalone HTML5 document that is easy to scan, easy to share, and vi
 5. Structure the information before decorating it. Put the highest-value facts first and move evidence or long detail later.
 6. Produce one `.html` file with essential CSS inline. Keep JavaScript inline and optional.
 7. Verify the finished file in a browser when browser tooling is available. Check one wide viewport and one narrow viewport, exercise every interactive control, and fix overflow, clipping, unreadable contrast, broken anchors, dead controls, and incorrect reset behavior.
+8. After the report is complete and verified, if a public shareable URL would materially help, follow **Optional public publishing** below. Publication is a separate side effect and is never implicit in report generation.
 
 ## Output contract
 
@@ -25,7 +26,18 @@ Create one standalone HTML5 document that is easy to scan, easy to share, and vi
 - Use real supplied content. Never invent metrics, findings, quotes, evidence, links, or conclusions to make the page look fuller.
 - Prefer native HTML and CSS for interaction: anchors, `<details>`, `<summary>`, sticky navigation, tables, and CSS charts.
 - Add JavaScript only when the report benefits from real data exploration that native HTML cannot provide, such as filtering, sorting, searching, threshold controls, or expandable row detail. Keep it small, inline, and framework-free. Follow `references/interaction-guide.md`.
-- Do not make publication or hosting part of the HTML generation unless the user asks. The artifact should be ready to upload unchanged to static hosting.
+- Do not upload during HTML generation. The artifact should be ready to upload unchanged to static hosting; public publication is an optional separate side effect governed below.
+
+## Optional public publishing
+
+A finished report can be published with the bundled `scripts/publish-report.sh`. Treat publication as a separate public side effect, not as another rendering step.
+
+1. Finish and verify the report locally first.
+2. Decide whether a shareable URL is useful. Do not suggest public publication when the report contains secrets, credentials, private source excerpts, internal-only URLs, personal data, or other content that should not become public.
+3. If the user already explicitly asked to publish this report, that request is approval. Otherwise ask before any upload and make the exposure clear, for example: "The report is ready. Publish it to the public report bucket? Anyone with the URL can access it."
+4. Only after approval, read `references/publishing.md` and run the bundled `scripts/publish-report.sh`. Pass `--project <name>` when the project is obvious.
+5. Return the verified public URL. If the script says the upload succeeded but public verification failed, report both the failure and the URL because the object may already exist publicly. Do not retry blindly.
+6. Do not delete the local report automatically after publication.
 
 ## Information hierarchy
 
