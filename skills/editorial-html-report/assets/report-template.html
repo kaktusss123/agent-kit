@@ -1,0 +1,351 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta name="color-scheme" content="dark" />
+  <title>Agent workflow review</title>
+  <style>
+    :root {
+      --bg: #050505;
+      --surface: #0d0d0f;
+      --text: #f3f2ef;
+      --muted: #a5a2aa;
+      --faint: #6d6a72;
+      --rule: #252527;
+      --track: #1b1b1e;
+      --accent: #9b8cff;
+      --accent-soft: #7668dc;
+      --max: 1440px;
+    }
+
+    * { box-sizing: border-box; }
+    html { scroll-behavior: smooth; }
+    body {
+      margin: 0;
+      background: var(--bg);
+      color: var(--text);
+      font-family: ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      line-height: 1.55;
+      -webkit-font-smoothing: antialiased;
+    }
+
+    a { color: inherit; text-underline-offset: 5px; }
+    a:hover { color: #fff; }
+
+    .page {
+      width: min(var(--max), calc(100vw - 64px));
+      margin: 0 auto;
+      padding: 54px 0 72px;
+    }
+
+    .eyebrow {
+      margin: 0 0 8px;
+      color: var(--muted);
+      font-size: 14px;
+    }
+
+    h1 {
+      max-width: 900px;
+      margin: 0;
+      font-size: clamp(36px, 5vw, 58px);
+      line-height: 1.03;
+      letter-spacing: -0.035em;
+      font-weight: 760;
+    }
+
+    .dek {
+      max-width: 820px;
+      margin: 18px 0 0;
+      color: var(--muted);
+      font-size: 18px;
+    }
+
+    .nav {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 16px 28px;
+      margin-top: 34px;
+      padding: 28px 0 24px;
+      border-top: 1px solid var(--rule);
+    }
+
+    .nav a { font-weight: 600; }
+
+    .metrics {
+      display: grid;
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+      gap: 32px;
+      padding: 18px 0 36px;
+      border-bottom: 1px solid var(--rule);
+    }
+
+    .metric-value {
+      font-size: clamp(38px, 4vw, 52px);
+      line-height: 1;
+      letter-spacing: -0.03em;
+      font-weight: 760;
+      font-variant-numeric: tabular-nums;
+    }
+
+    .metric-label {
+      margin-top: 12px;
+      color: var(--muted);
+      font-size: 16px;
+    }
+
+    section { padding-top: 44px; }
+
+    h2 {
+      margin: 0 0 22px;
+      font-size: 26px;
+      line-height: 1.15;
+      letter-spacing: -0.02em;
+    }
+
+    h3 {
+      margin: 0 0 8px;
+      font-size: 19px;
+      line-height: 1.25;
+    }
+
+    p { margin: 0; }
+
+    .muted { color: var(--muted); }
+
+    .split {
+      display: grid;
+      grid-template-columns: minmax(0, 1.55fr) minmax(320px, 0.95fr);
+      gap: 64px;
+      align-items: start;
+    }
+
+    .bars { margin-top: 26px; }
+
+    .bar-row {
+      display: grid;
+      grid-template-columns: 190px minmax(120px, 1fr) 58px 56px;
+      gap: 14px;
+      align-items: center;
+      margin: 18px 0;
+      font-variant-numeric: tabular-nums;
+    }
+
+    .bar-label { font-weight: 600; }
+    .bar-track { height: 12px; background: var(--track); overflow: hidden; }
+    .bar-fill { height: 100%; background: var(--accent); }
+    .bar-value { text-align: right; font-weight: 700; }
+    .bar-pct { text-align: right; color: var(--muted); font-size: 14px; }
+
+    .note {
+      margin-top: 26px;
+      color: var(--muted);
+      font-size: 15px;
+    }
+
+    .findings {
+      display: grid;
+      gap: 24px;
+    }
+
+    .finding {
+      border-left: 3px solid var(--accent);
+      padding: 4px 0 4px 20px;
+    }
+
+    .finding p { color: var(--muted); }
+    .finding strong { color: var(--text); }
+
+    .rule-section {
+      margin-top: 52px;
+      border-top: 1px solid var(--rule);
+    }
+
+    .evidence {
+      width: 100%;
+      border-collapse: collapse;
+      margin-top: 10px;
+      font-size: 15px;
+    }
+
+    .evidence th,
+    .evidence td {
+      padding: 14px 10px;
+      border-bottom: 1px solid var(--rule);
+      text-align: left;
+      vertical-align: top;
+    }
+
+    .evidence th {
+      color: var(--muted);
+      font-size: 13px;
+      font-weight: 600;
+    }
+
+    .evidence td:last-child,
+    .evidence th:last-child { text-align: right; }
+
+    details {
+      margin-top: 18px;
+      padding: 16px 0;
+      border-top: 1px solid var(--rule);
+      border-bottom: 1px solid var(--rule);
+    }
+
+    summary {
+      cursor: pointer;
+      font-weight: 650;
+    }
+
+    pre {
+      margin: 16px 0 0;
+      padding: 18px;
+      overflow: auto;
+      background: var(--surface);
+      border: 1px solid var(--rule);
+      border-radius: 5px;
+      color: #dfdde5;
+      font: 13px/1.55 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    }
+
+    footer {
+      margin-top: 58px;
+      padding-top: 20px;
+      border-top: 1px solid var(--rule);
+      color: var(--faint);
+      font-size: 13px;
+    }
+
+    @media (max-width: 900px) {
+      .metrics { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+      .split { grid-template-columns: 1fr; gap: 42px; }
+    }
+
+    @media (max-width: 640px) {
+      .page { width: calc(100vw - 38px); padding-top: 28px; }
+      .metrics { grid-template-columns: 1fr; gap: 26px; }
+      .bar-row { grid-template-columns: 1fr 52px 48px; gap: 10px; }
+      .bar-track { grid-column: 1 / -1; grid-row: 2; }
+      .bar-value { grid-column: 2; grid-row: 1; }
+      .bar-pct { grid-column: 3; grid-row: 1; }
+    }
+
+    @media (prefers-reduced-motion: reduce) {
+      html { scroll-behavior: auto; }
+    }
+  </style>
+</head>
+<body>
+  <main class="page">
+    <header>
+      <p class="eyebrow">Internal analysis · 21 Sep 2026</p>
+      <h1>Agent workflow review</h1>
+      <p class="dek">A compact example showing the default report language. Replace every sample value and section with real source material.</p>
+
+      <nav class="nav" aria-label="Report sections">
+        <a href="#findings">Findings</a>
+        <a href="#examples">Checked examples</a>
+        <a href="#method">Method and limits</a>
+      </nav>
+
+      <div class="metrics" aria-label="Summary metrics">
+        <div>
+          <div class="metric-value">84</div>
+          <div class="metric-label">completed tasks</div>
+        </div>
+        <div>
+          <div class="metric-value">317</div>
+          <div class="metric-label">changed files</div>
+        </div>
+        <div>
+          <div class="metric-value">96%</div>
+          <div class="metric-label">verification coverage</div>
+        </div>
+        <div>
+          <div class="metric-value">12m</div>
+          <div class="metric-label">median task time</div>
+        </div>
+      </div>
+    </header>
+
+    <section id="findings" class="split">
+      <div>
+        <h2>Most work is concentrated in fixes and review</h2>
+        <p class="muted">Example distribution. Replace this with measured categories from the source data.</p>
+
+        <div class="bars" aria-label="Work categories">
+          <div class="bar-row">
+            <div class="bar-label">Fixes</div>
+            <div class="bar-track"><div class="bar-fill" style="width: 74%"></div></div>
+            <div class="bar-value">31</div>
+            <div class="bar-pct">36.9%</div>
+          </div>
+          <div class="bar-row">
+            <div class="bar-label">Review and merge</div>
+            <div class="bar-track"><div class="bar-fill" style="width: 59%"></div></div>
+            <div class="bar-value">22</div>
+            <div class="bar-pct">26.2%</div>
+          </div>
+          <div class="bar-row">
+            <div class="bar-label">Feature work</div>
+            <div class="bar-track"><div class="bar-fill" style="width: 41%"></div></div>
+            <div class="bar-value">18</div>
+            <div class="bar-pct">21.4%</div>
+          </div>
+          <div class="bar-row">
+            <div class="bar-label">Investigation</div>
+            <div class="bar-track"><div class="bar-fill" style="width: 36%"></div></div>
+            <div class="bar-value">13</div>
+            <div class="bar-pct">15.5%</div>
+          </div>
+        </div>
+
+        <p class="note">Keep chart notes factual and short. Explain the counting rule or denominator, not the obvious shape of the bars.</p>
+      </div>
+
+      <aside>
+        <h2>Where to look closer</h2>
+        <div class="findings">
+          <article class="finding">
+            <h3>Complexity keeps coming up</h3>
+            <p><strong>17 tasks</strong> flag objections to excess complexity. Inspect work that grows beyond the original request.</p>
+          </article>
+          <article class="finding">
+            <h3>Validation can miss user experience</h3>
+            <p><strong>9 tasks</strong> contain repeated fixes. Compare those against verification reports before drawing causal conclusions.</p>
+          </article>
+          <article class="finding">
+            <h3>Automation candidates exist</h3>
+            <p><strong>21 tasks</strong> flag reusable work. Start by checking whether the repeated shape is actually the same task.</p>
+          </article>
+        </div>
+      </aside>
+    </section>
+
+    <section id="examples" class="rule-section">
+      <h2>Checked examples</h2>
+      <table class="evidence">
+        <thead>
+          <tr><th>Case</th><th>Observation</th><th>Confidence</th></tr>
+        </thead>
+        <tbody>
+          <tr><td>Review</td><td>Two review passes before merge</td><td>0.92</td></tr>
+          <tr><td>Fix</td><td>Follow-up change after verification</td><td>0.87</td></tr>
+          <tr><td>Investigation</td><td>Repeated manual sequence identified</td><td>0.81</td></tr>
+        </tbody>
+      </table>
+    </section>
+
+    <section id="method" class="rule-section">
+      <h2>Method and limits</h2>
+      <p class="muted">State sampling, thresholds, exclusions, and uncertainty directly. Do not bury limitations in a decorative footnote.</p>
+      <details>
+        <summary>Raw method notes</summary>
+        <pre>Replace with source-backed methodology or logs.</pre>
+      </details>
+    </section>
+
+    <footer>Standalone HTML5 report. No external runtime dependencies.</footer>
+  </main>
+</body>
+</html>
