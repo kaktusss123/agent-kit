@@ -246,3 +246,267 @@ Pi-каталога.
   автоматически при первом `install`/`uninstall` (см. Legacy ownership
   state). Ссылки, созданные другими инструментами (chezmoi, старые
   install-скрипты), инсталлер не трогает — их снимает вручную владелец.
+
+## Публикация HTML-отчётов
+
+`editorial-html-report` умеет публиковать готовые HTML-отчёты в S3-совместимое хранилище и возвращать ссылку, которая открывается в браузере как обычная веб-страница.
+
+Сейчас готовая конфигурация рассчитана на Cloud.ru Evolution Object Storage.
+
+Публикация никогда не выполняется автоматически. После подготовки отчёта агент может предложить его опубликовать и загрузит файл только после явного подтверждения пользователя.
+
+### Что понадобится
+
+На машине с agent-kit должны быть доступны:
+
+```bash
+aws --version
+curl --version
+cksum --version
+````
+
+На macOS AWS CLI можно установить через Homebrew:
+
+```bash
+brew install awscli
+```
+
+`curl` и `cksum` уже входят в стандартную систему.
+
+### 1. Создать бакет
+
+В Cloud.ru Evolution Object Storage создайте отдельный бакет для отчётов, например:
+
+```text
+agent-reports
+```
+
+Для бакета:
+
+1. Задайте доменное имя.
+2. Включите Static Website Hosting.
+3. Разрешите публичное чтение объектов.
+4. Не разрешайте публичную запись.
+
+Для хостинга можно указать:
+
+```text
+Главная страница: index.html
+Страница ошибки: 404.html
+```
+
+Отчёты будут доступны по адресам вида:
+
+```text
+https://<bucket-dns-name>.s3-website.cloud.ru/<object-key>
+```
+
+Бакет является публичным: любой человек, получивший URL отчёта, сможет его открыть.
+
+### 2. Создать учётные данные для загрузки
+
+Рекомендуется создать отдельный service account, например:
+
+```text
+agent-report-publisher
+```
+
+Дайте ему права на запись объектов только в бакет с отчётами.
+
+После этого создайте для service account ключ доступа Object Storage и сохраните:
+
+```text
+Key ID
+Key Secret
+```
+
+Также потребуется `tenant_id` проекта.
+
+Для Evolution Object Storage значение AWS Access Key ID имеет вид:
+
+```text
+<tenant_id>:<key_id>
+```
+
+### 3. Настроить AWS CLI
+
+Создайте отдельный профиль:
+
+```bash
+aws configure --profile cloudru-reports
+```
+
+Введите:
+
+```text
+AWS Access Key ID:     <tenant_id>:<key_id>
+AWS Secret Access Key: <key_secret>
+Default region name:   ru-central-1
+Default output format: json
+```
+
+Проверьте доступ:
+
+```bash
+aws s3 ls s3://agent-reports \
+  --profile cloudru-reports \
+  --endpoint-url https://s3.cloud.ru
+```
+
+Команда должна завершиться без ошибки.
+
+Секретный ключ хранится штатными средствами AWS CLI в `~/.aws/credentials`. Не добавляйте его в конфигурацию agent-kit или Git.
+
+### 4. Настроить agent-kit
+
+Создайте каталог конфигурации:
+
+```bash
+mkdir -p "${XDG_CONFIG_HOME:-$HOME/.config}/agent-kit"
+```
+
+Создайте файл:
+
+```text
+${XDG_CONFIG_HOME:-$HOME/.config}/agent-kit/reports.env
+```
+
+с содержимым:
+
+```bash
+AWS_PROFILE=cloudru-reports
+REPORTS_ENDPOINT_URL=https://s3.cloud.ru
+REPORTS_BUCKET=agent-reports
+REPORTS_PUBLIC_URL=https://<bucket-dns-name>.s3-website.cloud.ru
+```
+
+Замените:
+
+```text
+agent-reports
+```
+
+на имя своего бакета, если оно отличается, а:
+
+```text
+<bucket-dns-name>
+```
+
+на доменное имя бакета из Evolution Object Storage.
+
+В `reports.env` секретов нет. Он содержит только профиль AWS CLI и адрес назначения.
+
+Если конфигурацию нужно хранить в другом месте, путь можно переопределить:
+
+```bash
+export AGENT_KIT_REPORTS_CONFIG=/path/to/reports.env
+```
+
+### 5. Проверить публикацию
+
+Создайте тестовый отчёт:
+
+```bash
+cat > /tmp/report-smoke.html <<'EOF'
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>agent-kit smoke test</title>
+</head>
+<body>
+  <h1>It works</h1>
+</body>
+</html>
+EOF
+```
+
+Запустите publisher:
+
+```bash
+bash ~/.pi/agent/skills/editorial-html-report/scripts/publish-report.sh \
+  --project smoke \
+  /tmp/report-smoke.html
+```
+
+При успешной публикации команда напечатает только итоговый URL:
+
+```text
+https://<bucket-dns-name>.s3-website.cloud.ru/smoke/2026-09-22/report-smoke-....html
+```
+
+Откройте его в браузере. Должна отобразиться HTML-страница, а не начаться скачивание файла.
+
+Publisher также сам проверяет:
+
+* успешность загрузки в S3;
+* доступность публичного URL;
+* что сервер возвращает `Content-Type: text/html`.
+
+### Как это используется агентом
+
+После настройки никакие команды вручную выполнять не нужно.
+
+Обычный сценарий:
+
+```text
+пользователь просит HTML-отчёт
+        ↓
+editorial-html-report создаёт и проверяет файл
+        ↓
+агент решает, полезна ли публичная ссылка
+        ↓
+"Опубликовать отчёт в публичном хранилище?"
+        ↓
+пользователь подтверждает
+        ↓
+publish-report.sh
+        ↓
+агент возвращает публичный URL
+```
+
+Если пользователь уже явно попросил создать **и опубликовать** отчёт, отдельное повторное подтверждение не требуется.
+
+### Где хранятся отчёты
+
+Publisher создаёт ключи примерно такой структуры:
+
+```text
+<project>/<UTC-date>/<report-name>-<timestamp>-<checksum>.html
+```
+
+Например:
+
+```text
+zavod/2026-09-22/a11-verification-1790030123-381729182.html
+```
+
+Параметр проекта передаётся через:
+
+```bash
+publish-report.sh --project zavod report.html
+```
+
+Если проект не указан, используется:
+
+```text
+reports
+```
+
+Локальный HTML после публикации автоматически не удаляется.
+
+### Безопасность
+
+Публикуемые отчёты доступны без авторизации.
+
+Не публикуйте таким способом документы, содержащие:
+
+* пароли, токены и ключи;
+* персональные данные;
+* закрытые внутренние URL;
+* приватные исходники или документы;
+* другую информацию, которую нельзя размещать в публичном интернете.
+
+Сам бакет должен разрешать анонимное чтение, но загрузка новых объектов должна оставаться доступной только через авторизованный AWS CLI profile.
+
+```
