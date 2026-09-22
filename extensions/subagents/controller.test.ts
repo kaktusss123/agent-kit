@@ -7,6 +7,7 @@ import { ProviderExtensionError } from "./provider-extensions";
 import {
 	formatLiveSnapshot,
 	formatModelEvent,
+	formatOrphanList,
 	formatResult,
 	formatStatsBrief,
 	formatStatusList,
@@ -19,14 +20,15 @@ import {
 	settleRun,
 	startRun,
 } from "./fake-rpc";
-import { loadResult } from "./result-store";
-import type { SubagentModelEvent } from "./types";
+import { loadResult, sumSessionCost } from "./result-store";
+import type { SpawnOptions, SubagentModelEvent } from "./types";
 
 function makeRuntime(opts?: {
 	killGraceMs?: number;
 	dispatchTimeoutMs?: number;
 	startTimeoutMs?: number;
 	parentSession?: string;
+	defaultIdleExitMs?: number;
 	onCostChange?: (total: number) => void;
 }) {
 	const harness = createFakeSpawnFactory();
@@ -43,6 +45,7 @@ function makeRuntime(opts?: {
 		startTimeoutMs: opts?.startTimeoutMs ?? 2000,
 		dispatchTimeoutMs: opts?.dispatchTimeoutMs ?? 2000,
 		...(opts?.parentSession ? { parentSession: opts.parentSession } : {}),
+		...(opts?.defaultIdleExitMs !== undefined ? { defaultIdleExitMs: opts.defaultIdleExitMs } : {}),
 		...(opts?.onCostChange ? { onCostChange: opts.onCostChange } : {}),
 	});
 	runtime.onEvent((ev) => events.push(ev));
@@ -54,8 +57,9 @@ async function spawnRunning(
 	runtime: LocalSubagentRuntime,
 	harness: ReturnType<typeof createFakeSpawnFactory>,
 	task = "do things",
+	extra?: Pick<SpawnOptions, "idleExitMs">,
 ): Promise<{ id: string; proc: FakeRpcProcess }> {
-	const pendingSpawn = runtime.spawn({ task, label: "lab" });
+	const pendingSpawn = runtime.spawn({ task, label: "lab", ...extra });
 	// wait for the fake process to exist, then auto-accept
 	await new Promise((r) => setTimeout(r, 5));
 	const proc = harness.spawned[harness.spawned.length - 1];
@@ -1471,5 +1475,333 @@ describe("provider propagation (common spawn path)", () => {
 			await runtime.shutdown();
 			cleanup();
 		}
+	});
+});
+
+// ===========================================================================
+// F003: idle-exit for settled children + cross-restart reconciliation
+// ===========================================================================
+
+describe("LocalSubagentRuntime idle exit (F003)", () => {
+	test("completed child is retired after idleExitMs: record stays completed, processKilledAt set, no cancelled event", async () => {
+		const { harness, runtime, events, tmp, cleanup } = makeRuntime();
+		try {
+			const { id, proc } = await spawnRunning(runtime, harness, "do things", { idleExitMs: 50 });
+			settleRun(proc, "done");
+			await tick(60);
+			expect(runtime.inspect(id)[0].state).toBe("completed");
+			const settledAt = loadResult(id, tmp)!.endedAt;
+
+			await tick(120); // idle window (50ms) has long passed
+			expect(proc.signalsReceived).toContain("SIGTERM");
+			const snap = runtime.inspect(id)[0];
+			expect(snap.state).toBe("completed"); // retire semantics: state preserved
+			expect(snap.alive).toBe(false);
+			const persisted = loadResult(id, tmp);
+			expect(persisted!.status).toBe("completed");
+			expect(persisted!.endedAt).toBe(settledAt); // untouched settlement
+			expect(persisted!.processKilledAt).toBeNumber();
+			expect(events.filter((e) => e.kind === "cancelled" && e.agentId === id)).toHaveLength(0);
+			expect(events.filter((e) => e.kind === "completed")).toHaveLength(1);
+		} finally {
+			await runtime.shutdown();
+			cleanup();
+		}
+	});
+
+	test("failed-settle child with a live process is retired too (record stays failed)", async () => {
+		const { harness, runtime, events, tmp, cleanup } = makeRuntime();
+		try {
+			const { id, proc } = await spawnRunning(runtime, harness, "do things", { idleExitMs: 50 });
+			proc.writeToStdout({
+				type: "message_end",
+				message: { role: "assistant", stopReason: "error", errorMessage: "provider exploded" },
+			});
+			settleRun(proc, "partial");
+			await tick(60);
+			expect(runtime.inspect(id)[0].state).toBe("failed");
+			await tick(120);
+			expect(proc.signalsReceived).toContain("SIGTERM");
+			expect(runtime.inspect(id)[0].state).toBe("failed");
+			const persisted = loadResult(id, tmp);
+			expect(persisted!.status).toBe("failed");
+			expect(persisted!.failureReason).toContain("provider exploded");
+			expect(persisted!.processKilledAt).toBeNumber();
+			expect(events.filter((e) => e.kind === "cancelled")).toHaveLength(0);
+		} finally {
+			await runtime.shutdown();
+			cleanup();
+		}
+	});
+
+	test("runtime-level defaultIdleExitMs applies when the spawn has no idleExitMs", async () => {
+		const { harness, runtime, cleanup } = makeRuntime({ defaultIdleExitMs: 40 });
+		try {
+			const { id, proc } = await spawnRunning(runtime, harness);
+			settleRun(proc, "done");
+			await tick(150);
+			expect(proc.signalsReceived).toContain("SIGTERM");
+			expect(runtime.inspect(id)[0].state).toBe("completed");
+			expect(runtime.inspect(id)[0].alive).toBe(false);
+		} finally {
+			await runtime.shutdown();
+			cleanup();
+		}
+	});
+
+	test("idleExitMs: 0 disables the reap", async () => {
+		const { harness, runtime, cleanup } = makeRuntime();
+		try {
+			const { id, proc } = await spawnRunning(runtime, harness, "do things", { idleExitMs: 0 });
+			settleRun(proc, "done");
+			await tick(150);
+			expect(proc.signalsReceived).toHaveLength(0);
+			expect(runtime.inspect(id)[0].alive).toBe(true);
+		} finally {
+			await runtime.shutdown();
+			cleanup();
+		}
+	});
+
+	test("queued follow_up prevents retirement within the window; the queued run completes", async () => {
+		const { harness, runtime, events, cleanup } = makeRuntime();
+		try {
+			const { id, proc } = await spawnRunning(runtime, harness, "do things", { idleExitMs: 120 });
+			settleRun(proc, "first done");
+			await tick(60); // settle completed, timer armed (fires at arm+120)
+			await runtime.followUp(id, "then do this"); // must disarm the timer
+			await tick(150); // well past the original idle window
+			expect(proc.signalsReceived).toHaveLength(0); // not killed
+			expect(runtime.inspect(id)[0].alive).toBe(true);
+			// pi starts the queued follow-up as a new run, then settles it
+			startRun(proc);
+			settleRun(proc, "second done");
+			await tick(80);
+			expect(runtime.inspect(id)[0].state).toBe("completed");
+			const completions = events.filter((e) => e.kind === "completed");
+			expect(completions).toHaveLength(2);
+			expect(events.filter((e) => e.kind === "cancelled")).toHaveLength(0);
+		} finally {
+			await runtime.shutdown();
+			cleanup();
+		}
+	});
+
+	test("follow_up on an already-retired child spawns a fresh run instead of failing", async () => {
+		const { harness, runtime, events, tmp, cleanup } = makeRuntime();
+		try {
+			const { id, proc } = await spawnRunning(runtime, harness, "do things", { idleExitMs: 30 });
+			settleRun(proc, "first done");
+			await tick(150);
+			expect(runtime.inspect(id)[0].alive).toBe(false); // retired
+
+			const pendingFollow = runtime.followUp(id, "fresh task");
+			await tick(5);
+			const proc2 = harness.spawned[harness.spawned.length - 1];
+			expect(proc2).not.toBe(proc);
+			autoAcceptPrompt(proc2);
+			const res = await pendingFollow;
+			expect(res.respawned).toBe(true);
+			expect(res.agentId).not.toBe(id);
+			// the fresh child got the queued message as its initial task
+			const prompt = proc2.commands.find((c) => c.type === "prompt" && c.id === "spawn-prompt");
+			expect(prompt!.message).toBe("fresh task");
+
+			settleRun(proc2, "fresh done");
+			await tick(60);
+			expect(runtime.inspect(res.agentId)[0].state).toBe("completed");
+			// the old record is untouched: terminal result preserved
+			expect(runtime.inspect(id)[0].state).toBe("completed");
+			expect(loadResult(id, tmp)!.finalText).toBe("first done");
+			const completions = events.filter((e) => e.kind === "completed").map((e) => e.agentId);
+			expect(completions).toEqual([id, res.agentId]);
+		} finally {
+			await runtime.shutdown();
+			cleanup();
+		}
+	});
+
+	test("a pending question blocks idle-exit (never kill a child waiting for input)", async () => {
+		const { harness, runtime, cleanup } = makeRuntime();
+		try {
+			const { id, proc } = await spawnRunning(runtime, harness, "do things", { idleExitMs: 80 });
+			settleRun(proc, "done");
+			await tick(60); // settle completed, timer armed (fires at arm+80)
+			proc.writeToStdout({
+				type: "extension_ui_request", id: "ui-1", method: "input", title: "ask",
+				placeholder: askPayload("q", "which way?"),
+			});
+			await tick(5);
+			expect(runtime.inspect(id)[0].state).toBe("waiting_input");
+			await tick(120); // past the idle window
+			expect(proc.signalsReceived).toHaveLength(0);
+			expect(runtime.inspect(id)[0].alive).toBe(true);
+			expect(runtime.inspect(id)[0].state).toBe("waiting_input");
+		} finally {
+			await runtime.shutdown();
+			cleanup();
+		}
+	});
+
+	test("steer on an alive settled child disarms the idle timer (reuse stays safe)", async () => {
+		const { harness, runtime, cleanup } = makeRuntime();
+		try {
+			const { id, proc } = await spawnRunning(runtime, harness, "do things", { idleExitMs: 120 });
+			settleRun(proc, "done");
+			await tick(60); // settle completed, timer armed
+			await runtime.steer(id, "wake up with this"); // disarms
+			await tick(150);
+			expect(proc.signalsReceived).toHaveLength(0);
+			expect(runtime.inspect(id)[0].alive).toBe(true);
+		} finally {
+			await runtime.shutdown();
+			cleanup();
+		}
+	});
+});
+
+describe("LocalSubagentRuntime cross-restart reconciliation (F003)", () => {
+	// A restarted runtime over the same results dir; the caller drops it
+	// un-shutdown when it plays the dead-parent role.
+	function restart(tmp: string, parentSession: string | undefined): LocalSubagentRuntime {
+		const harness = createFakeSpawnFactory();
+		return new LocalSubagentRuntime({
+			defaultCwd: tmp,
+			resultsDir: tmp,
+			piCommand: { command: "node", args: ["/fake/pi-cli.js"] },
+			bridgePath: "/fake/bridge.ts",
+			spawnFn: harness.spawnFn,
+			killGraceMs: 50,
+			startTimeoutMs: 2000,
+			dispatchTimeoutMs: 2000,
+			...(parentSession ? { parentSession } : {}),
+		});
+	}
+
+	test("this session's running marker without terminal result becomes failed after restart", async () => {
+		const { harness, runtime, tmp, cleanup } = makeRuntime({ parentSession: "/sessions/main.jsonl" });
+		try {
+			const { id } = await spawnRunning(runtime, harness);
+			const marker = loadResult(id, tmp);
+			expect(marker!.status).toBe("running");
+			expect(marker!.pid).toBeNumber();
+			expect(marker!.parentSession).toBe("/sessions/main.jsonl");
+			// Ungraceful parent death below: `runtime` is dropped WITHOUT
+			// shutdown (no cancelAll, no terminal write).
+
+			const runtimeB = restart(tmp, "/sessions/main.jsonl");
+			try {
+				const after = loadResult(id, tmp);
+				expect(after!.status).toBe("failed");
+				expect(after!.failureReason).toBe("child lost across parent restart");
+				expect(after!.startedAt).toBe(marker!.startedAt);
+				expect(after!.endedAt).toBeNumber();
+				// the restarted runtime surfaces the finalized record via result()
+				const r = await runtimeB.result(id);
+				expect(r!.status).toBe("failed");
+				expect(r!.failureReason).toBe("child lost across parent restart");
+			} finally {
+				await runtimeB.shutdown();
+			}
+		} finally {
+			cleanup();
+		}
+	});
+
+	test("marker of another session is untouched and exposed as an orphan", async () => {
+		const { harness, runtime, tmp, cleanup } = makeRuntime({ parentSession: "/sessions/main.jsonl" });
+		try {
+			const { id } = await spawnRunning(runtime, harness);
+			const marker = loadResult(id, tmp);
+			expect(marker!.status).toBe("running");
+			// The parent died with its in-memory registry; the child (and its
+			// marker) survive it. `runtime` is dropped without shutdown.
+
+			const runtimeB = restart(tmp, "/sessions/other.jsonl");
+			try {
+				// NOT rewritten: still another session's running marker.
+				const after = loadResult(id, tmp);
+				expect(after!.status).toBe("running");
+				// ...but visible in the foreign-orphan listing (status --all).
+				const orphans = runtimeB.listForeignRunningMarkers();
+				expect(orphans).toHaveLength(1);
+				expect(orphans[0]).toMatchObject({ id, label: "lab", task: "do things" });
+				expect(orphans[0]!.pid).toBeNumber();
+				expect(orphans[0]!.ageMs).toBeGreaterThanOrEqual(0);
+			} finally {
+				await runtimeB.shutdown();
+			}
+		} finally {
+			cleanup();
+		}
+	});
+
+	test("terminal result supersedes the marker: restart neither rewrites nor duplicates", async () => {
+		const { harness, runtime, events, tmp, cleanup } = makeRuntime({ parentSession: "/sessions/main.jsonl" });
+		try {
+			const { id, proc } = await spawnRunning(runtime, harness);
+			settleRun(proc, "done");
+			await tick(60);
+			const before = loadResult(id, tmp);
+			expect(before!.status).toBe("completed");
+			expect(events.filter((e) => e.kind === "failed")).toHaveLength(0);
+
+			const runtimeB = restart(tmp, "/sessions/main.jsonl");
+			try {
+				const after = loadResult(id, tmp);
+				expect(after).toEqual(before); // identical: reconciliation skipped it
+				expect(runtimeB.listForeignRunningMarkers()).toHaveLength(0);
+			} finally {
+				await runtimeB.shutdown();
+			}
+		} finally {
+			cleanup();
+		}
+	});
+
+	test("result readers tolerate running-status markers", async () => {
+		const { harness, runtime, tmp, cleanup } = makeRuntime({ parentSession: "/sessions/main.jsonl" });
+		try {
+			const { id } = await spawnRunning(runtime, harness);
+			expect(loadResult(id, tmp)!.status).toBe("running");
+
+			const runtimeB = restart(tmp, "/sessions/other.jsonl");
+			try {
+				// result() never surfaces a marker as a final result
+				expect(await runtimeB.result(id)).toBeNull();
+				// cost rollup tolerates the token-less marker
+				expect(sumSessionCost(tmp, "/sessions/main.jsonl")).toBe(0);
+				// formatting tolerates it defensively
+				expect(formatResult(loadResult(id, tmp)!)).toContain("running");
+			} finally {
+				await runtimeB.shutdown();
+			}
+		} finally {
+			cleanup();
+		}
+	});
+});
+
+describe("orphan status section (F003)", () => {
+	test("formatOrphanList renders count, id, label, task, age and pid", () => {
+		const text = formatOrphanList([
+			{
+				id: "sa-9-zzzz",
+				label: "reviewer",
+				task: "review the diff carefully",
+				startedAt: Date.now() - 90 * 60 * 1000,
+				pid: 4242,
+				ageMs: 90 * 60 * 1000,
+			},
+		]);
+		expect(text).toContain("orphans from other sessions: 1");
+		expect(text).toContain("sa-9-zzzz");
+		expect(text).toContain("reviewer");
+		expect(text).toContain("review the diff carefully");
+		expect(text).toContain("1h30m");
+		expect(text).toContain("pid 4242");
+
+		const none = formatOrphanList([]);
+		expect(none).toContain("orphans from other sessions: 0");
 	});
 });

@@ -62,6 +62,13 @@ export interface SpawnOptions {
 	 * to the caller (abort = detach).
 	 */
 	signal?: AbortSignal;
+	/**
+	 * Idle-exit delay (F003): ms after this child settles into a terminal
+	 * state before its (never-self-exiting) process is retired. The terminal
+	 * record is preserved (retire semantics). `<= 0` disables idle exit;
+	 * undefined uses the runtime default (30 min).
+	 */
+	idleExitMs?: number;
 }
 
 export interface PendingQuestion {
@@ -136,8 +143,15 @@ export interface AgentResult {
 	label: string;
 	task: string;
 	cwd: string;
-	/** Terminal status of the last run: completed | failed | cancelled. */
-	status: "completed" | "failed" | "cancelled";
+	/**
+	 * Terminal status of the last run: completed | failed | cancelled. The
+	 * extra value "running" is a SPAWN-TIME MARKER only (F003 reconciliation):
+	 * written at process creation so an ungraceful parent death can never
+	 * leave a phantom child; it is superseded by the terminal write at settle
+	 * or reconciled to failed on parent restart. Every reader must treat
+	 * "running" as "no final result yet" — never as an outcome.
+	 */
+	status: "running" | "completed" | "failed" | "cancelled";
 	finalText?: string;
 	summary?: string;
 	failureReason?: string;
@@ -155,8 +169,25 @@ export interface AgentResult {
 	 * its original status, endedAt, exitCode and signal.
 	 */
 	processKilledAt?: number;
+	/** Child OS pid; recorded on spawn-time markers so operators can act on orphans. */
+	pid?: number;
 	/** Main session file that spawned this agent; enables per-session cost rollup. */
 	parentSession?: string;
+}
+
+/**
+ * A spawn-time marker of ANOTHER session still in "running" state on disk:
+ * an orphan whose owning parent is gone or holds it in a dead in-memory
+ * registry. This session must never rewrite it — only surface it.
+ */
+export interface ForeignRunningMarker {
+	id: string;
+	label: string;
+	task: string;
+	startedAt: number;
+	pid?: number;
+	/** now - startedAt, computed at listing time. */
+	ageMs: number;
 }
 
 /** Model-visible runtime events. Everything noisier stays telemetry-only. */

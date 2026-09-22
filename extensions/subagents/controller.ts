@@ -30,6 +30,7 @@
  * are handed to background listeners (the extension delivers them to the main
  * model at the next safe boundary).
  */
+import * as fs from "node:fs";
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
 import {
@@ -46,6 +47,7 @@ import type {
 	AgentResult,
 	AgentSnapshot,
 	AgentState,
+	ForeignRunningMarker,
 	SessionStats,
 	SpawnOptions,
 	SubagentModelEvent,
@@ -57,6 +59,15 @@ import { summarizeToolActivity } from "./activity";
 /** Live tool-activity bounds: status telemetry, never a log buffer. */
 const ACTIVE_TOOLS_MAX = 8;
 const RECENT_ACTIVITY_MAX = 4;
+
+/**
+ * Default idle-exit delay (F003): settled children are plain RPC processes
+ * that never exit on their own; after this long in a terminal state their
+ * process is retired (terminal record preserved). Generous, because steer /
+ * follow_up legitimately reuse completed children — any dispatch disarms
+ * the timer. Per-spawn `idleExitMs` overrides; `<= 0` disables.
+ */
+const DEFAULT_IDLE_EXIT_MS = 30 * 60 * 1000;
 
 /** An active tool entry keeps its RPC correlation id internally. */
 type ActiveToolEntry = ToolActivity & { toolCallId: string };
@@ -95,6 +106,11 @@ export interface ControllerOptions {
 	parentSession?: string;
 	/** Called whenever this session's subagent cost total changes. */
 	onCostChange?: (total: number) => void;
+	/**
+	 * Default idle-exit delay for settled children (F003); per-spawn
+	 * `idleExitMs` overrides. Defaults to 30 minutes; `<= 0` disables.
+	 */
+	defaultIdleExitMs?: number;
 }
 
 interface AgentRecord {
@@ -147,6 +163,13 @@ interface AgentRecord {
 	eventRoute?: "workspace";
 	/** Terminal retire requested: kill the process, keep the terminal record. */
 	retireRequested: boolean;
+	/**
+	 * Idle-exit delay for this child (F003): ms in a terminal state before
+	 * the process is retired. `<= 0` disables.
+	 */
+	idleExitMs: number;
+	/** Armed idle-exit timer; cleared by any dispatch, new run, or question. */
+	idleTimer?: NodeJS.Timeout;
 	/** Readiness contract: entry id -> required tool names (handshake pending). */
 	readinessExpected: Map<string, string[]>;
 	readinessDone: boolean;
@@ -191,6 +214,8 @@ export class LocalSubagentRuntime {
 	private readonly persistedBaseCost: number;
 	/** Latest cumulative cost reported per agent; the live part of the session total. */
 	private readonly countedCost = new Map<string, number>();
+	/** Default idle-exit delay for settled children (per-spawn idleExitMs overrides). */
+	private readonly defaultIdleExitMs: number;
 
 	constructor(opts: ControllerOptions) {
 		this.defaultCwd = opts.defaultCwd;
@@ -211,6 +236,12 @@ export class LocalSubagentRuntime {
 		this.persistedBaseCost = this.parentSession
 			? sumSessionCost(this.resultsDir, this.parentSession)
 			: 0;
+		this.defaultIdleExitMs = opts.defaultIdleExitMs ?? DEFAULT_IDLE_EXIT_MS;
+		// Startup reconciliation (F003): spawn-time markers of THIS session
+		// whose child never produced a terminal result mean the child was lost
+		// to an ungraceful parent death. Finalize them before anything can
+		// observe the results dir. No live processes exist yet.
+		this.reconcileLostChildren();
 	}
 
 	// ------------------------------------------------------------------ spawn
@@ -309,10 +340,17 @@ export class LocalSubagentRuntime {
 			settleFetchDone: false,
 			eventRoute: opts.eventRoute,
 			retireRequested: false,
+			idleExitMs: opts.idleExitMs ?? this.defaultIdleExitMs,
 			readinessExpected: new Map(Object.entries(readinessEntries)),
 			readinessDone: false,
 		};
 		this.records.set(id, record);
+
+		// Spawn-time partial marker (F003): persist a minimal "running" record
+		// AT process creation. If the parent dies before the child settles,
+		// startup reconciliation turns this marker into a failed result; the
+		// terminal write at settle supersedes it in place (same file).
+		this.persistSpawnMarker(record);
 
 		conn.onLine = (line) => this.handleChildLine(record, line);
 		conn.onStderr = () => {
@@ -439,7 +477,10 @@ export class LocalSubagentRuntime {
 		}
 
 		if (type === "agent_start") {
-			// Authoritative run boundary: reset run-local state.
+			// Authoritative run boundary: reset run-local state. A queued
+			// follow-up starting here also proves the child is working again —
+			// any armed idle-exit timer is stale.
+			this.clearIdleExit(record);
 			record.runActive = true;
 			record.runError = undefined;
 			record.finalText = undefined;
@@ -606,6 +647,8 @@ export class LocalSubagentRuntime {
 			askedAt: Date.now(),
 		};
 		record.state = "waiting_input";
+		// Never idle-exit a child that is waiting for user input (F003 guard).
+		this.clearIdleExit(record);
 		this.pushEvent(record, {
 			kind: "needs_input",
 			agentId: record.id,
@@ -725,6 +768,9 @@ export class LocalSubagentRuntime {
 			label: record.label,
 			summary: summarizeText(record.finalText),
 		});
+		// F003 idle-exit: the settled child's process would otherwise live
+		// forever. Retirement uses retire semantics — record and event stay.
+		this.armIdleExit(record);
 	}
 
 	private finishWithFailure(record: AgentRecord, reason: string): void {
@@ -734,6 +780,9 @@ export class LocalSubagentRuntime {
 		record.endedAt = Date.now();
 		this.persistResult(record, "failed");
 		this.pushEvent(record, { kind: "failed", agentId: record.id, label: record.label, reason });
+		// A failed-but-alive child (e.g. error stopReason at settle) is reaped
+		// by the same idle-exit path as a completed one.
+		this.armIdleExit(record);
 	}
 
 	private markTerminal(record: AgentRecord, state: "cancelled"): void {
@@ -771,6 +820,74 @@ export class LocalSubagentRuntime {
 		}
 	}
 
+	/**
+	 * Spawn-time partial marker (F003 reconciliation): a minimal "running"
+	 * record written at process creation. Superseded in place by the terminal
+	 * write at settle, or finalized as failed by startup reconciliation when
+	 * the parent died before the child settled. Best-effort: a missing
+	 * marker only weakens cross-restart reconciliation.
+	 */
+	private persistSpawnMarker(record: AgentRecord): void {
+		const marker: AgentResult = {
+			id: record.id,
+			label: record.label,
+			task: record.task,
+			cwd: record.cwd,
+			status: "running",
+			startedAt: record.startedAt,
+			...(record.conn.pid !== undefined ? { pid: record.conn.pid } : {}),
+			...(this.parentSession ? { parentSession: this.parentSession } : {}),
+		};
+		try {
+			saveResult(marker, this.resultsDir);
+		} catch {
+			// best-effort by design
+		}
+	}
+
+	/**
+	 * F003 idle-exit: a settled child whose process is still alive will never
+	 * exit on its own — schedule its termination after idleExitMs. Retirement
+	 * reuses retire() semantics: the terminal record, its state, endedAt and
+	 * event are preserved; only processKilledAt is added. Disarmed by any
+	 * dispatch (steer/follow_up reuse completed children — a queued
+	 * follow-up must not be killed), by a new run (agent_start), and by a
+	 * pending question (never kill a child waiting for user input).
+	 */
+	private armIdleExit(record: AgentRecord): void {
+		if (record.idleExitMs <= 0) return;
+		if (!isTerminal(record.state)) return;
+		if (record.pendingQuestion || record.retireRequested || record.conn.exit) return;
+		this.clearIdleExit(record);
+		const timer = setTimeout(() => {
+			record.idleTimer = undefined;
+			// Re-validate at fire time: a dispatch may have raced the timer.
+			if (!isTerminal(record.state)) return;
+			if (record.conn.exit || record.pendingQuestion || record.retireRequested) return;
+			if (record.pendingDispatch) {
+				// A dispatch preflight is in flight — the child may be about to
+				// run again. Re-arm and let the dispatch outcome decide.
+				this.armIdleExit(record);
+				return;
+			}
+			this.retire(record.id).catch(() => {
+				// idle-exit must never surface; a failed kill is retried by the
+				// next cancel/shutdown (and the process leaks no worse than before)
+			});
+		}, record.idleExitMs);
+		// Unref'd: a pending idle-exit must never keep the host (or the test
+		// suite) alive. shutdown() additionally clears every timer.
+		timer.unref?.();
+		record.idleTimer = timer;
+	}
+
+	private clearIdleExit(record: AgentRecord): void {
+		if (record.idleTimer) {
+			clearTimeout(record.idleTimer);
+			record.idleTimer = undefined;
+		}
+	}
+
 	// -------------------------------------------------------------- operations
 
 	private conn(record: AgentRecord): RpcChildConnection {
@@ -781,8 +898,30 @@ export class LocalSubagentRuntime {
 		await this.dispatchInput(this.mustGet(agentId), "steer", message);
 	}
 
-	async followUp(agentId: string, message: string): Promise<void> {
-		await this.dispatchInput(this.mustGet(agentId), "followUp", message);
+	/**
+	 * Queue a follow-up. Returns the agent that owns the work: normally the
+	 * SAME agent (pi atomically queues the input or starts a fresh run).
+	 * When the child process is already gone (idle exit retired the settled
+	 * child, or it died after settling) the follow-up degrades gracefully to
+	 * a FRESH spawn with the message as its task instead of erroring — queued
+	 * work survives the reap. The caller must track the returned agent id.
+	 */
+	async followUp(agentId: string, message: string): Promise<{ agentId: string; respawned: boolean }> {
+		const record = this.mustGet(agentId);
+		if ((record.conn.exit || record.retireRequested) && isTerminal(record.state)) {
+			const fresh = await this.spawn({
+				task: message,
+				label: record.label,
+				cwd: record.cwd,
+				model: record.model,
+				thinking: record.thinking,
+				idleExitMs: record.idleExitMs,
+				eventRoute: record.eventRoute,
+			});
+			return { agentId: fresh.id, respawned: true };
+		}
+		await this.dispatchInput(record, "followUp", message);
+		return { agentId, respawned: false };
 	}
 
 	/**
@@ -835,6 +974,10 @@ export class LocalSubagentRuntime {
 		message: string,
 	): Promise<void> {
 		this.assertAlive(record, behavior === "steer" ? "steer" : "follow_up");
+		// Live input reuses the child: any armed idle-exit is stale now. If the
+		// dispatch fails below, the timer is re-armed (the child is back to an
+		// idle terminal state with a live process).
+		this.clearIdleExit(record);
 		const overTerminal = isTerminal(record.state);
 		if (overTerminal) record.pendingDispatch = true;
 		const id = `dispatch-${++LocalSubagentRuntime.idCounter}`;
@@ -853,6 +996,7 @@ export class LocalSubagentRuntime {
 			}
 		} catch (err) {
 			if (overTerminal) record.pendingDispatch = false;
+			if (overTerminal && !record.conn.exit) this.armIdleExit(record);
 			throw err;
 		}
 	}
@@ -930,8 +1074,12 @@ export class LocalSubagentRuntime {
 		const record = this.records.get(agentId);
 		if (!record) {
 			// Unknown in this process (e.g. after a main restart) — try the
-			// persisted file in the shared results dir.
-			return loadResult(agentId, this.resultsDir);
+			// persisted file in the shared results dir. A "running" spawn marker
+			// is NOT a final result: it belongs to a live child of another
+			// session (or awaits reconciliation) and must never surface as an
+			// outcome.
+			const persisted = loadResult(agentId, this.resultsDir);
+			return persisted && isTerminal(persisted.status) ? persisted : null;
 		}
 		if (!isTerminal(record.state) || record.pendingDispatch) return null; // no final result yet
 		return this.recordToResult(record);
@@ -985,6 +1133,7 @@ export class LocalSubagentRuntime {
 			return;
 		}
 		record.cancelRequested = true;
+		this.clearIdleExit(record); // the kill below makes any idle timer moot
 		// pi abort: ends the current run with stopReason "aborted"; the session
 		// stays valid. Harmless when the child is idle or blocked in a dialog.
 		// SIGTERM follows immediately: pi exits cleanly (exit code 143) even
@@ -1037,6 +1186,55 @@ export class LocalSubagentRuntime {
 	}
 
 	/**
+	 * Spawn-time markers of OTHER sessions still in "running" state on disk
+	 * (F003 reconciliation): orphans whose owning parent is gone or whose
+	 * registry died with it. This session never rewrites them — they are
+	 * surfaced (op=status --all) so an operator can act on them. Markers of
+	 * THIS session are not listed: startup reconciliation already finalized
+	 * them, and live children of this runtime appear in inspect().
+	 */
+	listForeignRunningMarkers(): ForeignRunningMarker[] {
+		return runningMarkers(this.resultsDir)
+			.filter((m) => m.parentSession !== this.parentSession)
+			.map((m) => ({
+				id: m.id,
+				label: m.label ?? m.id,
+				task: m.task ?? "",
+				startedAt: m.startedAt ?? 0,
+				...(m.pid !== undefined ? { pid: m.pid } : {}),
+				ageMs: Math.max(0, Date.now() - (m.startedAt ?? Date.now())),
+			}))
+			.sort((a, b) => a.startedAt - b.startedAt);
+	}
+
+	/**
+	 * Startup reconciliation (F003/F014): scan the shared results dir for
+	 * spawn-time markers. A "running" marker of THIS parent session means
+	 * its child never produced a terminal result — the only way that happens
+	 * is an ungraceful parent death (session_shutdown always cancelAll()s).
+	 * Finalize the marker as failed so the lost child never stays a phantom
+	 * "running" entry. Markers of other sessions are foreign orphans — left
+	 * untouched (see listForeignRunningMarkers). Terminal results are not
+	 * markers; they are left exactly as settled.
+	 */
+	private reconcileLostChildren(): void {
+		for (const marker of runningMarkers(this.resultsDir)) {
+			if (marker.parentSession !== this.parentSession) continue;
+			const finalized: AgentResult = {
+				...marker,
+				status: "failed",
+				failureReason: "child lost across parent restart",
+				endedAt: Date.now(),
+			};
+			try {
+				saveResult(finalized, this.resultsDir);
+			} catch {
+				// best-effort: the marker stays and is re-reconciled on next start
+			}
+		}
+	}
+
+	/**
 	 * Session subagent cost total: results already on disk for this session
 	 * (resume base) plus the latest cumulative cost reported by every agent
 	 * of the live runtime. Children settled in this runtime are counted from
@@ -1072,6 +1270,10 @@ export class LocalSubagentRuntime {
 
 	/** Kill all live children without latching the runtime shut. */
 	async cancelAll(): Promise<void> {
+		// Idle-exit timers are moot under a mass kill — and they must never
+		// outlive the runtime (an unref'd timer alone would be enough, but a
+		// deterministic clear keeps the test suite exit-clean).
+		for (const r of this.records.values()) this.clearIdleExit(r);
 		const live = [...this.records.values()].filter((r) => !r.conn.exit);
 		if (live.length === 0) return;
 		for (const r of live) {
@@ -1263,6 +1465,33 @@ function eventToOutcome(ev: SubagentModelEvent): WaitOutcome {
 			// Workspace-routed only; never reaches the waiter path.
 			return { status: "timeout", state: "running" };
 	}
+}
+
+/**
+ * Parse the results dir for spawn-time "running" markers (F003): entries
+ * whose status is not terminal yet. Unreadable or corrupt files are skipped;
+ * the parsed result rides along for callers that rewrite it in place.
+ */
+function runningMarkers(dir: string): AgentResult[] {
+	let entries: string[];
+	try {
+		entries = fs.readdirSync(dir);
+	} catch {
+		return [];
+	}
+	const markers: AgentResult[] = [];
+	for (const name of entries) {
+		if (!name.endsWith(".json")) continue; // also excludes saveResult's .tmp files
+		let result: AgentResult;
+		try {
+			result = JSON.parse(fs.readFileSync(path.join(dir, name), "utf8")) as AgentResult;
+		} catch {
+			continue; // corrupt/partial file: skip, never break the caller
+		}
+		if (!result || typeof result.id !== "string" || result.status !== "running") continue;
+		markers.push(result);
+	}
+	return markers;
 }
 
 function isTerminal(state: AgentState): state is AgentResult["status"] {
