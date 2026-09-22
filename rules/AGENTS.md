@@ -55,12 +55,9 @@
 
 # Git task discipline
 
-* Never create task-generated changes in the primary checkout; task work belongs in the managed task worktree under the resolved task root (`AGENT_TASK_ROOT` override, default `~/.agent-kit/tasks`).
-* Before task mutation, establish a task branch and managed worktree through the task-workspace runtime.
-* Never invent a ticket; derive task branches only from explicit user identity or an existing matching task.
-* A ticket is not mandatory by default. When neither ticket nor branch is provided, ask whether the user authorizes ticketless work; do not block or emit `missing_ticket` before that answer. After explicit approval, use ticketless branch and commit naming.
-* A blocked task-workspace mutation is a routing failure, not authorization to reproduce the same mutation through eval, Python, shell, sed/cp, or another agent. Manual tracked-file adaptation is allowed only when it is an explicit implementation/recovery decision, with the reason and a re-verified diff.
-* Never pass an inferred `base_ref` (a release/hotfix/maintenance branch picked from context or merely observed in Git output); use an explicit user/SPEC/task decision, the deterministic runtime, or ask.
+* Never make task-generated changes in the primary checkout; task work goes through the managed task-workspace runtime (`skill://git-task`).
+* Never invent a ticket or a `base_ref`; both come only from an explicit user/SPEC/task decision. When neither ticket nor branch exists, ask whether ticketless work is authorized before blocking.
+* A guard block is a routing failure, never authorization to reproduce the same mutation through eval, Python, shell, sed/cp, or another agent.
 * Raw `git commit --no-verify` is forbidden everywhere; the only hook-bypass path is `checkpoint_commit`'s deferred hook verification after a real, current hook failure.
 * A RepoOwner that changed repository state may yield `done` only from a committed candidate that was finally verified after that commit; any later repository change means a new candidate commit and a new final verification.
 

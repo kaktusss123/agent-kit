@@ -19,6 +19,7 @@ A plan is authority for intent. It is not infallible evidence about current impl
 
 ## Change one coherent slice at a time
 
+- Establish a known baseline and continue only from a repository state you understand.
 - Prefer the smallest vertical slice that produces observable progress.
 - Reuse existing abstractions when they fit. Do not preserve a bad abstraction merely because it exists.
 - Avoid unrelated refactoring and parallel implementations.

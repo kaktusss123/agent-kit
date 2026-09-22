@@ -1,11 +1,11 @@
 ---
 name: unslop
-description: Cut AI tells from any writing. Must always apply.
+description: "Enhanced editorial pass that removes AI writing patterns and adds human voice. Use when the user asks to edit, de-AI, or improve a specific text deliverable — article, report, README, docs, long prose — not as always-on middleware: the compact global style contract lives in AGENTS.md."
 ---
 
 # Unslop
 
-Edit text to remove AI patterns and add human voice.
+Edit a specific text to remove AI patterns and add human voice. This skill is an explicit editorial pass, loaded on demand; day-to-day style rules stay in the global agent instructions.
 
 ## Process
 

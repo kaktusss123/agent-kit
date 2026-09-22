@@ -33,7 +33,7 @@ Use a lightweight workflow. Prefer the installed forge CLI over custom API wrapp
 8. For `create`, verify that the source branch already exists remotely. If it does not, stop and hand off to the git workflow. Do not push or let an interactive CLI flow push/fork on this skill's behalf.
 9. For `create`, check for an existing open PR/MR from the same source branch to the same target repository/branch. If one exists, report it and stop. Do not edit it unless the user explicitly requests `update`.
 10. For `update`, inspect the existing PR/MR first. Change only the fields requested by the user. If replacing the description would discard unrelated manual content and the user's intent is not explicit, show the conflict and ask before overwriting.
-11. Execute the requested provider operation non-interactively where practical, supplying explicit repository, branches, title, and description. For GitLab MR creation, pass `--squash-before-merge=true` explicitly.
+11. Execute the requested provider operation non-interactively where practical, supplying explicit repository, branches, title, and description, per the provider reference's mandatory flags.
 12. Return the resulting PR/MR URL. If the CLI fails, return the original failure output and do not invent a diagnosis that the CLI did not establish.
 
 ## Publication readiness
@@ -44,19 +44,6 @@ Treat verification as a publication gate, not a place to advertise failures.
 - Do not put failed, skipped, unknown, or not-run checks into the PR/MR description.
 - Do not invent a universal test command or require metrics the project does not provide.
 - A description may still be drafted before publication readiness is established.
-
-## Existing PR/MR safety
-
-For `create`:
-
-- Existing change request found: report its URL/identifier and stop.
-- Never replace its title or body automatically.
-
-For `update`:
-
-- Read current title/body first.
-- Preserve fields not requested for change.
-- Preserve useful manually written content unless the user explicitly asks to replace the whole description.
 
 ## References
 

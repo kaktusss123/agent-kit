@@ -24,13 +24,34 @@ A workspace spawn is the only owner dispatch. If it returns `unsupported`, fails
 
 A terminal run is announced as a completion message; the terminal outcome (envelope + `git_facts`) stays reachable via `subagent` op `result` for the rest of the session.
 
-- `done` — the envelope carries the owner's product outcome in `result.status` plus its structured report (summary, verification, gaps, conflicts per SKILL.md). For a `done` product outcome the runtime additionally verifies the settled worktree after the child stopped: accessible git repository, current HEAD, clean tree (untracked non-ignored files count as dirt; ignored build output does not). A failed check downgrades the outcome to `blocked` with a `done_rejected_*` reason and no trusted `result`.
+- `done` — the envelope carries the owner's product outcome in `result.status` plus its structured report (per the worker report contract below). For a `done` product outcome the runtime additionally verifies the settled worktree after the child stopped: accessible git repository, current HEAD, clean tree (untracked non-ignored files count as dirt; ignored build output does not). A failed check downgrades the outcome to `blocked` with a `done_rejected_*` reason and no trusted `result`.
 - `partial` — deadline hit mid-run; carries `child_may_have_mutated_repo`. Inspect the worktree state before any repair decision.
 - `blocked` — refusal, failed readiness, the report-recovery ladder exhausted, or a rejected `done` from the settled-state check above; carries the reason. The child may still have mutated the repo.
 
 Every terminal outcome carries `git_facts` (branch, HEAD SHA, dirty paths) read mechanically by the runtime from the worktree after the child stopped — never ask the model which commit it produced or whether anything is left uncommitted; read `git_facts`.
 
 A terminal outcome retires the owner: the process is settled and its record keeps the original terminal status forever. Terminal states never re-enter work.
+
+## Worker report contract
+
+Before `report_result(status=done)`, the finished state must be committed as a candidate commit, and the final verification must have run against the repository after that commit was created (ADR-0002). Checks run before the commit remain development feedback; they do not replace the post-commit final verification. If verification, hooks, or repair changed repository state after the last commit, that state is a new candidate: commit it and verify it again before yielding.
+
+The report itself is compact JSON, no raw test output:
+
+```json
+{
+  "status": "done | partial | blocked",
+  "summary": "one paragraph",
+  "changed_scope": ["paths or areas"],
+  "verification": [
+    { "check": "uv run pytest tests/dp_user_plane_api/trino -q", "cwd": "<worktree>", "result": "pass | fail | blocked" }
+  ],
+  "gaps": ["what was not run or could not run, and why"],
+  "contract_conflicts": ["disagreements with SPEC.md, if any"]
+}
+```
+
+Main reads this report as the owner's claim about the settled state and re-runs checks only when the report is missing or incomplete, repository state changed after the check, a result looks suspicious, or the check belongs to integration acceptance.
 
 ## Repair
 

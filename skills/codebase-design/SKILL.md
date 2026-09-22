@@ -1,6 +1,6 @@
 ---
 name: codebase-design
-description: "Design or improve module boundaries, interfaces, ownership, domain types, and test seams. Use for architecture work, API/module reshaping, refactoring that changes structure, or when an agent must compare alternative designs and prefer a small interface that hides complexity and keeps knowledge local."
+description: "Decide where responsibility, state, and interfaces live once the functionality itself is justified: module boundaries, interfaces, ownership, domain types, test seams, refactoring that changes structure. The prior question — whether the complexity is needed at all — belongs to skill://simple-design."
 ---
 
 # Codebase design
@@ -28,8 +28,14 @@ Ask:
 
 Prefer dependencies passed across explicit seams over hidden construction when replaceability or testing requires it. Do not create interfaces for a single implementation without a real boundary reason.
 
+## State and boundaries
+
+- Model important states explicitly. Make invalid states hard to represent.
+- Validate raw input at system boundaries, then trust typed internal state. Keep policy at the boundary and core logic testable without framework plumbing.
+- Before sharing mutable state between actors, ask whether either can change it independently; isolate first when possible.
+- Design retries and partial failures so rerunning an operation converges instead of compounding damage.
+- Consolidate a decision in one place instead of threading the same choice through many layers. If a maintainer must trace many wrappers to answer a simple question, flatten it.
+
 ## Design it twice when it matters
 
 For a costly or hard-to-reverse structural choice, sketch at least two meaningfully different whole shapes before committing. Compare interface depth, locality, state ownership, failure behavior, and migration cost.
-
-Do not perform multi-model orchestration unless the surrounding environment explicitly chooses to.
