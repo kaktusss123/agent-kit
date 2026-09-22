@@ -50,12 +50,12 @@ font-family: ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-
 
 Recommended scale:
 
-- Main title: 36-48px, 700-760 weight, tight line-height.
-- Section heading: 22-28px, 700 weight.
-- Metric value: 42-56px, 700-760 weight.
-- Body: 16-18px, line-height 1.5-1.65.
-- Secondary labels: 14-16px, muted.
-- Tiny metadata only when necessary: 12-13px.
+- Main title: 45-60px, 700-760 weight, tight line-height.
+- Section heading: 28-35px, 700 weight.
+- Metric value: 52-70px, 700-760 weight.
+- Body: 20-22px, line-height 1.5-1.65.
+- Secondary labels: 18-20px, muted.
+- Tiny metadata only when necessary: 15-16px.
 
 Do not uppercase ordinary section headings. Avoid excessive letter spacing except for genuinely tiny metadata.
 
