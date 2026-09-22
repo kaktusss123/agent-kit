@@ -12,7 +12,17 @@ import { spawn as nodeSpawn, type ChildProcess } from "node:child_process";
 import { JsonlReader } from "./jsonl";
 
 export interface ChildProcessLike {
-	stdin: { write(chunk: string): boolean; end(): void };
+	stdin: {
+		write(chunk: string): boolean;
+		end(): void;
+		/**
+		 * Subscribe to async stream failures. When the child dies while a write
+		 * is still buffered, the write reports success and the stream emits
+		 * "error" (EPIPE) on a later tick — a handler must exist or the error
+		 * escapes as an uncaughtException.
+		 */
+		on(event: "error", cb: (err: Error) => void): void;
+	};
 	stdout: { on(event: "data", cb: (chunk: Buffer) => void): void };
 	stderr: { on(event: "data", cb: (chunk: Buffer) => void): void };
 	on(event: "error", cb: (err: Error) => void): void;
@@ -44,6 +54,7 @@ export class RpcChildConnection {
 	readonly pid?: number;
 	private readonly proc: ChildProcessLike;
 	private stderrTail = "";
+	private stdinBroken = false;
 	private exited = false;
 	private exitInfo: ExitInfo | null = null;
 	private spawnError: Error | null = null;
@@ -83,11 +94,23 @@ export class RpcChildConnection {
 			reader.end();
 			this.settleExit({ code, signal });
 		});
+		// The child's stdin stream has no other owner; an unhandled "error"
+		// here would crash the host process (EPIPE after the child died under
+		// a pending write). Swallow it into diagnostics, mark the stream
+		// broken so send() stops writing, and settle the exit (idempotent —
+		// when "close" already fired with the real code, this is a no-op;
+		// otherwise -1 stands until the controller interprets it).
+		this.proc.stdin.on("error", (err: Error) => {
+			if (this.stdinBroken) return;
+			this.stdinBroken = true;
+			this.stderrTail = (this.stderrTail + `\nchild stdin error: ${err.message}`).slice(-8000);
+			this.settleExit({ code: -1, signal: null });
+		});
 	}
 
 	/** Send a JSON command line. Returns false when the process is gone. */
 	send(cmd: unknown): boolean {
-		if (this.exited || this.spawnError) return false;
+		if (this.exited || this.spawnError || this.stdinBroken) return false;
 		try {
 			return this.proc.stdin.write(JSON.stringify(cmd) + "\n");
 		} catch {

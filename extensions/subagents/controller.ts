@@ -121,6 +121,8 @@ interface AgentRecord {
 	stats?: SessionStats;
 	exitCode?: number | null;
 	signal?: string | null;
+	/** Kill timestamp when the process died after the record had settled. */
+	processKilledAt?: number;
 	pendingQuestion?: { requestId: string; request: AskInput; question: string; askedAt: number };
 	/** Tools currently executing, keyed by toolCallId (pi may run tools in parallel). */
 	activeTools: Map<string, ActiveToolEntry>;
@@ -640,6 +642,29 @@ export class LocalSubagentRuntime {
 	}
 
 	private handleChildExit(record: AgentRecord, info: { code: number | null; signal: string | null }): void {
+		if (isTerminal(record.state)) {
+			// A kill landed after the record had already gone terminal.
+			// First: a child that died before its spawn settled (the accept
+			// timer or a spawn error already failed the record) must still
+			// reject its pending spawn waiters — that rejection is the
+			// caller's only outcome, so terminal preservation must not
+			// swallow it.
+			if (!record.spawnSettled) {
+				record.spawnSettled = true;
+				for (const w of record.spawnWaiters.splice(0)) w(false);
+				return;
+			}
+			// Otherwise: a cancel/shutdown kill landed after the record had
+			// already settled (e.g. cancelAll SIGTERMs a completed child).
+			// Preserve the settled terminal state and result exactly — state,
+			// endedAt, exitCode and signal stay as they were; only the kill
+			// timestamp is recorded. Mirrors retire semantics: never turn a
+			// settled outcome into cancelled, never emit a second terminal
+			// event.
+			record.processKilledAt = Date.now();
+			this.persistResult(record, record.state);
+			return;
+		}
 		record.exitCode = info.code;
 		record.signal = info.signal;
 		record.endedAt = Date.now();
@@ -712,6 +737,7 @@ export class LocalSubagentRuntime {
 	}
 
 	private markTerminal(record: AgentRecord, state: "cancelled"): void {
+		if (isTerminal(record.state)) return;
 		record.state = state;
 		record.endedAt = record.endedAt ?? Date.now();
 		this.persistResult(record, state);
@@ -735,6 +761,7 @@ export class LocalSubagentRuntime {
 			tokens: statsToResultTokens(record.stats),
 			exitCode: record.exitCode,
 			signal: record.signal,
+			...(record.processKilledAt !== undefined ? { processKilledAt: record.processKilledAt } : {}),
 			...(this.parentSession ? { parentSession: this.parentSession } : {}),
 		};
 		try {
@@ -1238,7 +1265,7 @@ function eventToOutcome(ev: SubagentModelEvent): WaitOutcome {
 	}
 }
 
-function isTerminal(state: AgentState): boolean {
+function isTerminal(state: AgentState): state is AgentResult["status"] {
 	return state === "completed" || state === "failed" || state === "cancelled";
 }
 

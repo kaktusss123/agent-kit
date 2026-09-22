@@ -149,6 +149,12 @@ export interface AgentResult {
 	tokens?: { input: number; output: number; total: number; cost?: number };
 	exitCode?: number | null;
 	signal?: string | null;
+	/**
+	 * When the process was killed after this result had already settled
+	 * (cancel/retire of a terminal record): kill timestamp. The result keeps
+	 * its original status, endedAt, exitCode and signal.
+	 */
+	processKilledAt?: number;
 	/** Main session file that spawned this agent; enables per-session cost rollup. */
 	parentSession?: string;
 }

@@ -20,6 +20,9 @@ export class FakeRpcProcess implements ChildProcessLike {
 			return true;
 		},
 		end(): void {},
+		on: (event: "error", cb: (err: Error) => void): void => {
+			this.events.on("stdin-error", cb);
+		},
 	};
 	readonly stdout: StdioLike;
 	readonly stderr: StdioLike;
@@ -86,6 +89,11 @@ export class FakeRpcProcess implements ChildProcessLike {
 
 	writeToStderr(text: string): void {
 		this.events.emit("stderr", Buffer.from(text, "utf8"));
+	}
+
+	/** Test hook: the child's stdin stream dies asynchronously (e.g. EPIPE). */
+	emitStdinError(err: Error): void {
+		this.events.emit("stdin-error", err);
 	}
 
 	on(event: "error", cb: (err: Error) => void): void;
