@@ -125,6 +125,17 @@ concrete `model`/`thinking` because the child needs literal CLI flags.
 Child sessions are ordinary pi sessions named `subagent:<label>`, inspectable
 with standard tooling.
 
+## Spawn waves and provider rate limits
+
+Parallel children resolving to the same provider + model class share one rate
+budget: a large same-model wave can draw HTTP 429s that kill several children
+at once (observed on zai — children died ~2 minutes after dispatch). Mixed
+waves are fine (e.g. three implement owners on `default` plus one reviewer on
+`smart`); keep same-model waves small (<=3 in practice) or stagger them.
+A 429-killed child is simply re-spawnable; the cost is lost work plus the
+provider's rate-limit cooldown. There is deliberately no runtime concurrency
+limiter — wave discipline is the caller's job.
+
 ## Lifecycle
 
 States: `starting → running ⇄ waiting_input → completed | failed`, plus
