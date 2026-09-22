@@ -331,6 +331,8 @@ export default function (pi: ExtensionAPI) {
 			"wait (block until completed/failed/needs_input; plain spawns only — a workspace spawn already blocks),",
 			"result (fetch the full persisted result; workspace runs return the report envelope + Git facts), respond",
 			"(answer a child's pending question), cancel (abort and terminate).",
+			"Large parallel waves of children on one provider + model class can hit provider 429 rate limits — mix",
+			"model classes across a wave or keep same-model waves small.",
 			"When a background child settles, you receive a short [subagent ...] event message; the child transcript",
 			"is never added to your context — fetch details with op=result.",
 		].join(" "),
