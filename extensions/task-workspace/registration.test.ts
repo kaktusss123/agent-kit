@@ -1,7 +1,7 @@
 /**
  * Standalone registration regression (SPEC R2/R3.2): loading the
  * task-workspace extension entry (with no subagents module involved) still
- * registers the four task tools, the intentional bash override, and the
+ * registers the five task tools, the intentional bash override, and the
  * tool_call mutation guard using the capture-seam style of
  * workspace-agent.test.ts.
  */
@@ -17,6 +17,7 @@ const EXPECTED_TOOLS = [
   "ensure_task_repo",
   "remove_task_lane",
   "task_status",
+  "teardown_task_repo",
 ];
 
 interface Capture {
@@ -43,7 +44,7 @@ function loadStandalone(): Capture {
 }
 
 describe("standalone task-workspace registration", () => {
-  test("registers the four task tools, bash override, and mutation guard", () => {
+  test("registers the five task tools, bash override, and mutation guard", () => {
     const capture = loadStandalone();
     expect([...capture.tools].sort()).toEqual(EXPECTED_TOOLS);
     expect(capture.tools).toContain("bash");

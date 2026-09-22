@@ -49,7 +49,9 @@ import {
   ensureTaskRepo,
   removeTaskLane,
   taskStatus,
+  teardownTaskRepo,
 } from "./flows";
+import type { BootstrapConfig } from "./bootstrap";
 import { guardManagedWriteTarget } from "./guard";
 import {
   renderCheckpointCommitCall,
@@ -60,6 +62,8 @@ import {
   renderRemoveTaskLaneResult,
   renderTaskStatusCall,
   renderTaskStatusResult,
+  renderTeardownTaskRepoCall,
+  renderTeardownTaskRepoResult,
   type RenderOptions,
   type TaskStatusResultLike,
   type ToolResultLike,
@@ -81,6 +85,23 @@ function respond(result: Record<string, unknown>, details?: unknown): {
 function errorResult(e: unknown): Record<string, unknown> {
   return { status: "error", message: (e as Error).message };
 }
+
+/** Worktree dependency provisioning configuration (host-owned; the core
+ *  stays name-free). agent-kit has no root package.json, so its extension
+ *  tests resolve the host runtime's packages through node_modules links,
+ *  which ensure_task_repo provisions automatically. AGENT_KIT_PI_ROOT
+ *  overrides discovery with an explicit package directory. */
+export const BOOTSTRAP_CONFIG: BootstrapConfig = {
+  packages: [
+    "@earendil-works/pi-coding-agent",
+    "@earendil-works/pi-ai",
+    "@earendil-works/pi-tui",
+    "typebox",
+  ],
+  overrideEnv: "AGENT_KIT_PI_ROOT",
+  legacyRoot: "~/.local/lib/node_modules/@earendil-works/pi-coding-agent",
+  cliName: "pi",
+};
 
 // ─── Bash git guard: PATH shim wiring ────────────────────────────────
 
@@ -142,6 +163,8 @@ function detailsFor(tool: string, result: Record<string, unknown>): unknown {
       return undefined;
     case "remove_task_lane":
       return result.status === "removed" ? { ...result } : undefined;
+    case "teardown_task_repo":
+      return result.status === "torn_down" ? { ...result } : undefined;
     case "checkpoint_commit":
       if (result.status === "committed") {
         return {
@@ -245,7 +268,10 @@ export default function (pi: ExtensionAPI): void {
     }),
     execute: async (_toolCallId, params, _signal, _onUpdate, _ctx) => {
       try {
-        const result = await ensureTaskRepo(params, _ctx.cwd, { taskRoot: TASK_ROOT });
+        const result = await ensureTaskRepo(params, _ctx.cwd, {
+          taskRoot: TASK_ROOT,
+          bootstrap: { config: BOOTSTRAP_CONFIG, env: process.env },
+        });
         return respond(result, detailsFor("ensure_task_repo", result));
       } catch (e) {
         return respond(errorResult(e));
@@ -281,6 +307,30 @@ export default function (pi: ExtensionAPI): void {
     renderCall: (args, theme) => renderRemoveTaskLaneCall(args as { task?: string; path?: string }, theme),
     renderResult: (result, options, theme) =>
       renderRemoveTaskLaneResult(result as ToolResultLike, options as RenderOptions, theme),
+  });
+
+  // ─── teardown_task_repo ──────────────────────────────────────────
+  pi.registerTool({
+    name: "teardown_task_repo",
+    label: "Teardown Task Repo",
+    description:
+      "Guarded teardown of one whole canonical task workspace: refuse when any worktree has uncommitted changes, when a task branch is checked out outside the workspace (e.g. by another session), or when a task branch has commits not contained in its upstream or base HEAD (non-force). On success: remove all repo worktrees registered under the task workspace, delete the task branches (non-force), and clean the task root metadata directory. Multi-repo workspaces are fully handled.",
+    parameters: tb.Object({
+      task: tb.String({
+        description: "Canonical task identity (workspace name, as task_status reports it)",
+      }),
+    }),
+    execute: async (_toolCallId, params, _signal, _onUpdate, _ctx) => {
+      try {
+        const result = await teardownTaskRepo(params, _ctx.cwd, { taskRoot: TASK_ROOT });
+        return respond(result, detailsFor("teardown_task_repo", result));
+      } catch (e) {
+        return respond(errorResult(e));
+      }
+    },
+    renderCall: (args, theme) => renderTeardownTaskRepoCall(args as { task?: string }, theme),
+    renderResult: (result, options, theme) =>
+      renderTeardownTaskRepoResult(result as ToolResultLike, options as RenderOptions, theme),
   });
 
   // ─── checkpoint_commit ───────────────────────────────────────────────

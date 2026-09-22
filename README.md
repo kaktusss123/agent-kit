@@ -210,8 +210,17 @@ rules/AGENTS.md -> ~/.pi/agent/AGENTS.md   (если файл существуе
 `agent-kit install` из task worktree переключает управляемые ссылки на этот
 worktree; ссылки и state — единственное, что меняется. `status` показывает,
 какой checkout сейчас активен. Юнит-тесты расширений запускаются из репо
-так: `bun test extensions/<name>`. Разовом linker'ам нужны пакеты pi в
-`node_modules` (gitignored):
+так: `bun test extensions/<name>`.
+
+Тестам расширений нужны пакеты pi в `node_modules` (gitignored). Для
+репозитория без корневого `package.json` (как agent-kit) их проставляет сам
+`ensure_task_repo`: при создании или переиспользовании managed worktree он
+находит установку pi на машине (порядок: `AGENT_KIT_PI_ROOT` → полный
+`node_modules` основного checkout'а → окружение запущенного runtime'а → CLI
+`pi` на PATH → legacy-каталог) и создаёт симлинки в `node_modules` worktree,
+не трогая основной checkout. Повторный ensure — no-op. После ensure свежий
+worktree agent-kit проходит `bun test extensions/task-workspace` без ручных
+шагов. Если ensure недоступен, те же ссылки можно создать руками:
 
 ```sh
 mkdir -p node_modules/@earendil-works

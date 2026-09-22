@@ -96,7 +96,8 @@ describe("checkpoint_commit exact scope", () => {
   test("hook-modified intended file (staged by the hook) commits with exact scope", async () => {
     const repo = makeRepo("hook-modify-intended");
     writeFileSync(join(repo, "a.txt"), "unformatted\n");
-    setHook(repo, "sed -i 's/unformatted/formatted/' a.txt\ngit add a.txt\nexit 0\n");
+    // sed -i with an explicit backup suffix works on both GNU and BSD sed.
+    setHook(repo, "sed -i.bak 's/unformatted/formatted/' a.txt && rm -f a.txt.bak\ngit add a.txt\nexit 0\n");
 
     const r = await commit(repo, ["a.txt"]);
 

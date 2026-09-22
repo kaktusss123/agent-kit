@@ -210,7 +210,9 @@ describe("real-shell matrix through the armed bash tool path", () => {
     expect(seg("env-commit")).toContain("Blocked:");
     const xargs = seg("xargs-branch");
     expect(xargs).toContain("Blocked:");
-    expect(xargs).toContain("rc=123"); // xargs reports the failed command
+    // xargs reports the failed command: GNU xargs exits 123, BSD xargs
+    // (macOS) exits 1 when an invocation exits 1-125.
+    expect(xargs).toMatch(/rc=(123|[1-9][0-9]*)/);
   });
 
   test("documented blind spots stay NON-blocking: absolute path, inline PATH, sudo", () => {
