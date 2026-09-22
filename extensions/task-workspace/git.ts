@@ -286,6 +286,36 @@ export function parseWorktreePaths(output: string): string[] {
     .map((line) => line.slice("worktree ".length));
 }
 
+export interface WorktreeListEntry {
+  path: string;
+  head: string;
+  /** Checked-out local branch (short name), or null when detached. */
+  branch: string | null;
+}
+
+/** Parsed `git worktree list --porcelain`; empty when the repo dir cannot
+ *  be read (callers treat that as a refusal, not as "no worktrees"). */
+export async function getWorktreeList(repoDir: string): Promise<WorktreeListEntry[]> {
+  const r = await git(repoDir, "worktree", "list", "--porcelain");
+  if (!r.ok) return [];
+  const entries: WorktreeListEntry[] = [];
+  let current: WorktreeListEntry | null = null;
+  for (const line of r.stdout.split("\n")) {
+    if (line.startsWith("worktree ")) {
+      if (current) entries.push(current);
+      current = { path: line.slice("worktree ".length), head: "", branch: null };
+    } else if (!current) {
+      continue;
+    } else if (line.startsWith("HEAD ")) {
+      current.head = line.slice("HEAD ".length);
+    } else if (line.startsWith("branch ")) {
+      current.branch = line.slice("branch ".length).replace("refs/heads/", "");
+    }
+  }
+  if (current) entries.push(current);
+  return entries;
+}
+
 
 export async function getRepoCommonDir(repoRoot: string): Promise<string | null> {
   const result = await git(repoRoot, "rev-parse", "--git-common-dir");

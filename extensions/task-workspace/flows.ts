@@ -8,9 +8,9 @@
  * result object; the host binding owns schemas, serialization, result
  * attachment (e.g. details), and error catching.
  */
-import { basename, join, relative, resolve } from "node:path";
+import { basename, dirname, join, relative, resolve } from "node:path";
 import { mkdir } from "node:fs/promises";
-import { existsSync } from "node:fs";
+import { existsSync, readFileSync, readdirSync, rmSync } from "node:fs";
 import {
   classifyPath,
   expandPath,
@@ -20,8 +20,10 @@ import {
   getRepoBranch,
   getRepoCommonDir,
   getRepoSha,
+  getSourceDirty,
   getUpstream,
   git,
+  getWorktreeList,
   isLinkedWorktree,
   laneIdentity,
   parseLaneName,
@@ -30,8 +32,10 @@ import {
   scanTaskWorkspaces,
   taskWorkspacePath,
 } from "./git";
+import { bootstrapWorktreeDependencies } from "./bootstrap";
+import type { BootstrapConfig } from "./bootstrap";
 import { isSecretPath } from "./guard";
-import type { LinkedWorktreeFact } from "./types";
+import type { BootstrapResult, DirtyState, LinkedWorktreeFact } from "./types";
 
 const DEFERRED_PASS_RESULTS: Record<string, true> = {
   pass: true,
@@ -47,6 +51,31 @@ const DEFERRED_PASS_RESULTS: Record<string, true> = {
  *  lane): task work must land on its own reviewable branch. Exact names
  *  only — "release/main" or "develop-2" stay ordinary task branches. */
 const PROTECTED_TASK_BRANCHES = new Set(["main", "master", "develop"]);
+
+/** Worktree dependency provisioning (F013: a fresh managed worktree of a
+ *  manifest-free extension repo must be test-capable with no manual steps).
+ *  The binding supplies the package configuration and the environment; the
+ *  worktree is the only thing touched, the source/primary checkout never
+ *  is. Absent → results carry no bootstrap field (provisioning off). */
+export interface EnsureBootstrap {
+  config: BootstrapConfig;
+  env: Record<string, string | undefined>;
+}
+
+async function withBootstrap<T extends { status: string }>(
+  result: T,
+  worktree: string,
+  bootstrap?: EnsureBootstrap,
+): Promise<T & { bootstrap?: BootstrapResult }> {
+  if (!bootstrap) return { ...result };
+  return {
+    ...result,
+    bootstrap: await bootstrapWorktreeDependencies(worktree, bootstrap.config, {
+      env: bootstrap.env,
+      primaryDir: await getRepoCommonDir(worktree),
+    }),
+  };
+}
 
 // ─── task_status ────────────────────────────────────────────────────────
 
@@ -101,7 +130,7 @@ export interface EnsureTaskRepoParams {
 export async function ensureTaskRepo(
   params: EnsureTaskRepoParams,
   ctxCwd: string,
-  opts: { taskRoot: string },
+  opts: { taskRoot: string; bootstrap?: EnsureBootstrap },
 ) {
   // 0. Protected branches: refuse before anything is created or changed.
   if (PROTECTED_TASK_BRANCHES.has(params.branch)) {
@@ -203,7 +232,7 @@ export async function ensureTaskRepo(
         const inputRepo = await getInputRepoFacts(sourceAbs, sourceRoot, cwd, opts.taskRoot);
         const headSha = await getRepoSha(target);
         const upstream = await getUpstream(sourceRoot, params.branch);
-        return {
+        return await withBootstrap({
           status: "reused",
           task: identity,
           worktree: target,
@@ -215,7 +244,7 @@ export async function ensureTaskRepo(
           base: null,
           inputRepo,
           headSha,
-        };
+        }, target, opts.bootstrap);
       }
       return {
         status: "error",
@@ -280,7 +309,7 @@ export async function ensureTaskRepo(
     const inputRepo = await getInputRepoFacts(sourceAbs, sourceRoot, cwd, opts.taskRoot);
     const headSha = await getRepoSha(target);
     const upstream = await getUpstream(sourceRoot, params.branch);
-    return {
+    return await withBootstrap({
       status: "attached",
       task: identity,
       worktree: target,
@@ -292,7 +321,7 @@ export async function ensureTaskRepo(
       base: null,
       inputRepo,
       headSha,
-    };
+    }, target, opts.bootstrap);
   }
 
   // 6. The task branch is absent. Resolve and validate a remote only now;
@@ -376,7 +405,7 @@ export async function ensureTaskRepo(
       }
       const inputRepo = await getInputRepoFacts(sourceAbs, sourceRoot, cwd, opts.taskRoot);
       const headSha = await getRepoSha(target);
-      return {
+      return await withBootstrap({
         status: "created_from_remote",
         task: identity,
         worktree: target,
@@ -389,7 +418,7 @@ export async function ensureTaskRepo(
         base: null,
         inputRepo,
         headSha,
-      };
+      }, target, opts.bootstrap);
     }
   }
 
@@ -490,7 +519,7 @@ export async function ensureTaskRepo(
   }
   const inputRepo = await getInputRepoFacts(sourceAbs, sourceRoot, cwd, opts.taskRoot);
   const headSha = await getRepoSha(target);
-  return {
+  return await withBootstrap({
     status: "created",
     task: identity,
     worktree: target,
@@ -502,7 +531,7 @@ export async function ensureTaskRepo(
     base: { ref: baseRef, sha: baseSha },
     inputRepo,
     headSha,
-  };
+  }, target, opts.bootstrap);
 }
 
 // ─── remove_task_lane ───────────────────────────────────────────────────
@@ -632,6 +661,273 @@ export async function removeTaskLane(
   return {
     status: "removed",
     ...facts,
+  };
+}
+
+// ─── teardown_task_repo ──────────────────────────────────────────────
+
+interface TeardownWorktreeFact {
+  name: string;
+  path: string;
+  branch: string;
+  headSha: string;
+  upstream: string | null;
+  commonDir: string;
+  dirty: DirtyState;
+}
+
+interface TeardownRepoGroup {
+  commonDir: string;
+  worktrees: TeardownWorktreeFact[];
+}
+
+/** Enumerate the linked worktrees directly inside a task workspace and
+ *  group them by their git common dir. Returns a refusal result when the
+ *  layout is not one ensure_task_repo could have produced (real nested
+ *  repositories, unexpected directories, or a common dir inside the
+ *  workspace — none of these may be deleted by a runtime flow). */
+async function collectTeardownFacts(
+  workspace: string,
+): Promise<{ ok: true; groups: Map<string, TeardownRepoGroup>; artifacts: string[] } | { ok: false; refusal: Record<string, unknown> }> {
+  const groups = new Map<string, TeardownRepoGroup>();
+  const artifacts: string[] = [];
+  const unexpected: string[] = [];
+  const nestedRepos: string[] = [];
+  const badCommon: string[] = [];
+  for (const entry of readdirSync(workspace, { withFileTypes: true })) {
+    const child = join(workspace, entry.name);
+    if (!entry.isDirectory()) {
+      artifacts.push(entry.name);
+      continue;
+    }
+    let linked = false;
+    try {
+      linked = readFileSync(join(child, ".git"), "utf-8").startsWith("gitdir:");
+    } catch {
+      linked = false;
+    }
+    if (!linked) {
+      if (existsSync(join(child, ".git"))) nestedRepos.push(entry.name);
+      else unexpected.push(entry.name);
+      continue;
+    }
+    const branch = await getRepoBranch(child);
+    const commonDir = await getRepoCommonDir(child);
+    if (!branch || !commonDir) {
+      unexpected.push(entry.name);
+      continue;
+    }
+    if (commonDir === workspace || commonDir.startsWith(workspace + "/")) {
+      badCommon.push(entry.name);
+      continue;
+    }
+    const group = groups.get(commonDir) ?? { commonDir, worktrees: [] };
+    group.worktrees.push({
+      name: entry.name,
+      path: child,
+      branch,
+      headSha: await getRepoSha(child),
+      upstream: await getUpstream(child, branch),
+      commonDir,
+      dirty: await getSourceDirty(child),
+    });
+    groups.set(commonDir, group);
+  }
+  if (nestedRepos.length > 0 || unexpected.length > 0 || badCommon.length > 0) {
+    return {
+      ok: false,
+      refusal: {
+        status: "workspace_layout_rejected",
+        nestedRepositories: nestedRepos,
+        unexpectedDirectories: unexpected,
+        commonDirInsideWorkspace: badCommon,
+        reason:
+          "Refusing teardown: the workspace contains entries ensure_task_repo does not create (a nested real repository, an unexpected directory, or a git common dir inside the workspace). Inspect and clean them manually; the runtime never deletes what it did not create.",
+      },
+    };
+  }
+  return { ok: true, groups, artifacts };
+}
+
+export async function teardownTaskRepo(
+  params: { task: string },
+  ctxCwd: string,
+  opts: { taskRoot: string },
+) {
+  // 0. Resolve the workspace: the task identity maps to a directory that
+  // must be a DIRECT child of the task root — never the root itself, never
+  // outside it (identity traversal like ".." or "a/../../b" resolves to an
+  // escape and is refused before anything is inspected).
+  if (!params.task.trim()) {
+    return { status: "error", message: "Task identity is required." };
+  }
+  const taskRoot = realpath(opts.taskRoot);
+  const workspace = realpath(taskWorkspacePath(params.task, taskRoot));
+  if (dirname(workspace) !== taskRoot || workspace === taskRoot) {
+    return {
+      status: "error",
+      message: `Refusing task identity ${JSON.stringify(params.task)}: it does not resolve to a workspace directly inside ${taskRoot}`,
+    };
+  }
+  if (!existsSync(workspace)) {
+    return {
+      status: "error",
+      message: `No task workspace for ${JSON.stringify(params.task)} under ${taskRoot}; run task_status to list existing workspaces`,
+    };
+  }
+
+  // 1. Inventory: all linked worktrees grouped per repo, plus artifact files.
+  const inventory = await collectTeardownFacts(workspace);
+  if (!inventory.ok) return inventory.refusal;
+  const { groups, artifacts } = inventory;
+  const allWorktrees = [...groups.values()].flatMap((g) => g.worktrees);
+
+  // 2. Dirty guard: no worktree with uncommitted changes is ever removed.
+  const dirty = allWorktrees.filter(
+    (w) => w.dirty.staged.length > 0 || w.dirty.unstaged.length > 0,
+  );
+  if (dirty.length > 0) {
+    return {
+      status: "task_dirty",
+      task: params.task,
+      workspace,
+      dirty: dirty.map((w) => ({
+        name: w.name,
+        path: w.path,
+        branch: w.branch,
+        staged: w.dirty.staged,
+        unstaged: w.dirty.unstaged,
+      })),
+      reason:
+        "Refusing teardown: a worktree in this task workspace has uncommitted changes. Commit, discard, or move them first; nothing was removed.",
+    };
+  }
+
+  // 3. branch_in_use guard: a task branch checked out in a worktree OUTSIDE
+  // this workspace (typically another session's) must produce a clear
+  // refusal — never a silent removal path.
+  const inUse: { branch: string; worktree: string }[] = [];
+  for (const group of groups.values()) {
+    const list = await getWorktreeList(group.commonDir);
+    if (list.length === 0) {
+      return {
+        status: "error",
+        message: `Cannot read the worktree registry of ${group.commonDir}; refusing to tear down without it`,
+      };
+    }
+    const ourPaths = new Set(group.worktrees.map((w) => realpath(w.path)));
+    for (const entry of list) {
+      if (!entry.branch) continue;
+      if (ourPaths.has(realpath(entry.path))) continue;
+      if (group.worktrees.some((w) => w.branch === entry.branch)) {
+        inUse.push({ branch: entry.branch, worktree: entry.path });
+      }
+    }
+  }
+  if (inUse.length > 0) {
+    return {
+      status: "branch_in_use",
+      task: params.task,
+      workspace,
+      branches: inUse,
+      reason:
+        "Refusing teardown: a task branch is checked out in a worktree outside this task workspace (possibly another session). Coordinate and detach or remove that worktree first; nothing was removed.",
+    };
+  }
+
+  // 4. Non-force merge guard: every task branch must already be contained
+  // in its upstream (when set) or in the common repo's HEAD — the same
+  // condition a non-force `git branch -d` enforces. Refuse up front so a
+  // refusal never leaves a partially torn-down workspace behind.
+  const unmerged: { repo: string; branch: string; target: string | null }[] = [];
+  for (const group of groups.values()) {
+    const head = await git(group.commonDir, "rev-parse", "HEAD");
+    for (const w of group.worktrees) {
+      const target = w.upstream ?? (head.ok ? head.stdout : null);
+      const merged = target
+        ? await git(group.commonDir, "merge-base", "--is-ancestor", w.branch, target)
+        : { ok: false };
+      if (!merged.ok) {
+        unmerged.push({ repo: group.commonDir, branch: w.branch, target });
+      }
+    }
+  }
+  if (unmerged.length > 0) {
+    return {
+      status: "branch_unmerged",
+      task: params.task,
+      workspace,
+      branches: unmerged,
+      reason:
+        "Refusing teardown: a task branch has commits not contained in its upstream or base HEAD. Push, merge, or delete the branch explicitly; teardown is non-force and nothing was removed.",
+    };
+  }
+
+  // 5. Execute per repo: remove that repo's worktrees (non-force), then
+  // delete its branches (non-force), then prune stale registrations.
+  const tornDown: {
+    repo: string;
+    worktrees: { name: string; path: string; branch: string; headSha: string }[];
+    branches: string[];
+  }[] = [];
+  for (const group of groups.values()) {
+    for (const w of group.worktrees) {
+      const remove = await git(group.commonDir, "worktree", "remove", w.path);
+      if (!remove.ok) {
+        return {
+          status: "worktree_remove_failed",
+          task: params.task,
+          workspace,
+          repo: group.commonDir,
+          name: w.name,
+          path: w.path,
+          reason: remove.stderr,
+          note:
+            "Partial teardown: earlier worktrees were already removed and the workspace directory was kept. Fix the cause and rerun teardown_task_repo.",
+        };
+      }
+    }
+    const deletedBranches: string[] = [];
+    for (const w of group.worktrees) {
+      const del = await git(group.commonDir, "branch", "-d", w.branch);
+      if (!del.ok) {
+        return {
+          status: "branch_delete_blocked",
+          task: params.task,
+          workspace,
+          repo: group.commonDir,
+          branch: w.branch,
+          deletedBranches,
+          reason: del.stderr,
+          note:
+            "Partial teardown: the branch was not force-deleted and the workspace directory was kept. Inspect, then rerun teardown_task_repo.",
+        };
+      }
+      deletedBranches.push(w.branch);
+    }
+    await git(group.commonDir, "worktree", "prune");
+    tornDown.push({
+      repo: group.commonDir,
+      worktrees: group.worktrees.map((w) => ({
+        name: w.name,
+        path: w.path,
+        branch: w.branch,
+        headSha: w.headSha,
+      })),
+      branches: deletedBranches,
+    });
+  }
+
+  // 6. Clean the task root metadata directory — every guard has passed and
+  // every worktree is unregistered, so only artifact files remain inside.
+  rmSync(workspace, { recursive: true, force: true });
+
+  return {
+    status: "torn_down",
+    task: params.task,
+    workspace,
+    repos: tornDown,
+    artifacts,
   };
 }
 

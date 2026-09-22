@@ -301,6 +301,37 @@ export function renderRemoveTaskLaneResult(
 	return passthrough(result, theme);
 }
 
+// ======================================================= teardown_task_repo
+
+export function renderTeardownTaskRepoCall(
+	args: { task?: string },
+	theme: Theme,
+): Component {
+	return callLine("teardown_task_repo", args.task ? forDisplay(args.task) : "", theme);
+}
+
+export function renderTeardownTaskRepoResult(
+	result: ToolResultLike,
+	options: RenderOptions,
+	theme: Theme,
+): Component {
+	const early = errorOrPartial(result, options, theme, "teardown_task_repo failed");
+	if (early) return early;
+
+	const v = result.details;
+	if (typeof v === "object" && v !== null) {
+		const d = v as Record<string, unknown>;
+		if (d.status === "torn_down") {
+			const segments = [theme.fg("success", "✓ torn down")];
+			if (typeof d.task === "string" && d.task) segments.push(theme.fg("muted", forDisplay(d.task)));
+			const repos = Array.isArray(d.repos) ? d.repos.length : 0;
+			segments.push(theme.fg("dim", `${repos} ${repos === 1 ? "repo" : "repos"}`));
+			return oneLine(segments, theme);
+		}
+	}
+	return passthrough(result, theme);
+}
+
 // ======================================================= checkpoint_commit
 
 export function renderCheckpointCommitCall(

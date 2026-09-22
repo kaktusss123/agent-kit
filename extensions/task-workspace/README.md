@@ -42,13 +42,15 @@ worktrees); no manifest files.
 ## Layout
 
 `index.ts` is the pi binding (ExtensionAPI tool registration, TypeBox
-schemas, result `details`, and the bash tool override that arms the git
-PATH shim); `task-root.ts` is the task-root resolution policy
+schemas, result `details`, host bootstrap configuration, and the bash tool
+override that arms the git PATH shim); `task-root.ts` is the task-root
+resolution policy
 (`AGENT_TASK_ROOT` override → `~/.agent-kit/tasks` default); the remaining
 sibling modules (`flows.ts`, `git.ts`, `guard.ts`, `shim-path.ts`, `types.ts`)
 are a host-independent core that receives its task root explicitly and returns
 plain domain results. `core-isolation.test.ts` proves the core imports and
-runs with no host context.
+runs with no host context. `bootstrap.ts` is the host-independent
+dependency-provisioning core behind the ensure flow's bootstrap step.
 
 `shim/` holds the git guard: `shim/git` (a dumb POSIX PATH shim),
 `shim/policy.mjs` (the routing policy, runnable under node or bun), and

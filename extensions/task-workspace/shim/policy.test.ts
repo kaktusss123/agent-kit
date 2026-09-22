@@ -16,7 +16,10 @@ let fx: GuardFixture;
 
 beforeAll(async () => {
   fx = await createGuardFixture("agent-kit-policy-");
-});
+  // Fixture builds two managed worktrees plus ~25 git spawns; on a loaded
+  // machine that exceeds bun's default 5s hook timeout, so bound it
+  // explicitly.
+}, 60_000);
 
 afterAll(async () => {
   if (fx) await fx.destroy();

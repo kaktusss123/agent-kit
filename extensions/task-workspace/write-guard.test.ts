@@ -7,7 +7,9 @@ let fx: GuardFixture;
 
 beforeAll(async () => {
   fx = await createGuardFixture("agent-kit-write-guard-");
-});
+  // Fixture builds managed worktrees plus a burst of git spawns; on a
+  // loaded machine that exceeds bun's default 5s hook timeout.
+}, 60_000);
 
 afterAll(async () => {
   if (fx) await fx.destroy();

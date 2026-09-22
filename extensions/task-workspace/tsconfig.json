@@ -12,6 +12,7 @@
     "types": ["node"]
   },
   "include": [
+    "bootstrap.ts",
     "flows.ts",
     "git.ts",
     "guard.ts",

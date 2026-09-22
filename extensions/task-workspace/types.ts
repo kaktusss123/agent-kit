@@ -65,3 +65,18 @@ export interface GuardBlock {
 }
 export type GuardVerdict = GuardBlock | undefined;
 
+// ─── bootstrap (worktree dependency provisioning) ───────────────────────
+
+export interface BootstrapLink {
+  name: string;
+  source: string;
+  target: string;
+  action: "created" | "kept" | "repointed" | "conflict" | "source_missing";
+}
+
+export interface BootstrapResult {
+  status: "provisioned" | "current" | "not_applicable" | "skipped";
+  links: BootstrapLink[];
+  reason?: string;
+}
+

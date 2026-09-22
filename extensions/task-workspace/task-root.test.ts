@@ -9,7 +9,10 @@ import { resolveTaskRoot } from "./task-root";
 const RESOLVER_ENTRY = join(import.meta.dir, "task-root.ts");
 
 function withTempRoot(run: (root: string) => void): void {
-  const root = mkdtempSync(join(tmpdir(), "task-root-"));
+  // realpathSync: on macOS /var is a symlink to /private/var, and the
+  // resolver's walk-up realpath resolves the first EXISTING ancestor — the
+  // temp root itself — so expectations must be stated in real-path space.
+  const root = realpathSync(mkdtempSync(join(tmpdir(), "task-root-")));
   try {
     run(root);
   } finally {
@@ -51,7 +54,9 @@ describe("task-root resolution", () => {
   });
 
   test("default follows $HOME (fresh process, clean environment)", () => {
-    const fakeHome = mkdtempSync(join(tmpdir(), "task-root-home-"));
+    // Real-path space for the same /var → /private/var reason as
+    // withTempRoot: the walk-up realpath resolves the existing fakeHome.
+    const fakeHome = realpathSync(mkdtempSync(join(tmpdir(), "task-root-home-")));
     try {
       expect(resolveInSubprocess({ HOME: fakeHome })).toBe(
         join(fakeHome, ".agent-kit", "tasks"),
