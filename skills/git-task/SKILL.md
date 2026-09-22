@@ -68,30 +68,13 @@ Main is the task controller: it owns task intent, user decisions, orchestration,
 
 When implementation begins, reuse the existing canonical worktrees and load the task's `SPEC.md` when present. Before dispatch, fit each owner's scope to its deadline and leave time for a candidate commit plus post-commit verification. If the assignment cannot fit, reduce or sequence the scope instead of relying on the hard cutoff. Pass the chosen `deadlineSec`; the runtime adds the finalization budget to the child prompt, so Main must not duplicate it in the canonical task.
 
-Dispatch owners as parallel calls when repositories are independent, in dependency order otherwise, treating a contract-fixing checkpoint (implementation + local verification yielded) as the barrier before dependents mutate against it. Owners work strictly inside their own worktrees and return contract conflicts to Main instead of resolving them silently. Main does not edit task repositories itself. Once this skill is loaded, every repository mutation goes through a RepoOwner subagent run — no exceptions. Bypass counter-examples, all observed in practice: Main editing task-worktree files itself; Main implementing a change directly in the primary checkout; Main running Git surgery by hand (`worktree remove`, branch fixups) instead of dispatching a RepoOwner.
+Dispatch owners as parallel calls when repositories are independent, in dependency order otherwise, treating a contract-fixing checkpoint (implementation + local verification yielded) as the barrier before dependents mutate against it. Owners work strictly inside their own worktrees and return contract conflicts to Main instead of resolving them silently. Main does not edit task repositories itself. Once this skill is loaded, every repository mutation goes through a RepoOwner subagent run — no exceptions. Editing task-worktree files directly, implementing in the primary checkout, and hand-running Git surgery are the same routing failure in different costumes.
 
 Late escalation: Main keeps ownership of the repository whose owner already ran; dispatch an owner only for the newly discovered repository. If the discovery changes the cross-repo contract or architecture, update the specification before further mutation — no ceremonial restart.
 
 ## Worker verification reports
 
-Completion ordering (ADR-0002): a `done` outcome describes a committed, settled candidate. Before `report_result(status=done)`, the finished state must be committed as a candidate commit, and the final verification must have run against the repository after that commit was created. Checks run before the commit remain development feedback; they do not replace the post-commit final verification. If verification, hooks, or repair changed repository state after the last commit, that state is a new candidate: commit it and verify it again before yielding.
-
-Before yielding, a repo owner returns a compact structured report (JSON, no raw test output):
-
-```json
-{
-  "status": "done | partial | blocked",
-  "summary": "one paragraph",
-  "changed_scope": ["paths or areas"],
-  "verification": [
-    { "check": "uv run pytest tests/dp_user_plane_api/trino -q", "cwd": "<worktree>", "result": "pass | fail | blocked" }
-  ],
-  "gaps": ["what was not run or could not run, and why"],
-  "contract_conflicts": ["disagreements with SPEC.md, if any"]
-}
-```
-
-Main trusts this report and does not mechanically repeat local worker checks. Main re-runs checks only when the report is missing or incomplete, repository state changed after the check, a result looks suspicious, or the check is part of integration acceptance.
+Before yielding, a RepoOwner returns a compact structured report; the schema and the done-means-committed-and-verified completion ordering are the worker report contract in `references/repo-owners.md`. Main trusts this report and does not mechanically repeat local worker checks. Main re-runs checks only when the report is missing or incomplete, repository state changed after the check, a result looks suspicious, or the check is part of integration acceptance.
 
 ## Review and repair
 
