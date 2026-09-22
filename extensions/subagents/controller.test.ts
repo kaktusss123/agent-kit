@@ -545,6 +545,39 @@ describe("LocalSubagentRuntime cancel", () => {
 			cleanup();
 		}
 	});
+
+	test("F002: cancel of an already-completed child preserves the terminal result", async () => {
+		const { harness, runtime, events, tmp, cleanup } = makeRuntime();
+		try {
+			const { id, proc } = await spawnRunning(runtime, harness);
+			settleRun(proc, "done");
+			await tick(60);
+			expect(runtime.inspect(id)[0].state).toBe("completed");
+			const before = loadResult(id, tmp);
+			expect(before!.status).toBe("completed");
+			expect(before!.endedAt).toBeNumber();
+
+			// abort + SIGTERM; the fake child dies with exit code 143
+			await runtime.cancel(id);
+
+			const after = loadResult(id, tmp);
+			expect(after!.status).toBe("completed");
+			expect(after!.endedAt).toBe(before!.endedAt);
+			expect(after!.exitCode ?? undefined).toBe(before!.exitCode ?? undefined); // not 143
+			expect(after!.processKilledAt).toBeNumber();
+			// The settled payload is untouched: only processKilledAt was added.
+			const { processKilledAt: _beforeKilled, ...beforeRest } = before!;
+			const { processKilledAt: _afterKilled, ...afterRest } = after!;
+			expect(afterRest).toEqual(beforeRest);
+			// One terminal event only, and it stays a completion.
+			expect(events.filter((e) => e.kind === "completed")).toHaveLength(1);
+			expect(events.filter((e) => e.kind === "cancelled" && e.agentId === id)).toHaveLength(0);
+			expect(runtime.inspect(id)[0].state).toBe("completed");
+		} finally {
+			await runtime.shutdown();
+			cleanup();
+		}
+	});
 });
 
 describe("LocalSubagentRuntime shutdown", () => {
@@ -555,6 +588,31 @@ describe("LocalSubagentRuntime shutdown", () => {
 			await spawnRunning(runtime, harness, "b");
 			await runtime.shutdown();
 			expect(harness.spawned.every((p) => p.closed)).toBe(true);
+		} finally {
+			cleanup();
+		}
+	});
+
+	test("F002: shutdown cancelAll keeps a completed child's settled result intact", async () => {
+		const { harness, runtime, events, tmp, cleanup } = makeRuntime();
+		try {
+			const { id, proc } = await spawnRunning(runtime, harness);
+			settleRun(proc, "done");
+			await tick(60);
+			const before = loadResult(id, tmp);
+			expect(before!.status).toBe("completed");
+
+			// cancelAll SIGTERMs the idle-but-open child (exit code 143);
+			// the persisted result must keep its completed status and endedAt.
+			await runtime.shutdown();
+
+			const after = loadResult(id, tmp);
+			expect(after!.status).toBe("completed");
+			expect(after!.endedAt).toBe(before!.endedAt);
+			expect(after!.exitCode ?? undefined).toBe(before!.exitCode ?? undefined); // not 143
+			expect(after!.processKilledAt).toBeNumber();
+			expect(events.filter((e) => e.kind === "cancelled")).toHaveLength(0);
+			expect(runtime.inspect(id)[0].state).toBe("completed");
 		} finally {
 			cleanup();
 		}
