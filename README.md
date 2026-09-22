@@ -100,7 +100,13 @@ mandatory: например, перед работой с task workspace — п�
   real consumer у него отсутствует, поэтому library-уровень не выделяется.
 - **subagents** — единый subagent runtime; workspace-режим того же `subagent`
   (RepoOwner-протокол: readiness handshake, deadline, terminal envelope,
-  settled-state verification).
+  settled-state verification). Жизненный цикл: в момент спавна пишется
+  marker-запись `running` (при старте контроллера записи этого родителя без
+  терминального результата финализируются как `failed` — «child lost across
+  parent restart», чужие видны в `op=status` как orphans), а осевший ребёнок
+  завершает свой процесс после idle-задержки (`idleExitMs`, по умолчанию
+  30 минут; `0` — выключить) с сохранением терминального результата;
+  `follow_up` на уже завершённого ребёнка порождает свежий спавн с задачей.
 - **proxy-toggle** — машинная proxy-preference для окружения Pi
   (`/proxy on|off|status`). По умолчанию выключен: свежая машина без
   `proxy-state.json` работает напрямую, включать нужно только на

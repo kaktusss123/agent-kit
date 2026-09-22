@@ -5,7 +5,7 @@
  * main context. Deliveries are a few compact lines; the full result lives in
  * the persisted result file, reachable via `subagent result`.
  */
-import type { AgentResult, AgentSnapshot, SessionStats, SubagentModelEvent } from "./types";
+import type { AgentResult, AgentSnapshot, ForeignRunningMarker, SessionStats, SubagentModelEvent } from "./types";
 import { formatAskRequestJson, type AskInput } from "../ask/contract";
 
 /**
@@ -119,6 +119,28 @@ export function formatStatusList(snapshots: AgentSnapshot[], runViews?: Map<stri
 		(a, b) => STATE_ORDER[a.state] - STATE_ORDER[b.state] || b.startedAt - a.startedAt,
 	);
 	return sorted.map((s) => formatSnapshot(s, runViews?.get(s.id))).join("\n");
+}
+
+/**
+ * Compact section for spawn-time markers of OTHER sessions still "running"
+ * on disk (F003 reconciliation): orphans this session can see but must not
+ * touch. pid is included because termination usually means killing the
+ * process — the owning session may be long gone.
+ */
+export function formatOrphanList(orphans: ForeignRunningMarker[]): string {
+	const lines = [`orphans from other sessions: ${orphans.length}`];
+	for (const o of orphans) {
+		const parts = [
+			o.id,
+			`“${o.label}”`,
+			o.task ? oneLine(o.task, 80) : undefined,
+			`age ${formatDuration(o.ageMs)}`,
+			...(o.pid !== undefined ? [`pid ${o.pid}`] : []),
+		].filter(Boolean);
+		lines.push(`  ${parts.join(" · ")}`);
+	}
+	lines.push("  (not owned by this session: cancel from the owning session or kill the pid)");
+	return lines.join("\n");
 }
 
 /** Compact human token count ("874", "87.5k", "1.2M") for status views. */

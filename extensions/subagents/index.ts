@@ -62,6 +62,7 @@ import type { WaitOutcome } from "./types";
 import {
 	formatAskRequestBlock,
 	formatLiveSnapshot,
+	formatOrphanList,
 	formatResult,
 	formatStatusList,
 	RESOLVE_INSTRUCTION,
@@ -131,6 +132,13 @@ const SubagentParams = Type.Object({
 	),
 	message: Type.Optional(Type.String({ description: "steer/follow_up: message for the child agent" })),
 	answer: Type.Optional(Type.String({ description: "respond: answer to the child's pending question" })),
+	idleExitMs: Type.Optional(
+		Type.Integer({
+			description:
+				"spawn (plain only): ms after a child settles before its process is retired — the terminal result is kept (default 1800000 = 30 min; 0 disables idle exit)",
+			minimum: 0,
+		}),
+	),
 	timeoutSec: Type.Optional(
 		Type.Integer({ description: "wait: max seconds to block (default 600)", minimum: 1, maximum: 3600 }),
 	),
@@ -333,6 +341,9 @@ export default function (pi: ExtensionAPI) {
 			"(answer a child's pending question), cancel (abort and terminate).",
 			"Large parallel waves of children on one provider + model class can hit provider 429 rate limits — mix",
 			"model classes across a wave or keep same-model waves small.",
+			"Settled children are reaped automatically after an idle delay (default 30 min; per-spawn idleExitMs): the",
+			"terminal result is preserved, only the process exits. follow_up addressed at an already-reaped child",
+			"degrades to a fresh spawn with the queued task — track the returned agent id.",
 			"When a background child settles, you receive a short [subagent ...] event message; the child transcript",
 			"is never added to your context — fetch details with op=result.",
 		].join(" "),
@@ -393,6 +404,11 @@ export default function (pi: ExtensionAPI) {
 							if (params.cwd) {
 								return err("workspace spawns root the child at the worktree; `cwd` does not apply");
 							}
+							if (params.idleExitMs !== undefined) {
+								return err(
+									"idleExitMs applies to plain spawns only (workspace runs are reaped by the default idle exit after settling)",
+								);
+							}
 							const res = await getRuns().spawnRun({
 								workspace: params.workspace,
 								task: params.task,
@@ -419,6 +435,7 @@ export default function (pi: ExtensionAPI) {
 							cwd: params.cwd,
 							model: pair.model,
 							thinking: pair.thinking,
+							...(params.idleExitMs !== undefined ? { idleExitMs: params.idleExitMs } : {}),
 						});
 						return ok(
 							[
@@ -437,8 +454,15 @@ export default function (pi: ExtensionAPI) {
 							const v = runs?.runView(s.id);
 							if (v) views.set(s.id, v);
 						}
-						return ok(formatStatusList(snaps, views), {
+						// Full listing (no id): append foreign orphans (F003) — spawn
+						// markers of OTHER sessions still "running" on disk. Never
+						// rewritten here; surfaced so an operator can act on them.
+						const orphans = params.id ? [] : rt.listForeignRunningMarkers();
+						const text = formatStatusList(snaps, views)
+							+ (orphans.length > 0 ? `\n\n${formatOrphanList(orphans)}` : "");
+						return ok(text, {
 							agents: snaps.map((s) => agentDetailView(s, views.get(s.id))),
+							...(orphans.length > 0 ? { orphans } : {}),
 						});
 					}
 					case "steer": {
@@ -450,9 +474,22 @@ export default function (pi: ExtensionAPI) {
 					case "follow_up": {
 						requireId(params);
 						if (!params.message) return err("follow_up requires `message`");
-						await rt.followUp(params.id!, params.message);
+						const res = await rt.followUp(params.id!, params.message);
+						if (res.respawned) {
+							// The child was already reaped (idle exit) or died after
+							// settling: the queued work became a fresh agent. The model
+							// must track the NEW id — the old one stays terminal forever.
+							return ok(
+								[
+									`Subagent ${params.id} had already exited (settled children are reaped after their idle delay);`,
+									`its terminal result is preserved. The queued task was spawned as a FRESH subagent ${res.agentId}.`,
+									`Track id=${res.agentId} for status/wait/result from here on.`,
+								].join("\n"),
+								{ agentId: res.agentId, respawned: true },
+							);
+						}
 						return ok(
-							`Follow-up queued for ${params.id}; it runs after the current work (or resumes the idle agent).`,
+							`Follow-up queued for ${res.agentId}; it runs after the current work (or resumes the idle agent).`,
 						);
 					}
 					case "wait": {
