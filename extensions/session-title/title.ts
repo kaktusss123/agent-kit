@@ -11,17 +11,19 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 
 /** Hard cap for a generated title, in code points (tab titles must stay short). */
-export const TITLE_MAX_CODE_POINTS = 48;
+export const TITLE_MAX_CODE_POINTS = 30;
 
 /** System prompt for the title model. The reply language follows the user's message. */
 export const TITLE_SYSTEM_PROMPT = [
 	"You generate short session titles for a coding agent.",
-	"Given the user's first message, reply with a concise title that captures the task's essence.",
+	"Given the user's first message, reply with a 2-4 word title that captures the task's essence.",
 	"Rules:",
 	"- Reply in the same language as the user's message.",
-	"- 3 to 8 words.",
+	"- 2 to 4 words, never more: the most distinctive proper nouns or tech names plus the action, not a full sentence.",
+	"- Prefer concrete identifiers (service, tech, component names) over generic verbs like \"fix\" or \"update\".",
 	"- No surrounding quotes, no trailing punctuation, no prefixes like \"Task:\" or \"Re:\".",
 	"- Describe the goal, not greetings or pleasantries.",
+	"Good titles: \"Kuber-nagibator refactor\", \"Trino + S3\", \"Web-SQL ключ\".",
 	"Reply with the title only.",
 ].join("\n");
 
@@ -39,8 +41,9 @@ function dropFenceLines(lines: string[]): string[] {
 /**
  * Extract and sanitize a title from a model response: first non-empty line,
  * stripped of code fences, quotes and wrapping punctuation, whitespace
- * collapsed, hard-capped at TITLE_MAX_CODE_POINTS. Returns undefined when
- * nothing usable remains.
+ * collapsed, hard-capped at TITLE_MAX_CODE_POINTS (backing off to the last
+ * space so the cut does not end mid-word). Returns undefined when nothing
+ * usable remains.
  */
 export function sanitizeTitle(raw: string): string | undefined {
 	const nonEmpty = raw
@@ -58,7 +61,15 @@ export function sanitizeTitle(raw: string): string | undefined {
 	// Drop a single trailing sentence period (other punctuation is kept).
 	line = line.replace(/[.。]$/, "").trim();
 
-	const truncated = Array.from(line).slice(0, TITLE_MAX_CODE_POINTS).join("").trim();
+	const codePoints = Array.from(line);
+	if (codePoints.length > TITLE_MAX_CODE_POINTS) {
+		// Hard-cut to the cap, then back off to the last space so the cut does not
+		// end mid-word; a line with no spaces keeps the hard cut.
+		line = codePoints.slice(0, TITLE_MAX_CODE_POINTS).join("");
+		const lastSpace = line.lastIndexOf(" ");
+		if (lastSpace > 0) line = line.slice(0, lastSpace);
+	}
+	const truncated = line.trim();
 	return truncated.length > 0 ? truncated : undefined;
 }
 

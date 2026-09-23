@@ -24,7 +24,7 @@ describe("buildTitlePrompt", () => {
 describe("TITLE_SYSTEM_PROMPT", () => {
 	test("asks for the user's language and bare title output", () => {
 		expect(TITLE_SYSTEM_PROMPT).toContain("same language as the user's message");
-		expect(TITLE_SYSTEM_PROMPT).toContain("3 to 8 words");
+		expect(TITLE_SYSTEM_PROMPT).toContain("2 to 4 words");
 	});
 });
 
@@ -55,6 +55,13 @@ describe("sanitizeTitle", () => {
 		const result = sanitizeTitle(cyrillic);
 		expect(result).toBeDefined();
 		expect(Array.from(result!).length).toBe(TITLE_MAX_CODE_POINTS);
+	});
+
+	test("backs off to the last full word when the cap cuts mid-word", () => {
+		const long = "Fix flaky login and oauth tokens now"; // 36 code points.
+		expect(Array.from(long).length).toBeGreaterThan(TITLE_MAX_CODE_POINTS);
+		// Hard cut lands inside "tokens"; the partial word is dropped.
+		expect(sanitizeTitle(long)).toBe("Fix flaky login and oauth");
 	});
 
 	test("returns undefined for empty or punctuation-only output", () => {
