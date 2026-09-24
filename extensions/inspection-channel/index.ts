@@ -16,22 +16,73 @@ export const RESPONSE_FD_ENV = "AGENTKIT_INSPECT_RESPONSE_FD";
 const MAX_LINE_BYTES = 64 * 1024;
 const MAX_RESPONSE_BYTES = 1024 * 1024;
 const VERSION = 1;
+let activeChannel: { input: fs.ReadStream; output: fs.WriteStream } | undefined;
+let currentCwd = process.cwd();
 
 type Area = "subagents" | "task" | "all";
 type Request = { v: number; id: string; op: string; area: string };
 export type InspectionDeps = { cwd: string; inspect?: () => Record<string, unknown>[] };
 
-export function validateInheritedFd(value: string | undefined): number | undefined {
+function fdAccessMode(fd: number): number | undefined {
+	// Node has no portable fcntl(F_GETFL) binding. On Linux, fdinfo exposes
+	// the open mode; fail closed where the direction cannot be established.
+	try {
+		const info = fs.readFileSync(`/proc/self/fdinfo/${fd}`, "utf8");
+		const flags = info.match(/^flags:\s*([0-7]+)$/m)?.[1];
+		return flags === undefined ? undefined : Number.parseInt(flags, 8) & 3;
+	} catch {
+		return undefined;
+	}
+}
+
+export function validateInheritedFd(value: string | undefined, direction?: "read" | "write"): number | undefined {
 	if (!value || !/^(?:0|[1-9][0-9]*)$/.test(value)) return undefined;
 	const fd = Number(value);
-	if (!Number.isSafeInteger(fd) || fd < 0) return undefined;
+	if (!Number.isSafeInteger(fd) || fd <= 2) return undefined;
 	try {
 		const stat = fs.fstatSync(fd);
 		if (!stat.isFIFO() && !stat.isSocket()) return undefined;
+		if (direction !== undefined && fdAccessMode(fd) !== (direction === "read" ? 0 : 1)) return undefined;
 		return fd;
 	} catch {
 		return undefined;
 	}
+}
+
+export function validateInheritedFdPair(requestValue: string | undefined, responseValue: string | undefined): { requestFd: number; responseFd: number } | undefined {
+	if (requestValue === undefined || responseValue === undefined || requestValue === responseValue) return undefined;
+	const requestFd = validateInheritedFd(requestValue, "read");
+	const responseFd = validateInheritedFd(responseValue, "write");
+	return requestFd === undefined || responseFd === undefined ? undefined : { requestFd, responseFd };
+}
+
+export function frameJsonLines(buffer: Buffer, chunk: Buffer): { lines: Buffer[]; remainder: Buffer; oversized: boolean } {
+	const data = Buffer.concat([buffer, chunk]);
+	const lines: Buffer[] = [];
+	let offset = 0;
+	for (;;) {
+		const newline = data.indexOf(0x0a, offset);
+		if (newline < 0) break;
+		const frameLength = newline + 1 - offset;
+		if (frameLength > MAX_LINE_BYTES) return { lines, remainder: Buffer.alloc(0), oversized: true };
+		lines.push(data.subarray(offset, newline));
+		offset = newline + 1;
+	}
+	const remainder = data.subarray(offset);
+	return { lines, remainder, oversized: remainder.length > MAX_LINE_BYTES };
+}
+
+export function waitForDrain(output: NodeJS.WritableStream): Promise<void> {
+	return new Promise<void>((resolve, reject) => {
+		const cleanup = () => {
+			output.removeListener("drain", onDrain);
+			output.removeListener("error", onError);
+		};
+		const onDrain = () => { cleanup(); resolve(); };
+		const onError = (error: Error) => { cleanup(); reject(error); };
+		output.once("drain", onDrain);
+		output.once("error", onError);
+	});
 }
 
 export function validateRequest(value: unknown): { request?: Request; error?: { code: string; message: string } } {
@@ -71,10 +122,9 @@ export async function handleInspectionRequest(raw: string, deps: InspectionDeps)
 	}
 }
 
-function startInheritedChannel(getCwd: () => string): void {
-	const requestFd = validateInheritedFd(process.env[REQUEST_FD_ENV]);
-	const responseFd = validateInheritedFd(process.env[RESPONSE_FD_ENV]);
-	if (requestFd === undefined || responseFd === undefined) return;
+export function startInheritedChannel(requestFd: number, responseFd: number, getCwd: () => string): boolean {
+	if (activeChannel) return true;
+	if (requestFd === responseFd || validateInheritedFd(String(requestFd), "read") !== requestFd || validateInheritedFd(String(responseFd), "write") !== responseFd) return false;
 
 	let input: fs.ReadStream;
 	let output: fs.WriteStream;
@@ -82,35 +132,31 @@ function startInheritedChannel(getCwd: () => string): void {
 		input = fs.createReadStream(null as unknown as string, { fd: requestFd, autoClose: false, highWaterMark: 16 * 1024 });
 		output = fs.createWriteStream(null as unknown as string, { fd: responseFd, autoClose: false, highWaterMark: 16 * 1024 });
 	} catch {
-		return;
+		return false;
 	}
-	let buffer = "";
+	activeChannel = { input, output };
+	let buffer = Buffer.alloc(0);
+	const lines: Buffer[] = [];
 	let busy = false;
 	let stopped = false;
 
 	const stop = () => {
 		if (stopped) return;
 		stopped = true;
+		if (activeChannel?.input === input) activeChannel = undefined;
 		input.destroy();
 		output.destroy();
 	};
 	const writeResponse = async (response: Record<string, unknown>) => {
 		const line = JSON.stringify(response) + "\n";
 		if (Buffer.byteLength(line) > MAX_RESPONSE_BYTES) throw new Error("response exceeds protocol bound");
-		if (!output.write(line)) await new Promise<void>((resolve, reject) => {
-			output.once("drain", resolve);
-			output.once("error", reject);
-		});
+		if (!output.write(line)) await waitForDrain(output);
 	};
 	const consume = async () => {
 		if (busy || stopped) return;
-		const newline = buffer.indexOf("\n");
-		if (newline < 0) {
-			if (Buffer.byteLength(buffer) > MAX_LINE_BYTES) stop();
-			return;
-		}
-		const line = buffer.slice(0, newline).replace(/\r$/, "");
-		buffer = buffer.slice(newline + 1);
+		const frame = lines.shift();
+		if (!frame) return;
+		const line = frame.toString("utf8").replace(/\r$/, "");
 		busy = true;
 		input.pause();
 		try {
@@ -127,20 +173,27 @@ function startInheritedChannel(getCwd: () => string): void {
 		}
 	};
 	input.on("data", (chunk: Buffer | string) => {
-		buffer += chunk.toString();
+		const parsed = frameJsonLines(buffer, Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
+		if (parsed.oversized) { stop(); return; }
+		buffer = parsed.remainder;
+		lines.push(...parsed.lines);
 		void consume();
 	});
 	input.on("end", stop);
 	input.on("error", stop);
 	output.on("error", stop);
+	return true;
 }
 
 export default function registerInspectionChannel(pi: ExtensionAPI): void {
-	let cwd = process.cwd();
 	pi.on("session_start", (_event, ctx) => {
-		cwd = ctx.cwd;
+		currentCwd = ctx.cwd;
 	});
-	// Descriptor validation is intentionally repeated at registration time: an
-	// invalid inherited value must be inert, never an extension-startup failure.
-	startInheritedChannel(() => cwd);
+	// Pi invokes extension factories again for session changes. The transport
+	// is process-owned, not session-owned; reuse its sole stream pair and read
+	// the latest cwd when each request arrives.
+	if (!activeChannel) {
+		const pair = validateInheritedFdPair(process.env[REQUEST_FD_ENV], process.env[RESPONSE_FD_ENV]);
+		if (pair) startInheritedChannel(pair.requestFd, pair.responseFd, () => currentCwd);
+	}
 }

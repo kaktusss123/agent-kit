@@ -1,8 +1,9 @@
 import { describe, expect, test } from "bun:test";
+import { EventEmitter } from "node:events";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
-import { handleInspectionRequest, validateInheritedFd, validateRequest } from "./index";
+import { frameJsonLines, handleInspectionRequest, validateInheritedFd, validateInheritedFdPair, validateRequest, waitForDrain } from "./index";
 
 const deps = { cwd: process.cwd(), inspect: () => [{ id: "sa-1", state: "running" }] };
 
@@ -31,9 +32,45 @@ describe("inherited inspection protocol", () => {
 		expect(validateRequest({ v: 1, id: "x", op: "snapshot", area: "nope" })).toMatchObject({ error: { code: "unknown_area" } });
 	});
 
-	test("descriptor validation is numeric and fail-closed", () => {
+	test("descriptor validation rejects standard streams, malformed and absent descriptors", () => {
 		expect(validateInheritedFd(undefined)).toBeUndefined();
 		expect(validateInheritedFd("1.5")).toBeUndefined();
 		expect(validateInheritedFd("999999")).toBeUndefined();
+		for (const fd of ["0", "1", "2"]) expect(validateInheritedFd(fd)).toBeUndefined();
+		expect(validateInheritedFdPair("3", "3")).toBeUndefined();
+		expect(validateInheritedFdPair("0", "4")).toBeUndefined();
+		expect(validateInheritedFdPair("4", "1")).toBeUndefined();
+	});
+
+	test("frames are limited including newline and preserve UTF-8 across byte chunks", () => {
+		const payload = Buffer.from('{"id":"здравствуйте 🐈"}\n');
+		let buffer = Buffer.alloc(0);
+		let frames: Buffer[] = [];
+		for (const byte of payload) {
+			const parsed = frameJsonLines(buffer, Buffer.from([byte]));
+			buffer = parsed.remainder;
+			frames = frames.concat(parsed.lines);
+			expect(parsed.oversized).toBe(false);
+		}
+		expect(frames).toHaveLength(1);
+		expect(frames[0].toString("utf8")).toBe('{"id":"здравствуйте 🐈"}');
+		const exactPayloadLimit = Buffer.concat([Buffer.alloc(64 * 1024, 0x61), Buffer.from("\n")]);
+		expect(frameJsonLines(Buffer.alloc(0), exactPayloadLimit).oversized).toBe(true);
+	});
+
+	test("drain and error races remove the losing listener on every cycle", async () => {
+		const output = new EventEmitter() as NodeJS.WritableStream & EventEmitter;
+		for (let i = 0; i < 5; i++) {
+			const waiting = waitForDrain(output);
+			output.emit("drain");
+			await waiting;
+			expect(output.listenerCount("drain")).toBe(0);
+			expect(output.listenerCount("error")).toBe(0);
+		}
+		const waiting = waitForDrain(output);
+		output.emit("error", new Error("closed"));
+		await expect(waiting).rejects.toThrow("closed");
+		expect(output.listenerCount("drain")).toBe(0);
+		expect(output.listenerCount("error")).toBe(0);
 	});
 });
