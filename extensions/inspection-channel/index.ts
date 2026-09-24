@@ -23,26 +23,13 @@ type Area = "subagents" | "task" | "all";
 type Request = { v: number; id: string; op: string; area: string };
 export type InspectionDeps = { cwd: string; inspect?: () => Record<string, unknown>[] };
 
-function fdAccessMode(fd: number): number | undefined {
-	// Node has no portable fcntl(F_GETFL) binding. On Linux, fdinfo exposes
-	// the open mode; fail closed where the direction cannot be established.
-	try {
-		const info = fs.readFileSync(`/proc/self/fdinfo/${fd}`, "utf8");
-		const flags = info.match(/^flags:\s*([0-7]+)$/m)?.[1];
-		return flags === undefined ? undefined : Number.parseInt(flags, 8) & 3;
-	} catch {
-		return undefined;
-	}
-}
-
-export function validateInheritedFd(value: string | undefined, direction?: "read" | "write"): number | undefined {
+export function validateInheritedFd(value: string | undefined): number | undefined {
 	if (!value || !/^(?:0|[1-9][0-9]*)$/.test(value)) return undefined;
 	const fd = Number(value);
 	if (!Number.isSafeInteger(fd) || fd <= 2) return undefined;
 	try {
 		const stat = fs.fstatSync(fd);
 		if (!stat.isFIFO() && !stat.isSocket()) return undefined;
-		if (direction !== undefined && fdAccessMode(fd) !== (direction === "read" ? 0 : 1)) return undefined;
 		return fd;
 	} catch {
 		return undefined;
@@ -51,8 +38,8 @@ export function validateInheritedFd(value: string | undefined, direction?: "read
 
 export function validateInheritedFdPair(requestValue: string | undefined, responseValue: string | undefined): { requestFd: number; responseFd: number } | undefined {
 	if (requestValue === undefined || responseValue === undefined || requestValue === responseValue) return undefined;
-	const requestFd = validateInheritedFd(requestValue, "read");
-	const responseFd = validateInheritedFd(responseValue, "write");
+	const requestFd = validateInheritedFd(requestValue);
+	const responseFd = validateInheritedFd(responseValue);
 	return requestFd === undefined || responseFd === undefined ? undefined : { requestFd, responseFd };
 }
 
@@ -124,7 +111,7 @@ export async function handleInspectionRequest(raw: string, deps: InspectionDeps)
 
 export function startInheritedChannel(requestFd: number, responseFd: number, getCwd: () => string): boolean {
 	if (activeChannel) return true;
-	if (requestFd === responseFd || validateInheritedFd(String(requestFd), "read") !== requestFd || validateInheritedFd(String(responseFd), "write") !== responseFd) return false;
+	if (requestFd === responseFd || validateInheritedFd(String(requestFd)) !== requestFd || validateInheritedFd(String(responseFd)) !== responseFd) return false;
 
 	let input: fs.ReadStream;
 	let output: fs.WriteStream;
