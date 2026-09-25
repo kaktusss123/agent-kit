@@ -78,6 +78,7 @@ import { attachDelivery } from "./wiring";
 import { taskStatus } from "../task-workspace/flows";
 import { resolveTaskRoot } from "../task-workspace/task-root";
 import type { AgentSnapshot } from "./types";
+import { setSubagentInspectionSource } from "./inspection-seam";
 
 // =============================================================================
 // Configuration
@@ -274,6 +275,13 @@ export default function (pi: ExtensionAPI) {
 		return runs;
 	}
 
+	// The machine inspection extension reads through this seam; it never owns
+	// runtime state and therefore cannot accidentally create a second registry.
+	setSubagentInspectionSource({
+		inspect: () => (runtime ? runtime.inspect() : []),
+		view: (snapshot) => agentDetailView(snapshot, runs?.runView(snapshot.id)),
+	});
+
 	// Cost rollup: before the runtime exists, reconstruct this session's
 	// settled subagent spend from persisted results (resume case — the live
 	// runtime and its in-memory counters are gone). Once the runtime exists
@@ -321,6 +329,7 @@ export default function (pi: ExtensionAPI) {
 			runs = null;
 			await r.shutdown();
 		}
+		setSubagentInspectionSource(undefined);
 	});
 
 	// ------------------------------------------------------------------- tool
@@ -669,7 +678,7 @@ export default function (pi: ExtensionAPI) {
 
 	pi.registerCommand("agentkit-status", {
 		description:
-			"Structured live status for an external RPC controller (model-free read; args: subagents | task | all, default all)",
+			"Deprecated compatibility read for external RPC controllers (model-free; args: subagents | task | all, default all)",
 		getArgumentCompletions: (prefix) => {
 			const items = ["subagents", "task", "all"].map((v) => ({ value: v, label: v }));
 			const filtered = items.filter((i) => i.value.startsWith(prefix));

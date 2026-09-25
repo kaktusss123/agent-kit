@@ -301,6 +301,10 @@ export class LocalSubagentRuntime {
 			PI_SUBAGENT_LABEL: label,
 			PI_SUBAGENT_RESULTS_DIR: this.resultsDir,
 		};
+		// The inspection channel belongs only to this Pi process. Never inherit
+		// its descriptors into either plain or workspace children.
+		delete env.AGENTKIT_INSPECT_REQUEST_FD;
+		delete env.AGENTKIT_INSPECT_RESPONSE_FD;
 		const readinessEntries = opts.readinessEntries ?? {};
 		// The readiness contract stays MAIN-SIDE (this spawn's readinessEntries);
 		// the child-side probe reports only the observed tool set, and the
