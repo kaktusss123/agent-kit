@@ -7,7 +7,14 @@
  */
 import * as fs from "node:fs";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
-import { inspectSubagents } from "../subagents/inspection-seam";
+// Pi evaluates each extension entry through a fresh jiti instance with
+// moduleCache: false, so module-level state forks per entry and per /reload
+// while the streams created by a previous instance keep reading the
+// inherited descriptors. The channel singleton, the session cwd, and the
+// subagent source therefore live in one process-wide registry on globalThis
+// (owned by the inspection seam): re-evaluated factories reuse the sole
+// stream pair already attached to the process-owned transport.
+import { inspectionRegistry as registry, inspectSubagents } from "../subagents/inspection-seam";
 import { taskStatus } from "../task-workspace/flows";
 import { resolveTaskRoot } from "../task-workspace/task-root";
 
@@ -16,18 +23,6 @@ export const RESPONSE_FD_ENV = "AGENTKIT_INSPECT_RESPONSE_FD";
 const MAX_LINE_BYTES = 64 * 1024;
 const MAX_RESPONSE_BYTES = 1024 * 1024;
 const VERSION = 1;
-
-// Pi re-evaluates extension modules with a fresh jiti instance on /reload and
-// on session-cwd changes (moduleCache: false plus a cwd/generation cache
-// token), so module-level state is lost on re-import while the streams
-// created by the previous instance keep reading the inherited descriptors.
-// The singleton therefore lives on globalThis, keyed by a registered symbol,
-// and survives re-import: re-evaluated factory calls reuse the sole stream
-// pair already attached to the process-owned transport.
-type ChannelStreams = { input: fs.ReadStream; output: fs.WriteStream };
-type ChannelRegistry = { channel?: ChannelStreams; cwd: string };
-const REGISTRY_KEY = Symbol.for("agentkit.inspection-channel");
-const registry: ChannelRegistry = ((globalThis as { [key: symbol]: ChannelRegistry | undefined })[REGISTRY_KEY] ??= { cwd: process.cwd() });
 
 type Area = "subagents" | "task" | "all";
 type Request = { v: number; id: string; op: string; area: string };

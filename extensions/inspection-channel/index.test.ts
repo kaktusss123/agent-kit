@@ -217,7 +217,7 @@ describe("inherited inspection protocol", () => {
 	// the same object a re-evaluated extension factory would find after /reload
 	// or a session-cwd change.
 	test.skipIf(!hasMkfifo)("registers one singleton channel and stop clears the registry", () => {
-		const registry = (globalThis as { [key: symbol]: { channel?: { input: fs.ReadStream }; cwd?: string } | undefined })[Symbol.for("agentkit.inspection-channel")];
+		const registry = (globalThis as { [key: symbol]: { channel?: { input: fs.ReadStream }; cwd?: string } | undefined })[Symbol.for("agentkit.inspection")];
 		// Absorb any channel an earlier test in this file left registered.
 		const leftover = registry?.channel;
 		if (leftover) (leftover.input as unknown as EventEmitter).emit("error", new Error("test reset"));
