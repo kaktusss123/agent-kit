@@ -16,8 +16,18 @@ export const RESPONSE_FD_ENV = "AGENTKIT_INSPECT_RESPONSE_FD";
 const MAX_LINE_BYTES = 64 * 1024;
 const MAX_RESPONSE_BYTES = 1024 * 1024;
 const VERSION = 1;
-let activeChannel: { input: fs.ReadStream; output: fs.WriteStream } | undefined;
-let currentCwd = process.cwd();
+
+// Pi re-evaluates extension modules with a fresh jiti instance on /reload and
+// on session-cwd changes (moduleCache: false plus a cwd/generation cache
+// token), so module-level state is lost on re-import while the streams
+// created by the previous instance keep reading the inherited descriptors.
+// The singleton therefore lives on globalThis, keyed by a registered symbol,
+// and survives re-import: re-evaluated factory calls reuse the sole stream
+// pair already attached to the process-owned transport.
+type ChannelStreams = { input: fs.ReadStream; output: fs.WriteStream };
+type ChannelRegistry = { channel?: ChannelStreams; cwd: string };
+const REGISTRY_KEY = Symbol.for("agentkit.inspection-channel");
+const registry: ChannelRegistry = ((globalThis as { [key: symbol]: ChannelRegistry | undefined })[REGISTRY_KEY] ??= { cwd: process.cwd() });
 
 type Area = "subagents" | "task" | "all";
 type Request = { v: number; id: string; op: string; area: string };
@@ -64,11 +74,14 @@ export function waitForDrain(output: NodeJS.WritableStream): Promise<void> {
 		const cleanup = () => {
 			output.removeListener("drain", onDrain);
 			output.removeListener("error", onError);
+			output.removeListener("close", onClose);
 		};
 		const onDrain = () => { cleanup(); resolve(); };
 		const onError = (error: Error) => { cleanup(); reject(error); };
+		const onClose = () => { cleanup(); reject(new Error("output closed before drain")); };
 		output.once("drain", onDrain);
 		output.once("error", onError);
+		output.once("close", onClose);
 	});
 }
 
@@ -110,7 +123,7 @@ export async function handleInspectionRequest(raw: string, deps: InspectionDeps)
 }
 
 export function startInheritedChannel(requestFd: number, responseFd: number, getCwd: () => string): boolean {
-	if (activeChannel) return true;
+	if (registry.channel) return true;
 	if (requestFd === responseFd || validateInheritedFd(String(requestFd)) !== requestFd || validateInheritedFd(String(responseFd)) !== responseFd) return false;
 
 	let input: fs.ReadStream;
@@ -121,7 +134,7 @@ export function startInheritedChannel(requestFd: number, responseFd: number, get
 	} catch {
 		return false;
 	}
-	activeChannel = { input, output };
+	registry.channel = { input, output };
 	let buffer = Buffer.alloc(0);
 	const lines: Buffer[] = [];
 	let busy = false;
@@ -130,7 +143,7 @@ export function startInheritedChannel(requestFd: number, responseFd: number, get
 	const stop = () => {
 		if (stopped) return;
 		stopped = true;
-		if (activeChannel?.input === input) activeChannel = undefined;
+		if (registry.channel?.input === input) registry.channel = undefined;
 		input.destroy();
 		output.destroy();
 	};
@@ -174,13 +187,10 @@ export function startInheritedChannel(requestFd: number, responseFd: number, get
 
 export default function registerInspectionChannel(pi: ExtensionAPI): void {
 	pi.on("session_start", (_event, ctx) => {
-		currentCwd = ctx.cwd;
+		registry.cwd = ctx.cwd;
 	});
-	// Pi invokes extension factories again for session changes. The transport
-	// is process-owned, not session-owned; reuse its sole stream pair and read
-	// the latest cwd when each request arrives.
-	if (!activeChannel) {
+	if (!registry.channel) {
 		const pair = validateInheritedFdPair(process.env[REQUEST_FD_ENV], process.env[RESPONSE_FD_ENV]);
-		if (pair) startInheritedChannel(pair.requestFd, pair.responseFd, () => currentCwd);
+		if (pair) startInheritedChannel(pair.requestFd, pair.responseFd, () => registry.cwd);
 	}
 }

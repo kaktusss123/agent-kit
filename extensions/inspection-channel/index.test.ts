@@ -178,11 +178,18 @@ describe("inherited inspection protocol", () => {
 		}
 		expect(frames).toHaveLength(1);
 		expect(frames[0].toString("utf8")).toBe('{"id":"здравствуйте 🐈"}');
-		const exactPayloadLimit = Buffer.concat([Buffer.alloc(64 * 1024, 0x61), Buffer.from("\n")]);
-		expect(frameJsonLines(Buffer.alloc(0), exactPayloadLimit).oversized).toBe(true);
+		// The bound includes the newline: 65535 payload bytes + \n is the
+		// largest accepted frame; one more payload byte tips it oversized.
+		const largestAccepted = frameJsonLines(Buffer.alloc(0), Buffer.concat([Buffer.alloc(64 * 1024 - 1, 0x61), Buffer.from("\n")]));
+		expect(largestAccepted.oversized).toBe(false);
+		expect(largestAccepted.lines).toHaveLength(1);
+		expect(largestAccepted.lines[0].length).toBe(64 * 1024 - 1);
+		const smallestRejected = frameJsonLines(Buffer.alloc(0), Buffer.concat([Buffer.alloc(64 * 1024, 0x61), Buffer.from("\n")]));
+		expect(smallestRejected.oversized).toBe(true);
+		expect(smallestRejected.lines).toHaveLength(0);
 	});
 
-	test("drain and error races remove the losing listener on every cycle", async () => {
+	test("drain, error and close races remove the losing listeners on every cycle", async () => {
 		const output = new EventEmitter() as NodeJS.WritableStream & EventEmitter;
 		for (let i = 0; i < 5; i++) {
 			const waiting = waitForDrain(output);
@@ -190,11 +197,64 @@ describe("inherited inspection protocol", () => {
 			await waiting;
 			expect(output.listenerCount("drain")).toBe(0);
 			expect(output.listenerCount("error")).toBe(0);
+			expect(output.listenerCount("close")).toBe(0);
 		}
 		const waiting = waitForDrain(output);
 		output.emit("error", new Error("closed"));
 		await expect(waiting).rejects.toThrow("closed");
 		expect(output.listenerCount("drain")).toBe(0);
 		expect(output.listenerCount("error")).toBe(0);
+		expect(output.listenerCount("close")).toBe(0);
+		const closing = waitForDrain(output);
+		output.emit("close");
+		await expect(closing).rejects.toThrow("output closed before drain");
+		expect(output.listenerCount("drain")).toBe(0);
+		expect(output.listenerCount("error")).toBe(0);
+		expect(output.listenerCount("close")).toBe(0);
+	});
+
+	// The cross-reimport registry is keyed on globalThis, so this exercises
+	// the same object a re-evaluated extension factory would find after /reload
+	// or a session-cwd change.
+	test.skipIf(!hasMkfifo)("registers one singleton channel and stop clears the registry", () => {
+		const registry = (globalThis as { [key: symbol]: { channel?: { input: fs.ReadStream }; cwd?: string } | undefined })[Symbol.for("agentkit.inspection-channel")];
+		// Absorb any channel an earlier test in this file left registered.
+		const leftover = registry?.channel;
+		if (leftover) (leftover.input as unknown as EventEmitter).emit("error", new Error("test reset"));
+		expect(registry?.channel).toBeUndefined();
+
+		const dir = fs.mkdtempSync(path.join(os.tmpdir(), "inspection-singleton-"));
+		const requestPath = path.join(dir, "request.fifo");
+		const responsePath = path.join(dir, "response.fifo");
+		expect(spawnSync("mkfifo", [requestPath, responsePath], { stdio: "ignore" }).status).toBe(0);
+		const requestFd = fs.openSync(requestPath, fs.constants.O_RDONLY | fs.constants.O_NONBLOCK);
+		// A parent-held writer keeps the channel's request reader from seeing
+		// EOF; nothing is ever written through it.
+		const holdOpenFd = fs.openSync(requestPath, fs.constants.O_WRONLY | fs.constants.O_NONBLOCK);
+		const responseFd = fs.openSync(responsePath, fs.constants.O_RDONLY | fs.constants.O_NONBLOCK);
+		const secondRequestFd = fs.openSync(requestPath, fs.constants.O_RDONLY | fs.constants.O_NONBLOCK);
+		try {
+			expect(startInheritedChannel(requestFd, responseFd, () => process.cwd())).toBe(true);
+			const channel = registry?.channel;
+			expect(channel).toBeDefined();
+			// A repeated call with another fully valid pair is absorbed: true,
+			// and the original channel object stays registered untouched.
+			expect(startInheritedChannel(secondRequestFd, responseFd, () => process.cwd())).toBe(true);
+			expect(registry?.channel).toBe(channel);
+			// Even a deliberately invalid pair returns true instead of
+			// building a competing second channel.
+			expect(startInheritedChannel(responseFd, responseFd, () => process.cwd())).toBe(true);
+			expect(registry?.channel).toBe(channel);
+			// Stopping the channel clears the registry entry: descriptor
+			// validation rejects the next call again.
+			(channel!.input as unknown as EventEmitter).emit("error", new Error("test stop"));
+			expect(registry?.channel).toBeUndefined();
+			expect(startInheritedChannel(responseFd, responseFd, () => process.cwd())).toBe(false);
+		} finally {
+			for (const fd of [requestFd, holdOpenFd, responseFd, secondRequestFd]) {
+				try { fs.closeSync(fd); } catch { /* already closed by the runtime */ }
+			}
+			fs.rmSync(dir, { recursive: true, force: true });
+		}
 	});
 });
