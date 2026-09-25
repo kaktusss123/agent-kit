@@ -101,7 +101,7 @@ const CONFIG = {
 
 const SubagentParams = Type.Object({
 	op: StringEnum(["spawn", "status", "steer", "follow_up", "wait", "result", "respond", "cancel"] as const, {
-		description: "Operation to perform on subagents",
+		description: "Operation to perform on subagents (required on every call)",
 	}),
 	task: Type.Optional(Type.String({ description: "spawn: initial task prompt for the child agent" })),
 	id: Type.Optional(Type.String({ description: "target agent id (omit for status to list all)" })),
@@ -338,7 +338,7 @@ export default function (pi: ExtensionAPI) {
 		name: "subagent",
 		label: "Subagent",
 		description: [
-			"Manage background subagents: independent pi agent processes with their own sessions.",
+			"Manage background subagents: independent pi agent processes with their own sessions. The `op` parameter is required on every call.",
 			"One surface, two spawn modes. Plain spawn (cwd) starts a child in a working directory; it works in the",
 			"background. Workspace spawn (workspace=<managed task worktree>) starts a child that OWNS that worktree:",
 			"the call blocks until a terminal outcome (done/partial/blocked) or needs_input, with live progress in the",
