@@ -11,9 +11,10 @@
  * and generic subagent surfaces stay untouched.
  *
  * Contract:
- * - fail closed before dispatch (model pinning to the main session, workspace
- *   validation, static preflight, readiness handshake — the task prompt never
- *   reaches a model before the child proves initialization);
+ * - fail closed before dispatch (model resolution through the shared spawn
+ *   boundary, workspace validation, static preflight, readiness handshake —
+ *   the task prompt never reaches a model before the child proves
+ *   initialization);
  * - no fallback after dispatch (abort = detach; repair = a new owner spawn);
  * - deadline covers the whole run including the report ladder;
  * - settlement accepts only a fresh report_result envelope (staleness is
@@ -32,6 +33,9 @@ import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
+import type { ModelLike } from "../model-classes/core";
+import type { ModelPair, ThinkingLevel } from "../model-classes/store";
+import { resolveSpawnPair } from "./spawn-model";
 import {
 	envelopeFileName,
 	validateEnvelopeRecord,
@@ -209,8 +213,18 @@ export interface WorkspaceSpawnArgs {
 	deadlineSec?: number;
 	signal?: AbortSignal;
 	onUpdate?: ToolUpdateCallback;
-	/** Main session model; the child inherits it (no modelClass in workspace mode). */
-	model?: { provider: string; id: string };
+	/**
+	 * Explicit model class override, valid for workspace spawns exactly like
+	 * plain spawns: a saved class name, or "default" for the live session
+	 * pair. Omitted → the repoOwner routing default (/model-class route),
+	 * else the session pair.
+	 */
+	modelClass?: string;
+	/** Live session model: the inheritance source and the no-model gate fact. */
+	sessionModel?: { provider: string; id: string };
+	/** Registry-backed model catalogue for validating stored class pairs. */
+	modelRegistry?: { getAll(): ModelLike[] };
+	/** Live session thinking level (inheritance source). */
 	thinkingLevel?: string;
 	cwd?: string;
 	/**
@@ -780,10 +794,22 @@ export function createWorkspaceRuns(
 	async function spawnRun(args: WorkspaceSpawnArgs): Promise<WorkspaceToolResult> {
 		const { workspace, task, signal, onUpdate, hasPendingMessages } = args;
 		const deadlineMs = Math.max(1000, (args.deadlineSec ?? DEFAULT_DEADLINE_MS / 1000) * 1000);
-		// Pre-dispatch gate 1: model pinning — no silent defaults. Workspace
-		// children inherit the main session model (modelClass does not apply).
-		if (!args.model) {
-			return fail("blocked", workspace, "no model resolved in the current session (refusing to use a silent default)");
+		// Pre-dispatch gate 1: model resolution — no silent defaults. The child
+		// runs on the explicit class, the repoOwner routing default, or the live
+		// session pair (resolved through the shared spawn boundary). Every
+		// resolution failure — no session model, unknown class, unroutable or
+		// unresolvable routing entry — is a Main-side configuration problem:
+		// blocked, dispatched:false, nothing started.
+		let pair: ModelPair;
+		try {
+			pair = resolveSpawnPair(
+				"repoOwner",
+				args.modelClass,
+				{ model: args.sessionModel, modelRegistry: args.modelRegistry ?? { getAll: () => [] } },
+				(args.thinkingLevel as ThinkingLevel | undefined) ?? "off",
+			);
+		} catch (e) {
+			return fail("blocked", workspace, e instanceof Error ? e.message : String(e));
 		}
 		// Pre-dispatch gate 2: workspace validation.
 		let realWorkspace: string;
@@ -816,8 +842,8 @@ export function createWorkspaceRuns(
 				initialPrompt: repoOwnerPrompt(task, deadlineMs),
 				label: `owner-${base}`,
 				cwd: realWorkspace,
-				model: `${args.model.provider}/${args.model.id}`,
-				thinking: args.thinkingLevel,
+				model: pair.model,
+				thinking: pair.thinking,
 				additionalExtensions: profileEntries(),
 				readinessEntries: PROFILE_READINESS,
 				eventRoute: "workspace",

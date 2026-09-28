@@ -1,17 +1,27 @@
 /**
- * Model class resolution — the single mechanism behind `/model-class` and
- * `subagent(modelClass=...)`.
+ * Model class resolution — the single mechanism behind `/model-class`,
+ * Ctrl+Alt+P cycling, and `subagent(modelClass=...)` spawn routing.
  *
- * Semantics (SPEC §2, §5):
+ * Semantics:
  *
  *   default -> snapshot of the CURRENT main session model + thinking, read
  *              at resolution time (never cached at startup);
- *   cheap   -> persisted cheap configuration;
- *   smart   -> persisted smart configuration.
+ *   <name>  -> a user-named persisted class (any number of them).
  *
  * `default` is not a profile: it is whatever Pi is running right now. After
- * a successful switch to `cheap`/`smart` the applied pair automatically IS
+ * a successful switch to a saved class the applied pair automatically IS
  * the new `default`; there is no notion of an "active class".
+ *
+ * Spawn routing (one matrix for both spawn modes — the mode only selects
+ * the routing default):
+ *
+ *   explicit modelClass  -> "default" (session pair) or a saved class name,
+ *                           validated against the registry; anything else
+ *                           fails closed listing the saved names;
+ *   omitted modelClass   -> routing[mode] if set (resolved and validated
+ *                           identically; unresolvable routes fail closed
+ *                           naming class, mode, and fix), else the session
+ *                           pair.
  *
  * Resolution validates the whole target combination (model exists in the
  * registry AND the stored thinking level is supported by that model) before
@@ -20,7 +30,7 @@
  *
  * Pure module: no pi imports — Pi-bound callers supply the environment.
  */
-import type { ModelClassRef, ModelPair, StoredClasses, ThinkingLevel } from "./store";
+import type { ModelPair, RoutingTable, SpawnMode, StoredClasses, ThinkingLevel } from "./store";
 import { isThinkingLevel } from "./store";
 
 /** Minimal structural view of a registry model needed for validation. */
@@ -50,6 +60,8 @@ export type ResolveOutcome =
 			origin: "session" | "stored";
 			/** The matched registry model for stored classes (session pairs resolve to ctx.model). */
 			model?: ModelLike;
+			/** Set when the pair came from the mode's routing default. */
+			route?: { mode: SpawnMode; className: string };
 	  }
 	| { ok: false; error: string };
 
@@ -99,41 +111,137 @@ export function createExactModelMatcher(models: ModelLike[]): (model: string) =>
 	};
 }
 
-/** Error text for activating a class that was never configured (SPEC §8). */
-export function notConfiguredError(name: "cheap" | "smart"): string {
-	return `Model class "${name}" is not configured.\nUse \`/model-class ${name} set\` to save the current model.`;
+/** Comma-joined saved class names, or a note that none are saved. */
+function savedNamesList(stored: StoredClasses): string {
+	const names = Object.keys(stored);
+	return names.length > 0 ? names.join(", ") : "none are saved yet";
 }
 
 /**
- * Resolve a class reference to a concrete model + thinking pair (SPEC §5).
- * `default` snapshots the live session; `cheap`/`smart` read persisted state
- * and validate the saved combination against the current registry. Stored
- * classes return the matched registry model so callers never have to look
- * the model up a second time (a second lookup is a race window with a
- * misleading failure mode).
+ * Error for a class reference that is not saved (typo, never configured, or
+ * removed): lists the saved class names so the caller can self-correct.
  */
-export function resolveModelClass(ref: ModelClassRef, stored: StoredClasses, env: ModelClassEnv): ResolveOutcome {
-	if (ref === "default") {
-		const pair = env.currentPair();
-		if (!pair) return { ok: false, error: "no model resolved in the current session" };
-		return { ok: true, pair, origin: "session" };
-	}
-	const saved = stored[ref];
-	if (!saved) return { ok: false, error: notConfiguredError(ref) };
+export function unknownClassError(ref: string, stored: StoredClasses): string {
+	return (
+		`Model class "${ref}" is not saved.\n` +
+		`Saved classes: ${savedNamesList(stored)}.\n` +
+		`Pick a saved name, or save it first: \`/model-class ${ref} set\`.`
+	);
+}
+
+/** Error wrapper for a routing default that cannot be resolved (SPEC D4). */
+export function routingFailureError(mode: SpawnMode, className: string, cause: string): string {
+	return (
+		`Spawn routing for mode "${mode}" is set to class "${className}", but it cannot be resolved:\n${cause}\n` +
+		`Fix: \`/model-class route ${mode} <class|inherit>\` to change or reset the route, ` +
+		`or re-save the class with \`/model-class ${className} set\`.`
+	);
+}
+
+/**
+ * Resolve a SAVED-CLASS reference (no `default` special case): own-property
+ * lookup — inherited Object properties (`constructor`, `toString`, ...) must
+ * behave exactly like unknown class names, never leak through as a class.
+ * Routing uses this directly: a routed value is looked up as a saved class
+ * ONLY, so a hand-edited `"default"` target fails closed instead of being
+ * silently reinterpreted as the session pair.
+ */
+function resolveStoredClass(name: string, stored: StoredClasses, env: ModelClassEnv): ResolveOutcome {
+	const saved = Object.hasOwn(stored, name) ? stored[name] : undefined;
+	if (!saved) return { ok: false, error: unknownClassError(name, stored) };
 	const model = env.findModel(saved.model);
 	if (!model) {
 		return {
 			ok: false,
-			error: `Model class "${ref}" refers to ${saved.model}, which is no longer available. Re-save it: \`/model-class ${ref} set\`.`,
+			error: `Model class "${name}" refers to ${saved.model}, which is no longer available. Re-save it: \`/model-class ${name} set\`.`,
 		};
 	}
 	if (!isThinkingLevel(saved.thinking) || !supportedThinkingLevels(model).includes(saved.thinking)) {
 		return {
 			ok: false,
-			error: `Model class "${ref}" refers to ${saved.model} with thinking level "${saved.thinking}", which that model does not support. Re-save it: \`/model-class ${ref} set\`.`,
+			error: `Model class "${name}" refers to ${saved.model} with thinking level "${saved.thinking}", which that model does not support. Re-save it: \`/model-class ${name} set\`.`,
 		};
 	}
 	return { ok: true, pair: saved, origin: "stored", model };
+}
+
+/**
+ * Resolve a class reference to a concrete model + thinking pair. `default`
+ * snapshots the live session; a saved class name reads persisted state and
+ * validates the saved combination against the current registry. Stored
+ * classes return the matched registry model so callers never have to look
+ * the model up a second time (a second lookup is a race window with a
+ * misleading failure mode). Anything else fails closed listing the saved
+ * class names.
+ */
+export function resolveModelClass(ref: string, stored: StoredClasses, env: ModelClassEnv): ResolveOutcome {
+	if (ref === "default") {
+		const pair = env.currentPair();
+		if (!pair) return { ok: false, error: "no model resolved in the current session" };
+		return { ok: true, pair, origin: "session" };
+	}
+	return resolveStoredClass(ref, stored, env);
+}
+
+/**
+ * Resolve the concrete pair for one spawn (SPEC R3 — one matrix for both
+ * spawn modes; the mode only selects the routing default):
+ *
+ * 1. explicit `requested`: `"default"` → live session pair; a saved class
+ *    name → its stored pair, validated; anything else → fail closed with
+ *    the saved class names listed;
+ * 2. omitted: routing entry for `mode` → that entry's value, resolved as a
+ *    SAVED CLASS ONLY and validated identically (an unresolvable route —
+ *    dead class, invalid name, even a hand-edited `"default"` — fails closed
+ *    naming the class, the mode, and the fix); no routing entry → live
+ *    session pair.
+ */
+export function resolveSpawnTarget(
+	mode: SpawnMode,
+	requested: string | undefined,
+	stored: StoredClasses,
+	routing: RoutingTable,
+	env: ModelClassEnv,
+): ResolveOutcome {
+	if (requested !== undefined) return resolveModelClass(requested, stored, env);
+	const routed = routing[mode];
+	if (routed !== undefined) {
+		const outcome = resolveStoredClass(routed, stored, env);
+		if (!outcome.ok) return { ok: false, error: routingFailureError(mode, routed, outcome.error) };
+		return { ...outcome, route: { mode, className: routed } };
+	}
+	return resolveModelClass("default", stored, env);
+}
+
+// ------------------------------------------------------------------ cycling
+
+/** Outcome of the stateless next-class selection (SPEC R5). */
+export type NextClassOutcome =
+	| { ok: true; name: string; pair: ModelPair }
+	| { ok: false; error: string };
+
+function samePair(a: ModelPair, b: ModelPair): boolean {
+	return a.model === b.model && a.thinking === b.thinking;
+}
+
+/**
+ * Stateless forward cycling: if the live session pair equals a saved
+ * class's pair (model AND thinking), switch to the NEXT class in storage
+ * order (wrap around); if it equals none, switch to the FIRST class; zero
+ * saved classes → error, nothing changes. No "active class" is persisted —
+ * the live model is the only source of truth.
+ */
+export function nextModelClass(current: ModelPair | null, stored: StoredClasses): NextClassOutcome {
+	const names = Object.keys(stored);
+	if (names.length === 0) {
+		return {
+			ok: false,
+			error: "No saved model classes to cycle. Save one first: `/model-class <class> set`.",
+		};
+	}
+	const matchIndex = current ? names.findIndex((n) => samePair(stored[n]!, current)) : -1;
+	const name = matchIndex === -1 ? names[0]! : names[(matchIndex + 1) % names.length]!;
+	return { ok: true, name, pair: stored[name]! };
 }
 
 // ------------------------------------------------------------------ switching
@@ -161,7 +269,7 @@ export type ApplyOutcome =
 
 /**
  * Apply a resolved pair to the live session without ever leaving it in a
- * mixed state (SPEC §8, "Частичное переключение"):
+ * mixed state:
  *
  * 1. the caller must fully validate the target BEFORE calling this;
  * 2. apply the model — a `false` here means nothing changed at all;

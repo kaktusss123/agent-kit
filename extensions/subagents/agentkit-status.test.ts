@@ -139,7 +139,10 @@ describe("agentkit-status payload contract", () => {
 				data: {
 					task: {
 						classification: expect.stringContaining("_"),
-						cwd: env.base,
+					// The task-workspace flow canonicalizes ctx cwd with realpath
+					// ("avoid symlink mismatches", e.g. macOS /var -> /private/var),
+					// so the payload reports the real path, not the mkdtemp literal.
+					cwd: fs.realpathSync(env.base),
 						repoRoot: "",
 						branch: "",
 						isLinkedWorktree: false,

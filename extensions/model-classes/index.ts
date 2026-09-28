@@ -1,43 +1,71 @@
 /**
- * model-classes — saved model + thinking shortcuts for Pi.
+ * model-classes — named model + thinking classes for Pi.
  *
- * Exactly three classes (SPEC):
+ * Any number of user-named classes (`/model-class <name> set`), plus:
  *
  *   default -> the CURRENT main session model + thinking; never stored,
- *              always a live snapshot taken at resolution time;
- *   cheap   -> user-saved model + thinking pair;
- *   smart   -> user-saved model + thinking pair.
+ *              always a live snapshot taken at resolution time.
  *
  * Commands:
  *
- *   /model-class                     status + usage (self-explanatory, no
- *                                    active-class marker: after a switch
- *                                    the applied pair IS the new default);
- *   /model-class <cheap|smart>       apply the saved pair to this session;
- *   /model-class <cheap|smart> set   persist the current pair into the class.
+ *   /model-class                                  status + usage;
+ *   /model-class <class>                          apply the saved pair to this session;
+ *   /model-class <class> set                      persist the current pair into the class;
+ *   /model-class <class> unset                    delete the class (refused while routed);
+ *   /model-class next                             cycle to the next saved class (stateless);
+ *   /model-class route                            show the spawn-mode routing table;
+ *   /model-class route <plain|repoOwner> <class|inherit>
+ *                                                 set/reset a spawn mode's default.
  *
- * `default` is intentionally not addressable: there is no `/model-class
- * default`, no help, no reset. Switching never leaves a mixed model/thinking
- * state and never falls back (not to default, not to another model, no
- * reasoning downgrade). Storage: `<agent-dir>/model-classes.json`, atomic.
+ * Ctrl+Alt+P cycles classes with the same stateless rule as `next`; the
+ * shortcut notifies with the applied class + pair.
+ *
+ * Switching never leaves a mixed model/thinking state and never falls back
+ * (not to default, not to another model, no reasoning downgrade). Storage:
+ * `<agent-dir>/model-classes.json`, atomic; classes keep storage insertion
+ * order, which is the cycling order.
  *
  * The resolution itself lives in core.ts and is shared with the subagents
- * extension (`subagent spawn modelClass=...` resolves through the same
- * functions before the child process is started).
+ * extension (`subagent spawn modelClass=...` and spawn-mode routing resolve
+ * through the same functions before the child process is started).
  */
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import {
 	applyResolvedPair,
 	canonicalModelId,
 	createExactModelMatcher,
+	nextModelClass,
 	resolveModelClass,
 	type ModelClassEnv,
 	type ModelLike,
 	type SessionModelApplier,
 } from "./core";
 import { parseModelClassCommand, MODEL_CLASS_USAGE } from "./parse";
-import { renderModelClassStatus, renderSaved, renderSwitched } from "./render";
-import { loadModelClasses, modelClassesPath, saveModelClass, type ModelPair, type StoredClasses } from "./store";
+import {
+	renderModelClassStatus,
+	renderRouteSet,
+	renderRoutingTable,
+	renderSaved,
+	renderSwitched,
+	renderUnset,
+} from "./render";
+import {
+	loadStoredFile,
+	modelClassesPath,
+	saveModelClass,
+	saveRouting,
+	unsetModelClass,
+	type ModelPair,
+	type StoredClasses,
+	type StoredModelClasses,
+} from "./store";
+
+/** Structural slice of the pi command/shortcut ctx this extension needs. */
+interface CtxLike {
+	model?: ModelLike | undefined;
+	modelRegistry: { getAll(): ModelLike[] };
+	ui: { notify(text: string, kind: "info" | "error" | "warning"): void };
+}
 
 export default function (pi: ExtensionAPI) {
 	/** Registry-backed exact matcher, rebuilt per call (models can refresh). */
@@ -51,7 +79,7 @@ export default function (pi: ExtensionAPI) {
 		return { model: canonicalModelId(ctxLike.model), thinking: pi.getThinkingLevel() };
 	}
 
-	/** Pi-bound applier used by the switch flow. */
+	/** Pi-bound applier used by the switch/cycle flows. */
 	const applier: SessionModelApplier = {
 		setModel: async (_pair, model) =>
 			pi.setModel(model as unknown as Parameters<typeof pi.setModel>[0]),
@@ -66,14 +94,70 @@ export default function (pi: ExtensionAPI) {
 		};
 	}
 
-	function loadStored(): StoredClasses {
-		return loadModelClasses(modelClassesPath());
+	function loadStored(): StoredModelClasses {
+		return loadStoredFile(modelClassesPath());
+	}
+
+	/** Classes-only load for the switch flow and completions. */
+	function loadClasses(): StoredClasses {
+		return loadStoredFile(modelClassesPath()).classes;
+	}
+
+	function notifyError(ctx: CtxLike, prefix: string, e: unknown): void {
+		ctx.ui.notify(`${prefix}: ${e instanceof Error ? e.message : String(e)}`, "error");
+	}
+
+	/**
+	 * Stateless forward cycle (SPEC R5), shared by `/model-class next` and
+	 * the Ctrl+Alt+P shortcut: pick the next saved class from the live
+	 * session pair, resolve + validate it, and apply it through the shared
+	 * no-mixed-state apply path. Any failure leaves the session unchanged.
+	 */
+	async function cycleToNext(ctx: CtxLike): Promise<void> {
+		let stored: StoredModelClasses;
+		try {
+			stored = loadStored();
+		} catch (e) {
+			notifyError(ctx, "Cannot cycle", e);
+			return;
+		}
+		const next = nextModelClass(currentPair(ctx), stored.classes);
+		if (!next.ok) {
+			ctx.ui.notify(next.error, "error");
+			return;
+		}
+		const resolved = resolveModelClass(next.name, stored.classes, envFor(ctx));
+		if (!resolved.ok || !resolved.model) {
+			ctx.ui.notify(resolved.ok ? "no model resolved in the current session" : resolved.error, "error");
+			return;
+		}
+		const target = { pair: resolved.pair, model: resolved.model };
+		const previous = ctx.model
+			? { pair: { model: canonicalModelId(ctx.model), thinking: pi.getThinkingLevel() }, model: ctx.model }
+			: null;
+		const outcome = await applyResolvedPair(applier, target, previous);
+		if (!outcome.ok) {
+			ctx.ui.notify(outcome.error, "error");
+			return;
+		}
+		ctx.ui.notify(renderSwitched(next.name, target.pair.model, target.pair.thinking), "info");
 	}
 
 	pi.registerCommand("model-class", {
-		description: "Show saved model classes (default/cheap/smart), switch, or save the current model",
+		description:
+			"Show saved model classes and spawn routing, switch/save/delete classes, cycle classes, or route spawn modes",
 		getArgumentCompletions: (prefix: string) => {
-			const values = ["cheap", "smart", "cheap set", "smart set"];
+			let names: string[] = [];
+			try {
+				names = Object.keys(loadClasses());
+			} catch {
+				// unreadable storage: keyword completions only
+			}
+			const values: string[] = ["next", "route"];
+			for (const n of names) values.push(n, `${n} set`, `${n} unset`);
+			for (const mode of ["plain", "repoOwner"]) {
+				values.push(`route ${mode}`, `route ${mode} inherit`, ...names.map((n) => `route ${mode} ${n}`));
+			}
 			const items = values.map((v) => ({ value: v, label: v }));
 			const filtered = items.filter((i) => i.value.startsWith(prefix));
 			return filtered.length > 0 ? filtered : null;
@@ -86,17 +170,67 @@ export default function (pi: ExtensionAPI) {
 			}
 
 			if (parsed.kind === "status") {
-				let stored: StoredClasses;
+				let stored: StoredModelClasses;
 				try {
 					stored = loadStored();
 				} catch (e) {
-					ctx.ui.notify(`Cannot read model classes: ${e instanceof Error ? e.message : String(e)}`, "error");
+					notifyError(ctx, "Cannot read model classes", e);
 					return;
 				}
 				const session = ctx.model
 					? { name: "default" as const, model: canonicalModelId(ctx.model), thinking: pi.getThinkingLevel() }
 					: { name: "default" as const, model: "(no model in session)" };
-				ctx.ui.notify(renderModelClassStatus(session, stored), "info");
+				ctx.ui.notify(renderModelClassStatus(session, stored.classes, stored.routing), "info");
+				return;
+			}
+
+			if (parsed.kind === "next") {
+				await cycleToNext(ctx);
+				return;
+			}
+
+			if (parsed.kind === "routeStatus") {
+				let stored: StoredModelClasses;
+				try {
+					stored = loadStored();
+				} catch (e) {
+					notifyError(ctx, "Cannot read model classes", e);
+					return;
+				}
+				ctx.ui.notify(renderRoutingTable(stored.classes, stored.routing), "info");
+				return;
+			}
+
+			if (parsed.kind === "routeSet") {
+				const { mode, target } = parsed;
+				let stored: StoredModelClasses;
+				try {
+					stored = loadStored();
+				} catch (e) {
+					notifyError(ctx, "Cannot read model classes", e);
+					return;
+				}
+				// Own-property saved-check: inherited Object properties (`constructor`,
+				// ...) pass the class-name grammar, so property access alone would leak
+				// them through as "saved".
+				if (target !== "inherit" && !Object.hasOwn(stored.classes, target)) {
+					ctx.ui.notify(
+						`Model class "${target}" is not saved.\nSave it first: \`/model-class ${target} set\`.`,
+						"error",
+					);
+					return;
+				}
+				try {
+					// Atomic write; throws on failure — only then do we report success.
+					saveRouting(modelClassesPath(), mode, target);
+				} catch (e) {
+					notifyError(ctx, `Cannot route ${mode}`, e);
+					return;
+				}
+				ctx.ui.notify(
+					renderRouteSet(mode, target, target === "inherit" ? undefined : stored.classes[target]),
+					"info",
+				);
 				return;
 			}
 
@@ -110,13 +244,29 @@ export default function (pi: ExtensionAPI) {
 					// Atomic write; throws on failure — only then do we report success.
 					saveModelClass(modelClassesPath(), parsed.name, pair);
 				} catch (e) {
-					ctx.ui.notify(
-						`Cannot save model class "${parsed.name}": ${e instanceof Error ? e.message : String(e)}`,
-						"error",
-					);
+					notifyError(ctx, `Cannot save model class "${parsed.name}"`, e);
 					return;
 				}
 				ctx.ui.notify(renderSaved(parsed.name, pair.model, pair.thinking), "info");
+				return;
+			}
+
+			if (parsed.kind === "unset") {
+				let outcome;
+				try {
+					outcome = unsetModelClass(modelClassesPath(), parsed.name);
+				} catch (e) {
+					notifyError(ctx, `Cannot delete model class "${parsed.name}"`, e);
+					return;
+				}
+				if (!outcome.ok) {
+					ctx.ui.notify(outcome.error, "error");
+					return;
+				}
+				ctx.ui.notify(
+					outcome.deleted ? renderUnset(parsed.name) : `Model class "${parsed.name}" is not saved (nothing to delete).`,
+					"info",
+				);
 				return;
 			}
 
@@ -124,11 +274,11 @@ export default function (pi: ExtensionAPI) {
 			// BEFORE touching the session; any failure leaves it unchanged.
 			// The resolver returns the matched registry model, so there is no
 			// second lookup to race with a registry refresh.
-			let stored;
+			let stored: StoredClasses;
 			try {
-				stored = loadStored();
+				stored = loadClasses();
 			} catch (e) {
-				ctx.ui.notify(`Cannot switch: ${e instanceof Error ? e.message : String(e)}`, "error");
+				notifyError(ctx, "Cannot switch", e);
 				return;
 			}
 			const resolved = resolveModelClass(parsed.name, stored, envFor(ctx));
@@ -146,6 +296,15 @@ export default function (pi: ExtensionAPI) {
 				return;
 			}
 			ctx.ui.notify(renderSwitched(parsed.name, target.pair.model, target.pair.thinking), "info");
+		},
+	});
+
+	// Stateless class cycling (SPEC R5): forward only, no persisted
+	// "active class" — the live model is the only source of truth.
+	pi.registerShortcut("ctrl+alt+p", {
+		description: "Cycle the session model to the next saved model class",
+		handler: async (ctx) => {
+			await cycleToNext(ctx);
 		},
 	});
 }

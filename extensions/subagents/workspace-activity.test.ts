@@ -379,7 +379,7 @@ function dispatch(h: Harness, params: Record<string, unknown>, signal?: AbortSig
 		deadlineSec: params.timeout_ms !== undefined ? (params.timeout_ms as number) / 1000 : undefined,
 		signal,
 		onUpdate,
-		model: CTX.model,
+		sessionModel: CTX.model,
 		thinkingLevel: CTX.thinkingLevel,
 		cwd: CTX.cwd,
 	}) as Promise<{ details: Record<string, unknown> }>;
@@ -520,7 +520,7 @@ describe("workspace run live updates", () => {
 			await h.runtime.shutdown();
 			h.cleanup();
 		}
-	});
+	}, 15000); // ~5.9s of mandatory wall time (driveToRunning + 2500ms two-boundary tick) exceeds bun's 5s default
 
 	test("T8: update loop stops after terminal done — no leaked timers", async () => {
 		const h = makeLayer();

@@ -113,15 +113,19 @@ Generic children therefore cannot spawn recursively by construction; a
 workspace worker additionally carries the subagents index (see the
 workspace section) and may spawn plain `subagent` helpers. Normal
 skills/context files stay on.
-Per-spawn `cwd`, `label`, and `modelClass` (`cheap | default | smart`,
-default `default`; resolved to concrete model + thinking by the
-model-classes resolver before the process starts — see
-`../model-classes/README.md`). Which class to use is the caller's explicit
-per-spawn choice (Main decides via the tool's prompt guidelines: default =
-ordinary work, cheap = high-volume low-stakes, smart = critical review /
-escalation); the runtime never maps roles to classes or picks a class
-itself. The internal runtime boundary (`SpawnOptions`) still carries
-concrete `model`/`thinking` because the child needs literal CLI flags.
+Per-spawn `cwd`, `label`, and `modelClass` (a free-form string, valid for
+BOTH spawn modes; resolved to concrete model + thinking by the
+model-classes resolver — routing-aware — before the process starts; see
+`../model-classes/README.md`). Omitted, the spawn mode's routed default
+applies (`/model-class route <plain|repoOwner> <class|inherit>`; with no
+route the child inherits the current main session pair); an explicit saved
+class name overrides routing, and `"default"` matches the live session
+pair regardless of routing. A present route that cannot be resolved (dead
+class, hand-edited garbage target) or unreadable model-class storage fails
+the spawn closed instead of silently inheriting. The runtime never maps roles to classes or
+picks a class itself — routing is the user's machine-global configuration.
+The internal runtime boundary (`SpawnOptions`) still carries concrete
+`model`/`thinking` because the child needs literal CLI flags.
 Child sessions are ordinary pi sessions named `subagent:<label>`, inspectable
 with standard tooling.
 
@@ -170,14 +174,16 @@ Workspace is a MODE of a `subagent` spawn, not a separate agent kind:
 `subagent op=spawn workspace=<managed worktree> task=... deadlineSec=...`
 runs a RepoOwner — a child rooted in a managed task worktree with a strict
 protocol on top of the shared subagent runtime. Plain `cwd` spawns keep
-working exactly as before (no ownership semantics, modelClass applies);
-`modelClass` does not apply to workspace spawns — the child inherits the
-main session's model and thinking level.
+working exactly as before (no ownership semantics, `modelClass` applies);
+`modelClass` applies to workspace spawns identically — omitted, the
+`repoOwner` routing default (else the main session's model + thinking)
+decides, and resolution failures classify as `blocked` (`dispatched:false`,
+nothing started).
 
 - **Per-spawn profile**: RepoOwner children load the task-workspace entry, a
   reporting bridge, the subagents index (so the owner can spawn plain
-  `subagent` helpers — modelClass applies to those, never to the owner
-  itself), and a readiness probe in addition to the base bridge
+  `subagent` helpers — routing-aware modelClass applies to those too), and a
+  readiness probe in addition to the base bridge
   (`SpawnOptions.additionalExtensions`; the probe comes last as a pure
   observer — no tools, no tool_call hooks). Generic children are
   byte-identical.

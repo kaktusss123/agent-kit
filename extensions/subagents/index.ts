@@ -8,17 +8,18 @@
  * of a spawn, not a separate agent kind:
  *
  * - plain spawn (`cwd`) starts the child in a working directory without any
- *   repository-ownership semantics; the child picks its model by CLASS
- *   (modelClass: cheap | default | smart) resolved through the model-classes
- *   resolver before the process starts;
+ *   repository-ownership semantics; the child's model is picked by CLASS
+ *   (`modelClass`: a saved class name, or "default" = the current session
+ *   pair) or, when omitted, by the plain-mode routing default — resolved
+ *   through the model-classes resolver before the process starts;
  * - workspace spawn (`workspace=<managed worktree>`) starts the child as the
- *   OWNER of that worktree (RepoOwner): the child inherits the main session's
- *   model (modelClass does not apply), strict validation and readiness happen
- *   before dispatch (fail closed), the spawn call blocks until a terminal
- *   outcome (done/partial/blocked) or needs_input with live progress rendered
- *   into the tool call, and the run gets the enforced deadline, the
- *   report_result envelope contract, and settled-state verification
- *   (ADR-0003) — see ./workspace-runs.
+ *   OWNER of that worktree (RepoOwner): modelClass applies identically
+ *   (omitted → the repoOwner routing default, else the session pair); strict
+ *   validation and readiness happen before dispatch (fail closed), the spawn
+ *   call blocks until a terminal outcome (done/partial/blocked) or
+ *   needs_input with live progress rendered into the tool call, and the run
+ *   gets the enforced deadline, the report_result envelope contract, and
+ *   settled-state verification (ADR-0003) — see ./workspace-runs.
  *
  * Surfaces:
  * - `subagent` tool (LLM): spawn / status / steer / follow_up / wait / result /
@@ -49,7 +50,8 @@ import { DefaultPackageManager, SettingsManager } from "@earendil-works/pi-codin
 import { StringEnum } from "@earendil-works/pi-ai";
 import { Type } from "typebox";
 import { LocalSubagentRuntime } from "./controller";
-import { resolveSpawnPair, type SpawnModelClass } from "./spawn-model";
+import { resolveSpawnPair } from "./spawn-model";
+import { loadModelClasses, modelClassesPath } from "../model-classes/store";
 import {
 	requireProviderExtensions,
 	type ConfiguredPackageRef,
@@ -99,51 +101,73 @@ const CONFIG = {
 // Tool schema
 // =============================================================================
 
-const SubagentParams = Type.Object({
-	op: StringEnum(["spawn", "status", "steer", "follow_up", "wait", "result", "respond", "cancel"] as const, {
-		description: "Operation to perform on subagents (required on every call)",
-	}),
-	task: Type.Optional(Type.String({ description: "spawn: initial task prompt for the child agent" })),
-	id: Type.Optional(Type.String({ description: "target agent id (omit for status to list all)" })),
-	label: Type.Optional(Type.String({ description: "spawn: short name for the agent" })),
-	cwd: Type.Optional(
-		Type.String({
-			description:
-				"spawn: working directory for the child (default: main cwd). Plain working directory — no repository ownership; use `workspace` for that",
+/**
+ * Saved class names for the STATIC tool texts, as display text. Called
+ * inside the extension factory: each registration reads current storage at
+ * extension load — never at module import (the agent dir may be redirected
+ * after import, e.g. by tests). Mid-session class changes do not refresh
+ * already-loaded descriptions (accepted); runtime validation remains the
+ * contract. Unreadable storage degrades to "none saved yet".
+ */
+function savedClassesText(): string {
+	try {
+		const names = Object.keys(loadModelClasses(modelClassesPath()));
+		return names.length > 0 ? names.join(", ") : "none saved yet";
+	} catch {
+		return "none saved yet";
+	}
+}
+
+/**
+ * Tool parameter schema; `savedClasses` bakes the currently saved class
+ * names into the static modelClass description (see savedClassesText).
+ */
+function buildSubagentParams(savedClasses: string) {
+	return Type.Object({
+		op: StringEnum(["spawn", "status", "steer", "follow_up", "wait", "result", "respond", "cancel"] as const, {
+			description: "Operation to perform on subagents (required on every call)",
 		}),
-	),
-	workspace: Type.Optional(
-		Type.String({
-			description:
-				"spawn: run this child as the OWNER of a managed task worktree (RepoOwner mode). The spawn call blocks until a terminal outcome (done/partial/blocked) or needs_input, with live progress in the tool call. The child inherits the main session model; modelClass does not apply",
-		}),
-	),
-	deadlineSec: Type.Optional(
-		Type.Integer({
-			description:
-				"spawn (workspace only): run deadline in seconds (default 600); covers the whole run including the report ladder",
-			minimum: 1,
-		}),
-	),
-	modelClass: Type.Optional(
-		StringEnum(["cheap", "default", "smart"] as const, {
-			description:
-				'spawn (plain cwd only; ignored and rejected with workspace): model class for the child (default: "default" = current main model + thinking; "cheap"/"smart" = saved classes, configure via /model-class <class> set)',
-		}),
-	),
-	message: Type.Optional(Type.String({ description: "steer/follow_up: message for the child agent" })),
-	answer: Type.Optional(Type.String({ description: "respond: answer to the child's pending question" })),
-	idleExitMs: Type.Optional(
-		Type.Integer({
-			description:
-				"spawn (plain only): ms after a child settles before its process is retired — the terminal result is kept (default 1800000 = 30 min; 0 disables idle exit)",
-			minimum: 0,
-		}),
-	),
-	timeoutSec: Type.Optional(
-		Type.Integer({ description: "wait: max seconds to block (default 600)", minimum: 1, maximum: 3600 }),
-	),
-});
+		task: Type.Optional(Type.String({ description: "spawn: initial task prompt for the child agent" })),
+		id: Type.Optional(Type.String({ description: "target agent id (omit for status to list all)" })),
+		label: Type.Optional(Type.String({ description: "spawn: short name for the agent" })),
+		cwd: Type.Optional(
+			Type.String({
+				description:
+					"spawn: working directory for the child (default: main cwd). Plain working directory — no repository ownership; use `workspace` for that",
+			}),
+		),
+		workspace: Type.Optional(
+			Type.String({
+				description:
+					"spawn: run this child as the OWNER of a managed task worktree (RepoOwner mode). The spawn call blocks until a terminal outcome (done/partial/blocked) or needs_input, with live progress in the tool call. The child's model follows modelClass or the repoOwner routing default (/model-class route)",
+			}),
+		),
+		deadlineSec: Type.Optional(
+			Type.Integer({
+				description:
+					"spawn (workspace only): run deadline in seconds (default 600); covers the whole run including the report ladder",
+				minimum: 1,
+			}),
+		),
+		modelClass: Type.Optional(
+			Type.String({
+				description: `spawn (both plain and workspace): model class for the child. Omit → the mode's routed default (/model-class route; plain and repoOwner route independently; no route → inherit the current main session model). A saved class name (currently: ${savedClasses}) overrides routing. "default" → the live main session model + thinking regardless of routing`,
+			}),
+		),
+		message: Type.Optional(Type.String({ description: "steer/follow_up: message for the child agent" })),
+		answer: Type.Optional(Type.String({ description: "respond: answer to the child's pending question" })),
+		idleExitMs: Type.Optional(
+			Type.Integer({
+				description:
+					"spawn (plain only): ms after a child settles before its process is retired — the terminal result is kept (default 1800000 = 30 min; 0 disables idle exit)",
+				minimum: 0,
+			}),
+		),
+		timeoutSec: Type.Optional(
+			Type.Integer({ description: "wait: max seconds to block (default 600)", minimum: 1, maximum: 3600 }),
+		),
+	});
+}
 
 // =============================================================================
 // Wiring
@@ -255,6 +279,12 @@ export default function (pi: ExtensionAPI) {
 	/** Main session file for result attribution; set on session_start and lazily on tool entry. */
 	let parentSessionFile: string | undefined;
 
+	// Static tool texts enumerate the saved classes AT EXTENSION LOAD (SPEC
+	// R4): built per registration so each load sees current storage, with no
+	// user-storage read at module import time.
+	const savedClasses = savedClassesText();
+	const SubagentParams = buildSubagentParams(savedClasses);
+
 	function getRuntime(ctxCwd?: string): LocalSubagentRuntime {
 		if (!runtime) {
 			runtime = new LocalSubagentRuntime({
@@ -360,7 +390,7 @@ export default function (pi: ExtensionAPI) {
 			"Use subagent op=spawn to delegate self-contained work that does not need your direct involvement, especially parallelizable or exploratory tasks.",
 			"spawn (plain cwd) returns immediately; keep working or spawn more agents, then use subagent op=wait to block for a specific child when you need its outcome.",
 			"Workspace spawn: dispatch independent repo owners in parallel with multiple subagent calls with workspace=<worktree> in one block. The call blocks until a terminal outcome; its JSON carries the protocol outcome in `status`, and the owner's product outcome lives in `result.status` (present only when status is done). If the user sends a message while the call blocks, it detaches early (run continues; completion arrives via event) — handle the user's message then, and use op=cancel only if they asked to stop.",
-			"Workspace runs inherit the main session model — do not pass modelClass with workspace (it is rejected). Plain children pick a model class per spawn: omit modelClass or use \"default\" for ordinary delegated work; \"cheap\" for high-volume scouting, extraction, classification, and broad parallel research; \"smart\" for critical review, difficult reasoning, and explicit escalation. Configure cheap/smart via /model-class <class> set.",
+			`Both spawn modes pick the child's model by class: omit modelClass to use the mode's routed default (plain and repoOwner route independently via /model-class route; with no route the child inherits your current session model), pass a saved class name (currently: ${savedClasses}) to override routing, or pass "default" to explicitly match your current session model. Save classes with /model-class <class> set; route spawn modes with /model-class route <plain|repoOwner> <class|inherit>.`,
 			"Workspace terminal results include runtime-read `git_facts` (branch, HEAD SHA, dirty paths) — never ask the model for these; trust `git_facts` over any textual self-report about repository state.",
 			"When a child reports needs_input, first try to resolve the request from your own conversation and task context — do not ask the user again for information that is already known.",
 			"Only if the answer is unknown, use `ask` with the child's supplied request to get the missing decision, then answer via subagent op=respond id=<...> (a plain-text answer is enough; works for both modes).",
@@ -405,11 +435,9 @@ export default function (pi: ExtensionAPI) {
 							// Validation, profile, readiness, deadline, report
 							// envelope, and settled-state verification live in the
 							// workspace run layer; the call blocks until terminal.
-							if (params.modelClass) {
-								return err(
-									"modelClass does not apply to workspace spawns: the child inherits the main session model",
-								);
-							}
+							// modelClass applies here exactly like on plain spawns;
+							// omitted, the repoOwner routing default (else the session
+							// pair) decides — resolution fails closed pre-dispatch.
 							if (params.cwd) {
 								return err("workspace spawns root the child at the worktree; `cwd` does not apply");
 							}
@@ -426,7 +454,9 @@ export default function (pi: ExtensionAPI) {
 								onUpdate,
 								hasPendingMessages:
 									typeof ctx.hasPendingMessages === "function" ? () => ctx.hasPendingMessages() : undefined,
-								model: ctx.model,
+								modelClass: params.modelClass,
+								sessionModel: ctx.model,
+								modelRegistry: ctx.modelRegistry,
 								thinkingLevel: ctx.thinkingLevel,
 								cwd: ctx.cwd,
 							});
@@ -435,9 +465,10 @@ export default function (pi: ExtensionAPI) {
 						if (params.deadlineSec) {
 							return err("deadlineSec applies to workspace spawns only (plain spawns are managed via wait)");
 						}
-						// Resolve the class BEFORE spawning: an unconfigured class or
-						// a model that is gone fails the op without starting a child.
-						const pair = resolveSpawnPair(params.modelClass ?? "default", ctx, pi.getThinkingLevel());
+						// Resolve the class (or the plain-mode routing default) BEFORE
+						// spawning: an unknown class, an unroutable route, or a model
+						// that is gone fails the op without starting a child.
+						const pair = resolveSpawnPair("plain", params.modelClass, ctx, pi.getThinkingLevel());
 						const snap = await rt.spawn({
 							task: params.task,
 							label: params.label,
