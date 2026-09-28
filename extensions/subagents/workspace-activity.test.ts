@@ -520,7 +520,7 @@ describe("workspace run live updates", () => {
 			await h.runtime.shutdown();
 			h.cleanup();
 		}
-	});
+	}, 15000); // ~5.9s of mandatory wall time (driveToRunning + 2500ms two-boundary tick) exceeds bun's 5s default
 
 	test("T8: update loop stops after terminal done — no leaked timers", async () => {
 		const h = makeLayer();
