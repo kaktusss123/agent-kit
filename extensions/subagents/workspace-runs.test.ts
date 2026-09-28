@@ -11,6 +11,7 @@ import { execFileSync } from "node:child_process";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
+import type { ModelLike } from "../model-classes/core";
 import { LocalSubagentRuntime } from "./controller";
 import {
 	autoAcceptPrompt,
@@ -78,9 +79,15 @@ function makeLayer(layerOpts?: {
 	const taskRoot = fs.realpathSync(taskRootRaw);
 	// Pin the task root for the layer under test: AGENT_TASK_ROOT is set
 	// to the fixture, proving the override feeds the layer (and that an
-	// ambient value cannot leak). Restored in cleanup().
+	// ambient value cannot leak). Restored in cleanup(). The model-classes
+	// storage is pinned the same way: routed-pair resolution must never
+	// depend on (or accidentally read) the real user's agent dir.
 	const previousGeneric = process.env.AGENT_TASK_ROOT;
 	process.env.AGENT_TASK_ROOT = taskRoot;
+	const previousAgentDir = process.env.PI_CODING_AGENT_DIR;
+	const agentDir = path.join(base, "agent-dir");
+	fs.mkdirSync(agentDir, { recursive: true });
+	process.env.PI_CODING_AGENT_DIR = agentDir;
 
 	const messages: Harness["messages"] = [];
 	const pi = {
@@ -114,6 +121,8 @@ function makeLayer(layerOpts?: {
 		cleanup() {
 			if (previousGeneric === undefined) delete process.env.AGENT_TASK_ROOT;
 			else process.env.AGENT_TASK_ROOT = previousGeneric;
+			if (previousAgentDir === undefined) delete process.env.PI_CODING_AGENT_DIR;
+			else process.env.PI_CODING_AGENT_DIR = previousAgentDir;
 			fs.rmSync(base, { recursive: true, force: true });
 		},
 		agentId() {
@@ -155,14 +164,21 @@ function dispatchCall(
 	ctxOverride?: unknown,
 	hasPendingMessages?: () => boolean,
 ) {
-	const ctx = (ctxOverride ?? CTX) as { model?: { provider: string; id: string }; thinkingLevel?: string; cwd?: string };
+	const ctx = (ctxOverride ?? CTX) as {
+		model?: { provider: string; id: string };
+		thinkingLevel?: string;
+		cwd?: string;
+		modelRegistry?: { getAll(): ModelLike[] };
+	};
 	return h.runs.spawnRun({
 		workspace: params.workspace as string,
 		task: params.task as string,
 		deadlineSec: params.timeout_ms !== undefined ? (params.timeout_ms as number) / 1000 : undefined,
 		signal,
 		hasPendingMessages,
-		model: ctx.model,
+		modelClass: params.modelClass as string | undefined,
+		sessionModel: ctx.model,
+		modelRegistry: ctx.modelRegistry,
 		thinkingLevel: ctx.thinkingLevel,
 		cwd: ctx.cwd,
 	});
@@ -173,9 +189,10 @@ async function driveToRunning(
 	h: Harness,
 	params: Record<string, unknown>,
 	signal?: AbortSignal,
+	ctxOverride?: unknown,
 	hasPendingMessages?: () => boolean,
 ) {
-	const pending = dispatchCall(h, params, signal, undefined, hasPendingMessages);
+	const pending = dispatchCall(h, params, signal, ctxOverride, hasPendingMessages);
 	// Wait for the child process: validation runs real git, which can take a
 	// few hundred ms on macOS before the spawn happens.
 	for (let i = 0; i < 100 && h.harness.spawned.length === 0; i++) {
@@ -883,7 +900,7 @@ describe("steering wake (pending-message detach)", () => {
 			// this wake
 			resetOwnDeliveryMark();
 			const ws = makeWorktree(h.taskRoot, "wake-ws");
-			const { pending, proc } = await driveToRunning(h, { workspace: ws, task: "t" }, undefined, () => true);
+			const { pending, proc } = await driveToRunning(h, { workspace: ws, task: "t" }, undefined, undefined, () => true);
 			const agentId = h.agentId();
 
 			const res = await pending;
@@ -922,7 +939,7 @@ describe("steering wake (pending-message detach)", () => {
 			resetOwnDeliveryMark();
 			const ws = makeWorktree(h.taskRoot, "own-wake-ws");
 			let pendingUser = false;
-			const { pending, proc } = await driveToRunning(h, { workspace: ws, task: "t" }, undefined, () => pendingUser);
+			const { pending, proc } = await driveToRunning(h, { workspace: ws, task: "t" }, undefined, undefined, () => pendingUser);
 			const agentId = h.agentId();
 
 			// a generic (non-workspace) child completes in the background:
@@ -1017,7 +1034,7 @@ describe("provider propagation fail-fast (R2)", () => {
 			const res = await runs2.spawnRun({
 				workspace: ws,
 				task: "t",
-				model: { provider: "cloudru", id: "Qwen/Qwen3.5" },
+				sessionModel: { provider: "cloudru", id: "Qwen/Qwen3.5" },
 			});
 			expect(res.details).toMatchObject({ status: "blocked", dispatched: false });
 			expect(String(res.details.reason)).toContain("pi install <package-source>");
@@ -1026,6 +1043,152 @@ describe("provider propagation fail-fast (R2)", () => {
 			h.cleanup();
 		}
 	}, 20000);
+});
+
+describe("spawn-mode routing (R3)", () => {
+	/** Registry with two distinct models so routed vs session pairs differ. */
+	const ROUTED_REGISTRY: ModelLike[] = [
+		{ provider: "zai", id: "glm-x", reasoning: true },
+		{ provider: "zai", id: "glm-max", reasoning: true, thinkingLevelMap: { xhigh: "xh", max: "mx" } },
+	];
+	const ROUTED_CTX = {
+		model: { provider: "zai", id: "glm-x" }, // session runs the light model
+		thinkingLevel: "low",
+		cwd: "/tmp",
+		modelRegistry: { getAll: () => ROUTED_REGISTRY },
+	};
+
+	/** Write routing storage into the harness's pinned agent dir. */
+	function seedAgentStorage(h: Harness, stored: Record<string, unknown>): void {
+		fs.writeFileSync(
+			path.join(process.env.PI_CODING_AGENT_DIR!, "model-classes.json"),
+			JSON.stringify(stored),
+		);
+	}
+
+	test("route repoOwner heavy: session on the light model, owner dispatched with the heavy pair (A3)", async () => {
+		const h = makeLayer();
+		try {
+			seedAgentStorage(h, {
+				heavy: { model: "zai/glm-max", thinking: "xhigh" },
+				routing: { repoOwner: "heavy" },
+			});
+			const ws = makeWorktree(h.taskRoot, "routed-ws");
+			const { pending, proc } = await driveToRunning(h, { workspace: ws, task: "own it" }, undefined, ROUTED_CTX);
+			const args = proc.spec.args;
+			expect(args[args.indexOf("--model") + 1]).toBe("zai/glm-max");
+			expect(args[args.indexOf("--thinking") + 1]).toBe("xhigh");
+			// the run semantics are unchanged: fresh envelope settles done
+			const agentId = h.agentId();
+			writeEnvelope(h, agentId);
+			settleRun(proc, "owned it");
+			const res = await pending;
+			expect(res.details).toMatchObject({ status: "done", dispatched: true, agentId });
+		} finally {
+			await h.runtime.shutdown();
+			h.cleanup();
+		}
+	}, 20000);
+
+	test("no routing: owner inherits the session pair (migration, A1)", async () => {
+		const h = makeLayer();
+		try {
+			seedAgentStorage(h, { heavy: { model: "zai/glm-max", thinking: "xhigh" } });
+			const ws = makeWorktree(h.taskRoot, "inherit-ws");
+			const { pending, proc } = await driveToRunning(h, { workspace: ws, task: "t" }, undefined, ROUTED_CTX);
+			const args = proc.spec.args;
+			expect(args[args.indexOf("--model") + 1]).toBe("zai/glm-x");
+			expect(args[args.indexOf("--thinking") + 1]).toBe("low");
+			writeEnvelope(h, h.agentId());
+			settleRun(proc, "done");
+			expect((await pending).details).toMatchObject({ status: "done" });
+		} finally {
+			await h.runtime.shutdown();
+			h.cleanup();
+		}
+	}, 20000);
+
+	test("explicit modelClass overrides repoOwner routing (A4)", async () => {
+		const h = makeLayer();
+		try {
+			seedAgentStorage(h, {
+				smart: { model: "zai/glm-max", thinking: "max" },
+				heavy: { model: "zai/glm-max", thinking: "xhigh" },
+				routing: { repoOwner: "smart" },
+			});
+			// routing points at smart/max, the explicit class asks for xhigh
+			const ws = makeWorktree(h.taskRoot, "override-ws");
+			const { pending, proc } = await driveToRunning(
+				h,
+				{ workspace: ws, task: "t", modelClass: "heavy" },
+				undefined,
+				ROUTED_CTX,
+			);
+			const args = proc.spec.args;
+			expect(args[args.indexOf("--model") + 1]).toBe("zai/glm-max");
+			expect(args[args.indexOf("--thinking") + 1]).toBe("xhigh"); // heavy, not the routed smart/max
+			writeEnvelope(h, h.agentId());
+			settleRun(proc, "done");
+			expect((await pending).details).toMatchObject({ status: "done" });
+		} finally {
+			await h.runtime.shutdown();
+			h.cleanup();
+		}
+	}, 20000);
+
+	test("broken routing (class not saved) → blocked, dispatched:false, no process, fix named (A6)", async () => {
+		const h = makeLayer();
+		try {
+			seedAgentStorage(h, { routing: { repoOwner: "nosuch" } });
+			const ws = makeWorktree(h.taskRoot, "brokenroute-ws");
+			const res = await dispatchCall(h, { workspace: ws, task: "t" }, undefined, ROUTED_CTX);
+			expect(res.details).toMatchObject({ status: "blocked", dispatched: false });
+			const reason = String(res.details.reason);
+			expect(reason).toContain('"repoOwner"');
+			expect(reason).toContain('"nosuch"');
+			expect(reason).toContain("/model-class route repoOwner <class|inherit>");
+			expect(h.harness.spawned).toHaveLength(0);
+		} finally {
+			h.cleanup();
+		}
+	});
+
+	test("routed dead model → blocked with the re-save fix (A7)", async () => {
+		const h = makeLayer();
+		try {
+			seedAgentStorage(h, { heavy: { model: "gone/vanished", thinking: "high" }, routing: { repoOwner: "heavy" } });
+			const ws = makeWorktree(h.taskRoot, "deadmodel-ws");
+			const res = await dispatchCall(h, { workspace: ws, task: "t" }, undefined, ROUTED_CTX);
+			expect(res.details).toMatchObject({ status: "blocked", dispatched: false });
+			const reason = String(res.details.reason);
+			expect(reason).toContain("no longer available");
+			expect(reason).toContain("/model-class heavy set");
+			expect(h.harness.spawned).toHaveLength(0);
+		} finally {
+			h.cleanup();
+		}
+	});
+
+	test("explicit unknown modelClass on a workspace spawn → blocked with the saved names listed", async () => {
+		const h = makeLayer();
+		try {
+			seedAgentStorage(h, { heavy: { model: "zai/glm-max", thinking: "xhigh" } });
+			const ws = makeWorktree(h.taskRoot, "unknownclass-ws");
+			const res = await dispatchCall(
+				h,
+				{ workspace: ws, task: "t", modelClass: "nosuch" },
+				undefined,
+				ROUTED_CTX,
+			);
+			expect(res.details).toMatchObject({ status: "blocked", dispatched: false });
+			const reason = String(res.details.reason);
+			expect(reason).toContain('"nosuch"');
+			expect(reason).toContain("heavy"); // the saved class list
+			expect(h.harness.spawned).toHaveLength(0);
+		} finally {
+			h.cleanup();
+		}
+	});
 });
 
 describe("static preflight (A2b)", () => {
@@ -1081,7 +1244,7 @@ describe("N1 profile order and sequential report", () => {
 			const pending = h.runs.spawnRun({
 				workspace: ws,
 				task: "t",
-				model: { provider: "zai", id: "glm-x" },
+				sessionModel: { provider: "zai", id: "glm-x" },
 				thinkingLevel: "low",
 				cwd: h.tmp,
 			});

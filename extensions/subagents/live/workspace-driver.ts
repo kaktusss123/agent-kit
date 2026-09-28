@@ -101,7 +101,7 @@ export default function (pi: ExtensionAPI) {
 						task: req.task,
 						deadlineSec: req.timeout_ms !== undefined ? req.timeout_ms / 1000 : undefined,
 						onUpdate,
-						model: { provider, id: rest.join("/") },
+						sessionModel: { provider, id: rest.join("/") },
 						thinkingLevel: req.thinkingLevel ?? "low",
 						cwd: LIVE_DIR,
 					});

@@ -1,16 +1,21 @@
 /**
- * Unit tests for model class resolution and switching (SPEC §5, §8, §10):
- * dynamic `default`, stored classes, missing class/model/level, no
- * fallback, no partial switch.
+ * Unit tests for model class resolution and switching: dynamic `default`,
+ * named stored classes, the full R3 spawn-routing matrix (explicit/omitted
+ * per mode, every fail-closed path), the stateless next-class selection,
+ * no fallback, no partial switch.
  */
 import { describe, expect, test } from "bun:test";
 import {
 	applyResolvedPair,
 	canonicalModelId,
 	createExactModelMatcher,
-	notConfiguredError,
+	nextModelClass,
 	resolveModelClass,
+	resolveSpawnTarget,
+	routingFailureError,
 	supportedThinkingLevels,
+	unknownClassError,
+	type ModelClassEnv,
 	type ModelLike,
 	type SessionModelApplier,
 } from "./core";
@@ -97,12 +102,12 @@ describe("createExactModelMatcher", () => {
 function envWith(models: ModelLike[], current: ModelPair | null) {
 	const matcher = createExactModelMatcher(models);
 	return {
-		env: { currentPair: () => current, findModel: matcher },
+		env: { currentPair: () => current, findModel: matcher } satisfies ModelClassEnv,
 		matcher,
 	};
 }
 
-describe("resolveModelClass — default is the live session (A9, A10)", () => {
+describe("resolveModelClass — default is the live session", () => {
 	test("snapshots whatever the session runs at resolution time", () => {
 		let current: ModelPair | null = { model: "prov-a/model-a", thinking: "high" };
 		const { env } = envWith([MODEL_A], null);
@@ -128,55 +133,256 @@ describe("resolveModelClass — default is the live session (A9, A10)", () => {
 	});
 });
 
-describe("resolveModelClass — stored classes", () => {
+describe("resolveModelClass — named stored classes", () => {
 	const stored: StoredClasses = {
-		cheap: { model: "prov-b/openai/gpt-oss-120b", thinking: "medium" },
-		smart: { model: "prov-a/model-a", thinking: "xhigh" },
+		workhorse: { model: "prov-b/openai/gpt-oss-120b", thinking: "medium" },
+		heavy: { model: "prov-a/model-a", thinking: "xhigh" },
 	};
 
-	test("cheap/smart resolve to the persisted pair (A3, A11)", () => {
+	test("saved classes resolve to the persisted pair", () => {
 		const { env } = envWith([MODEL_A, MODEL_B, MODEL_PLAIN], { model: "prov-a/model-a", thinking: "high" });
-		expect(resolveModelClass("cheap", stored, env)).toEqual({
+		expect(resolveModelClass("workhorse", stored, env)).toEqual({
 			ok: true,
 			pair: { model: "prov-b/openai/gpt-oss-120b", thinking: "medium" },
 			origin: "stored",
 			model: MODEL_B, // single-resolution contract: the match travels with the outcome
+			route: undefined,
 		});
-		expect(resolveModelClass("smart", stored, env)).toMatchObject({ ok: true, origin: "stored", model: MODEL_A });
+		expect(resolveModelClass("heavy", stored, env)).toMatchObject({ ok: true, origin: "stored", model: MODEL_A });
 	});
 
-	test("unconfigured class -> spec error, session state irrelevant (A7)", () => {
-		const { env } = envWith([MODEL_A], { model: "prov-a/model-a", thinking: "high" });
-		const outcome = resolveModelClass("cheap", {}, env);
-		expect(outcome).toMatchObject({ ok: false, error: notConfiguredError("cheap") });
-		expect(outcome.ok === false && outcome.error).toContain("Use `/model-class cheap set`");
+	test("old cheap/smart names keep working as ordinary classes (compat)", () => {
+		const legacy: StoredClasses = {
+			cheap: { model: "prov-b/openai/gpt-oss-120b", thinking: "medium" },
+			smart: { model: "prov-a/model-a", thinking: "xhigh" },
+		};
+		const { env } = envWith([MODEL_A, MODEL_B], null);
+		expect(resolveModelClass("cheap", legacy, env)).toMatchObject({ ok: true, origin: "stored" });
+		expect(resolveModelClass("smart", legacy, env)).toMatchObject({ ok: true, origin: "stored" });
 	});
 
-	test("model gone from registry -> error, NO default fallback (A8)", () => {
+	test("unknown class -> fail closed with the saved class names listed (R3)", () => {
 		const { env } = envWith([MODEL_A], { model: "prov-a/model-a", thinking: "high" });
-		const onlyCheap: StoredClasses = { cheap: stored.cheap };
-		const outcome = resolveModelClass("cheap", onlyCheap, env);
+		const outcome = resolveModelClass("budget", stored, env);
+		expect(outcome.ok).toBe(false);
+		if (outcome.ok) throw new Error("unreachable");
+		expect(outcome.error).toBe(unknownClassError("budget", stored));
+		expect(outcome.error).toContain("workhorse, heavy");
+		expect(outcome.error).toContain("`/model-class budget set`");
+	});
+
+	test("unknown class with zero saved classes names that honestly", () => {
+		const { env } = envWith([MODEL_A], null);
+		const outcome = resolveModelClass("anything", {}, env);
+		expect(outcome.ok).toBe(false);
+		expect(outcome.ok === false && outcome.error).toContain("none are saved yet");
+	});
+
+	test("model gone from registry -> error, NO default fallback", () => {
+		const { env } = envWith([MODEL_A], { model: "prov-a/model-a", thinking: "high" });
+		const onlyWorkhorse: StoredClasses = { workhorse: stored.workhorse };
+		const outcome = resolveModelClass("workhorse", onlyWorkhorse, env);
 		expect(outcome.ok).toBe(false);
 		expect(outcome.ok === false && outcome.error).toContain("no longer available");
+		expect(outcome.ok === false && outcome.error).toContain("Re-save it: `/model-class workhorse set`");
 	});
 
 	test("thinking level unsupported by the stored model -> error, no downgrade", () => {
 		const { env } = envWith([MODEL_B], null);
-		const outcome = resolveModelClass("smart", { smart: { model: "prov-b/openai/gpt-oss-120b", thinking: "max" } }, env);
+		const outcome = resolveModelClass(
+			"heavy",
+			{ heavy: { model: "prov-b/openai/gpt-oss-120b", thinking: "max" } },
+			env,
+		);
 		expect(outcome.ok).toBe(false);
 		expect(outcome.ok === false && outcome.error).toContain("does not support");
 		expect(outcome.ok === false && outcome.error).toContain("max");
 	});
 
-	test("equal classes are all resolvable, no dedup or warning (A5)", () => {
+	test("equal classes are all resolvable, no dedup or warning", () => {
 		const { env } = envWith([MODEL_A], { model: "prov-a/model-a", thinking: "high" });
 		const same: StoredClasses = {
-			cheap: { model: "prov-a/model-a", thinking: "high" },
-			smart: { model: "prov-a/model-a", thinking: "high" },
+			workhorse: { model: "prov-a/model-a", thinking: "high" },
+			heavy: { model: "prov-a/model-a", thinking: "high" },
 		};
 		expect(resolveModelClass("default", same, env)).toMatchObject({ ok: true });
-		expect(resolveModelClass("cheap", same, env)).toMatchObject({ ok: true });
-		expect(resolveModelClass("smart", same, env)).toMatchObject({ ok: true });
+		expect(resolveModelClass("workhorse", same, env)).toMatchObject({ ok: true });
+		expect(resolveModelClass("heavy", same, env)).toMatchObject({ ok: true });
+	});
+});
+
+// ------------------------------------------------------- resolveSpawnTarget
+
+describe("resolveSpawnTarget — the R3 matrix", () => {
+	const stored: StoredClasses = {
+		workhorse: { model: "prov-b/openai/gpt-oss-120b", thinking: "medium" },
+		heavy: { model: "prov-a/model-a", thinking: "xhigh" },
+	};
+	const session: ModelPair = { model: "prov-c/text-only", thinking: "off" };
+	function env(sessionPair: ModelPair | null) {
+		return envWith([MODEL_A, MODEL_B, MODEL_C], sessionPair).env;
+	}
+
+	test("1a. explicit \"default\" -> live session pair, even with routing configured (A5)", () => {
+		const routing = { plain: "workhorse" as const, repoOwner: "heavy" as const };
+		for (const mode of ["plain", "repoOwner"] as const) {
+			expect(resolveSpawnTarget(mode, "default", stored, routing, env(session))).toEqual({
+				ok: true,
+				pair: session,
+				origin: "session",
+			});
+		}
+	});
+
+	test("1b. explicit saved class -> its stored pair, validated (A4)", () => {
+		expect(resolveSpawnTarget("plain", "heavy", stored, {}, env(session))).toMatchObject({
+			ok: true,
+			pair: { model: "prov-a/model-a", thinking: "xhigh" },
+			origin: "stored",
+			model: MODEL_A,
+		});
+		// explicit override ignores the mode's routing
+		expect(resolveSpawnTarget("repoOwner", "workhorse", stored, { repoOwner: "heavy" }, env(session))).toMatchObject(
+			{ ok: true, pair: stored.workhorse, origin: "stored" },
+		);
+	});
+
+	test("1c. explicit unknown -> fail closed listing saved names", () => {
+		const outcome = resolveSpawnTarget("plain", "nosuch", stored, { plain: "workhorse" }, env(session));
+		expect(outcome.ok).toBe(false);
+		expect(outcome.ok === false && outcome.error).toContain("workhorse, heavy");
+	});
+
+	test("1d. explicit dead model -> fail closed with the re-save hint", () => {
+		const dead: StoredClasses = { gone: { model: "prov-x/vanished", thinking: "high" } };
+		const outcome = resolveSpawnTarget("plain", "gone", dead, {}, env(session));
+		expect(outcome.ok).toBe(false);
+		expect(outcome.ok === false && outcome.error).toContain("no longer available");
+	});
+
+	test("2a. omitted + route for the mode -> that class's pair (A2/A3)", () => {
+		expect(resolveSpawnTarget("plain", undefined, stored, { plain: "workhorse" }, env(session))).toMatchObject({
+			ok: true,
+			pair: stored.workhorse,
+			origin: "stored",
+			route: { mode: "plain", className: "workhorse" },
+		});
+		expect(
+			resolveSpawnTarget("repoOwner", undefined, stored, { repoOwner: "heavy" }, env(session)),
+		).toMatchObject({ ok: true, pair: stored.heavy, origin: "stored" });
+	});
+
+	test("2b. routing applies BY MODE: an unrouted mode inherits the session (R3)", () => {
+		expect(resolveSpawnTarget("repoOwner", undefined, stored, { plain: "workhorse" }, env(session))).toEqual({
+			ok: true,
+			pair: session,
+			origin: "session",
+		});
+		expect(resolveSpawnTarget("plain", undefined, stored, { repoOwner: "heavy" }, env(session))).toEqual({
+			ok: true,
+			pair: session,
+			origin: "session",
+		});
+	});
+
+	test("2c. omitted + no routing at all -> live session pair (migration, A1)", () => {
+		expect(resolveSpawnTarget("plain", undefined, stored, {}, env(session))).toEqual({
+			ok: true,
+			pair: session,
+			origin: "session",
+		});
+		expect(resolveSpawnTarget("repoOwner", undefined, stored, {}, env(session))).toEqual({
+			ok: true,
+			pair: session,
+			origin: "session",
+		});
+	});
+
+	test("2d. omitted + no routing + no session model -> fail closed", () => {
+		const outcome = resolveSpawnTarget("plain", undefined, stored, {}, env(null));
+		expect(outcome).toMatchObject({ ok: false, error: "no model resolved in the current session" });
+	});
+
+	test("2e. route to a missing class -> fail closed naming class, mode, and fix (A6, D4)", () => {
+		const outcome = resolveSpawnTarget(
+			"repoOwner",
+			undefined,
+			stored,
+			{ repoOwner: "nosuch" },
+			env(session),
+		);
+		expect(outcome.ok).toBe(false);
+		if (outcome.ok) throw new Error("unreachable");
+		expect(outcome.error).toBe(routingFailureError("repoOwner", "nosuch", unknownClassError("nosuch", stored)));
+		expect(outcome.error).toContain('"repoOwner"');
+		expect(outcome.error).toContain('"nosuch"');
+		expect(outcome.error).toContain("/model-class route repoOwner <class|inherit>");
+		expect(outcome.error).toContain("/model-class nosuch set");
+	});
+
+	test("2f. route to a dead model -> same failure shape at spawn time (A7)", () => {
+		const dead: StoredClasses = { workhorse: { model: "prov-gone/vanished", thinking: "high" } };
+		const outcome = resolveSpawnTarget("plain", undefined, dead, { plain: "workhorse" }, env(session));
+		expect(outcome.ok).toBe(false);
+		if (outcome.ok) throw new Error("unreachable");
+		expect(outcome.error).toContain("Spawn routing for mode \"plain\" is set to class \"workhorse\"");
+		expect(outcome.error).toContain("no longer available");
+		expect(outcome.error).toContain("/model-class route plain <class|inherit>");
+	});
+
+	test("2g. route to an unsupported thinking combination -> fail closed", () => {
+		const bad: StoredClasses = { heavy: { model: "prov-b/openai/gpt-oss-120b", thinking: "max" } };
+		const outcome = resolveSpawnTarget("repoOwner", undefined, bad, { repoOwner: "heavy" }, env(session));
+		expect(outcome.ok).toBe(false);
+		expect(outcome.ok === false && outcome.error).toContain("does not support");
+	});
+});
+
+// ---------------------------------------------------------- nextModelClass
+
+describe("nextModelClass — stateless cycle (R5, A9)", () => {
+	const stored: StoredClasses = {
+		workhorse: { model: "prov-b/openai/gpt-oss-120b", thinking: "medium" },
+		heavy: { model: "prov-a/model-a", thinking: "xhigh" },
+	};
+
+	test("session on the LAST class wraps to the first", () => {
+		expect(nextModelClass(stored.heavy, stored)).toEqual({ ok: true, name: "workhorse", pair: stored.workhorse });
+	});
+
+	test("session on a class -> the NEXT class in storage order", () => {
+		expect(nextModelClass(stored.workhorse, stored)).toEqual({ ok: true, name: "heavy", pair: stored.heavy });
+	});
+
+	test("session pair matches NO class -> the FIRST class", () => {
+		expect(nextModelClass({ model: "prov-c/text-only", thinking: "off" }, stored)).toEqual({
+			ok: true,
+			name: "workhorse",
+			pair: stored.workhorse,
+		});
+		expect(nextModelClass(null, stored)).toEqual({ ok: true, name: "workhorse", pair: stored.workhorse });
+	});
+
+	test("pair equality requires model AND thinking", () => {
+		const nearMiss: ModelPair = { model: "prov-a/model-a", thinking: "high" }; // same model, other thinking
+		expect(nextModelClass(nearMiss, stored)).toEqual({ ok: true, name: "workhorse", pair: stored.workhorse });
+	});
+
+	test("first of duplicate pairs matches; next skips to the following class", () => {
+		const dupes: StoredClasses = {
+			a: { model: "prov-a/model-a", thinking: "high" },
+			b: { model: "prov-a/model-a", thinking: "high" },
+			c: { model: "prov-b/openai/gpt-oss-120b", thinking: "medium" },
+		};
+		expect(nextModelClass(dupes.a, dupes).name).toBe("b");
+		expect(nextModelClass(dupes.c, dupes).name).toBe("a");
+	});
+
+	test("zero classes -> informative error, nothing changes", () => {
+		const outcome = nextModelClass({ model: "prov-a/model-a", thinking: "high" }, {});
+		expect(outcome.ok).toBe(false);
+		expect(outcome.ok === false && outcome.error).toContain("No saved model classes");
+		expect(outcome.ok === false && outcome.error).toContain("/model-class <class> set");
 	});
 });
 
@@ -207,14 +413,14 @@ function fakeApplier(models: Record<string, ModelLike>, opts?: { failModelFor?: 
 			// pi clamp: nearest supported level, then first supported.
 			const idx = THINKING_LEVELS.indexOf(requested);
 			for (let i = idx; i >= 0; i--) {
-				if (supported.includes(THINKING_LEVELS[i])) {
-					level = THINKING_LEVELS[i];
+				if (supported.includes(THINKING_LEVELS[i]!)) {
+					level = THINKING_LEVELS[i]!;
 					return;
 				}
 			}
 			for (let i = idx + 1; i < THINKING_LEVELS.length; i++) {
-				if (supported.includes(THINKING_LEVELS[i])) {
-					level = THINKING_LEVELS[i];
+				if (supported.includes(THINKING_LEVELS[i]!)) {
+					level = THINKING_LEVELS[i]!;
 					return;
 				}
 			}
@@ -228,7 +434,7 @@ function fakeApplier(models: Record<string, ModelLike>, opts?: { failModelFor?: 
 	};
 }
 
-describe("applyResolvedPair — no partial switch (SPEC §8)", () => {
+describe("applyResolvedPair — no partial switch", () => {
 	const target: { pair: ModelPair; model: ModelLike } = {
 		pair: { model: "prov-b/openai/gpt-oss-120b", thinking: "high" },
 		model: MODEL_B,
@@ -238,7 +444,7 @@ describe("applyResolvedPair — no partial switch (SPEC §8)", () => {
 		model: MODEL_A,
 	};
 
-	test("success applies model + stored thinking together (A3)", async () => {
+	test("success applies model + stored thinking together", async () => {
 		const f = fakeApplier({ "prov-b/openai/gpt-oss-120b": MODEL_B });
 		const outcome = await applyResolvedPair(f.applier, target, null);
 		expect(outcome).toEqual({ ok: true });

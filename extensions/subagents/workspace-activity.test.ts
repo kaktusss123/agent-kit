@@ -379,7 +379,7 @@ function dispatch(h: Harness, params: Record<string, unknown>, signal?: AbortSig
 		deadlineSec: params.timeout_ms !== undefined ? (params.timeout_ms as number) / 1000 : undefined,
 		signal,
 		onUpdate,
-		model: CTX.model,
+		sessionModel: CTX.model,
 		thinkingLevel: CTX.thinkingLevel,
 		cwd: CTX.cwd,
 	}) as Promise<{ details: Record<string, unknown> }>;

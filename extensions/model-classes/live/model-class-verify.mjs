@@ -307,7 +307,7 @@ try {
 			);
 			check(
 				"unset cheap fails the spawn op with the spec error (A7)",
-				!!cheapSpawn && cheapSpawn.isError && cheapSpawn.text.includes('Model class "cheap" is not configured'),
+				!!cheapSpawn && cheapSpawn.isError && cheapSpawn.text.includes('Model class "cheap" is not saved'),
 				JSON.stringify(cheapSpawn?.text?.slice(0, 160)),
 			);
 			check(
@@ -345,7 +345,7 @@ try {
 			const errNotes = await drainNotifies();
 			check(
 				"unset cheap fails with the spec error",
-				errNotes.some((n) => n.type === "error" && n.message.includes('Model class "cheap" is not configured')),
+				errNotes.some((n) => n.type === "error" && n.message.includes('Model class "cheap" is not saved')),
 				JSON.stringify(errNotes),
 			);
 			s = await getState();
