@@ -94,6 +94,23 @@ describe("renderModelClassStatus", () => {
 		expect(out).not.toContain("(undefined, undefined)");
 	});
 
+	test("a present-but-empty route target flags NOT SAVED, never renders as inherit (R2)", () => {
+		const out = renderRoutingTable(CLASSES, { plain: "" });
+		expect(out).toContain("NOT SAVED");
+		expect(out).toContain("<empty>");
+		expect(out).toContain("/model-class route plain inherit");
+		// the healthy mode still renders normally
+		expect(out).toContain("repoOwner  inherit  (session pair)");
+		// the broken mode must not read as session inheritance
+		expect(out).not.toMatch(/^plain\s+inherit/m);
+	});
+
+	test("absent (undefined) routing entry renders the inherit line", () => {
+		const out = renderRoutingTable(CLASSES, {});
+		expect(out).toContain("plain      inherit  (session pair)");
+		expect(out).toContain("repoOwner  inherit  (session pair)");
+	});
+
 	test("session without a model renders an explicit row, not `not set`", () => {
 		const out = renderModelClassStatus({ name: "default", model: "(no model in session)" }, {}, {});
 		expect(out.split("\n")[2]).toBe("default  (no model in session)");

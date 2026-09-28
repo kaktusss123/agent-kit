@@ -124,6 +124,27 @@ describe("resolveSpawnPair — the literal default / inheritance paths", () => {
 		});
 	});
 
+	test("omitted with an empty or whitespace-only storage file inherits the session pair (empty ≡ missing)", () => {
+		for (const payload of ["", "  \n\t"]) {
+			withAgentDir(payload, () => {
+				for (const mode of ["plain", "repoOwner"] as const) {
+					expect(resolveSpawnPair(mode, undefined, ctx(SESSION, REGISTRY), "medium")).toEqual({
+						model: "prov-a/model-a",
+						thinking: "medium",
+					});
+				}
+			});
+		}
+	});
+
+	test("an explicit class with an empty storage file still fails as unknown class", () => {
+		withAgentDir("", () => {
+			expect(() => resolveSpawnPair("plain", "heavy", ctx(SESSION, REGISTRY), "high")).toThrow(
+				/Model class "heavy" is not saved/,
+			);
+		});
+	});
+
 	test("omitted with corrupt storage fails closed: routing state is unknown, not absent (D4)", () => {
 		withAgentDir(CORRUPT, (dir) => {
 			for (const mode of ["plain", "repoOwner"] as const) {

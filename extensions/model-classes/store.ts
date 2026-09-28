@@ -128,8 +128,10 @@ export function parseStoredPair(value: unknown): ModelPair | undefined {
 
 /**
  * Read and JSON-parse the storage file. Returns `undefined` for a missing
- * file; throws on unreadable or corrupt content so callers never silently
- * lose saved state.
+ * or EMPTY/whitespace-only file — mirroring the write path
+ * (`readModifiableStorage`), both legitimately mean "no state" and must not
+ * fail closed; only genuinely corrupt content throws so callers never
+ * silently lose saved state.
  */
 function readStorageObject(file: string): Record<string, unknown> | undefined {
 	let raw: string;
@@ -139,6 +141,7 @@ function readStorageObject(file: string): Record<string, unknown> | undefined {
 		if ((e as NodeJS.ErrnoException).code === "ENOENT") return undefined;
 		throw e;
 	}
+	if (raw.trim() === "") return undefined; // empty file ≡ missing file: no state
 	let data: unknown;
 	try {
 		data = JSON.parse(raw);
@@ -177,9 +180,9 @@ function parseRouting(value: unknown): RoutingTable {
 
 /**
  * Load the whole storage file: every valid class (in insertion order) plus
- * the routing table. Missing file → empty. Entries that fail validation are
- * treated as not set. Corrupt JSON throws: the caller should surface the
- * error rather than silently losing the user's saved classes.
+ * the routing table. Missing or empty file → empty. Entries that fail
+ * validation are treated as not set. Corrupt JSON throws: the caller should
+ * surface the error rather than silently losing the user's saved classes.
  */
 export function loadStoredFile(file: string): StoredModelClasses {
 	const obj = readStorageObject(file);

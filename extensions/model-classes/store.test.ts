@@ -353,6 +353,18 @@ describe("failure semantics", () => {
 		expect(loadModelClasses(path.join(os.tmpdir(), `mc-none-${Date.now()}.json`))).toEqual({});
 	});
 
+	test("an empty storage file loads as empty classes and routing, like a missing file", () => {
+		const file = tmpFile();
+		fs.writeFileSync(file, "");
+		expect(loadStoredFile(file)).toEqual({ classes: {}, routing: {} });
+	});
+
+	test("a whitespace-only storage file loads as empty, like a missing file", () => {
+		const file = tmpFile();
+		fs.writeFileSync(file, "  \n\t ");
+		expect(loadStoredFile(file)).toEqual({ classes: {}, routing: {} });
+	});
+
 	test("corrupt JSON throws instead of silently dropping saved classes", () => {
 		const file = tmpFile();
 		fs.writeFileSync(file, "{ not json");

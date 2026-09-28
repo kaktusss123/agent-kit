@@ -38,24 +38,36 @@ function pad(value: string, width: number): string {
  * classes that are not saved.
  */
 export function renderRoutingTable(stored: StoredClasses, routing: RoutingTable): string {
-	const routedNames = SPAWN_MODES.map((mode) => routing[mode]).filter(Boolean) as string[];
+	// `!== undefined` (not truthiness): a PRESENT-but-empty target (""
+	// from a hand-edit) counts toward the width exactly like any other
+	// routed name and must never silently disappear from the table.
+	const routedNames = SPAWN_MODES.map((mode) => routing[mode]).filter(
+		(name): name is string => name !== undefined,
+	);
 	const classWidth = Math.max("inherit".length, ...routedNames.map((n) => n.length)) + 2;
 	const modeWidth = Math.max(...SPAWN_MODES.map((m) => m.length)) + 2;
 	const lines = SPAWN_MODES.map((mode) => {
 		const className = routing[mode];
 		const head = pad(mode, modeWidth);
-		if (!className) return `${head}${pad("inherit", classWidth)}(session pair)`;
+		// Absent entry → inherit. A present-but-empty target is SET state that
+		// fails closed at spawn resolution (`resolveSpawnTarget` uses
+		// `!== undefined`): it must render as NOT SAVED, never hide as
+		// inheritance (SPEC R2).
+		if (className === undefined) return `${head}${pad("inherit", classWidth)}(session pair)`;
+		// `<empty>` keeps an empty-string target readable instead of
+		// interpolating nothing into the line.
+		const display = className === "" ? "<empty>" : className;
 		// Own-property lookup: an inherited Object property (`constructor`, ...)
 		// must render as NOT SAVED, never leak through as a pair.
 		const pair: ModelPair | undefined = Object.hasOwn(stored, className) ? stored[className] : undefined;
 		if (!pair) {
 			return (
-				`${head}${pad(className, classWidth)}` +
-				`NOT SAVED — save it (\`/model-class ${className} set\`) ` +
+				`${head}${pad(display, classWidth)}` +
+				`NOT SAVED — save it (\`/model-class ${display} set\`) ` +
 				`or reset the route (\`/model-class route ${mode} inherit\`)`
 			);
 		}
-		return `${head}${pad(className, classWidth)}(${pair.model}, ${pair.thinking})`;
+		return `${head}${pad(display, classWidth)}(${pair.model}, ${pair.thinking})`;
 	});
 	return ["Routing (spawn-mode defaults)", "", ...lines].join("\n");
 }
