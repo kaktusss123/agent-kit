@@ -45,7 +45,9 @@ export function renderRoutingTable(stored: StoredClasses, routing: RoutingTable)
 		const className = routing[mode];
 		const head = pad(mode, modeWidth);
 		if (!className) return `${head}${pad("inherit", classWidth)}(session pair)`;
-		const pair: ModelPair | undefined = stored[className];
+		// Own-property lookup: an inherited Object property (`constructor`, ...)
+		// must render as NOT SAVED, never leak through as a pair.
+		const pair: ModelPair | undefined = Object.hasOwn(stored, className) ? stored[className] : undefined;
 		if (!pair) {
 			return (
 				`${head}${pad(className, classWidth)}` +

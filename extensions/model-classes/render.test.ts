@@ -87,6 +87,13 @@ describe("renderModelClassStatus", () => {
 		expect(out).toContain("repoOwner  inherit  (session pair)");
 	});
 
+	test("a routed inherited-property name (`constructor`) flags NOT SAVED, never renders garbage", () => {
+		const out = renderRoutingTable(CLASSES, { plain: "constructor" });
+		expect(out).toContain("NOT SAVED");
+		expect(out).toContain("/model-class route plain inherit");
+		expect(out).not.toContain("(undefined, undefined)");
+	});
+
 	test("session without a model renders an explicit row, not `not set`", () => {
 		const out = renderModelClassStatus({ name: "default", model: "(no model in session)" }, {}, {});
 		expect(out.split("\n")[2]).toBe("default  (no model in session)");

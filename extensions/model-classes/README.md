@@ -92,6 +92,13 @@ spawn time with an error naming the class, the mode, and the fix
 workspace spawns such failures classify as `blocked` (`dispatched:false`,
 nothing started) — a Main-side config problem, not a profile failure.
 
+Hand-edited routing values are preserved structurally: a present route to
+a name that is not a saved class (a reserved word like `default`, garbage
+like `INVALID!`) fails closed exactly like a dead class — never silently
+downgraded to inheritance. Unreadable storage (corrupt JSON) fails omitted
+spawns the same way: the routing state is unknown, not absent; only the
+literal `modelClass: "default"` resolves without consulting storage.
+
 Routing is machine-global (agent dir), not per-project. Scope note: routing
 applies by spawn mode regardless of who spawns — a RepoOwner spawning a
 plain helper without `modelClass` gets the `plain` route; `modelClass:
@@ -106,7 +113,8 @@ plain helper without `modelClass` gets the `plain` route; `modelClass:
 - **No fallback.** An unsaved class, a model that is gone from the registry,
   or an unsupported thinking level all fail with an error. Never falls back
   to `default`, another provider, or a lower reasoning level; the session
-  (or the spawn) stays unchanged.
+  (or the spawn) stays unchanged. A present-but-unresolvable routing entry
+  or an unreadable storage file fails closed at spawn time the same way.
 - **Atomic persistence.** `<agent-dir>/model-classes.json` (honors
   `PI_CODING_AGENT_DIR`) is written tmp+rename; a failed write reports an
   error and never claims success. Corrupt JSON aborts every write (`set` /

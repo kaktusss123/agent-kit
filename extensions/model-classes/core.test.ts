@@ -199,6 +199,21 @@ describe("resolveModelClass — named stored classes", () => {
 		expect(outcome.ok === false && outcome.error).toContain("max");
 	});
 
+	test("`constructor` (inherited Object property) is exactly an unknown class name", () => {
+		const { env } = envWith([MODEL_A], { model: "prov-a/model-a", thinking: "high" });
+		const outcome = resolveModelClass("constructor", stored, env);
+		expect(outcome.ok).toBe(false);
+		if (outcome.ok) throw new Error("unreachable");
+		expect(outcome.error).toBe(unknownClassError("constructor", stored));
+		expect(outcome.error).toContain("workhorse, heavy");
+	});
+
+	test("a class genuinely saved as `constructor` resolves normally (own property)", () => {
+		const saved: StoredClasses = { constructor: { model: "prov-a/model-a", thinking: "high" } };
+		const { env } = envWith([MODEL_A], null);
+		expect(resolveModelClass("constructor", saved, env)).toMatchObject({ ok: true, origin: "stored" });
+	});
+
 	test("equal classes are all resolvable, no dedup or warning", () => {
 		const { env } = envWith([MODEL_A], { model: "prov-a/model-a", thinking: "high" });
 		const same: StoredClasses = {
@@ -335,6 +350,26 @@ describe("resolveSpawnTarget — the R3 matrix", () => {
 		const outcome = resolveSpawnTarget("repoOwner", undefined, bad, { repoOwner: "heavy" }, env(session));
 		expect(outcome.ok).toBe(false);
 		expect(outcome.ok === false && outcome.error).toContain("does not support");
+	});
+
+	test("2h. routed inherited-property name (`constructor`) fails closed like any unknown class (A6)", () => {
+		const outcome = resolveSpawnTarget("plain", undefined, stored, { plain: "constructor" }, env(session));
+		expect(outcome.ok).toBe(false);
+		if (outcome.ok) throw new Error("unreachable");
+		expect(outcome.error).toBe(routingFailureError("plain", "constructor", unknownClassError("constructor", stored)));
+		expect(outcome.error).toContain("/model-class route plain <class|inherit>");
+	});
+
+	test("2i. routed reserved/garbage string targets fail closed, never reinterpreted (A6)", () => {
+		// a hand-edited "default" route must NOT resolve as the session pair
+		const dflt = resolveSpawnTarget("repoOwner", undefined, stored, { repoOwner: "default" }, env(session));
+		expect(dflt.ok).toBe(false);
+		expect(dflt.ok === false && dflt.error).toContain('set to class "default"');
+		expect(dflt.ok === false && dflt.error).toContain("/model-class route repoOwner <class|inherit>");
+		// invalid-grammar targets fail identically
+		const garbage = resolveSpawnTarget("plain", undefined, stored, { plain: "INVALID!" }, env(session));
+		expect(garbage.ok).toBe(false);
+		expect(garbage.ok === false && garbage.error).toContain('set to class "INVALID!"');
 	});
 });
 

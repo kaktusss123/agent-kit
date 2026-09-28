@@ -11,11 +11,16 @@
  * and there is no fallback.
  *
  * Storage rules at this boundary:
- * - the literal `"default"` and an omitted param with no readable routing
- *   resolve the live session pair WITHOUT consulting storage — saved-class
- *   storage can never break the inheritance path (corrupt file included);
- * - an explicit class name, or a routing entry, reads storage and throws on
- *   any failure (corrupt storage is never masked).
+ * - the literal `"default"` resolves the live session pair WITHOUT
+ *   consulting storage — the escape hatch can never be broken by a storage
+ *   problem;
+ * - an omitted param with NO storage file (or an empty one) legitimately
+ *   means "no routing": the session pair applies (loadStoredFile returns an
+ *   empty table for that case without throwing);
+ * - anything else reads storage, and a read failure (corrupt JSON,
+ *   unreadable file) means the routing state is UNKNOWN, not absent — a
+ *   possibly-routed mode must not silently downgrade to the session model,
+ *   so the failure propagates with the file path and the fix named.
  *
  * Pure module: no runtime imports (pi types only appear as structural
  * parameters), so bun tests can exercise the boundary directly.
@@ -64,15 +69,21 @@ export function resolveSpawnPair(
 	if (requested === "default") {
 		return pairOrThrow(resolveSpawnTarget(mode, "default", {}, {}, envFor(ctx, currentThinking)));
 	}
+	// Everything else reads storage fresh. A read failure is unknown routing
+	// state, not absent routing: it must fail closed here rather than silently
+	// downgrade a possibly-routed mode to the session pair (SPEC D4). Only a
+	// missing/empty file legitimately means "no routing" — loadStoredFile
+	// returns an empty table for that case without throwing.
 	let stored: StoredModelClasses;
 	try {
 		stored = loadStoredFile(modelClassesPath());
 	} catch (e) {
-		if (requested !== undefined) throw e; // explicit class: never masked
-		// Omitted param with unreadable storage: no readable routing exists,
-		// so the session pair applies — identical to today's inheritance
-		// default. `/model-class` status surfaces the corruption loudly.
-		return pairOrThrow(resolveSpawnTarget(mode, undefined, {}, {}, envFor(ctx, currentThinking)));
+		throw new Error(
+			`${e instanceof Error ? e.message : String(e)}\n` +
+				`Spawn routing state is unknown, so the spawn is refused rather than silently inheriting the session model. ` +
+				`Fix: repair the file so it is valid JSON, or delete it and re-save what you need ` +
+				`(classes: \`/model-class <class> set\`; routing: \`/model-class route <mode> <class|inherit>\`).`,
+		);
 	}
 	return pairOrThrow(resolveSpawnTarget(mode, requested, stored.classes, stored.routing, envFor(ctx, currentThinking)));
 }

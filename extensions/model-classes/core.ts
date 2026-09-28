@@ -139,6 +139,33 @@ export function routingFailureError(mode: SpawnMode, className: string, cause: s
 }
 
 /**
+ * Resolve a SAVED-CLASS reference (no `default` special case): own-property
+ * lookup — inherited Object properties (`constructor`, `toString`, ...) must
+ * behave exactly like unknown class names, never leak through as a class.
+ * Routing uses this directly: a routed value is looked up as a saved class
+ * ONLY, so a hand-edited `"default"` target fails closed instead of being
+ * silently reinterpreted as the session pair.
+ */
+function resolveStoredClass(name: string, stored: StoredClasses, env: ModelClassEnv): ResolveOutcome {
+	const saved = Object.hasOwn(stored, name) ? stored[name] : undefined;
+	if (!saved) return { ok: false, error: unknownClassError(name, stored) };
+	const model = env.findModel(saved.model);
+	if (!model) {
+		return {
+			ok: false,
+			error: `Model class "${name}" refers to ${saved.model}, which is no longer available. Re-save it: \`/model-class ${name} set\`.`,
+		};
+	}
+	if (!isThinkingLevel(saved.thinking) || !supportedThinkingLevels(model).includes(saved.thinking)) {
+		return {
+			ok: false,
+			error: `Model class "${name}" refers to ${saved.model} with thinking level "${saved.thinking}", which that model does not support. Re-save it: \`/model-class ${name} set\`.`,
+		};
+	}
+	return { ok: true, pair: saved, origin: "stored", model };
+}
+
+/**
  * Resolve a class reference to a concrete model + thinking pair. `default`
  * snapshots the live session; a saved class name reads persisted state and
  * validates the saved combination against the current registry. Stored
@@ -153,22 +180,7 @@ export function resolveModelClass(ref: string, stored: StoredClasses, env: Model
 		if (!pair) return { ok: false, error: "no model resolved in the current session" };
 		return { ok: true, pair, origin: "session" };
 	}
-	const saved = stored[ref];
-	if (!saved) return { ok: false, error: unknownClassError(ref, stored) };
-	const model = env.findModel(saved.model);
-	if (!model) {
-		return {
-			ok: false,
-			error: `Model class "${ref}" refers to ${saved.model}, which is no longer available. Re-save it: \`/model-class ${ref} set\`.`,
-		};
-	}
-	if (!isThinkingLevel(saved.thinking) || !supportedThinkingLevels(model).includes(saved.thinking)) {
-		return {
-			ok: false,
-			error: `Model class "${ref}" refers to ${saved.model} with thinking level "${saved.thinking}", which that model does not support. Re-save it: \`/model-class ${ref} set\`.`,
-		};
-	}
-	return { ok: true, pair: saved, origin: "stored", model };
+	return resolveStoredClass(ref, stored, env);
 }
 
 /**
@@ -178,9 +190,11 @@ export function resolveModelClass(ref: string, stored: StoredClasses, env: Model
  * 1. explicit `requested`: `"default"` → live session pair; a saved class
  *    name → its stored pair, validated; anything else → fail closed with
  *    the saved class names listed;
- * 2. omitted: routing entry for `mode` → that class, resolved and validated
- *    identically (an unresolvable route fails closed naming the class, the
- *    mode, and the fix); no routing entry → live session pair.
+ * 2. omitted: routing entry for `mode` → that entry's value, resolved as a
+ *    SAVED CLASS ONLY and validated identically (an unresolvable route —
+ *    dead class, invalid name, even a hand-edited `"default"` — fails closed
+ *    naming the class, the mode, and the fix); no routing entry → live
+ *    session pair.
  */
 export function resolveSpawnTarget(
 	mode: SpawnMode,
@@ -192,7 +206,7 @@ export function resolveSpawnTarget(
 	if (requested !== undefined) return resolveModelClass(requested, stored, env);
 	const routed = routing[mode];
 	if (routed !== undefined) {
-		const outcome = resolveModelClass(routed, stored, env);
+		const outcome = resolveStoredClass(routed, stored, env);
 		if (!outcome.ok) return { ok: false, error: routingFailureError(mode, routed, outcome.error) };
 		return { ...outcome, route: { mode, className: routed } };
 	}

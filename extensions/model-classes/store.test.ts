@@ -175,7 +175,7 @@ describe("routing storage (R3)", () => {
 		expect(loadStoredFile(file).routing).toEqual({ plain: "workhorse" });
 	});
 
-	test("hand-edited routing garbage degrades: unknown modes and non-class targets dropped", () => {
+	test("hand-edited routing garbage: unknown modes and non-string targets dropped", () => {
 		const file = tmpFile();
 		fs.writeFileSync(
 			file,
@@ -183,12 +183,23 @@ describe("routing storage (R3)", () => {
 				routing: {
 					plain: "workhorse",
 					bogusMode: "heavy",
-					repoOwner: "not a class!",
-					alsoBad: "default",
+					repoOwner: 42,
+					alsoBad: null,
 				},
 			}),
 		);
 		expect(loadStoredFile(file).routing).toEqual({ plain: "workhorse" });
+	});
+
+	test("string routing targets are preserved even when not valid/saved class names (D4/A6 fail closed)", () => {
+		const file = tmpFile();
+		fs.writeFileSync(
+			file,
+			JSON.stringify({ routing: { repoOwner: "INVALID!", plain: "default" } }),
+		);
+		// preserved structurally: a present route is unknown-but-set state
+		// that fails closed at spawn resolution — never silently dropped
+		expect(loadStoredFile(file).routing).toEqual({ repoOwner: "INVALID!", plain: "default" });
 	});
 
 	test("a route to a class that is not saved loads fine (flagged at spawn/status, R2)", () => {
@@ -326,6 +337,16 @@ describe("failure semantics", () => {
 		fs.writeFileSync(file, "");
 		saveModelClass(file, "cheap", { model: "a/m", thinking: "low" });
 		expect(loadModelClasses(file).cheap).toEqual({ model: "a/m", thinking: "low" });
+	});
+
+	test("a class literally named `constructor` round-trips (own-property storage)", () => {
+		const file = tmpFile();
+		saveModelClass(file, "constructor", { model: "a/m", thinking: "low" });
+		saveModelClass(file, "workhorse", { model: "b/m2", thinking: "high" });
+		expect(loadModelClasses(file)).toEqual({
+			constructor: { model: "a/m", thinking: "low" },
+			workhorse: { model: "b/m2", thinking: "high" },
+		});
 	});
 
 	test("missing file loads as empty", () => {

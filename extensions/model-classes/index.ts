@@ -210,7 +210,10 @@ export default function (pi: ExtensionAPI) {
 					notifyError(ctx, "Cannot read model classes", e);
 					return;
 				}
-				if (target !== "inherit" && stored.classes[target] === undefined) {
+				// Own-property saved-check: inherited Object properties (`constructor`,
+				// ...) pass the class-name grammar, so property access alone would leak
+				// them through as "saved".
+				if (target !== "inherit" && !Object.hasOwn(stored.classes, target)) {
 					ctx.ui.notify(
 						`Model class "${target}" is not saved.\nSave it first: \`/model-class ${target} set\`.`,
 						"error",

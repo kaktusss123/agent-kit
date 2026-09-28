@@ -250,49 +250,68 @@ describe("subagent tool surface", () => {
 		expect(res.isError).toBe(true);
 	});
 
-	test("static descriptions enumerate the saved class names at extension load (R4)", () => {
+	test("static descriptions enumerate the saved class names at extension LOAD, never at import (R4)", () => {
 		const base = fs.mkdtempSync(path.join(os.tmpdir(), "subagent-desc-test-"));
-		const agentDir = path.join(base, "agent-dir");
-		fs.mkdirSync(agentDir, { recursive: true });
+		const agentDir1 = path.join(base, "agent-dir-1");
+		const agentDir2 = path.join(base, "agent-dir-2");
+		fs.mkdirSync(agentDir1, { recursive: true });
+		fs.mkdirSync(agentDir2, { recursive: true });
 		fs.writeFileSync(
-			path.join(agentDir, "model-classes.json"),
+			path.join(agentDir1, "model-classes.json"),
 			JSON.stringify({
 				workhorse: { model: "zai/glm-x", thinking: "low" },
 				heavy: { model: "zai/glm-max", thinking: "high" },
 			}),
 		);
+		fs.writeFileSync(
+			path.join(agentDir2, "model-classes.json"),
+			JSON.stringify({ deep: { model: "zai/glm-max", thinking: "high" } }),
+		);
 		const indexPath = path.join(import.meta.dir, "index.ts");
-		// Fresh module load in a subprocess: the class list is baked in at
-		// import time, so the env must be pinned before the import runs.
+		// Fresh module load in a subprocess with NO agent dir pinned: the
+		// class list must be enumerated at REGISTRATION time (extension load),
+		// so the env is redirected AFTER the import, BEFORE each register().
+		// Each registration reads the storage that is current at that moment.
 		const script = [
-			`process.env.PI_CODING_AGENT_DIR = ${JSON.stringify(agentDir)};`,
+			`delete process.env.PI_CODING_AGENT_DIR;`,
 			`delete process.env.PI_SUBAGENT_ID;`,
 			`const { default: register } = await import(${JSON.stringify(pathToFileURL(indexPath).href)});`,
 			`const tools = new Map();`,
-			`register({`,
-			`	registerTool: (d) => tools.set(d.name, d),`,
-			`	registerCommand: () => {},`,
-			`	sendMessage: () => {},`,
-			`	getThinkingLevel: () => "low",`,
-			`	on: () => () => {},`,
-			`});`,
-			`const def = tools.get("subagent");`,
+			`const registerOnce = () => {`,
+			`	tools.clear();`,
+			`	register({`,
+			`		registerTool: (d) => tools.set(d.name, d),`,
+			`		registerCommand: () => {},`,
+			`		sendMessage: () => {},`,
+			`		getThinkingLevel: () => "low",`,
+			`		on: () => () => {},`,
+			`	});`,
+			`	return tools.get("subagent");`,
+			`};`,
+			`process.env.PI_CODING_AGENT_DIR = ${JSON.stringify(agentDir1)};`,
+			`const def1 = registerOnce();`,
+			`process.env.PI_CODING_AGENT_DIR = ${JSON.stringify(agentDir2)};`,
+			`const def2 = registerOnce();`,
 			`console.log(JSON.stringify({`,
-			`	modelClass: def.parameters.properties.modelClass,`,
-			`	guidelines: def.promptGuidelines,`,
+			`	d1: def1.parameters.properties.modelClass.description,`,
+			`	g1: def1.promptGuidelines,`,
+			`	d2: def2.parameters.properties.modelClass.description,`,
 			`}));`,
 		].join("\n");
 		try {
 			const out = execFileSync("bun", ["-e", script], { encoding: "utf8" });
 			const parsed = JSON.parse(out) as {
-				modelClass: { type: string; description: string };
-				guidelines: string[];
+				d1: string;
+				g1: string[];
+				d2: string;
 			};
-			expect(parsed.modelClass.type).toBe("string");
-			expect(parsed.modelClass.description).toContain("currently: workhorse, heavy");
-			const guidelines = parsed.guidelines.join("\n");
-			expect(guidelines).toContain("currently: workhorse, heavy");
-			expect(guidelines).toContain("/model-class route");
+			expect(parsed.d1).toContain("currently: workhorse, heavy");
+			expect(parsed.g1.join("\n")).toContain("currently: workhorse, heavy");
+			expect(parsed.g1.join("\n")).toContain("/model-class route");
+			// the second registration enumerates CURRENT storage, not a list
+			// frozen at import time
+			expect(parsed.d2).toContain("currently: deep");
+			expect(parsed.d2).not.toContain("workhorse");
 		} finally {
 			fs.rmSync(base, { recursive: true, force: true });
 		}

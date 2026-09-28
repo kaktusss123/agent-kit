@@ -1153,6 +1153,25 @@ describe("spawn-mode routing (R3)", () => {
 		}
 	});
 
+	test("hand-edited invalid routing target (\"default\") → blocked with the routing fix, never silent inheritance (A6)", async () => {
+		const h = makeLayer();
+		try {
+			// "default" is a reserved word, not a saved class: it must fail as a
+			// routing error — not be reinterpreted as the session pair.
+			seedAgentStorage(h, { heavy: { model: "zai/glm-max", thinking: "xhigh" }, routing: { repoOwner: "default" } });
+			const ws = makeWorktree(h.taskRoot, "invalidroute-ws");
+			const res = await dispatchCall(h, { workspace: ws, task: "t" }, undefined, ROUTED_CTX);
+			expect(res.details).toMatchObject({ status: "blocked", dispatched: false });
+			const reason = String(res.details.reason);
+			expect(reason).toContain('set to class "default"');
+			expect(reason).toContain('"repoOwner"');
+			expect(reason).toContain("/model-class route repoOwner <class|inherit>");
+			expect(h.harness.spawned).toHaveLength(0);
+		} finally {
+			h.cleanup();
+		}
+	});
+
 	test("routed dead model → blocked with the re-save fix (A7)", async () => {
 		const h = makeLayer();
 		try {

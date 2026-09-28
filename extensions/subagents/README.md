@@ -120,7 +120,9 @@ model-classes resolver — routing-aware — before the process starts; see
 applies (`/model-class route <plain|repoOwner> <class|inherit>`; with no
 route the child inherits the current main session pair); an explicit saved
 class name overrides routing, and `"default"` matches the live session
-pair regardless of routing. The runtime never maps roles to classes or
+pair regardless of routing. A present route that cannot be resolved (dead
+class, hand-edited garbage target) or unreadable model-class storage fails
+the spawn closed instead of silently inheriting. The runtime never maps roles to classes or
 picks a class itself — routing is the user's machine-global configuration.
 The internal runtime boundary (`SpawnOptions`) still carries concrete
 `model`/`thinking` because the child needs literal CLI flags.

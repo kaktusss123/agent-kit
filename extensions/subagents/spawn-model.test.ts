@@ -1,11 +1,13 @@
 /**
  * Unit tests for the subagent spawn modelClass boundary (SPEC R3): the
- * literal `default` and omitted-with-no-routing resolve the live session
- * pair without ever consulting stored classes (corrupt storage included),
- * explicit and routed classes resolve persisted state through the registry,
- * routing is per spawn mode, and an unresolvable target throws here — the
- * tool calls this immediately before `runtime.spawn()`, so a throw here IS
- * the no-child guarantee (fail closed, no fallback).
+ * literal `default` and omitted-with-no-storage resolve the live session
+ * pair without ever consulting stored classes, explicit and routed classes
+ * resolve persisted state through the registry, routing is per spawn mode,
+ * and an unresolvable or unreadable target throws here — the tool calls
+ * this immediately before `runtime.spawn()`, so a throw here IS the
+ * no-child guarantee (fail closed, no fallback). An omitted param with
+ * unreadable (corrupt) storage also fails closed: routing state is
+ * unknown, not absent (D4).
  *
  * Every case runs against a throwaway PI_CODING_AGENT_DIR: nothing here may
  * depend on (or accidentally read) the real user storage.
@@ -122,12 +124,21 @@ describe("resolveSpawnPair — the literal default / inheritance paths", () => {
 		});
 	});
 
-	test("omitted with corrupt storage still inherits the session pair (no readable routing)", () => {
-		withAgentDir(CORRUPT, () => {
-			expect(resolveSpawnPair("repoOwner", undefined, ctx(SESSION, REGISTRY), "low")).toEqual({
-				model: "prov-a/model-a",
-				thinking: "low",
-			});
+	test("omitted with corrupt storage fails closed: routing state is unknown, not absent (D4)", () => {
+		withAgentDir(CORRUPT, (dir) => {
+			for (const mode of ["plain", "repoOwner"] as const) {
+				let message: string | undefined;
+				try {
+					resolveSpawnPair(mode, undefined, ctx(SESSION, REGISTRY), "low");
+				} catch (e) {
+					message = e instanceof Error ? e.message : String(e);
+				}
+				// actionable: names the corruption, the file path, and the fix
+				expect(message).toContain("corrupt");
+				expect(message).toContain(path.join(dir, "model-classes.json"));
+				expect(message).toContain("valid JSON");
+				expect(message).toContain("/model-class route <mode> <class|inherit>");
+			}
 		});
 	});
 
@@ -169,6 +180,14 @@ describe("resolveSpawnPair — explicit classes (both modes)", () => {
 		withAgentDir({ heavy: STORED_HEAVY }, () => {
 			expect(() => resolveSpawnPair("plain", "cheap", ctx(SESSION, REGISTRY), "high")).toThrow(
 				/Model class "cheap" is not saved[\s\S]*heavy/,
+			);
+		});
+	});
+
+	test("`constructor` (inherited Object property) behaves exactly like an unknown class name", () => {
+		withAgentDir({ heavy: STORED_HEAVY }, () => {
+			expect(() => resolveSpawnPair("plain", "constructor", ctx(SESSION, REGISTRY), "high")).toThrow(
+				/Model class "constructor" is not saved[\s\S]*heavy/,
 			);
 		});
 	});
@@ -267,7 +286,23 @@ describe("resolveSpawnPair — spawn-mode routing (R3)", () => {
 		});
 	});
 
-	test("hand-edited garbage routing degrades to inheritance, not failure", () => {
+	test("hand-edited routing to a non-class string target fails closed, not silent inheritance (A6, both modes)", () => {
+		// "default" is a reserved word, not a saved class: it must fail as a
+		// routing error — never be reinterpreted as the session-pair literal.
+		withAgentDir({ heavy: STORED_HEAVY, routing: { repoOwner: "default" } }, () => {
+			expect(() => resolveSpawnPair("repoOwner", undefined, ctx(SESSION, REGISTRY), "high")).toThrow(
+				/routing for mode "repoOwner" is set to class "default"[\s\S]*is not saved[\s\S]*heavy/,
+			);
+		});
+		// garbage grammar target: same failure shape, exactly like a dead class
+		withAgentDir({ heavy: STORED_HEAVY, routing: { plain: "INVALID!" } }, () => {
+			expect(() => resolveSpawnPair("plain", undefined, ctx(SESSION, REGISTRY), "high")).toThrow(
+				/routing for mode "plain" is set to class "INVALID!"[\s\S]*\/model-class route plain <class\|inherit>/,
+			);
+		});
+	});
+
+	test("hand-edited non-object routing degrades to inheritance (cannot be a route at all)", () => {
 		withAgentDir({ routing: "workhorse" }, () => {
 			expect(resolveSpawnPair("plain", undefined, ctx(SESSION, REGISTRY), "high")).toEqual({
 				model: "prov-a/model-a",

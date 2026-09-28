@@ -90,7 +90,7 @@ export interface ModelPair {
 /** Persisted model classes, keyed by name in storage (insertion) order. */
 export type StoredClasses = Record<ModelClassName, ModelPair>;
 
-/** Routing table: spawn mode -> saved class name. Partial by design. */
+/** Routing table: spawn mode -> routed class reference. Partial by design. */
 export type RoutingTable = Partial<Record<SpawnMode, ModelClassName>>;
 
 /** Everything the storage file carries. */
@@ -153,11 +153,16 @@ function readStorageObject(file: string): Record<string, unknown> | undefined {
 
 /**
  * Parse the routing table out of the reserved `routing` value. Degrade
- * semantics: a non-object `routing`, unknown modes, and non-class-name
- * targets (including reserved words like `default`) are dropped — the mode
- * falls back to session inheritance. A route to a class name that is not
- * (or no longer) saved LOADS fine; it is flagged in status and fails closed
- * at spawn time.
+ * semantics: a non-object `routing` and unknown modes are dropped — the
+ * mode falls back to session inheritance. A STRING target for a known mode
+ * is preserved structurally even when it is not a valid/saved class name
+ * (reserved words like `default`, garbage like `"INVALID!"`): a present
+ * routing value is unknown-but-set state, not absent state, so it must
+ * fail closed at spawn resolution with the routing-aware error (SPEC D4)
+ * and stay visibly flagged in status — never silently degrade to
+ * inheritance. Write-time validation (`/model-class route`) is unchanged.
+ * Non-string values (numbers, null, objects) cannot be a class reference
+ * and are dropped.
  */
 function parseRouting(value: unknown): RoutingTable {
 	if (typeof value !== "object" || value === null || Array.isArray(value)) return {};
@@ -165,7 +170,7 @@ function parseRouting(value: unknown): RoutingTable {
 	const routing: RoutingTable = {};
 	for (const mode of SPAWN_MODES) {
 		const target = raw[mode];
-		if (typeof target === "string" && isClassName(target)) routing[mode] = target;
+		if (typeof target === "string") routing[mode] = target;
 	}
 	return routing;
 }

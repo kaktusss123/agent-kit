@@ -205,6 +205,19 @@ describe("route", () => {
 			expect(JSON.parse(fs.readFileSync(path.join(dir, "model-classes.json"), "utf8")).routing).toEqual({});
 		});
 	});
+
+	test("`constructor` passes the grammar but is not saved: route set refuses it like any unknown name", async () => {
+		// `constructor` is an inherited Object property — the saved-check must
+		// use own-property semantics or property access "finds" it.
+		await withAgentStorage({ heavy: { model: "zai/glm-x", thinking: "low" } }, async (dir, base) => {
+			await base.run("route plain constructor");
+			expect(base.last()!.kind).toBe("error");
+			expect(base.last()!.text).toContain("not saved");
+			expect(JSON.parse(fs.readFileSync(path.join(dir, "model-classes.json"), "utf8")).routing ?? {}).toEqual(
+				{},
+			);
+		});
+	});
 });
 
 describe("next / ctrl+alt+p (stateless cycle, R5/A9)", () => {
