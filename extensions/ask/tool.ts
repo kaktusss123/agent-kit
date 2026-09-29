@@ -226,6 +226,43 @@ export function disambiguateDisplayLabels(labels: string[]): string[] {
 	});
 }
 
+/**
+ * JSON-aware wire dedup (ZAVOD-30 §2.1 wire invariant): ensures every
+ * emitted option string is unique WITHOUT breaking JSON validity. The
+ * first occurrence of each identical encoding is kept as-is; every later
+ * duplicate gets an in-object `dup` differentiator before encoding, bumped
+ * further while the encoding still collides with an already-used string.
+ * Positional mapping (`actions[]`) is untouched — callers keep the same
+ * order, only the item payloads change. Parsers ignore `dup` for display.
+ */
+export function disambiguateWireItems(items: AskWireItem[]): AskWireItem[] {
+	const seen = new Set(items.map((item) => JSON.stringify(item)));
+	if (seen.size === items.length) return items; // fast path: already unique
+	const used = new Set<string>();
+	const occurrence = new Map<string, number>();
+	return items.map((item) => {
+		const base = JSON.stringify(item);
+		const k = (occurrence.get(base) ?? 0) + 1;
+		occurrence.set(base, k);
+		if (k === 1) {
+			used.add(base);
+			return item; // the first occurrence of each identical item keeps its encoding
+		}
+		// Later copies carry `dup` mirroring their occurrence number,
+		// bumped further when that exact encoding already exists.
+		let n = k;
+		let candidate: AskWireItem = { ...item, dup: n };
+		let encoded = JSON.stringify(candidate);
+		while (used.has(encoded)) {
+			n += 1;
+			candidate = { ...item, dup: n };
+			encoded = JSON.stringify(candidate);
+		}
+		used.add(encoded);
+		return candidate;
+	});
+}
+
 // ============================================================ wire format v2 (ZAVOD-30 §2.1)
 
 /**
@@ -240,7 +277,8 @@ export function disambiguateDisplayLabels(labels: string[]): string[] {
  * Answers travel back as one of the emitted strings verbatim (or
  * `cancelled`); the driver maps the reply by exact string equality, so
  * uniqueness of the emitted strings is enforced with
- * `disambiguateDisplayLabels` below.
+ * `disambiguateWireItems` below (in-object `dup` differentiator — never a
+ * string suffix, which would break JSON validity per the wire invariant).
  */
 export const ASK_WIRE_VERSION = 1;
 
@@ -280,6 +318,17 @@ export interface AskWireItem {
 	 * omitted when nothing is selected.
 	 */
 	checked?: string[];
+	/**
+	 * Wire-collision differentiator (ZAVOD-30 §2.1 wire invariant): when two
+	 * wire items would encode to the identical string, the later copies
+	 * carry `dup: <occurrence number>` (2 for the second copy, 3 for the
+	 * third, …) so every emitted string stays valid v1-JSON and remains
+	 * parseable by `tryParseWireItem`. Parsers are tolerant to unknown
+	 * fields and ignore it for display; the driver still resolves the reply
+	 * positionally by exact string equality. Absent on the first occurrence
+	 * and on naturally unique items.
+	 */
+	dup?: number;
 }
 
 export function encodeWireItem(item: AskWireItem): string {
@@ -335,7 +384,7 @@ function finalizeDialog(
 	items: AskWireItem[],
 	actions: Array<FallbackAction | undefined>,
 ): FallbackDialog {
-	const options = disambiguateDisplayLabels(items.map(encodeWireItem));
+	const options = disambiguateWireItems(items).map(encodeWireItem);
 	return { title, options, actions };
 }
 

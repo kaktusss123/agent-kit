@@ -244,9 +244,11 @@ function pickKind(kind: AskWireItem["kind"], predicate?: (item: AskWireItem) => 
 
 const pickOption = (label: string) => pickKind("option", (i) => i.label === label);
 const pickNthOption = (label: string, n: number) => (_title: string, options: string[] | undefined) => {
-	// match by raw substring: disambiguated duplicates carry a " [n]" suffix
-	// and no longer parse as JSON — the driver still maps them by exact match
-	const matches = (options ?? []).filter((s) => s.includes(`"label":"${label}"`));
+	// JSON-aware dedup: every emitted string stays valid v1-JSON, later
+	// identical copies carry an in-object `dup` differentiator — match the
+	// nth parsed item with this label and return its exact emitted string,
+	// so the driver resolves it positionally by exact match.
+	const matches = (options ?? []).filter((s) => tryParseWireItem(s)?.label === label);
 	if (matches.length <= n) throw new Error(`only ${matches.length} options labeled "${label}"`);
 	return matches[n]!;
 };
@@ -337,14 +339,31 @@ describe("rpcFallbackAsk wire format (ZAVOD-30 §2.1)", () => {
 			question: "Which?",
 			options: [{ label: "foo" }, { label: "foo" }],
 		};
+		let replied: string | undefined;
+		const pickSecondFoo = (_title: string, options: string[] | undefined) => {
+			const s = pickNthOption("foo", 1)(_title, options);
+			replied = s;
+			return s;
+		};
 		const { ui, calls } = scriptedUi([
-			{ expect: { kind: "select" }, reply: pickNthOption("foo", 1) }, // the SECOND row
+			{ expect: { kind: "select" }, reply: pickSecondFoo }, // the SECOND row
 			{ expect: { kind: "select" }, reply: pickSubmit() },
 		]);
 		const outcome = await rpcFallbackAsk(ui, [q], undefined);
 		const emitted = calls[0]!.options!;
 		expect(new Set(emitted).size).toBe(emitted.length);
-		// the reply is the exact emitted string, so it resolves positionally
+		// wire invariant (§2.1): every emitted string is valid v1-JSON —
+		// no string-suffix dedup may break parseability (throws on failure).
+		const items = wireItems(emitted);
+		const foos = items.filter((i) => i.kind === "option" && i.label === "foo");
+		expect(foos).toHaveLength(2);
+		// in-object differentiator: first copy untouched, second carries dup
+		expect(foos[0]!.dup).toBeUndefined();
+		expect(foos[1]!.dup).toBe(2);
+		// the reply is the exact emitted string of the SECOND duplicate row,
+		// so the driver resolves it positionally to the second action.
+		expect(replied).toBe(emitted[2]);
+		expect(tryParseWireItem(replied!)?.dup).toBe(2);
 		expect(outcome).toEqual({
 			kind: "answers",
 			results: [
