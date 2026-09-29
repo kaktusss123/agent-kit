@@ -188,6 +188,7 @@ describe("formatting", () => {
 	});
 
 	test("outcome text mirrors the OMP shapes", () => {
+		// legacy tolerance: no surface produces chat, but the mapper stays total
 		expect(formatAskOutcomeText({ kind: "chat" })).toContain("chat about this");
 		// neutral text: the execute layer aborts the turn on cancellation, so
 		// this text must not license continuing on uncertainty
@@ -261,11 +262,24 @@ describe("findReservedOptionLabel (OMP reserved labels)", () => {
 				{
 					id: "q",
 					question: "Q?",
+					options: [{ label: "Type a response…" }, { label: "fine" }],
+				},
+			],
+		};
+		expect(findReservedOptionLabel(request)).toBe("Type a response…");
+	});
+
+	test("\"Chat about this\" is no longer reserved (ZAVOD-30: no Chat control to collide with)", () => {
+		const request: AskInput = {
+			questions: [
+				{
+					id: "q",
+					question: "Q?",
 					options: [{ label: "Chat about this" }, { label: "fine" }],
 				},
 			],
 		};
-		expect(findReservedOptionLabel(request)).toBe("Chat about this");
+		expect(findReservedOptionLabel(request)).toBeUndefined();
 	});
 
 	test("clean requests pass", () => {

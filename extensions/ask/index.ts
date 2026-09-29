@@ -146,7 +146,9 @@ async function richDialogAsk(
 		const dialog = new AskDialog(questions.questions, theme, done);
 		dialog.tuiRef = tui;
 		const onAbort = () => {
-			done(undefined);
+			// Explicit interrupt only (Esc never aborts): answered questions
+			// survive in partialResults so the transcript renders them.
+			done(dialog.cancelledOutcome());
 			signal?.removeEventListener("abort", onAbort);
 		};
 		if (signal) {
@@ -166,8 +168,8 @@ async function richDialogAsk(
 		} as never;
 	});
 	if (result === undefined) {
-		// Dismissed because the run was aborted — the caller (pi) discards this
-		// tool call anyway; report cancelled so nothing pretends an answer.
+		// The custom surface was dismissed without an outcome — report
+		// cancelled so nothing pretends an answer.
 		return { kind: "cancelled" };
 	}
 	return result;

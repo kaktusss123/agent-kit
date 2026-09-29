@@ -63,7 +63,9 @@ describe("AskDialog", () => {
 		expect(lines).toContain("Which base?");
 		expect(lines).toContain("main (Recommended)");
 		expect(lines).toContain("Type a response…");
-		expect(lines).toContain("Chat about this");
+		expect(lines).not.toContain("Chat about this");
+		expect(lines).toContain("esc back");
+		expect(lines).not.toContain("esc cancel");
 	});
 
 	test("the highlighted option's long description wraps and appears in full", () => {
@@ -110,16 +112,79 @@ describe("AskDialog", () => {
 		expect(lines).toContain("Done selecting");
 	});
 
-	test("esc cancels the whole dialog", () => {
+	test("esc on question 2 steps back to question 1 with answers preserved (E3)", () => {
+		const { dialog, outcomes } = drive();
+		dialog.handleInput(RAW.down); // cursor: develop (single-select)
+		dialog.handleInput(RAW.enter); // answer base=develop -> question 2
+		expect(dialog.render(80).join("\n")).toContain("[scopes]");
+		dialog.handleInput(RAW.escape); // back to base, answer kept
+		const lines = dialog.render(80).join("\n");
+		expect(lines).toContain("[base]");
+		expect(outcomes).toHaveLength(0); // the turn is alive: nothing resolved
+		// re-answering advances again; the preserved answer is still develop
+		dialog.handleInput(RAW.enter);
+		expect(dialog.render(80).join("\n")).toContain("[scopes]");
+	});
+
+	test("esc on the first question is a no-op with a hint, never an abort (E3)", () => {
 		const { dialog, outcomes } = drive();
 		dialog.handleInput(RAW.escape);
-		expect(outcomes).toEqual([{ kind: "cancelled" }]);
+		expect(outcomes).toHaveLength(0);
+		const lines = dialog.render(80).join("\n");
+		expect(lines).toContain("[base]"); // still on question 1
+		expect(lines).toContain("Already at the first question");
+		// the dialog still works after the no-op hint
+		dialog.handleInput(RAW.enter);
+		expect(dialog.render(80).join("\n")).toContain("[scopes]");
+		expect(outcomes).toHaveLength(0);
+	});
+
+	test("esc on review goes back to the questions (E3)", () => {
+		const { dialog, outcomes } = drive();
+		dialog.handleInput(RAW.enter); // base: main -> scopes
+		dialog.handleInput(RAW.enter); // scopes: toggle api on
+		dialog.handleInput(RAW.down);
+		dialog.handleInput(RAW.down);
+		dialog.handleInput(RAW.enter); // Done -> review
+		expect(dialog.render(80).join("\n")).toContain("Review your answers");
+		dialog.handleInput(RAW.escape); // back to questions, nothing resolved
+		expect(outcomes).toHaveLength(0);
+		expect(dialog.render(80).join("\n")).toContain("[scopes]");
+	});
+
+	test("abort outcome carries the answers collected so far (partialResults)", () => {
+		const outcomes: Array<AskOutcome | undefined> = [];
+		const dialog = new AskDialog(questions, stubTheme, (o) => outcomes.push(o), {
+			markdownTheme: () => stubMdTheme,
+		});
+		dialog.handleInput(RAW.enter); // base: main -> scopes
+		const aborted = dialog.cancelledOutcome();
+		expect(aborted).toEqual({
+			kind: "cancelled",
+			partialResults: [
+				{
+					id: "base",
+					question: "Which base?",
+					options: ["main", "develop"],
+					multi: false,
+					selectedOptions: ["main"],
+				},
+				{
+					id: "scopes",
+					question: "Scopes?",
+					options: ["api", "ui"],
+					multi: true,
+					selectedOptions: [],
+				},
+			],
+		});
+		expect(outcomes).toHaveLength(0); // the dialog itself is still alive
 	});
 
 	test("Type a response captures free-form text via the embedded input", () => {
 		const { dialog, outcomes } = drive();
 		const enter = RAW.enter;
-		// navigate to the free-form row: rows are [main, develop, Type a response…, Chat],
+		// navigate to the free-form row: rows are [main, develop, Type a response…],
 		// cursor starts at recommended row 0 -> two downs reach the free-form action
 		dialog.handleInput(RAW.down);
 		dialog.handleInput(RAW.down);
@@ -183,7 +248,7 @@ describe("AskDialog", () => {
 		]);
 	});
 
-	test("left/right navigation preserves answers; chat row resolves", () => {
+	test("left/right navigation preserves answers", () => {
 		const { dialog } = drive();
 		dialog.handleInput(RAW.enter); // answer base -> scopes
 		dialog.handleInput(RAW.left); // back to base
@@ -191,13 +256,21 @@ describe("AskDialog", () => {
 		// the recommended answer is preserved (re-select main advances again)
 		dialog.handleInput(RAW.enter);
 		expect(dialog.render(80).join("\n")).toContain("[scopes]");
+	});
 
-		const { dialog: d2, outcomes } = drive();
-		d2.handleInput(RAW.down);
-		d2.handleInput(RAW.down);
-		d2.handleInput(RAW.down); // chat row (wraps are SelectList behavior)
-		d2.handleInput(RAW.enter);
-		expect(outcomes).toEqual([{ kind: "chat" }]);
+	test("no chat row exists anywhere in the dialog", () => {
+		const { dialog, outcomes } = drive();
+		expect(dialog.render(80).join("\n")).not.toContain("Chat about this");
+		// walk every row and activate it: no activation resolves a chat outcome
+		for (let i = 0; i < 4; i++) {
+			const probe = drive();
+			for (let k = 0; k < i; k++) probe.dialog.handleInput(RAW.down);
+			probe.dialog.handleInput(RAW.enter);
+			for (const outcome of probe.outcomes) {
+				expect(outcome).not.toEqual({ kind: "chat" });
+			}
+		}
+		expect(outcomes).toHaveLength(0);
 	});
 
 	test("raw key encodings match what handleInput dispatches on", () => {

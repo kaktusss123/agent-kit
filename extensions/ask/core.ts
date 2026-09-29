@@ -5,7 +5,6 @@
  * final structured result.
  */
 import {
-	CHAT_OPTION_LABEL,
 	OTHER_OPTION_LABEL,
 	type AskInput,
 	type AskOutcome,
@@ -15,7 +14,7 @@ import {
 
 // ==================================================================== rows
 
-export type RowKind = "option" | "other" | "done" | "chat";
+export type RowKind = "option" | "other" | "done";
 
 export interface DialogRow {
 	kind: RowKind;
@@ -30,8 +29,8 @@ const RECOMMENDED_SUFFIX = " (Recommended)";
 /**
  * Rows for one question, in display order: options, then runtime controls.
  * Single-select marks the recommended option in the label (stripped again in
- * results); multi-select always offers "Done selecting". "Other" and "Chat
- * about this" are runtime-added — the model never sends them.
+ * results); multi-select always offers "Done selecting". "Other" is
+ * runtime-added — the model never sends it. (ZAVOD-30: no Chat row.)
  */
 export function buildRows(question: AskQuestion): DialogRow[] {
 	const rows: DialogRow[] = question.options.map((option, optionIndex) => {
@@ -51,7 +50,6 @@ export function buildRows(question: AskQuestion): DialogRow[] {
 		rows.push({ kind: "done", label: "✓ Done selecting" });
 	}
 	rows.push({ kind: "other", label: OTHER_OPTION_LABEL });
-	rows.push({ kind: "chat", label: CHAT_OPTION_LABEL });
 	return rows;
 }
 
@@ -196,7 +194,7 @@ export function goBack(state: DialogState, questions: AskQuestion[]): void {
 
 /**
  * Activate the highlighted row: select (single), toggle (multi), or enter
- * one of the runtime controls. May resolve the dialog (chat) or advance.
+ * one of the runtime controls. May advance to the next question or review.
  */
 export function activateRow(state: DialogState, questions: AskQuestion[]): void {
 	if (state.mode !== "question") return;
@@ -204,10 +202,6 @@ export function activateRow(state: DialogState, questions: AskQuestion[]): void 
 	if (!question) return;
 	const row = rowsFor(state, questions)[state.cursor];
 	if (!row) return;
-	if (row.kind === "chat") {
-		state.outcome = { kind: "chat" };
-		return;
-	}
 	if (row.kind === "other") {
 		state.mode = "other";
 		state.otherText = "";

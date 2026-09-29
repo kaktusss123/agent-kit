@@ -3,7 +3,12 @@
  * primitives (SelectList/Input/Markdown) — the pi port of the OMP ask-dialog
  * workflow: per-question lists, arrow navigation with preserved answers,
  * single/multi-select, recommended hints, descriptions, previews, free-form
- * response input, a review screen, and "Chat about this".
+ * response input, and a review screen.
+ *
+ * Esc never destroys anything (ZAVOD-30 E3): in question mode it steps back
+ * (no-op with a hint on the first question), on review it goes back to the
+ * questions. Aborting the turn is only possible via an explicit interrupt
+ * (the host abort signal); the abort outcome carries partialResults.
  *
  * This module is presentation only: all behavior lives in core.ts, and the
  * tool wiring lives in tool.ts. Not unit-tested (needs a terminal); the
@@ -39,6 +44,7 @@ import {
 	rowsFor,
 	submitOther,
 	submitReview,
+	toResults,
 } from "./core";
 
 export type AskDialogResult = AskOutcome | undefined;
@@ -62,6 +68,8 @@ export class AskDialog implements Component {
 	private readonly markdownTheme?: () => MarkdownTheme;
 	/** Injected by the wiring so key handling can trigger re-renders. */
 	tuiRef?: TUI;
+	/** No-op hint shown after Esc on the first question (E3); cleared on the next mutation. */
+	private notice?: string;
 	/** Focusable passthrough so the hardware cursor lands on the Input row. */
 	focused = false;
 
@@ -132,12 +140,18 @@ export class AskDialog implements Component {
 
 	/** Called after any state mutation: resolve or keep the dialog alive. */
 	private afterMutation(): void {
+		this.notice = undefined;
 		if (this.state.outcome) {
 			this.done(this.state.outcome);
 			return;
 		}
 		this.syncSelectList();
 		this.tuiRef?.requestRender();
+	}
+
+	/** Abort outcome for an explicit host interrupt: answered questions survive in details. */
+	cancelledOutcome(): AskOutcome {
+		return { kind: "cancelled", partialResults: toResults(this.questions, this.state.answers) };
 	}
 
 	// ----------------------------------------------------------- input handling
@@ -162,10 +176,16 @@ export class AskDialog implements Component {
 			}
 			return;
 		}
-		// Question mode.
+		// Question mode: Esc steps back, it never aborts (E3). On the first
+		// question there is nothing to step back to: no-op with a hint.
 		if (matchesKey(data, Key.escape)) {
-			this.state.outcome = { kind: "cancelled" };
-			this.done(this.state.outcome);
+			if (this.state.index > 0) {
+				goBack(this.state, this.questions);
+				this.afterMutation();
+			} else {
+				this.notice = "Already at the first question — Esc goes back, it never aborts";
+				this.tuiRef?.requestRender();
+			}
 			return;
 		}
 		if (matchesKey(data, Key.right) || matchesKey(data, Key.tab)) {
@@ -231,7 +251,8 @@ export class AskDialog implements Component {
 			lines.push(...this.previewLines(width, preview));
 		}
 		lines.push("");
-		lines.push(this.helpLine(width, "↑↓ navigate · enter select · ←/→ question · esc cancel"));
+		lines.push(this.helpLine(width, "↑↓ navigate · enter select · ←/→ question · esc back"));
+		if (this.notice) lines.push(truncateToWidth(` ${this.theme.fg("dim", this.notice)}`, width));
 		return lines;
 	}
 
