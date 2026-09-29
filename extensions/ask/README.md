@@ -6,15 +6,19 @@ oh-my-pi's `ask` (reference contract) and shared by every role:
 - **Interactive main** registers this extension: the model calls `ask` with
   OMP-style structured questions; the user answers through a rich TUI dialog
   (editor replacement; tabs/navigation, single/multi-select, recommended hints, option
-  descriptions and previews, free-form `Type a response…`, a review screen, and
-  `Chat about this`). On RPC-mode mains it degrades to the standard pi
-  extension UI dialogs (select/input per question plus a review step).
-  Without any interactive UI (print/json/headless) the tool fails closed —
-  it returns an explicit unavailable error and never pretends someone
-  answered. Dismissing the question (Esc) aborts the agent turn (OMP
-  parity) — `ask` is called only when the missing answer is material, so a
-  dismissal is a cancellation, not a license to continue on uncertainty;
-  `Chat about this` remains a normal outcome.
+  descriptions and previews, free-form `Type a response…`, and a review screen).
+  On RPC-mode mains it degrades to the standard pi extension UI dialogs,
+  speaking the ask-v2 wire format (each select option is a JSON string with
+  `kind`/`label`/`desc`/`preview`/`rec` plus one `kind: meta` item per
+  dialog; replies match emitted strings verbatim). The review step offers
+  per-question revise, submit, and revise-all — the summary itself is not
+  selectable. Without any interactive UI (print/json/headless) the tool fails
+  closed — it returns an explicit unavailable error and never pretends
+  someone answered. Cancelling (explicit interrupt, dismissed dialog, or
+  three unknown RPC replies) aborts the agent turn (OMP parity) and carries
+  `partialResults` in the outcome/details so the transcript can render the
+  questions already answered. There is no Chat control on any surface
+  (ZAVOD-30 D7): free-form input covers the "discuss it" case.
 - **Subagents** never load this extension. The subagents bridge registers the
   same `ask` (same name, same schema, same role-neutral description — proven
   by parity tests); the structured request travels to the controller, which

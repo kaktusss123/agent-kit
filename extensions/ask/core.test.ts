@@ -37,15 +37,21 @@ const questions: AskQuestion[] = [single, multi];
 describe("buildRows", () => {
 	test("options plus runtime controls; recommended suffix on single-select", () => {
 		const rows = buildRows(single);
-		expect(rows.map((r) => r.kind)).toEqual(["option", "option", "other", "chat"]);
+		expect(rows.map((r) => r.kind)).toEqual(["option", "option", "other"]);
 		expect(rows[1]!.label).toBe("develop (Recommended)");
 		expect(rows[1]!.description).toBe("integration");
 	});
 
 	test("multi-select gets a Done row and no recommended suffix", () => {
 		const rows = buildRows(multi);
-		expect(rows.map((r) => r.kind)).toEqual(["option", "option", "done", "other", "chat"]);
+		expect(rows.map((r) => r.kind)).toEqual(["option", "option", "done", "other"]);
 		expect(rows[0]!.label).toBe("api");
+	});
+
+	test("no Chat row exists on any surface (ZAVOD-30 D7)", () => {
+		expect(buildRows(single).some((r) => r.kind === "chat")).toBe(false);
+		expect(buildRows(multi).some((r) => r.kind === "chat")).toBe(false);
+		expect(rowsFor(initialState(questions), questions).some((r) => r.kind === "chat")).toBe(false);
 	});
 });
 
@@ -276,7 +282,7 @@ describe("description pane", () => {
 	test("descriptionFor is undefined for runtime control rows", () => {
 		const state = initialState(questions);
 		const rows = rowsFor(state, questions);
-		for (const kind of ["other", "chat"] as const) {
+		for (const kind of ["other"] as const) {
 			state.cursor = rows.findIndex((r) => r.kind === kind);
 			expect(descriptionFor(state, questions)).toBeUndefined();
 		}
@@ -290,17 +296,22 @@ describe("description pane", () => {
 	});
 });
 
-describe("chat and cancel", () => {
-	test("chat row resolves the whole dialog", () => {
-		const state = initialState(questions);
-		const rows = rowsFor(state, questions);
-		state.cursor = rows.findIndex((r) => r.kind === "chat");
-		activateRow(state, questions);
-		expect(state.outcome).toEqual({ kind: "chat" });
-	});
-
+describe("cancel", () => {
 	test("cancelled outcome is set by the wiring, not the state machine", () => {
 		const state = initialState(questions);
 		expect(state.outcome).toBeUndefined();
+	});
+
+	test("no activation path resolves a chat outcome (ZAVOD-30 D7)", () => {
+		for (const qs of [questions, [multi]]) {
+			const state = initialState(qs);
+			const rows = rowsFor(state, qs);
+			for (let cursor = 0; cursor < rows.length; cursor++) {
+				const probe = initialState(qs);
+				probe.cursor = cursor;
+				activateRow(probe, qs);
+				expect(probe.outcome).not.toEqual({ kind: "chat" });
+			}
+		}
 	});
 });

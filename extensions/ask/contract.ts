@@ -48,22 +48,32 @@ export interface AskQuestionResult {
 	customInput?: string;
 }
 
-/** Structured `ask` outcome: either answers, a chat redirect, or a cancel. */
+/**
+ * Structured `ask` outcome: answers, a cancel, or a legacy chat redirect.
+ *
+ * `kind: "chat"` is never produced by any current surface (ZAVOD-30 removed
+ * the Chat control everywhere); the variant stays in the type so receivers
+ * (tool execute, subagents bridge) tolerate it if one ever arrives.
+ */
 export type AskOutcome =
 	| { kind: "answers"; results: AskQuestionResult[] }
 	| { kind: "chat" }
-	| { kind: "cancelled" };
+	| { kind: "cancelled"; partialResults?: AskQuestionResult[] };
 
 // ============================================================ reserved labels
 
 export const OTHER_OPTION_LABEL = "Type a response…";
+/**
+ * Legacy Chat control label. Never emitted by any surface since ZAVOD-30;
+ * kept exported so receivers stay tolerant to it. NOT reserved: a model
+ * option may now legitimately use this text (no runtime row collides).
+ */
 export const CHAT_OPTION_LABEL = "Chat about this";
 export const NEXT_OPTION_LABEL = "Next →";
 
 /** Labels the runtime adds itself; models must not send them as options. */
 export const RESERVED_OPTION_LABELS: ReadonlySet<string> = new Set([
 	OTHER_OPTION_LABEL,
-	CHAT_OPTION_LABEL,
 	NEXT_OPTION_LABEL,
 ]);
 
@@ -227,10 +237,10 @@ export function parseAskRequest(raw: string | undefined): AskInput | undefined {
 }
 
 /**
- * OMP reserved-label invariant: the runtime adds its own "Other", "Chat
- * about this", and "Next →" rows, so a model-supplied option with one of
- * those labels would collide with a runtime control (duplicate rows, wrong
- * action resolved). Returns the first offending label, if any. Applied
+ * OMP reserved-label invariant: the runtime adds its own "Other" and
+ * "Next →" rows, so a model-supplied option with one of those labels
+ * would collide with a runtime control (duplicate rows, wrong action
+ * resolved). Returns the first offending label, if any. Applied
  * identically to Main and child executions.
  */
 export function findReservedOptionLabel(request: AskInput): string | undefined {
