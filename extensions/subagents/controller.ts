@@ -127,6 +127,8 @@ interface AgentRecord {
 	endedAt?: number;
 	lastActivityAt: number;
 	sessionFile?: string;
+	/** Pi-reported path held until a real session file exists on disk. */
+	pendingSessionFile?: string;
 	sessionId?: string;
 	finalText?: string;
 	/** Failure of the current run; cleared by `agent_start` and on success. */
@@ -539,12 +541,17 @@ export class LocalSubagentRuntime {
 			if (cmd === "get_state" && ev.success === true) {
 				const data = ev.data as { sessionFile?: string; sessionId?: string } | undefined;
 				record.sessionId = data?.sessionId ?? record.sessionId;
-				// sessionFile is only taken from the settle-time fetch: pi creates
-				// the file lazily (on the first persisted assistant message), so an
-				// early path would dangle for children that die before then. Its
-				// presence keeps meaning "a session file exists on disk".
-				if (ev.id !== "ctl-state-early") {
+				// Pi reports the path before it creates the file. Keep that early
+				// identity private until a bounded existence check succeeds; terminal
+				// get_state retains its existing authoritative behavior.
+				if (ev.id === "ctl-state-early") {
+					if (typeof data?.sessionFile === "string" && data.sessionFile) {
+						record.pendingSessionFile = data.sessionFile;
+						this.promoteSessionFile(record);
+					}
+				} else {
 					record.sessionFile = data?.sessionFile ?? record.sessionFile;
+					record.pendingSessionFile = undefined;
 				}
 				return;
 			}
@@ -582,6 +589,8 @@ export class LocalSubagentRuntime {
 				| { role?: string; stopReason?: string; errorMessage?: string }
 				| undefined;
 			if (msg?.role === "assistant") {
+				// Persistence can lag this event. inspect() retries the same check.
+				this.promoteSessionFile(record);
 				if (msg.stopReason === "error" && msg.errorMessage) {
 					record.runError = msg.errorMessage;
 				} else {
@@ -1391,7 +1400,20 @@ export class LocalSubagentRuntime {
 		return record;
 	}
 
+	private promoteSessionFile(record: AgentRecord): void {
+		const candidate = record.pendingSessionFile;
+		if (!candidate) return;
+		try {
+			if (!fs.statSync(candidate).isFile()) return;
+		} catch {
+			return; // Pi has not persisted the file yet (or it is inaccessible).
+		}
+		record.sessionFile = candidate;
+		record.pendingSessionFile = undefined;
+	}
+
 	private snapshot(record: AgentRecord): AgentSnapshot {
+		this.promoteSessionFile(record);
 		return {
 			id: record.id,
 			label: record.label,

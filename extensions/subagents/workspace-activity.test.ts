@@ -232,31 +232,43 @@ describe("controller: live tool activity (T4-T6)", () => {
 	});
 });
 
-	describe("controller: early session identity (T3)", () => {
-	test("sessionId is available right after prompt acceptance; sessionFile only once settled", async () => {
+describe("controller: early session identity (T3)", () => {
+	test("sessionId is early; sessionFile appears mid-run only after the reported file exists", async () => {
 		const h = makeRuntime();
 		try {
 			const { snap, proc } = await spawnChild(h);
 			const early = proc.commands.find((c) => c.type === "get_state");
 			expect(early).toBeDefined();
-			// answer it like a real pi would, and consume the command so the
-			// settle-time fake helper does not answer the stale entry again
+			const reportedFile = path.join(h.tmp, "early-session.jsonl");
+			// Consume the early command so settleRun answers only the terminal one.
 			proc.writeToStdout({
 				id: early!.id,
 				type: "response",
 				command: "get_state",
 				success: true,
-				data: { sessionFile: "/tmp/early-session.jsonl", sessionId: "early-session" },
+				data: { sessionFile: reportedFile, sessionId: "early-session" },
 			});
 			proc.commands.splice(proc.commands.indexOf(early!), 1);
-			await tick(10);
 			const fresh = h.runtime.inspect(snap.id)[0]!;
-			// the id is authoritative immediately; the FILE path is not: pi
-			// creates the session file lazily, so an early path could dangle
 			expect(fresh.sessionId).toBe("early-session");
 			expect(fresh.sessionFile).toBeUndefined();
+			expect(JSON.stringify(fresh)).not.toContain(reportedFile); // candidate stays private
+			// A directory at the authoritative path is not a transcript either.
+			fs.mkdirSync(reportedFile);
+			expect(h.runtime.inspect(snap.id)[0]!.sessionFile).toBeUndefined();
+			fs.rmdirSync(reportedFile);
+			// Persistence may happen after message_end: a later inspection must
+			// promote the SAME Pi-reported path without another get_state request.
+			proc.writeToStdout({ type: "message_end", message: { role: "assistant" } });
+			expect(h.runtime.inspect(snap.id)[0]!.sessionFile).toBeUndefined();
+			const stateRequests = proc.commands.filter((c) => c.type === "get_state").length;
+			fs.writeFileSync(reportedFile, "{\"type\":\"session\"}\n");
+			const live = h.runtime.inspect(snap.id)[0]!;
+			expect(live.state).toBe("running");
+			expect(live.sessionFile).toBe(reportedFile);
+			expect(proc.commands.filter((c) => c.type === "get_state")).toHaveLength(stateRequests);
 
-			// the settle-time refresh completes the pair (file exists by then)
+			// Terminal get_state remains authoritative for fake settle compatibility.
 			settleRun(proc, "done text");
 			await tick(60);
 			const res = await h.runtime.result(snap.id);
@@ -441,7 +453,7 @@ describe("workspace run live updates", () => {
 		}
 	});
 
-	test("T3: session id is learned while running but no longer painted into updates", async () => {
+	test("T3: workspace inspection exposes Pi's file mid-run, not in the progress card", async () => {
 		const h = makeLayer();
 		try {
 			const ws = makeWorktree(h.taskRoot, "obs-session-ws");
@@ -449,18 +461,28 @@ describe("workspace run live updates", () => {
 			const proc = h.lastProc();
 			const early = proc.commands.find((c) => c.type === "get_state");
 			expect(early).toBeDefined();
+			const reportedFile = path.join(h.tmp, "obs-session.jsonl");
 			proc.writeToStdout({
 				id: early!.id,
 				type: "response",
 				command: "get_state",
 				success: true,
-				data: { sessionFile: "/tmp/obs-session.jsonl", sessionId: "obs-session-42" },
+				data: { sessionFile: reportedFile, sessionId: "obs-session-42" },
 			});
+			proc.commands.splice(proc.commands.indexOf(early!), 1);
+			expect(h.runtime.inspect(h.agentId())[0]!.sessionFile).toBeUndefined();
+			proc.writeToStdout({ type: "message_end", message: { role: "assistant" } });
+			fs.writeFileSync(reportedFile, "{\"type\":\"session\"}\n");
+			const stateRequests = proc.commands.filter((c) => c.type === "get_state").length;
+			const live = h.runtime.inspect(h.agentId())[0]!;
+			expect(live.state).toBe("running");
+			expect(live.sessionFile).toBe(reportedFile);
+			expect(h.runs.runView(h.agentId())?.state).toBe("running");
+			expect(proc.commands.filter((c) => c.type === "get_state")).toHaveLength(stateRequests);
 			await tick(60);
-			// the card no longer renders session rows; op=status carries them
+			// The progress card still omits session rows; inspection owns them.
 			expect(h.updates.length).toBeGreaterThanOrEqual(1);
 			expect(h.updates.some((u) => u.text.includes("obs-session-42"))).toBe(false);
-			// the loop survived processing the get_state response
 
 			writeEnvelope(h, h.agentId());
 			settleRun(proc, "finished");
