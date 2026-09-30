@@ -15,6 +15,8 @@ import * as path from "node:path";
 import registerExtension, { agentDetailView } from "./index";
 import type { AgentSnapshot } from "./types";
 import type { WorkspaceRunView } from "./workspace-runs";
+import { handleInspectionRequest } from "../inspection-channel";
+import { inspectionRegistry, setSubagentInspectionSource } from "./inspection-seam";
 
 interface CommandDef {
 	description?: string;
@@ -323,6 +325,87 @@ describe("agentDetailView (shared with subagent op=status)", () => {
 			terminal: { status: "done" } as WorkspaceRunView["terminal"],
 		};
 		const detail = agentDetailView(snap({ state: "completed", alive: false }), view) as Record<string, unknown>;
-		expect(detail.run).toEqual({ workspace: "/tmp/ws", state: "completed", status: "done", deadlineMsLeft: 0 });
+		expect(detail.run).toEqual({
+			workspace: "/tmp/ws", state: "completed", status: "done", deadlineMsLeft: 0,
+			terminal: { status: "done" },
+		});
+	});
+
+	test.each(["done", "partial", "blocked"] as const)("projects %s terminal facts without leaking full outcomes", (status) => {
+		const view: WorkspaceRunView = {
+			state: "settled",
+			workspace: "/tmp/ws",
+			deadlineMsLeft: 0,
+			terminal: {
+				status, dispatched: true, workspace: "/tmp/ws", reason: "runtime reason",
+				last_output: "private full output",
+				child_may_have_mutated_repo: true,
+				git_facts: { branch: "feat/test", headSha: "abc", dirty: { staged: [], unstaged: [] } },
+				result: {
+					status: "blocked", summary: "Product summary",
+					changed_scope: ["private path"], verification: [], gaps: ["private gap"],
+					contract_conflicts: ["private conflict"],
+				},
+			},
+		};
+		const before = structuredClone(view);
+		const snapshot = snap({ state: "completed", alive: false });
+		const detail = agentDetailView(snapshot, view);
+		expect(detail.state).toBe("completed");
+		expect(detail.run).toEqual({
+			workspace: "/tmp/ws", state: "settled", status, deadlineMsLeft: 0,
+			terminal: { status, reason: "runtime reason", result: { status: "blocked", summary: "Product summary" } },
+		});
+		expect(view).toEqual(before);
+	});
+
+	test("expired deadline and recovery ladder do not imply a terminal outcome", () => {
+		const detail = agentDetailView(snap(), {
+			state: "terminating", workspace: "/tmp/ws", deadlineMsLeft: 0, ladder: { step: 3, max: 3 },
+		});
+		expect(detail.run).toEqual({
+			workspace: "/tmp/ws", state: "terminating", deadlineMsLeft: 0, ladder: { step: 3, max: 3 },
+		});
+	});
+
+	test("inherited inspection reads the shared projection without changing state or delivering messages", async () => {
+		const previous = inspectionRegistry.subagents;
+		const { pi, messages } = makePi();
+		registerExtension(pi);
+		const snapshots = [snap({ id: "plain" }), snap({ id: "owner", state: "completed", alive: false })];
+		const view: WorkspaceRunView = {
+			state: "settled", workspace: "/tmp/ws", deadlineMsLeft: 0,
+			terminal: {
+				status: "done", dispatched: true, workspace: "/tmp/ws",
+				result: { status: "partial", summary: "Remaining work", changed_scope: [], verification: [], gaps: [] },
+			},
+		};
+		const before = structuredClone({ snapshots, view });
+		let reads = 0;
+		setSubagentInspectionSource({
+			inspect: () => { reads++; return snapshots; },
+			view: (snapshot) => agentDetailView(snapshot, snapshot.id === "owner" ? view : undefined),
+		});
+		try {
+			for (const id of ["first", "second"]) {
+				expect(await handleInspectionRequest(JSON.stringify({ v: 1, id, op: "snapshot", area: "subagents" }), { cwd: "/tmp" })).toEqual({
+					v: 1, id, ok: true, result: { v: 1, area: "subagents", data: { agents: [
+						{ ...snapshots[0], task: `${"x".repeat(200)}…` },
+						{ ...snapshots[1], task: `${"x".repeat(200)}…`, run: {
+							workspace: "/tmp/ws", state: "settled", status: "done", deadlineMsLeft: 0,
+							terminal: { status: "done", result: { status: "partial", summary: "Remaining work" } },
+						} },
+					] } },
+				});
+			}
+			expect(await handleInspectionRequest('{"v":1,"id":"control","op":"cancel","area":"subagents"}', { cwd: "/tmp" })).toMatchObject({
+				ok: false, error: { code: "unknown_op" },
+			});
+			expect(reads).toBe(2);
+			expect({ snapshots, view }).toEqual(before);
+			expect(messages).toEqual([]);
+		} finally {
+			inspectionRegistry.subagents = previous;
+		}
 	});
 });

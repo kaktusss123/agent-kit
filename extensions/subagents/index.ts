@@ -797,9 +797,9 @@ function clipSnapshot(s: ReturnType<LocalSubagentRuntime["inspect"]>[number]) {
 /**
  * One agent's structured status detail: the clipped snapshot plus, for a
  * run-owned (workspace) agent, a compact view of its run. The single mapping
- * behind `subagent op=status` and the `agentkit-status` command, so the two
- * surfaces cannot drift; exposes only fields the existing status builders
- * already expose (full terminal outcomes stay on `subagent op=result`).
+ * behind `subagent op=status`, `agentkit-status` and inherited inspection,
+ * so the surfaces cannot drift. Terminal projection includes only runtime status,
+ * reason and product status/summary (full outcomes stay on `subagent op=result`).
  */
 export function agentDetailView(s: AgentSnapshot, view?: WorkspaceRunView) {
 	return view
@@ -808,7 +808,16 @@ export function agentDetailView(s: AgentSnapshot, view?: WorkspaceRunView) {
 				run: {
 					workspace: view.workspace,
 					state: view.state,
-					...(view.terminal ? { status: view.terminal.status } : {}),
+					...(view.terminal ? {
+						status: view.terminal.status,
+						terminal: {
+							status: view.terminal.status,
+							...(view.terminal.reason !== undefined ? { reason: view.terminal.reason } : {}),
+							...(view.terminal.result ? {
+								result: { status: view.terminal.result.status, summary: view.terminal.result.summary },
+							} : {}),
+						},
+					} : {}),
 					deadlineMsLeft: view.deadlineMsLeft,
 					...(view.ladder ? { ladder: view.ladder } : {}),
 				},
