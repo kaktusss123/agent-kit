@@ -142,16 +142,39 @@ export interface CurrentTaskProjection {
 
 /** Most recent selection entry on the branch (entries arrive root → leaf,
  *  so the last match is the latest successful ensure). */
+function normalizeIdentity(task: string): string {
+  return task.replace(/\\/g, "/").split("/").filter(Boolean).join("_");
+}
+
 function selectionFromBranch(entries: SessionSelectionEntry[]): string | null {
   for (let i = entries.length - 1; i >= 0; i--) {
     const entry = entries[i];
-    if (!entry || entry.type !== "custom" || entry.customType !== SESSION_SELECTION_ENTRY_TYPE) {
-      continue;
+    if (entry?.type === "custom" && entry.customType === SESSION_SELECTION_ENTRY_TYPE) {
+      const task = (entry.data as { task?: unknown } | undefined)?.task;
+      if (typeof task === "string" && task) return normalizeIdentity(task);
     }
-    const task = (entry.data as { task?: unknown } | undefined)?.task;
-    if (typeof task === "string" && task) return task;
+    const legacy = legacyEnsureTask(entry);
+    if (legacy) return legacy;
   }
   return null;
+}
+
+/** Recover only successful ensure_task_repo results from supported Pi tool
+ *  history records; older sessions predate our custom selection entry. */
+function legacyEnsureTask(entry: SessionSelectionEntry): string | null {
+  if (!entry || (entry.type !== "toolResult" && entry.type !== "message")) return null;
+  const row = entry as SessionSelectionEntry & { message?: { role?: unknown; toolName?: unknown; isError?: unknown; content?: unknown } };
+  const message = row.message ?? row as unknown as NonNullable<typeof row.message>;
+  if (message.role !== undefined && message.role !== "toolResult") return null;
+  if (message.toolName !== "ensure_task_repo" || message.isError === true) return null;
+  let details: unknown;
+  if (Array.isArray(message.content)) {
+    const text = message.content.find((part) => !!part && typeof part === "object" && (part as { type?: unknown }).type === "text") as { text?: unknown } | undefined;
+    if (typeof text?.text === "string") { try { details = JSON.parse(text.text); } catch { return null; } }
+  }
+  if (!details || typeof details !== "object") return null;
+  const result = details as { status?: unknown; task?: unknown };
+  return isRecordableEnsureStatus(result.status) && typeof result.task === "string" && result.task ? normalizeIdentity(result.task) : null;
 }
 
 /** Managed-cwd selection: the identity of the workspace whose managed
@@ -176,7 +199,7 @@ export async function buildCurrentTaskProjection(opts: {
   owners?: OwnersFor;
 }): Promise<CurrentTaskProjection> {
   const cwdIdentity = selectionFromCwd(opts.cwd, opts.taskRoot);
-  const identity = cwdIdentity ?? selectionFromBranch(opts.branchEntries);
+  const identity = cwdIdentity ? normalizeIdentity(cwdIdentity) : selectionFromBranch(opts.branchEntries);
   if (!identity) {
     return { state: "none", identity: null, workspace: null, source: null, repos: [] };
   }
@@ -199,7 +222,7 @@ export async function readWorkspaceRepos(
   workspace: string,
   owners?: OwnersFor,
 ): Promise<CurrentRepo[]> {
-  const facts = await linkedWorktreeFacts(workspace);
+  const facts = await linkedWorktreeFacts(workspace, { strict: true });
   const linked = new Map<string, LinkedWorktreeFact>(
     facts.map((f) => [f.name, { path: f.path, commonDir: f.commonDir }]),
   );

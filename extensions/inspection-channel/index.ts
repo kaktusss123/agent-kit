@@ -55,17 +55,16 @@ function defaultOwners(): OwnersFor {
 function defaultBranchEntries(): SessionSelectionEntry[] {
   const session = registry.session;
   if (!session) return [];
-  try {
-    return (session.manager.getBranch() ?? []) as SessionSelectionEntry[];
-  } catch {
-    return [];
-  }
+  return (session.manager.getBranch() ?? []) as SessionSelectionEntry[];
 }
 
 /** Session-scoped current-task projection: selection (managed cwd, else the
  *  latest successful ensure on the current session branch) plus the selected
  *  workspace's repo facts. Never guesses from the global task catalog. */
 async function currentTaskProjection(deps: InspectionDeps): Promise<CurrentTaskProjection> {
+  // The process cwd survives shutdown, but it is no longer bound to a live
+  // session; never present that cwd-derived task as current until rebind.
+  if (!deps.branchEntries && !registry.session) return { state: "none", identity: null, workspace: null, source: null, repos: [] };
   return buildCurrentTaskProjection({
     cwd: deps.cwd,
     taskRoot: resolveTaskRoot(),

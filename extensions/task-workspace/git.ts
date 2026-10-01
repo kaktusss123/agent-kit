@@ -412,12 +412,14 @@ export async function getLaneFacts(
  *  (readWorkspaceRepos in ./current). */
 export async function linkedWorktreeFacts(
   wsPath: string,
+  options: { strict?: boolean } = {},
 ): Promise<{ name: string; path: string; commonDir: string | null }[]> {
   let subEntries: string[];
   try {
     subEntries = await readdir(wsPath);
-  } catch {
-    return [];
+  } catch (error) {
+    if (!options.strict || (error as NodeJS.ErrnoException).code === "ENOENT") return [];
+    throw error;
   }
   const facts: { name: string; path: string; commonDir: string | null }[] = [];
   for (const sub of subEntries) {

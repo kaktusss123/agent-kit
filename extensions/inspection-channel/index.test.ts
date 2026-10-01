@@ -5,6 +5,7 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { frameJsonLines, handleInspectionRequest, startInheritedChannel, validateInheritedFd, validateInheritedFdPair, validateRequest, waitForDrain } from "./index";
+import { inspectionRegistry } from "../subagents/inspection-seam";
 
 const deps = { cwd: process.cwd(), inspect: () => [{ id: "sa-1", state: "running" }] };
 
@@ -56,6 +57,22 @@ describe("inherited inspection protocol", () => {
 			if (previous === undefined) delete process.env.AGENT_TASK_ROOT;
 			else process.env.AGENT_TASK_ROOT = previous;
 			fs.rmSync(root, { recursive: true, force: true });
+		}
+	});
+
+	test("task projection is disabled while unbound and branch read errors propagate", async () => {
+		const prior = inspectionRegistry.session;
+		const priorCwd = inspectionRegistry.cwd;
+		try {
+			inspectionRegistry.session = undefined;
+			inspectionRegistry.cwd = process.cwd();
+			const unbound = await handleInspectionRequest('{"v":1,"id":"u","op":"snapshot","area":"task_current"}', deps);
+			expect(unbound).toMatchObject({ ok: true, result: { data: { task: { current: { state: "none", identity: null } } } } });
+			const failed = await handleInspectionRequest('{"v":1,"id":"e","op":"snapshot","area":"task_current"}', { ...deps, branchEntries: () => { throw new Error("history unavailable"); } });
+			expect(failed).toMatchObject({ ok: false, error: { code: "snapshot_failed" } });
+		} finally {
+			inspectionRegistry.session = prior;
+			inspectionRegistry.cwd = priorCwd;
 		}
 	});
 

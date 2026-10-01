@@ -23,6 +23,7 @@ import {
 } from "./current";
 import { taskWorkspacePath } from "./git";
 import { ensureTaskRepo } from "./flows";
+import { SessionManager } from "@earendil-works/pi-coding-agent";
 
 let rootDir: string | null = null;
 
@@ -131,7 +132,7 @@ describe("current-task projection: selection", () => {
     });
     expect(projection.state).toBe("ok");
     expect(projection.source).toBe("session");
-    expect(projection.identity).toBe(ensured.task);
+    expect(projection.identity).toBe("feat_work");
     expect(projection.workspace).toBe(ws(taskRoot, ensured.task));
     expect(projection.repos).toHaveLength(1);
     expect(projection.repos[0]!.path).toBe(ensured.worktree);
@@ -148,8 +149,8 @@ describe("current-task projection: selection", () => {
     const entriesA = [selectionEntry(a.task, a.worktree), { type: "message" }, compactionEntry()];
     const entriesB = [...entriesA, selectionEntry(b.task, b.worktree)];
     const cwd = tempDir("neutral-latest");
-    expect(await project({ cwd, taskRoot: sharedRoot, entries: entriesA })).toMatchObject({ state: "ok", identity: a.task, source: "session" });
-    expect(await project({ cwd, taskRoot: sharedRoot, entries: entriesB })).toMatchObject({ state: "ok", identity: b.task, source: "session" });
+    expect(await project({ cwd, taskRoot: sharedRoot, entries: entriesA })).toMatchObject({ state: "ok", identity: a.task.replace(/\//g, "_"), source: "session" });
+    expect(await project({ cwd, taskRoot: sharedRoot, entries: entriesB })).toMatchObject({ state: "ok", identity: b.task.replace(/\//g, "_"), source: "session" });
     // A fork/session with no selection cannot inherit the other branch's entry.
     expect(await project({ cwd, taskRoot: sharedRoot, entries: [] })).toMatchObject({ state: "none", identity: null });
   });
@@ -183,7 +184,7 @@ describe("current-task projection: selection", () => {
       entries: [selectionEntry(ensured.task, ensured.worktree)],
     });
     expect(projection.state).toBe("missing");
-    expect(projection.identity).toBe(ensured.task);
+    expect(projection.identity).toBe("feat_work");
     expect(projection.workspace).toBe(ws(taskRoot, ensured.task));
     expect(projection.source).toBe("session");
     expect(projection.repos).toEqual([]);
@@ -202,7 +203,39 @@ describe("current-task projection: selection", () => {
       taskRoot,
       entries: [selectionEntry(ensured.task, ensured.worktree)],
     });
-    expect(projection).toMatchObject({ state: "missing", identity: ensured.task, repos: [] });
+    expect(projection).toMatchObject({ state: "missing", identity: "feat_work", repos: [] });
+  });
+
+  test("real SessionManager history retains legacy association through save, resume, fork and compaction", async () => {
+    const { source, taskRoot } = makeSourceRepo("sdk-history");
+    const ensured = await ensure(source, taskRoot);
+    const neutral = tempDir("sdk-neutral");
+    const sessions = tempDir("sdk-sessions");
+    const manager = SessionManager.create(neutral, sessions);
+    manager.appendMessage({ role: "user", content: "start", timestamp: Date.now() } as never);
+    manager.appendMessage({ role: "toolResult", toolCallId: "call-1", toolName: "ensure_task_repo", content: [{ type: "text", text: JSON.stringify({ status: "attached", task: ensured.task }) }], isError: false, timestamp: Date.now() } as never);
+    const file = manager.getSessionFile();
+    expect(file).toBeTruthy();
+    const resumed = SessionManager.open(file!, sessions);
+    const projection = (entries: SessionSelectionEntry[]) => project({ cwd: neutral, taskRoot, entries });
+    expect(await projection(resumed.getBranch() as SessionSelectionEntry[])).toMatchObject({ state: "ok", identity: "feat_work" });
+    const fork = SessionManager.forkFrom(file!, neutral, tempDir("sdk-fork"));
+    expect(await projection(fork.getBranch() as SessionSelectionEntry[])).toMatchObject({ state: "ok", identity: "feat_work" });
+    const leaf = resumed.getLeafId();
+    resumed.appendCompaction("summary", null, 10);
+    expect(await projection(resumed.getBranch() as SessionSelectionEntry[])).toMatchObject({ state: "ok", identity: "feat_work" });
+    expect(leaf).toBeTruthy();
+  });
+
+  test("legacy successful ensure tool results recover current task, but failures do not", async () => {
+    const { source, taskRoot } = makeSourceRepo("legacy-history");
+    const ensured = await ensure(source, taskRoot);
+    const legacy = { type: "message", message: { role: "toolResult", toolName: "ensure_task_repo", isError: false, content: [{ type: "text", text: JSON.stringify({ status: "attached", task: ensured.task }) }] } } as unknown as SessionSelectionEntry;
+    expect(await project({ cwd: tempDir("legacy-neutral"), taskRoot, entries: [legacy] })).toMatchObject({ state: "ok", identity: "feat_work", source: "session" });
+    const failed = { ...legacy, message: { ...legacy.message, isError: true } } as unknown as SessionSelectionEntry;
+    expect(await project({ cwd: tempDir("legacy-failed"), taskRoot, entries: [failed] })).toMatchObject({ state: "none", identity: null });
+    const failedStatus = { ...legacy, message: { ...legacy.message, content: [{ type: "text", text: JSON.stringify({ status: "error", task: ensured.task }) }] } } as unknown as SessionSelectionEntry;
+    expect(await project({ cwd: tempDir("legacy-status"), taskRoot, entries: [failedStatus] })).toMatchObject({ state: "none", identity: null });
   });
 
   test("failed ensure statuses are never recordable", () => {
