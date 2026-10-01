@@ -424,16 +424,22 @@ export async function linkedWorktreeFacts(
   const facts: { name: string; path: string; commonDir: string | null }[] = [];
   for (const sub of subEntries) {
     const subPath = join(wsPath, sub);
+    let gitContent: string;
     try {
-      const gitContent = readFileSync(join(subPath, ".git"), "utf-8");
-      if (!gitContent.startsWith("gitdir:")) continue;
+      gitContent = readFileSync(join(subPath, ".git"), "utf-8");
+    } catch (error) {
+      if (!options.strict || (error as NodeJS.ErrnoException).code === "ENOENT") continue;
+      throw error;
+    }
+    if (!gitContent.startsWith("gitdir:")) continue;
+    try {
       facts.push({
         name: sub,
         path: subPath,
         commonDir: await getRepoCommonDir(subPath),
       });
-    } catch {
-      continue;
+    } catch (error) {
+      if (options.strict) throw error;
     }
   }
   return facts;

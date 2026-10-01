@@ -6,7 +6,7 @@
  * paths, failed Git reads, and owner matching.
  */
 import { execFileSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterAll, describe, expect, test } from "bun:test";
@@ -21,7 +21,7 @@ import {
   type OwnersFor,
   type SessionSelectionEntry,
 } from "./current";
-import { taskWorkspacePath } from "./git";
+import { linkedWorktreeFacts, taskWorkspacePath } from "./git";
 import { ensureTaskRepo } from "./flows";
 import { SessionManager } from "@earendil-works/pi-coding-agent";
 
@@ -329,6 +329,24 @@ describe("current-task projection: repo facts", () => {
     expect(repo.dirty.available).toBe(true);
     expect(repo.dirty.staged).toEqual(["staged.txt"]);
     expect(repo.dirty.unstaged).toEqual(["README.md", "unstaged.txt"]);
+  });
+
+  test("strict workspace inspection propagates unreadable .git while legacy catalog skips it", async () => {
+    if (typeof process.getuid === "function" && process.getuid() === 0) return;
+    const { source, taskRoot } = makeSourceRepo("unreadable-git");
+    const ensured = await ensure(source, taskRoot);
+    const wsDir = ws(taskRoot, ensured.task);
+    const gitFile = join(wsDir, "src", ".git");
+    // Positive control: the linked-worktree pointer is readable before changing permissions.
+    expect(readFileSync(gitFile, "utf-8")).toStartWith("gitdir:");
+    chmodSync(gitFile, 0);
+    try {
+      await expect(readWorkspaceRepos(wsDir)).rejects.toMatchObject({ code: "EACCES" });
+      // The non-strict global catalog intentionally retains its historical skip behavior.
+      expect(await linkedWorktreeFacts(wsDir)).toEqual([]);
+    } finally {
+      chmodSync(gitFile, 0o644);
+    }
   });
 
   test("failed Git reads are unavailable, never clean; headSha is null", async () => {
