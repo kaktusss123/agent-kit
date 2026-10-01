@@ -331,6 +331,30 @@ describe("current-task projection: repo facts", () => {
     expect(repo.dirty.unstaged).toEqual(["README.md", "unstaged.txt"]);
   });
 
+  test("strict workspace inspection ignores ordinary artifacts and inspects linked repositories", async () => {
+    const { source, taskRoot } = makeSourceRepo("workspace-artifacts");
+    const ensured = await ensure(source, taskRoot);
+    const wsDir = ws(taskRoot, ensured.task);
+    writeFileSync(join(wsDir, "SPEC.md"), "spec\\n");
+    writeFileSync(join(wsDir, "CONTRACT.md"), "contract\\n");
+    writeFileSync(join(wsDir, "metadata.json"), "{}\\n");
+    writeFileSync(join(wsDir, "notes.txt"), "notes\\n");
+
+    const repos = await readWorkspaceRepos(wsDir);
+    expect(repos).toHaveLength(1);
+    expect(repos[0]!.path).toBe(ensured.worktree);
+    expect(repos[0]!.gitAvailable).toBe(true);
+    expect(repos[0]!.headSha).toMatch(/^[0-9a-f]{40}$/);
+    const projection = await project({
+      cwd: tempDir("workspace-artifacts-cwd"),
+      taskRoot,
+      entries: [selectionEntry(ensured.task, ensured.worktree)],
+    });
+    expect(projection.state).toBe("ok");
+    expect(projection.repos).toHaveLength(1);
+    expect(projection.repos[0]!.path).toBe(ensured.worktree);
+  });
+
   test("strict workspace inspection propagates unreadable .git while legacy catalog skips it", async () => {
     if (typeof process.getuid === "function" && process.getuid() === 0) return;
     const { source, taskRoot } = makeSourceRepo("unreadable-git");

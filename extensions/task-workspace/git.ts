@@ -428,7 +428,8 @@ export async function linkedWorktreeFacts(
     try {
       gitContent = readFileSync(join(subPath, ".git"), "utf-8");
     } catch (error) {
-      if (!options.strict || (error as NodeJS.ErrnoException).code === "ENOENT") continue;
+      const code = (error as NodeJS.ErrnoException).code;
+      if (!options.strict || code === "ENOENT" || code === "ENOTDIR") continue;
       throw error;
     }
     if (!gitContent.startsWith("gitdir:")) continue;
