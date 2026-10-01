@@ -49,7 +49,9 @@ describe("inherited inspection protocol", () => {
 		process.env.AGENT_TASK_ROOT = root;
 		try {
 			const task = await handleInspectionRequest('{"v":1,"id":"b","op":"snapshot","area":"task"}', deps);
-			expect(task).toMatchObject({ v: 1, id: "b", ok: true, result: { v: 1, area: "task" } });
+			expect(task).toMatchObject({ v: 1, id: "b", ok: true, result: { v: 1, area: "task", data: { task: { current: { state: "none", repos: [] } } } } });
+			const scoped = await handleInspectionRequest('{"v":1,"id":"c","op":"snapshot","area":"task_current"}', { ...deps, branchEntries: () => [] });
+			expect(scoped).toMatchObject({ v: 1, id: "c", ok: true, result: { v: 1, area: "task_current", data: { task: { current: { state: "none", identity: null, repos: [] } } } } });
 		} finally {
 			if (previous === undefined) delete process.env.AGENT_TASK_ROOT;
 			else process.env.AGENT_TASK_ROOT = previous;
@@ -62,6 +64,7 @@ describe("inherited inspection protocol", () => {
 		expect(await handleInspectionRequest('{"v":2,"id":"x","op":"snapshot","area":"all"}', deps)).toMatchObject({ ok: false, error: { code: "unknown_version" } });
 		expect(await handleInspectionRequest('{"v":1,"id":"x","op":"nope","area":"all"}', deps)).toMatchObject({ ok: false, error: { code: "unknown_op" } });
 		expect(validateRequest({ v: 1, id: "x", op: "snapshot", area: "nope" })).toMatchObject({ error: { code: "unknown_area" } });
+		expect(validateRequest({ v: 1, id: "x", op: "snapshot", area: "task_current" })).toMatchObject({ request: { area: "task_current" } });
 	});
 
 	test("descriptor validation rejects standard streams, malformed and absent descriptors", () => {

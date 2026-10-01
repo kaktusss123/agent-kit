@@ -15,6 +15,13 @@ import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 // (owned by the inspection seam): re-evaluated factories reuse the sole
 // stream pair already attached to the process-owned transport.
 import { inspectionRegistry as registry, inspectSubagents } from "../subagents/inspection-seam";
+import {
+  buildCurrentTaskProjection,
+  matchActiveOwners,
+  type CurrentTaskProjection,
+  type OwnersFor,
+  type SessionSelectionEntry,
+} from "../task-workspace/current";
 import { taskStatus } from "../task-workspace/flows";
 import { resolveTaskRoot } from "../task-workspace/task-root";
 
@@ -24,9 +31,58 @@ const MAX_LINE_BYTES = 64 * 1024;
 const MAX_RESPONSE_BYTES = 1024 * 1024;
 const VERSION = 1;
 
-type Area = "subagents" | "task" | "all";
+type Area = "subagents" | "task" | "task_current" | "all";
 type Request = { v: number; id: string; op: string; area: string };
-export type InspectionDeps = { cwd: string; inspect?: () => Record<string, unknown>[] };
+export type InspectionDeps = {
+  cwd: string;
+  inspect?: () => Record<string, unknown>[];
+  /** Current session branch entries (root → leaf) for the session-scoped
+   *  current-task selection; defaults to the captured session manager. */
+  branchEntries?: () => SessionSelectionEntry[];
+  /** Active workspace RepoOwner matcher; defaults to matching this
+   *  session's subagent runs against the exact repository workspace. */
+  owners?: OwnersFor;
+};
+
+// Identifies this channel graph: only the owning graph may clear the
+// captured session reader on session_shutdown (mirrors the subagents seam).
+const instanceToken: object = {};
+
+function defaultOwners(): OwnersFor {
+  return (repoPath) => matchActiveOwners(inspectSubagents(), repoPath);
+}
+
+function defaultBranchEntries(): SessionSelectionEntry[] {
+  const session = registry.session;
+  if (!session) return [];
+  try {
+    return (session.manager.getBranch() ?? []) as SessionSelectionEntry[];
+  } catch {
+    return [];
+  }
+}
+
+/** Session-scoped current-task projection: selection (managed cwd, else the
+ *  latest successful ensure on the current session branch) plus the selected
+ *  workspace's repo facts. Never guesses from the global task catalog. */
+async function currentTaskProjection(deps: InspectionDeps): Promise<CurrentTaskProjection> {
+  return buildCurrentTaskProjection({
+    cwd: deps.cwd,
+    taskRoot: resolveTaskRoot(),
+    branchEntries: deps.branchEntries ? deps.branchEntries() : defaultBranchEntries(),
+    owners: deps.owners ?? defaultOwners(),
+  });
+}
+
+/** Legacy global catalog facts plus the ADDITIVE session-scoped `current`
+ *  projection; v1 consumers keep reading the legacy fields unchanged. */
+async function taskSnapshot(deps: InspectionDeps) {
+  const [legacy, current] = await Promise.all([
+    taskStatus({}, deps.cwd, { taskRoot: resolveTaskRoot() }),
+    currentTaskProjection(deps),
+  ]);
+  return { ...legacy, current };
+}
 
 export function validateInheritedFd(value: string | undefined): number | undefined {
 	if (!value || !/^(?:0|[1-9][0-9]*)$/.test(value)) return undefined;
@@ -86,7 +142,7 @@ export function validateRequest(value: unknown): { request?: Request; error?: { 
 	if (request.v !== VERSION) return protocolError("unknown_version", "unsupported protocol version");
 	if (typeof request.id !== "string" || request.id.length === 0 || request.id.length > 256) return protocolError("malformed_request", "id must be a non-empty string of at most 256 characters");
 	if (request.op !== "snapshot") return protocolError("unknown_op", "unsupported operation");
-	if (request.area !== "subagents" && request.area !== "task" && request.area !== "all") return protocolError("unknown_area", "unsupported snapshot area");
+	if (request.area !== "subagents" && request.area !== "task" && request.area !== "task_current" && request.area !== "all") return protocolError("unknown_area", "unsupported snapshot area");
 	return { request: request as Request };
 }
 
@@ -110,7 +166,11 @@ export async function handleInspectionRequest(raw: string, deps: InspectionDeps)
 	try {
 		const data: Record<string, unknown> = {};
 		if (request.area === "subagents" || request.area === "all") data.agents = (deps.inspect ?? inspectSubagents)();
-		if (request.area === "task" || request.area === "all") data.task = await taskStatus({}, deps.cwd, { taskRoot: resolveTaskRoot() });
+		if (request.area === "task" || request.area === "all") data.task = await taskSnapshot(deps);
+		// Scoped read: selection + selected workspace repos only — no global
+		// catalog scan — for frequent task refresh (legacy `task`/`all` areas
+		// stay available for full diagnostics).
+		if (request.area === "task_current") data.task = { current: await currentTaskProjection(deps) };
 		return { v: VERSION, id: request.id, ok: true, result: { v: VERSION, area: request.area, data } };
 	} catch {
 		return { v: VERSION, id: request.id, ok: false, error: { code: "snapshot_failed", message: "snapshot could not be read" } };
@@ -183,6 +243,18 @@ export function startInheritedChannel(requestFd: number, responseFd: number, get
 export default function registerInspectionChannel(pi: ExtensionAPI): void {
 	pi.on("session_start", (_event, ctx) => {
 		registry.cwd = ctx.cwd;
+		// Capture the CURRENT session's branch reader for the session-scoped
+		// current-task projection. session_start fires on new sessions, resumes
+		// and forks, so session switching can never leak another session's
+		// selection; session_shutdown clears it (owner-token guarded).
+		const manager = (ctx as { sessionManager?: { getBranch?: () => unknown[] } }).sessionManager;
+		registry.session =
+			manager && typeof manager.getBranch === "function"
+				? { owner: instanceToken, manager }
+				: undefined;
+	});
+	pi.on("session_shutdown", () => {
+		if (registry.session?.owner === instanceToken) registry.session = undefined;
 	});
 	if (!registry.channel) {
 		const pair = validateInheritedFdPair(process.env[REQUEST_FD_ENV], process.env[RESPONSE_FD_ENV]);
