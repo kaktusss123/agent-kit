@@ -20,7 +20,15 @@
  *                           fails closed listing the saved names;
  *   omitted modelClass   -> routing[mode] if set (resolved and validated
  *                           identically; unresolvable routes fail closed
- *                           naming class, mode, and fix), else the session
+ *                           naming class, mode, and fix). Past the route the
+ *                           modes diverge: repoOwner falls to the implicit
+ *                           default class REPO_OWNER_DEFAULT_CLASS ("heavy";
+ *                           the normal RepoOwner implementation class) when
+ *                           it is saved, and only then to the session pair;
+ *                           plain has no implicit class and falls straight
+ *                           to the session pair. An unresolvable implicit
+ *                           default fails closed exactly like a broken route
+ *                           — it never silently degrades to the session
  *                           pair.
  *
  * Resolution validates the whole target combination (model exists in the
@@ -62,6 +70,8 @@ export type ResolveOutcome =
 			model?: ModelLike;
 			/** Set when the pair came from the mode's routing default. */
 			route?: { mode: SpawnMode; className: string };
+			/** Set when an omitted workspace spawn resolved via the implicit default class. */
+			implicitClass?: string;
 	  }
 	| { ok: false; error: string };
 
@@ -129,12 +139,25 @@ export function unknownClassError(ref: string, stored: StoredClasses): string {
 	);
 }
 
+/** The implicit repoOwner default class used when the mode has no route. */
+export const REPO_OWNER_DEFAULT_CLASS = "heavy";
+
 /** Error wrapper for a routing default that cannot be resolved (SPEC D4). */
 export function routingFailureError(mode: SpawnMode, className: string, cause: string): string {
 	return (
 		`Spawn routing for mode "${mode}" is set to class "${className}", but it cannot be resolved:\n${cause}\n` +
 		`Fix: \`/model-class route ${mode} <class|inherit>\` to change or reset the route, ` +
 		`or re-save the class with \`/model-class ${className} set\`.`
+	);
+}
+
+/** Error wrapper for an unresolvable implicit repoOwner default class. */
+export function implicitDefaultFailureError(className: string, cause: string): string {
+	return (
+		`RepoOwner default model class "${className}" is saved but cannot be resolved:\n${cause}\n` +
+		`Fix: re-save it with \`/model-class ${className} set\`, ` +
+		`or pass modelClass explicitly (a saved class or "default"), ` +
+		`or set a repoOwner route (\`/model-class route repoOwner <class>\`).`
 	);
 }
 
@@ -184,8 +207,9 @@ export function resolveModelClass(ref: string, stored: StoredClasses, env: Model
 }
 
 /**
- * Resolve the concrete pair for one spawn (SPEC R3 — one matrix for both
- * spawn modes; the mode only selects the routing default):
+ * Resolve the concrete pair for one spawn (one matrix for both spawn
+ * modes; the mode selects the routing default and the implicit repoOwner
+ * class):
  *
  * 1. explicit `requested`: `"default"` → live session pair; a saved class
  *    name → its stored pair, validated; anything else → fail closed with
@@ -193,8 +217,11 @@ export function resolveModelClass(ref: string, stored: StoredClasses, env: Model
  * 2. omitted: routing entry for `mode` → that entry's value, resolved as a
  *    SAVED CLASS ONLY and validated identically (an unresolvable route —
  *    dead class, invalid name, even a hand-edited `"default"` — fails closed
- *    naming the class, the mode, and the fix); no routing entry → live
- *    session pair.
+ *    naming the class, the mode, and the fix);
+ * 3. omitted + no route: repoOwner → the implicit default class
+ *    (REPO_OWNER_DEFAULT_CLASS, "heavy") when saved, validated identically
+ *    and failing closed when unresolvable; plain, and repoOwner without a
+ *    saved implicit class → the live session pair.
  */
 export function resolveSpawnTarget(
 	mode: SpawnMode,
@@ -209,6 +236,11 @@ export function resolveSpawnTarget(
 		const outcome = resolveStoredClass(routed, stored, env);
 		if (!outcome.ok) return { ok: false, error: routingFailureError(mode, routed, outcome.error) };
 		return { ...outcome, route: { mode, className: routed } };
+	}
+	if (mode === "repoOwner" && Object.hasOwn(stored, REPO_OWNER_DEFAULT_CLASS)) {
+		const implicit = resolveStoredClass(REPO_OWNER_DEFAULT_CLASS, stored, env);
+		if (!implicit.ok) return { ok: false, error: implicitDefaultFailureError(REPO_OWNER_DEFAULT_CLASS, implicit.error) };
+		return { ...implicit, implicitClass: REPO_OWNER_DEFAULT_CLASS };
 	}
 	return resolveModelClass("default", stored, env);
 }

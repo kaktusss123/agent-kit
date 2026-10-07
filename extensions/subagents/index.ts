@@ -14,7 +14,8 @@
  *   through the model-classes resolver before the process starts;
  * - workspace spawn (`workspace=<managed worktree>`) starts the child as the
  *   OWNER of that worktree (RepoOwner): modelClass applies identically
- *   (omitted → the repoOwner routing default, else the session pair); strict
+ *   (omitted → the repoOwner routing default, else the implicit default
+ *   class "heavy" when saved, else the session pair); strict
  *   validation and readiness happen before dispatch (fail closed), the spawn
  *   call blocks until a terminal outcome (done/partial/blocked) or
  *   needs_input with live progress rendered into the tool call, and the run
@@ -51,7 +52,7 @@ import { StringEnum } from "@earendil-works/pi-ai";
 import { Type } from "typebox";
 import { LocalSubagentRuntime } from "./controller";
 import { resolveSpawnPair } from "./spawn-model";
-import { loadModelClasses, modelClassesPath } from "../model-classes/store";
+import { loadStoredFile, loadModelClasses, modelClassesPath } from "../model-classes/store";
 import {
 	requireProviderExtensions,
 	type ConfiguredPackageRef,
@@ -77,6 +78,12 @@ import {
 } from "./workspace-runs";
 import { renderSubagentCall, renderSubagentResult } from "./render";
 import { attachDelivery } from "./wiring";
+import {
+	buildSpawnModelSection,
+	buildSpawnModelSectionError,
+	SPAWN_MODEL_SECTION,
+	type SpawnGuidanceState,
+} from "./spawn-guidance";
 import { taskStatus } from "../task-workspace/flows";
 import { resolveTaskRoot } from "../task-workspace/task-root";
 import type { AgentSnapshot } from "./types";
@@ -139,7 +146,7 @@ function buildSubagentParams(savedClasses: string) {
 		workspace: Type.Optional(
 			Type.String({
 				description:
-					"spawn: run this child as the OWNER of a managed task worktree (RepoOwner mode). The spawn call blocks until a terminal outcome (done/partial/blocked) or needs_input, with live progress in the tool call. The child's model follows modelClass or the repoOwner routing default (/model-class route)",
+					"spawn: run this child as the OWNER of a managed task worktree (RepoOwner mode). The spawn call blocks until a terminal outcome (done/partial/blocked) or needs_input, with live progress in the tool call. The child's model follows modelClass, else the repoOwner routing default, else the saved `heavy` class, else the current session model (/model-class route)",
 			}),
 		),
 		deadlineSec: Type.Optional(
@@ -151,7 +158,7 @@ function buildSubagentParams(savedClasses: string) {
 		),
 		modelClass: Type.Optional(
 			Type.String({
-				description: `spawn (both plain and workspace): model class for the child. Omit → the mode's routed default (/model-class route; plain and repoOwner route independently; no route → inherit the current main session model). A saved class name (currently: ${savedClasses}) overrides routing. "default" → the live main session model + thinking regardless of routing`,
+				description: `spawn (both plain and workspace): model class for the child — a saved class name (currently: ${savedClasses}) or "default" (the live main session model + thinking); an explicit value always overrides the defaults. Omitted — plain: the plain routed default, else the current session model; workspace: the repoOwner routed default, else the saved class heavy, else the current session model (see the subagent_model_defaults prompt section for the current pairs). Omit on workspace (RepoOwner) spawns unless the user explicitly asks for a class; on plain spawns pick a class yourself when it fits the work — smart suits review and complex/nontrivial reasoning`,
 			}),
 		),
 		message: Type.Optional(Type.String({ description: "steer/follow_up: message for the child agent" })),
@@ -362,6 +369,30 @@ export default function (pi: ExtensionAPI) {
 		setSubagentInspectionSource(undefined);
 	});
 
+	// Fresh model-default guidance: the static tool texts bake in class names
+	// captured at load, but mid-session /model-class changes (set/unset/route)
+	// must reach Main without stale snapshots. A dedicated prompt section is
+	// rebuilt from CURRENT storage on every before_agent_start; Pi diffs
+	// sections and appends a transcript delta only when the text changed, so
+	// this costs nothing per turn and never replaces the whole system prompt.
+	pi.on("before_agent_start", async (event, ctx) => {
+		let text: string;
+		try {
+			const stored = loadStoredFile(modelClassesPath());
+			const state: SpawnGuidanceState = {
+				classes: stored.classes,
+				routing: stored.routing,
+				session: ctx.model
+					? { model: `${ctx.model.provider}/${ctx.model.id}`, thinking: pi.getThinkingLevel() }
+					: null,
+			};
+			text = buildSpawnModelSection(state);
+		} catch (e) {
+			text = buildSpawnModelSectionError(e instanceof Error ? e.message : String(e));
+		}
+		(event.systemPromptOptions.sections ??= {})[SPAWN_MODEL_SECTION] = text;
+	});
+
 	// ------------------------------------------------------------------- tool
 
 	pi.registerTool({
@@ -390,7 +421,7 @@ export default function (pi: ExtensionAPI) {
 			"Use subagent op=spawn to delegate self-contained work that does not need your direct involvement, especially parallelizable or exploratory tasks.",
 			"spawn (plain cwd) returns immediately; keep working or spawn more agents, then use subagent op=wait to block for a specific child when you need its outcome.",
 			"Workspace spawn: dispatch independent repo owners in parallel with multiple subagent calls with workspace=<worktree> in one block. The call blocks until a terminal outcome; its JSON carries the protocol outcome in `status`, and the owner's product outcome lives in `result.status` (present only when status is done). If the user sends a message while the call blocks, it detaches early (run continues; completion arrives via event) — handle the user's message then, and use op=cancel only if they asked to stop.",
-			`Both spawn modes pick the child's model by class: omit modelClass to use the mode's routed default (plain and repoOwner route independently via /model-class route; with no route the child inherits your current session model), pass a saved class name (currently: ${savedClasses}) to override routing, or pass "default" to explicitly match your current session model. Save classes with /model-class <class> set; route spawn modes with /model-class route <plain|repoOwner> <class|inherit>.`,
+			`Spawn model selection: omit modelClass on workspace (RepoOwner) spawns unless the user explicitly requests a class (currently saved: ${savedClasses}) — those children then use the repoOwner routed default, else the saved class heavy, else your current session model. On plain spawns choose freely: omitting uses the plain routed default (else your current session model), and picking a class yourself is fine — smart suits review and complex/nontrivial reasoning work. The subagent_model_defaults prompt section lists the current saved class/model pairs and effective defaults (refreshed from storage when they change). heavy is the normal RepoOwner implementation class. An explicit class or "default" always overrides. Save classes with /model-class <class> set; route spawn modes with /model-class route <plain|repoOwner> <class|inherit> (inherit resets the mode to its normal default chain, not forced inheritance).`,
 			"Workspace terminal results include runtime-read `git_facts` (branch, HEAD SHA, dirty paths) — never ask the model for these; trust `git_facts` over any textual self-report about repository state.",
 			"When a child reports needs_input, first try to resolve the request from your own conversation and task context — do not ask the user again for information that is already known.",
 			"Only if the answer is unknown, use `ask` with the child's supplied request to get the missing decision, then answer via subagent op=respond id=<...> (a plain-text answer is enough; works for both modes).",
@@ -436,8 +467,9 @@ export default function (pi: ExtensionAPI) {
 							// envelope, and settled-state verification live in the
 							// workspace run layer; the call blocks until terminal.
 							// modelClass applies here exactly like on plain spawns;
-							// omitted, the repoOwner routing default (else the session
-							// pair) decides — resolution fails closed pre-dispatch.
+							// omitted, the repoOwner routing default, else the saved
+							// heavy class, else the session pair decides — resolution
+							// fails closed pre-dispatch.
 							if (params.cwd) {
 								return err("workspace spawns root the child at the worktree; `cwd` does not apply");
 							}

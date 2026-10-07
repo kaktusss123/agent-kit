@@ -237,8 +237,9 @@ describe("resolveSpawnPair — spawn-mode routing (R3)", () => {
 		});
 	});
 
-	test("routing is per mode: an unrouted mode inherits the session pair (A3)", () => {
-		withAgentDir({ heavy: STORED_HEAVY, routing: { plain: "heavy" } }, () => {
+	test("routing is per mode: an unrouted plain inherits the session pair (A3)", () => {
+		// no saved heavy class: the unrouted repoOwner also falls to the session pair
+		withAgentDir({ deep: STORED_HEAVY, routing: { plain: "deep" } }, () => {
 			expect(resolveSpawnPair("repoOwner", undefined, ctx(SESSION, REGISTRY), "high")).toEqual({
 				model: "prov-a/model-a",
 				thinking: "high",
@@ -249,6 +250,25 @@ describe("resolveSpawnPair — spawn-mode routing (R3)", () => {
 				model: "prov-a/model-a",
 				thinking: "high",
 			});
+		});
+	});
+
+	test("omitted repoOwner with a saved heavy and no route -> the implicit heavy pair, not the session pair", () => {
+		withAgentDir({ heavy: STORED_HEAVY }, () => {
+			expect(resolveSpawnPair("repoOwner", undefined, ctx(SESSION, REGISTRY), "low")).toEqual(STORED_HEAVY);
+			// plain never consults the implicit class
+			expect(resolveSpawnPair("plain", undefined, ctx(SESSION, REGISTRY), "low")).toEqual({
+				model: "prov-a/model-a",
+				thinking: "low",
+			});
+		});
+	});
+
+	test("unresolvable implicit heavy (dead model) fails closed at the spawn boundary", () => {
+		withAgentDir({ heavy: { model: "prov-gone/vanished", thinking: "high" } }, () => {
+			expect(() => resolveSpawnPair("repoOwner", undefined, ctx(SESSION, REGISTRY), "high")).toThrow(
+				/RepoOwner default model class "heavy"[\s\S]*no longer available[\s\S]*pass modelClass explicitly/,
+			);
 		});
 	});
 

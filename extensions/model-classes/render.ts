@@ -15,6 +15,7 @@
  */
 import type { ModelPair, RouteTarget, RoutingTable, SpawnMode, StoredClasses } from "./store";
 import { SPAWN_MODES } from "./store";
+import { REPO_OWNER_DEFAULT_CLASS } from "./core";
 import { MODEL_CLASS_USAGE } from "./parse";
 
 /** One rendered status row: `default` is the live session pair. */
@@ -32,28 +33,42 @@ function pad(value: string, width: number): string {
 }
 
 /**
- * Render the routing table: both spawn modes always shown, `inherit` (with
- * the session-pair note) when a mode has no route, the resolved pair for
- * routed classes, and a visible MISSING CLASS flag for routes pointing at
- * classes that are not saved.
+ * Render the routing table: both spawn modes always shown. An absent entry
+ * renders the mode's EFFECTIVE omitted-modelClass default, never a blanket
+ * "inherit": plain falls back to the session pair; repoOwner falls back to
+ * the implicit default class ("heavy") when it is saved, and only then to
+ * the session pair. Routed classes show the resolved pair, and routes
+ * pointing at classes that are not saved are visibly flagged, never hidden
+ * (SPEC R2).
  */
 export function renderRoutingTable(stored: StoredClasses, routing: RoutingTable): string {
 	// `!== undefined` (not truthiness): a PRESENT-but-empty target (""
 	// from a hand-edit) counts toward the width exactly like any other
 	// routed name and must never silently disappear from the table.
+	const implicitHeavy = Object.hasOwn(stored, REPO_OWNER_DEFAULT_CLASS)
+		? stored[REPO_OWNER_DEFAULT_CLASS]
+		: undefined;
+	const repoOwnerAuto = implicitHeavy ? `auto ${REPO_OWNER_DEFAULT_CLASS}` : "auto";
 	const routedNames = SPAWN_MODES.map((mode) => routing[mode]).filter(
 		(name): name is string => name !== undefined,
 	);
-	const classWidth = Math.max("inherit".length, ...routedNames.map((n) => n.length)) + 2;
+	const targetWidth =
+		Math.max("inherit".length, repoOwnerAuto.length, ...routedNames.map((n) => n.length)) + 2;
 	const modeWidth = Math.max(...SPAWN_MODES.map((m) => m.length)) + 2;
 	const lines = SPAWN_MODES.map((mode) => {
 		const className = routing[mode];
 		const head = pad(mode, modeWidth);
-		// Absent entry → inherit. A present-but-empty target is SET state that
-		// fails closed at spawn resolution (`resolveSpawnTarget` uses
-		// `!== undefined`): it must render as NOT SAVED, never hide as
-		// inheritance (SPEC R2).
-		if (className === undefined) return `${head}${pad("inherit", classWidth)}(session pair)`;
+		// Absent entry → the mode's effective default (see function doc):
+		// plain inherits the session pair; repoOwner's implicit chain never
+		// renders as "inherit" while a saved heavy class will actually run.
+		if (className === undefined) {
+			if (mode === "repoOwner") {
+				return implicitHeavy
+					? `${head}${pad(repoOwnerAuto, targetWidth)}(${implicitHeavy.model}, ${implicitHeavy.thinking}) — implicit repoOwner default`
+					: `${head}${pad(repoOwnerAuto, targetWidth)}(session pair — no saved ${REPO_OWNER_DEFAULT_CLASS} class)`;
+			}
+			return `${head}${pad("inherit", targetWidth)}(session pair)`;
+		}
 		// `<empty>` keeps an empty-string target readable instead of
 		// interpolating nothing into the line.
 		const display = className === "" ? "<empty>" : className;
@@ -62,14 +77,18 @@ export function renderRoutingTable(stored: StoredClasses, routing: RoutingTable)
 		const pair: ModelPair | undefined = Object.hasOwn(stored, className) ? stored[className] : undefined;
 		if (!pair) {
 			return (
-				`${head}${pad(display, classWidth)}` +
+				`${head}${pad(display, targetWidth)}` +
 				`NOT SAVED — save it (\`/model-class ${display} set\`) ` +
 				`or reset the route (\`/model-class route ${mode} inherit\`)`
 			);
 		}
-		return `${head}${pad(display, classWidth)}(${pair.model}, ${pair.thinking})`;
+		return `${head}${pad(display, targetWidth)}(${pair.model}, ${pair.thinking})`;
 	});
-	return ["Routing (spawn-mode defaults)", "", ...lines].join("\n");
+	return [
+		"Routing (spawn-mode defaults; inherit = reset to the mode's normal default)",
+		"",
+		...lines,
+	].join("\n");
 }
 
 /**
@@ -115,7 +134,14 @@ export function renderUnset(name: string): string {
 
 /** Short confirmation for `route <mode> <class|inherit>` (resolved pair when known). */
 export function renderRouteSet(mode: SpawnMode, target: RouteTarget, pair?: ModelPair): string {
-	if (target === "inherit") return `Routing ${mode}: inherit (session pair)`;
+	if (target === "inherit") {
+		// inherit RESETS explicit routing to the mode's normal default chain —
+		// for repoOwner that is the implicit heavy class when saved, not forced
+		// session inheritance.
+		return mode === "repoOwner"
+			? `Routing repoOwner reset to its default (saved ${REPO_OWNER_DEFAULT_CLASS} when present, else the session pair)`
+			: `Routing plain: inherit (session pair)`;
+	}
 	const suffix = pair ? ` (${pair.model}, ${pair.thinking})` : "";
 	return `Routing ${mode}: ${target}${suffix}`;
 }

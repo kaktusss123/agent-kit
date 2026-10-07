@@ -188,7 +188,10 @@ describe("route", () => {
 		await withAgentStorage({ workhorse: { model: "zai/glm-x", thinking: "low" } }, async (dir, base) => {
 			await base.run("route");
 			expect(base.last()!.text).toContain("plain      inherit");
-			expect(base.last()!.text).toContain("repoOwner  inherit");
+			// no heavy saved in this fixture: repoOwner shows the auto row degraded
+			// to the session pair, never a blanket "inherit"
+			expect(base.last()!.text).toContain("repoOwner  auto");
+			expect(base.last()!.text).not.toMatch(/^repoOwner\s+inherit/m);
 
 			await base.run("route plain nosuch");
 			expect(base.last()!.kind).toBe("error");

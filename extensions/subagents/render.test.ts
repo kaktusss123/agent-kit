@@ -85,6 +85,19 @@ describe("renderSubagentCall", () => {
 		expect(result).toContain("result");
 		expect(result).toContain("id=sa-1");
 	});
+
+	test("explicit modelClass renders before the task preview; omitted renders nothing", () => {
+		const explicit = lines(
+			renderSubagentCall({ op: "spawn", workspace: "/tasks/feat/agent-kit", task: "own it", modelClass: "smart" }, theme),
+		);
+		expect(explicit).toContain("modelClass=smart");
+		expect(explicit.indexOf("modelClass=smart")).toBeLessThan(explicit.indexOf("own it"));
+		const dflt = lines(renderSubagentCall({ op: "spawn", cwd: "/repo", task: "t", modelClass: "default" }, theme));
+		expect(dflt).toContain("modelClass=default");
+		// omitted: no bogus class segment is invented
+		const omitted = lines(renderSubagentCall({ op: "spawn", workspace: "/tasks/feat/agent-kit", task: "own it" }, theme));
+		expect(omitted).not.toMatch(/model(=|Class=)/);
+	});
 });
 
 describe("renderSubagentResult — non-card paths", () => {

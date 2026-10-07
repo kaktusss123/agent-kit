@@ -1090,15 +1090,33 @@ describe("spawn-mode routing (R3)", () => {
 		}
 	}, 20000);
 
-	test("no routing: owner inherits the session pair (migration, A1)", async () => {
+	test("no routing, no saved heavy: owner falls to the session pair (migration, A1)", async () => {
 		const h = makeLayer();
 		try {
-			seedAgentStorage(h, { heavy: { model: "zai/glm-max", thinking: "xhigh" } });
+			seedAgentStorage(h, { deep: { model: "zai/glm-max", thinking: "xhigh" } });
 			const ws = makeWorktree(h.taskRoot, "inherit-ws");
 			const { pending, proc } = await driveToRunning(h, { workspace: ws, task: "t" }, undefined, ROUTED_CTX);
 			const args = proc.spec.args;
 			expect(args[args.indexOf("--model") + 1]).toBe("zai/glm-x");
 			expect(args[args.indexOf("--thinking") + 1]).toBe("low");
+			writeEnvelope(h, h.agentId());
+			settleRun(proc, "done");
+			expect((await pending).details).toMatchObject({ status: "done" });
+		} finally {
+			await h.runtime.shutdown();
+			h.cleanup();
+		}
+	}, 20000);
+
+	test("no routing, saved heavy: owner runs the implicit heavy pair, not the session pair", async () => {
+		const h = makeLayer();
+		try {
+			seedAgentStorage(h, { heavy: { model: "zai/glm-max", thinking: "xhigh" } });
+			const ws = makeWorktree(h.taskRoot, "implicit-heavy-ws");
+			const { pending, proc } = await driveToRunning(h, { workspace: ws, task: "own it" }, undefined, ROUTED_CTX);
+			const args = proc.spec.args;
+			expect(args[args.indexOf("--model") + 1]).toBe("zai/glm-max");
+			expect(args[args.indexOf("--thinking") + 1]).toBe("xhigh");
 			writeEnvelope(h, h.agentId());
 			settleRun(proc, "done");
 			expect((await pending).details).toMatchObject({ status: "done" });
