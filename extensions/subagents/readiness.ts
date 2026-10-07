@@ -50,8 +50,8 @@ export const TASK_WORKSPACE_ENTRY_ID = "task-workspace";
  * Entry id of the subagents extension inside the RepoOwner profile: the
  * profile loads the SAME index the main session uses, so a workspace worker
  * can spawn plain `subagent` children (repo-local helpers) and pick their
- * modelClass (cheap/default/smart) — its own work still runs on the inherited
- * main-session model.
+ * modelClass (any saved class or "default") — its own model was fixed at
+ * dispatch time by the spawn's modelClass or the repoOwner default chain.
  */
 export const SUBAGENTS_ENTRY_ID = "subagents";
 

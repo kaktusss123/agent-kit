@@ -21,7 +21,7 @@ const CLASSES: StoredClasses = {
 };
 
 describe("renderModelClassStatus", () => {
-	test("no saved classes, no routing: session row + inherit rows + usage", () => {
+	test("no saved classes, no routing: session row + effective-default rows + usage", () => {
 		const out = renderModelClassStatus({ name: "default", model: "model-A", thinking: "high" }, {}, {});
 		expect(out).toBe(
 			[
@@ -29,10 +29,10 @@ describe("renderModelClassStatus", () => {
 				"",
 				"default  model-A    high",
 				"",
-				"Routing (spawn-mode defaults)",
+				"Routing (spawn-mode defaults; inherit = reset to the mode's normal default)",
 				"",
 				"plain      inherit  (session pair)",
-				"repoOwner  inherit  (session pair)",
+				"repoOwner  auto     (session pair — no saved heavy class)",
 				"",
 				MODEL_CLASS_USAGE,
 			].join("\n"),
@@ -70,10 +70,10 @@ describe("renderModelClassStatus", () => {
 		);
 		const routing = out.split("\n").slice(6, 10);
 		expect(routing).toEqual([
-			"Routing (spawn-mode defaults)",
+			"Routing (spawn-mode defaults; inherit = reset to the mode's normal default)",
 			"",
-			"plain      workhorse  (cloudru/openai/gpt-oss-120b, medium)",
-			"repoOwner  heavy      (openai-codex/gpt-5.6-sol, high)",
+			"plain      workhorse   (cloudru/openai/gpt-oss-120b, medium)",
+			"repoOwner  heavy       (openai-codex/gpt-5.6-sol, high)",
 		]);
 	});
 
@@ -83,8 +83,10 @@ describe("renderModelClassStatus", () => {
 		expect(out).toContain("NOT SAVED");
 		expect(out).toContain("/model-class nosuch set");
 		expect(out).toContain("/model-class route plain inherit");
-		// the healthy mode still renders normally
-		expect(out).toContain("repoOwner  inherit  (session pair)");
+		// the healthy mode still renders normally — heavy is saved, so the
+		// unrouted repoOwner shows the implicit default, never "inherit"
+		expect(out).toContain("repoOwner  auto heavy  (openai-codex/gpt-5.6-sol, high)");
+		expect(out).not.toMatch(/^repoOwner\s+inherit/m);
 	});
 
 	test("a routed inherited-property name (`constructor`) flags NOT SAVED, never renders garbage", () => {
@@ -99,16 +101,22 @@ describe("renderModelClassStatus", () => {
 		expect(out).toContain("NOT SAVED");
 		expect(out).toContain("<empty>");
 		expect(out).toContain("/model-class route plain inherit");
-		// the healthy mode still renders normally
-		expect(out).toContain("repoOwner  inherit  (session pair)");
+		// the healthy mode still renders normally — heavy is saved, so the
+		// unrouted repoOwner shows the implicit default, never "inherit"
+		expect(out).toContain("repoOwner  auto heavy  (openai-codex/gpt-5.6-sol, high)");
 		// the broken mode must not read as session inheritance
 		expect(out).not.toMatch(/^plain\s+inherit/m);
 	});
 
-	test("absent (undefined) routing entry renders the inherit line", () => {
+	test("absent (undefined) routing entry renders the effective default per mode", () => {
 		const out = renderRoutingTable(CLASSES, {});
-		expect(out).toContain("plain      inherit  (session pair)");
-		expect(out).toContain("repoOwner  inherit  (session pair)");
+		expect(out).toContain("plain      inherit     (session pair)");
+		expect(out).toContain("repoOwner  auto heavy  (openai-codex/gpt-5.6-sol, high)");
+		expect(out).not.toMatch(/^repoOwner\s+inherit/m);
+		// without a saved heavy the repoOwner row degrades to the session pair
+		const outNoHeavy = renderRoutingTable({ workhorse: CLASSES.workhorse }, {});
+		expect(outNoHeavy).toContain("plain      inherit  (session pair)");
+		expect(outNoHeavy).toContain("repoOwner  auto     (session pair — no saved heavy class)");
 	});
 
 	test("session without a model renders an explicit row, not `not set`", () => {
@@ -122,8 +130,11 @@ describe("renderRoutingTable", () => {
 		const routing = { plain: "workhorse" as const };
 		const status = renderModelClassStatus({ name: "default", model: "m", thinking: "low" }, CLASSES, routing);
 		expect(status).toContain(renderRoutingTable(CLASSES, routing));
-		// an unrouted mode reads as session inheritance (A10)
-		expect(renderRoutingTable(CLASSES, routing)).toContain("repoOwner  inherit    (session pair)");
+		// an unrouted repoOwner reads as its implicit default (heavy is saved),
+		// not as session inheritance
+		expect(renderRoutingTable(CLASSES, routing)).toContain(
+			"repoOwner  auto heavy  (openai-codex/gpt-5.6-sol, high)",
+		);
 	});
 });
 
@@ -143,6 +154,9 @@ describe("confirmations", () => {
 			"Routing plain: workhorse (cloudru/openai/gpt-oss-120b, medium)",
 		);
 		expect(renderRouteSet("plain", "workhorse")).toBe("Routing plain: workhorse");
-		expect(renderRouteSet("repoOwner", "inherit")).toBe("Routing repoOwner: inherit (session pair)");
+		expect(renderRouteSet("repoOwner", "inherit")).toBe(
+			"Routing repoOwner reset to its default (saved heavy when present, else the session pair)",
+		);
+		expect(renderRouteSet("plain", "inherit")).toBe("Routing plain: inherit (session pair)");
 	});
 });

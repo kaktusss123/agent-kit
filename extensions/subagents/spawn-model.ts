@@ -55,10 +55,13 @@ function envFor(ctx: SpawnModelCtx, currentThinking: ThinkingLevel): ModelClassE
 }
 
 /**
- * Resolve the concrete pair for one spawn. `mode` selects the routing
- * default when `requested` is omitted; an explicit `requested` (a saved
- * class name or the literal `"default"`) overrides routing for both modes.
- * Storage is read fresh per call.
+ * Resolve the concrete pair for one spawn. `mode` selects the fallback
+ * chain when `requested` is omitted: plain → the plain routing default,
+ * else the live session pair; repoOwner → the repoOwner routing default,
+ * else the implicit default class ("heavy" when saved), else the live
+ * session pair. An explicit `requested` (a saved class name or the literal
+ * `"default"`) overrides all defaults for both modes. Storage is read
+ * fresh per call.
  */
 export function resolveSpawnPair(
 	mode: SpawnMode,

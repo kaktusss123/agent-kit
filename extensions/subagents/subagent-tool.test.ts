@@ -24,6 +24,7 @@ interface ToolDef {
 function makePi() {
 	const tools = new Map<string, ToolDef>();
 	const messages: Array<Record<string, unknown>> = [];
+	const handlers = new Map<string, (event: never, ctx?: unknown) => unknown>();
 	const pi = {
 		registerTool: (def: ToolDef) => {
 			tools.set(def.name, def);
@@ -33,9 +34,12 @@ function makePi() {
 			messages.push(message);
 		},
 		getThinkingLevel: () => "low",
-		on: () => () => {},
+		on: (event: string, handler: (event: never, ctx?: unknown) => unknown) => {
+			handlers.set(event, handler);
+			return () => handlers.delete(event);
+		},
 	} as unknown as ExtensionAPI;
-	return { pi, tools, messages };
+	return { pi, tools, messages, handlers };
 }
 
 function makeEnv() {
@@ -130,6 +134,13 @@ describe("subagent tool surface", () => {
 		expect(guidelines).toContain("/model-class route");
 		expect(guidelines).not.toContain("do not pass modelClass");
 		expect(guidelines).not.toContain("it is rejected");
+		// the omission rule is scoped to workspace only: plain class selection
+		// (e.g. an explicit smart reviewer) must stay allowed
+		expect(guidelines).toContain("omit modelClass on workspace (RepoOwner) spawns unless the user explicitly requests a class");
+		expect(guidelines).not.toMatch(/omit modelClass unless the user/);
+		expect(guidelines).toContain("smart suits review and complex/nontrivial reasoning");
+		expect(props.modelClass.description).toContain("Omit on workspace (RepoOwner) spawns unless the user explicitly asks for a class");
+		expect(props.modelClass.description).toContain("on plain spawns pick a class yourself");
 	});
 
 	test("workspace spawn without a session model → blocked, dispatched:false, no process", async () => {
@@ -306,7 +317,7 @@ describe("subagent tool surface", () => {
 				d2: string;
 			};
 			expect(parsed.d1).toContain("currently: workhorse, heavy");
-			expect(parsed.g1.join("\n")).toContain("currently: workhorse, heavy");
+			expect(parsed.g1.join("\n")).toContain("currently saved: workhorse, heavy");
 			expect(parsed.g1.join("\n")).toContain("/model-class route");
 			// the second registration enumerates CURRENT storage, not a list
 			// frozen at import time
@@ -316,6 +327,47 @@ describe("subagent tool surface", () => {
 			fs.rmSync(base, { recursive: true, force: true });
 		}
 	}, 30000);
+
+	test("before_agent_start maintains a fresh subagent_model_defaults section from CURRENT storage", async () => {
+		const base = fs.mkdtempSync(path.join(os.tmpdir(), "subagent-guidance-test-"));
+		const agentDir = path.join(base, "agent-dir");
+		fs.mkdirSync(agentDir, { recursive: true });
+		const storage = path.join(agentDir, "model-classes.json");
+		const prevAgentDir = process.env.PI_CODING_AGENT_DIR;
+		process.env.PI_CODING_AGENT_DIR = agentDir;
+		const writeStorage = (payload: unknown) =>
+			fs.writeFileSync(storage, typeof payload === "string" ? payload : JSON.stringify(payload));
+		try {
+			const { pi, handlers } = makePi();
+			registerExtension(pi);
+			const handler = handlers.get("before_agent_start") as
+				| ((event: Record<string, any>, ctx: unknown) => Promise<void>)
+				| undefined;
+			expect(handler).toBeDefined();
+			const ctx = { model: { provider: "zai", id: "glm-x" } };
+			const run = async () => {
+				const event = { systemPromptOptions: { sections: {} as Record<string, string> } };
+				await handler!(event, ctx);
+				return event.systemPromptOptions.sections["subagent_model_defaults"]!;
+			};
+			// saved heavy, no route: the section names the pair and the implicit default
+			writeStorage({ heavy: { model: "zai/glm-max", thinking: "xhigh" } });
+			const first = await run();
+			expect(first).toContain("heavy=zai/glm-max (xhigh)");
+			expect(first).toContain("implicit heavy -> zai/glm-max (xhigh)");
+			expect(first).toContain("current session model zai/glm-x (low)");
+			// mid-session routing change: the NEXT run reflects it (no stale snapshot)
+			writeStorage({ heavy: { model: "zai/glm-max", thinking: "xhigh" }, routing: { repoOwner: "heavy" } });
+			expect(await run()).toContain("route=heavy -> zai/glm-max (xhigh)");
+			// unreadable storage: explicit fail-closed note, never a silent default
+			writeStorage("{ not json");
+			expect(await run()).toContain("unreadable");
+		} finally {
+			if (prevAgentDir === undefined) delete process.env.PI_CODING_AGENT_DIR;
+			else process.env.PI_CODING_AGENT_DIR = prevAgentDir;
+			fs.rmSync(base, { recursive: true, force: true });
+		}
+	}, 10000);
 });
 
 // ---------------------------------------------------------------------------
@@ -613,6 +665,13 @@ describe("nested spawn from a workspace worker", () => {
 		// would flip the main-session gates, so pin it away like makeEnv does.
 		process.argv[1] = probe;
 		delete process.env.PI_SUBAGENT_ID;
+		// Pin an EMPTY agent dir: spawn resolution must never consult the real
+		// user's model-classes storage (a real plain route to a model outside
+		// this fake registry would make the spawn fail closed here).
+		const prevAgentDir = process.env.PI_CODING_AGENT_DIR;
+		const agentDir = path.join(base, "agent-dir");
+		fs.mkdirSync(agentDir, { recursive: true });
+		process.env.PI_CODING_AGENT_DIR = agentDir;
 		try {
 			const { pi, tools } = makePi();
 			registerExtension(pi);
@@ -658,6 +717,8 @@ describe("nested spawn from a workspace worker", () => {
 		} finally {
 			process.argv[1] = prevArgv1;
 			if (prevWorkerId !== undefined) process.env.PI_SUBAGENT_ID = prevWorkerId;
+			if (prevAgentDir === undefined) delete process.env.PI_CODING_AGENT_DIR;
+			else process.env.PI_CODING_AGENT_DIR = prevAgentDir;
 			fs.rmSync(base, { recursive: true, force: true });
 		}
 	}, 15000);

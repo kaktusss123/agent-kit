@@ -117,13 +117,17 @@ Per-spawn `cwd`, `label`, and `modelClass` (a free-form string, valid for
 BOTH spawn modes; resolved to concrete model + thinking by the
 model-classes resolver — routing-aware — before the process starts; see
 `../model-classes/README.md`). Omitted, the spawn mode's routed default
-applies (`/model-class route <plain|repoOwner> <class|inherit>`; with no
-route the child inherits the current main session pair); an explicit saved
-class name overrides routing, and `"default"` matches the live session
-pair regardless of routing. A present route that cannot be resolved (dead
+applies (`/model-class route <plain|repoOwner> <class|inherit>`); with no
+route a plain child inherits the current main session pair, while a
+workspace (RepoOwner) child falls to the implicit default class `heavy`
+when it is saved (else the session pair). An explicit saved class name
+overrides all defaults, and `"default"` matches the live session
+pair regardless of routing. A present route — or an unresolvable saved
+`heavy` — that cannot be resolved (dead
 class, hand-edited garbage target) or unreadable model-class storage fails
 the spawn closed instead of silently inheriting. The runtime never maps roles to classes or
-picks a class itself — routing is the user's machine-global configuration.
+picks a class itself — routing and the saved `heavy` default are the user's
+machine-global configuration.
 The internal runtime boundary (`SpawnOptions`) still carries concrete
 `model`/`thinking` because the child needs literal CLI flags.
 Child sessions are ordinary pi sessions named `subagent:<label>`, inspectable
@@ -176,8 +180,9 @@ runs a RepoOwner — a child rooted in a managed task worktree with a strict
 protocol on top of the shared subagent runtime. Plain `cwd` spawns keep
 working exactly as before (no ownership semantics, `modelClass` applies);
 `modelClass` applies to workspace spawns identically — omitted, the
-`repoOwner` routing default (else the main session's model + thinking)
-decides, and resolution failures classify as `blocked` (`dispatched:false`,
+`repoOwner` routing default decides, else the implicit `heavy` class when
+saved, else the main session's model + thinking —
+and resolution failures classify as `blocked` (`dispatched:false`,
 nothing started).
 
 - **Per-spawn profile**: RepoOwner children load the task-workspace entry, a
@@ -231,8 +236,12 @@ nothing started).
   stays queryable via
   `subagent op=result id=<agentId>` for the rest of the session. Runs are
   identified by their agentId; there is no separate run-id namespace.
-- **Model pinning**: the child runs with the main session's resolved model
-  and thinking level; without a model the spawn is refused (`blocked`).
+- **Model selection**: the child runs on the explicit `modelClass`, else
+  the `repoOwner` routing default, else the implicit `heavy` class when
+  saved, else the main session's resolved model and thinking level; a
+  resolution failure refuses the spawn (`blocked`). Main sees the current
+  class pairs and effective defaults in the `subagent_model_defaults`
+  system-prompt section (refreshed when they change).
 - **Live operator observability**: while a workspace spawn waits, the tool
   call re-renders a compact status view via Pi's transient `onUpdate`
   channel (display-only — never Main's LLM context, child transcript stays

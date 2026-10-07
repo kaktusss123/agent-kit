@@ -287,35 +287,92 @@ describe("resolveSpawnTarget — the R3 matrix", () => {
 		).toMatchObject({ ok: true, pair: stored.heavy, origin: "stored" });
 	});
 
-	test("2b. routing applies BY MODE: an unrouted mode inherits the session (R3)", () => {
-		expect(resolveSpawnTarget("repoOwner", undefined, stored, { plain: "workhorse" }, env(session))).toEqual({
+	test("2b. routing applies BY MODE: an unrouted repoOwner falls to the implicit default class; unrouted plain inherits the session (R3)", () => {
+		// `stored` has `heavy` saved: the unrouted repoOwner resolves it, not the session pair
+		expect(resolveSpawnTarget("repoOwner", undefined, stored, { plain: "workhorse" }, env(session))).toMatchObject({
 			ok: true,
-			pair: session,
-			origin: "session",
+			pair: stored.heavy,
+			origin: "stored",
+			implicitClass: "heavy",
 		});
-		expect(resolveSpawnTarget("plain", undefined, stored, { repoOwner: "heavy" }, env(session))).toEqual({
+		// plain never consults the implicit class
+		expect(resolveSpawnTarget("plain", undefined, stored, { repoOwner: "workhorse" }, env(session))).toEqual({
 			ok: true,
 			pair: session,
 			origin: "session",
 		});
 	});
 
-	test("2c. omitted + no routing at all -> live session pair (migration, A1)", () => {
+	test("2c. omitted + no routing: plain -> session; repoOwner -> implicit heavy when saved, else session", () => {
 		expect(resolveSpawnTarget("plain", undefined, stored, {}, env(session))).toEqual({
 			ok: true,
 			pair: session,
 			origin: "session",
 		});
-		expect(resolveSpawnTarget("repoOwner", undefined, stored, {}, env(session))).toEqual({
+		expect(resolveSpawnTarget("repoOwner", undefined, stored, {}, env(session))).toMatchObject({
+			ok: true,
+			pair: stored.heavy,
+			origin: "stored",
+			implicitClass: "heavy",
+		});
+		const noHeavy: StoredClasses = { workhorse: stored.workhorse };
+		expect(resolveSpawnTarget("repoOwner", undefined, noHeavy, {}, env(session))).toEqual({
 			ok: true,
 			pair: session,
 			origin: "session",
+		});
+	});
+
+	test("2c-1. a repoOwner route wins over the implicit default class", () => {
+		expect(
+			resolveSpawnTarget("repoOwner", undefined, stored, { repoOwner: "workhorse" }, env(session)),
+		).toMatchObject({ ok: true, pair: stored.workhorse, route: { mode: "repoOwner", className: "workhorse" } });
+	});
+
+	test("2c-2. unresolvable implicit heavy (dead model) fails closed, never the session pair", () => {
+		const dead: StoredClasses = { heavy: { model: "prov-x/vanished", thinking: "high" } };
+		const outcome = resolveSpawnTarget("repoOwner", undefined, dead, {}, env(session));
+		expect(outcome.ok).toBe(false);
+		if (outcome.ok) throw new Error("unreachable");
+		expect(outcome.error).toContain('RepoOwner default model class "heavy"');
+		expect(outcome.error).toContain("no longer available");
+		expect(outcome.error).toContain("/model-class heavy set");
+		expect(outcome.error).toContain("pass modelClass explicitly");
+	});
+
+	test("2c-3. unresolvable implicit heavy (unsupported thinking) fails closed the same way", () => {
+		const bad: StoredClasses = { heavy: { model: "prov-b/openai/gpt-oss-120b", thinking: "max" } };
+		const outcome = resolveSpawnTarget("repoOwner", undefined, bad, {}, env(session));
+		expect(outcome.ok).toBe(false);
+		expect(outcome.ok === false && outcome.error).toContain("does not support");
+	});
+
+	test("2c-4. explicit class or \"default\" overrides the implicit default", () => {
+		expect(resolveSpawnTarget("repoOwner", "default", stored, {}, env(session))).toEqual({
+			ok: true,
+			pair: session,
+			origin: "session",
+		});
+		expect(resolveSpawnTarget("repoOwner", "workhorse", stored, {}, env(session))).toMatchObject({
+			ok: true,
+			pair: stored.workhorse,
+			origin: "stored",
 		});
 	});
 
 	test("2d. omitted + no routing + no session model -> fail closed", () => {
 		const outcome = resolveSpawnTarget("plain", undefined, stored, {}, env(null));
 		expect(outcome).toMatchObject({ ok: false, error: "no model resolved in the current session" });
+		// repoOwner without a saved heavy has nothing left to fall back to either
+		const noHeavy: StoredClasses = { workhorse: stored.workhorse };
+		const owner = resolveSpawnTarget("repoOwner", undefined, noHeavy, {}, env(null));
+		expect(owner).toMatchObject({ ok: false, error: "no model resolved in the current session" });
+		// a saved heavy resolves even without a session model
+		expect(resolveSpawnTarget("repoOwner", undefined, stored, {}, env(null))).toMatchObject({
+			ok: true,
+			pair: stored.heavy,
+			implicitClass: "heavy",
+		});
 	});
 
 	test("2e. route to a missing class -> fail closed naming class, mode, and fix (A6, D4)", () => {

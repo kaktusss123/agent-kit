@@ -4,7 +4,7 @@ Deterministic contract of workspace-mode `subagent` spawns (subagents extension,
 
 ## Dispatching an owner
 
-`subagent op=spawn workspace=<worktree> task=<assignment> deadlineSec=<seconds>` runs a RepoOwner: an independent agent process rooted in a managed task worktree. The child inherits the main session model; `modelClass` does not apply to workspace spawns (plain `cwd` spawns keep it).
+`subagent op=spawn workspace=<worktree> task=<assignment> deadlineSec=<seconds>` runs a RepoOwner: an independent agent process rooted in a managed task worktree. The child's model: an explicit `modelClass` (a saved class or `"default"`) always wins; omitted, the repoOwner routed default (`/model-class route` — the user's explicit choice), else the saved `heavy` class, else the current session model decides. `modelClass` applies to workspace spawns exactly like to plain `cwd` spawns; resolution fails closed before dispatch when a named or routed class cannot be resolved. Do not override these workspace defaults merely because the work looks complex — an explicit user model choice always wins. `heavy` is the normal RepoOwner implementation class; `smart` primarily suits review and complex/nontrivial reasoning (plain reviewers and helpers may take it explicitly).
 
 - `workspace` — the absolute managed worktree path from `ensure_task_repo`; the owner works with relative paths there and sees the repository's own project instructions.
 - `task` — the complete owner assignment: intent, applicable contract artifacts (e.g. SPEC.md), the worker report contract from SKILL.md, and the instruction to change only this repository. The registry retains this canonical text unchanged.
@@ -59,7 +59,7 @@ Repair means a NEW workspace spawn whose task begins with inspecting the existin
 
 ## Restrictions the runtime enforces
 
-- RepoOwner children may spawn repo-local helpers through the same `subagent` tool: plain `cwd` spawns only, with the full `modelClass` choice (cheap/default/smart). Helpers are part of the owner's execution and may use ordinary tools inside this workspace, but they cannot create workspace spawns: a managed worktree has exactly one owning RepoOwner, and helpers never become separate RepoOwners.
+- RepoOwner children may spawn repo-local helpers through the same `subagent` tool: plain `cwd` spawns only, with the full `modelClass` choice (any saved class or `"default"`). Helpers are part of the owner's execution and may use ordinary tools inside this workspace, but they cannot create workspace spawns: a managed worktree has exactly one owning RepoOwner, and helpers never become separate RepoOwners.
 - On an owner, the `subagent` tool accepts only `status`, `result`, `respond`, `cancel`; `wait`, `steer`, `follow_up` are rejected (owner lifecycle events belong to the workspace registry; steering would bypass the deadline).
 - Workspace runs produce no generic `[subagent ...]` deliveries; do not `wait()` on them.
 

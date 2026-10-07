@@ -217,7 +217,7 @@ export interface WorkspaceSpawnArgs {
 	 * Explicit model class override, valid for workspace spawns exactly like
 	 * plain spawns: a saved class name, or "default" for the live session
 	 * pair. Omitted → the repoOwner routing default (/model-class route),
-	 * else the session pair.
+	 * else the saved heavy class when present, else the session pair.
 	 */
 	modelClass?: string;
 	/** Live session model: the inheritance source and the no-model gate fact. */

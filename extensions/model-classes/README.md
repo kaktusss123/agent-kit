@@ -59,7 +59,7 @@ identifier typing) and never changes the session. It overwrites an existing
 saved class without confirmation. `unset` deletes a class and refuses while
 any routing entry references it, naming the modes to reset first.
 `route <mode> <class>` validates that the class is saved at set time;
-`inherit` resets the mode to session inheritance. `next` (and Ctrl+Alt+P)
+`inherit` resets the mode's explicit routing (see below). `next` (and Ctrl+Alt+P)
 cycle forward through saved classes in storage order — see below.
 
 ## Cycling (Ctrl+Alt+P, `/model-class next`)
@@ -84,7 +84,14 @@ plain (`cwd`) and workspace (`workspace=`) spawns. One resolution matrix
 | a saved class name   | its stored pair, validated against the registry (override)        |
 | anything else        | fail closed; the error lists the saved class names                |
 | omitted + route set  | the routed class, resolved and validated identically (fail closed)|
-| omitted + no route   | live session pair (plain spawns: today's behavior; workspace: the pre-dispatch no-model gate still applies) |
+| omitted + no route   | plain: live session pair. repoOwner: the implicit default class `heavy` when saved (validated identically; an unresolvable saved heavy fails closed), else the live session pair |
+
+The implicit `heavy` default is a soft policy, not a lock: `modelClass`
+stays usable on workspace spawns, and the guidance for Main is to omit it
+there unless the user explicitly asks for another class (`heavy` is the
+normal RepoOwner implementation class; `smart` primarily suits review and
+complex/nontrivial reasoning). Nothing is persisted by the fallback — it
+reads whatever is saved.
 
 A route that references a missing class or a dead model fails closed at
 spawn time with an error naming the class, the mode, and the fix
@@ -103,6 +110,10 @@ Routing is machine-global (agent dir), not per-project. Scope note: routing
 applies by spawn mode regardless of who spawns — a RepoOwner spawning a
 plain helper without `modelClass` gets the `plain` route; `modelClass:
 "default"` is the explicit way to match the parent's model.
+
+`/model-class route <mode> inherit` RESETS explicit routing back to the
+mode's normal default chain — for `repoOwner` that is the implicit `heavy`
+class when saved, not forced session inheritance.
 
 ## Guarantees
 
