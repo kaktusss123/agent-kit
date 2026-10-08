@@ -56,6 +56,12 @@ import type {
 } from "./types";
 import { summarizeToolActivity } from "./activity";
 import { loadProgress, type RunHistory } from "./progress";
+import {
+	normalizeLastText,
+	publicAssistantText,
+	validateLastAssistantText,
+	type LastAssistantText,
+} from "./last-text";
 
 /** Live tool-activity bounds: status telemetry, never a log buffer. */
 const ACTIVE_TOOLS_MAX = 8;
@@ -132,6 +138,8 @@ interface AgentRecord {
 	pendingSessionFile?: string;
 	sessionId?: string;
 	finalText?: string;
+	/** Last PUBLIC assistant text (bounded automatic projection, accepted from completed message_end events). */
+	lastAssistantText?: LastAssistantText;
 	/** Failure of the current run; cleared by `agent_start` and on success. */
 	runError?: string;
 	/** Process-level failure (spawn, watchdog, unexpected exit). */
@@ -595,7 +603,7 @@ export class LocalSubagentRuntime {
 
 		if (type === "message_end") {
 			const msg = ev.message as
-				| { role?: string; stopReason?: string; errorMessage?: string }
+				| { role?: string; stopReason?: string; errorMessage?: string; content?: unknown }
 				| undefined;
 			if (msg?.role === "assistant") {
 				// Persistence can lag this event. inspect() retries the same check.
@@ -611,6 +619,7 @@ export class LocalSubagentRuntime {
 				// cumulative token/cost/context numbers. Fire-and-forget — the
 				// response handler is command-keyed and replaces record.stats.
 				connGetStats(record);
+				this.acceptLastAssistantText(record, msg);
 			}
 			return;
 		}
@@ -833,6 +842,9 @@ export class LocalSubagentRuntime {
 			exitCode: record.exitCode,
 			signal: record.signal,
 			...(record.processKilledAt !== undefined ? { processKilledAt: record.processKilledAt } : {}),
+			...(record.lastAssistantText !== undefined
+				? { lastAssistantText: { ...record.lastAssistantText } }
+				: {}),
 			...(this.parentSession ? { parentSession: this.parentSession } : {}),
 			...(record.run ? { run: this.runHistory(record) } : {}),
 		};
@@ -872,6 +884,9 @@ export class LocalSubagentRuntime {
 			status: "running",
 			startedAt: record.startedAt,
 			...(record.conn.pid !== undefined ? { pid: record.conn.pid } : {}),
+			...(record.lastAssistantText !== undefined
+				? { lastAssistantText: { ...record.lastAssistantText } }
+				: {}),
 			...(this.parentSession ? { parentSession: this.parentSession } : {}),
 			...(record.run ? { run: this.runHistory(record) } : {}),
 		};
@@ -1158,6 +1173,9 @@ export class LocalSubagentRuntime {
 			tokens: statsToResultTokens(record.stats),
 			exitCode: record.exitCode,
 			signal: record.signal,
+			...(record.lastAssistantText !== undefined
+				? { lastAssistantText: { ...record.lastAssistantText } }
+				: {}),
 			...(this.parentSession ? { parentSession: this.parentSession } : {}),
 			...(record.run ? { run: this.runHistory(record) } : {}),
 		};
@@ -1273,9 +1291,14 @@ export class LocalSubagentRuntime {
 		for (const marker of runningMarkers(this.resultsDir)) {
 			if (marker.parentSession !== this.parentSession) continue;
 			const progress = loadProgress(marker.id, this.resultsDir) ?? marker.run?.progress;
+			// Malformed optional fields are dropped, never forwarded: the lost
+			// record keeps the last PUBLIC speech only when it is well-formed.
+			const { lastAssistantText: rawLastText, ...markerFields } = marker;
+			const lastText = validateLastAssistantText(rawLastText);
 			const finalized: AgentResult = {
-				...marker,
+				...markerFields,
 				...(marker.run ? { run: { ...marker.run, state: "lost", ...(progress ? { progress } : {}) } } : {}),
+				...(lastText ? { lastAssistantText: lastText } : {}),
 				status: "failed",
 				failureReason: "child lost across parent restart",
 				endedAt: Date.now(),
@@ -1441,6 +1464,29 @@ export class LocalSubagentRuntime {
 		return record;
 	}
 
+	/**
+	 * Automatic bounded projection of the child's last PUBLIC assistant text
+	 * (plain and workspace children alike): completed `message_end` text
+	 * blocks only. Thinking, tool calls, tool results, error/aborted/deferred
+	 * messages and empty text never replace an accepted fragment; the runtime
+	 * assigns updatedAt. Acceptance is bounded to non-terminal records, so a
+	 * late event after settlement cannot mutate a terminal record. Persistence
+	 * rides the existing result path: the running marker is rewritten on every
+	 * accepted change and the terminal write keeps the fragment.
+	 */
+	private acceptLastAssistantText(
+		record: AgentRecord,
+		msg: { stopReason?: string; content?: unknown },
+	): void {
+		if (isTerminal(record.state)) return; // never mutate a terminal record late
+		const raw = publicAssistantText(msg);
+		if (raw === undefined) return;
+		const text = normalizeLastText(raw);
+		if (text === undefined) return;
+		record.lastAssistantText = { text, updatedAt: Date.now() };
+		this.persistSpawnMarker(record);
+	}
+
 	private promoteSessionFile(record: AgentRecord): void {
 		const candidate = record.pendingSessionFile;
 		if (!candidate) return;
@@ -1478,6 +1524,9 @@ export class LocalSubagentRuntime {
 			signal: record.signal,
 			activeTool: record.conn.exit ? undefined : newestActiveTool(record),
 			recentActivity: record.recentActivity.map((entry) => ({ ...entry })),
+			...(record.lastAssistantText !== undefined
+				? { lastAssistantText: { ...record.lastAssistantText } }
+				: {}),
 		};
 	}
 }

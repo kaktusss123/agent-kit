@@ -361,5 +361,40 @@ point-in-time values: consumers recompute elapsed age from `updatedAt`, and
 must not infer liveness from history. Absent/malformed optional progress
 should be displayed as not reported; no progress is required for completion.
 
+### `lastAssistantText` — automatic last public speech (UX revision)
+
+Optional additive channel at the **AgentSnapshot/AgentResult root** (plain and
+workspace children alike), separate from `Progress`/`RunHistory` and from the
+product report:
+
+```ts
+type LastAssistantText = {
+  text: string; // normalized, max 512 UTF-16 code units
+  updatedAt: number; // Unix ms, assigned by the runtime at acceptance
+};
+// AgentSnapshot.lastAssistantText? / AgentResult.lastAssistantText?
+```
+
+Single source: the child's completed RPC `message_end` with `role=assistant` —
+`type=text` content blocks only, joined in order. Thinking, tool calls, tool
+results, delta streams and full transcripts never enter. Messages with
+`stopReason` error/aborted/deferred (or pending) and empty-after-normalization
+text never replace an accepted fragment. Text is normalized (control
+characters → space, whitespace folded, trimmed) and capped AFTER
+normalization at 512 UTF-16 code units; only the single last fragment is
+kept and a newer completed message replaces it.
+
+Acceptance is bounded to non-terminal records: a `message_end` arriving after
+the record settled cannot mutate the terminal record. No new sidecar or log:
+persistence rides the existing result path — the spawn-time `running` marker
+is rewritten on every accepted change, the terminal write keeps the fragment,
+and lost-run reconciliation (`run.state: "lost"`) retains it when well-formed
+(malformed optional values are dropped, never forwarded). The projection is
+available immediately in narrow inspection `area=subagents`
+(`data.agents[].lastAssistantText`, via `agentDetailView`), `subagent
+op=status`, `subagent op=result` (`details.result` root for plain agents) and
+persisted history. Absence is meaningful: the child has produced no public
+speech yet — it is never inferred from silence about blockers or activity.
+
 Dev note: `bun test` needs `typebox` resolvable from the repo tree —
 `ln -s <pi-package>/node_modules/typebox node_modules/typebox` (gitignored).

@@ -6,6 +6,7 @@
  */
 import type { AskInput } from "../ask/contract";
 import type { RunHistory } from "./progress";
+import type { LastAssistantText } from "./last-text";
 
 /** Logical agent state. Process liveness is tracked separately (`alive`). */
 export type AgentState =
@@ -139,6 +140,13 @@ export interface AgentSnapshot {
 	activeTool?: ToolActivity;
 	/** Most recently finished tools, oldest first, hard-capped (status telemetry, not a log). */
 	recentActivity?: ToolActivity[];
+	/**
+	 * Last PUBLIC assistant text (bounded automatic projection, plain and
+	 * workspace children alike): completed `message_end` text blocks only,
+	 * normalized and capped; runtime-assigned updatedAt. Absent until the
+	 * first accepted message; a separate channel from report_progress.
+	 */
+	lastAssistantText?: LastAssistantText;
 }
 
 /** Persisted result for one agent run (the "lazy full result"). */
@@ -179,6 +187,12 @@ export interface AgentResult {
 	parentSession?: string;
 	/** Optional bounded workspace history. Not a resumable execution handle. */
 	run?: RunHistory;
+	/**
+	 * Bounded projection of the child's last PUBLIC assistant text; written
+	 * by the running marker on each accepted message, kept by the terminal
+	 * write and by lost-run reconciliation. Not a resumable-run promise.
+	 */
+	lastAssistantText?: LastAssistantText;
 }
 
 /**
