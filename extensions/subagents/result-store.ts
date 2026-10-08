@@ -12,6 +12,7 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import type { AgentResult } from "./types";
+import { validateLastAssistantText } from "./last-text";
 
 export function defaultResultsDir(): string {
 	const agentDir = process.env.PI_CODING_AGENT_DIR || path.join(os.homedir(), ".pi", "agent");
@@ -27,10 +28,24 @@ export function saveResult(result: AgentResult, dir: string): string {
 	return file;
 }
 
+/**
+ * Load one persisted result. Terminal records written by earlier sessions
+ * are the source for `subagent result` after a main restart, so the optional
+ * bounded channel gets a read-time boundary here: a malformed
+ * `lastAssistantText` is dropped, never forwarded into live projections;
+ * every other persisted fact passes through untouched and the file itself
+ * is never rewritten (old/legacy records stay as written).
+ */
 export function loadResult(agentId: string, dir: string): AgentResult | null {
 	const file = path.join(dir, `${sanitizeId(agentId)}.json`);
 	try {
-		return JSON.parse(fs.readFileSync(file, "utf8")) as AgentResult;
+		const parsed: unknown = JSON.parse(fs.readFileSync(file, "utf8"));
+		if (!parsed || typeof parsed !== "object") return null;
+		const record = parsed as AgentResult & { lastAssistantText?: unknown };
+		const bounded = validateLastAssistantText(record.lastAssistantText);
+		if (bounded) return { ...record, lastAssistantText: bounded };
+		const { lastAssistantText: _malformed, ...rest } = record;
+		return rest;
 	} catch {
 		return null;
 	}

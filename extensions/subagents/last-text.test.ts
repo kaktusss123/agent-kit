@@ -131,9 +131,9 @@ interface Rt {
 	cleanup(): void;
 }
 
-function makeRuntime(parentSession?: string): Rt {
+function makeRuntime(parentSession?: string, dir?: string): Rt {
 	const harness = createFakeSpawnFactory();
-	const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "lasttext-test-"));
+	const tmp = dir ?? fs.mkdtempSync(path.join(os.tmpdir(), "lasttext-test-"));
 	const runtime = new LocalSubagentRuntime({
 		defaultCwd: tmp,
 		resultsDir: tmp,
@@ -394,6 +394,153 @@ describe("lastAssistantText projection (controller)", () => {
 			expect(rt.runtime.inspect(id)[0].lastAssistantText!.text).toBe("second run speech");
 		} finally {
 			await rt.runtime.shutdown();
+			rt.cleanup();
+		}
+	});
+});
+
+describe("lastAssistantText boundary on persisted result reads", () => {
+	/** Write a foreign/legacy persisted record straight to disk, as a
+	 * previous session (or a corrupting crash) would have left it. */
+	function writeRecord(dir: string, record: Record<string, unknown>): void {
+		fs.mkdirSync(dir, { recursive: true });
+		fs.writeFileSync(path.join(dir, `${record.id}.json`), JSON.stringify(record), "utf8");
+	}
+
+	const terminalRecord = (id: string, extra: Record<string, unknown> = {}) => ({
+		id,
+		label: "lab",
+		task: "t",
+		cwd: "/tmp/w",
+		status: "completed",
+		finalText: "old final text",
+		summary: "old final text",
+		startedAt: 1,
+		endedAt: 2,
+		...extra,
+	});
+
+	test("valid bounded fragment survives the history read after a restart", async () => {
+		const rt = makeRuntime();
+		try {
+			writeRecord(rt.tmp, terminalRecord("sa-keep", { lastAssistantText: { text: "kept speech", updatedAt: 1717000000000 } }));
+			const result = await rt.runtime.result("sa-keep");
+			expect(result).not.toBeNull();
+			expect(result!.status).toBe("completed");
+			expect(result!.finalText).toBe("old final text");
+			expect(result!.lastAssistantText).toEqual({ text: "kept speech", updatedAt: 1717000000000 });
+		} finally {
+			await rt.runtime.shutdown();
+			rt.cleanup();
+		}
+	});
+
+	test("malformed field is dropped, other result facts kept, old records not rewritten", async () => {
+		const malformed: Record<string, unknown> = {
+			oversize: { text: "x".repeat(LAST_TEXT_MAX + 1), updatedAt: 1 },
+			nonStringText: { text: 7, updatedAt: 1 },
+			emptyText: { text: "", updatedAt: 1 },
+			stringTimestamp: { text: "hi", updatedAt: "soon" },
+			nullTimestamp: { text: "hi", updatedAt: null },
+			negativeTimestamp: { text: "hi", updatedAt: -1 },
+			arrayValue: ["not", "an", "object"],
+			scalarValue: "junk",
+		};
+		const rt = makeRuntime();
+		try {
+			for (const [name, value] of Object.entries(malformed)) {
+				const id = `sa-bad-${name}`;
+				writeRecord(rt.tmp, terminalRecord(id, { lastAssistantText: value }));
+				const result = await rt.runtime.result(id);
+				expect(result!.status).toBe("completed");
+				expect(result!.finalText).toBe("old final text");
+				expect(result!.summary).toBe("old final text");
+				expect("lastAssistantText" in result!).toBe(false);
+				// Tolerance is read-time only: the old record on disk is preserved.
+				const onDisk = JSON.parse(fs.readFileSync(path.join(rt.tmp, `${id}.json`), "utf8"));
+				expect(onDisk.lastAssistantText).toEqual(value);
+			}
+		} finally {
+			await rt.runtime.shutdown();
+			rt.cleanup();
+		}
+	});
+
+	test("plain terminal record without the field reads unchanged after a restart", async () => {
+		const rt = makeRuntime();
+		try {
+			writeRecord(rt.tmp, terminalRecord("sa-plain"));
+			const result = await rt.runtime.result("sa-plain");
+			expect(result).toMatchObject({ id: "sa-plain", status: "completed", finalText: "old final text" });
+			expect("lastAssistantText" in result!).toBe(false);
+		} finally {
+			await rt.runtime.shutdown();
+			rt.cleanup();
+		}
+	});
+
+	test("running marker is never a result; lost reconciliation drops the malformed field", async () => {
+		const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "lasttext-boundary-"));
+		// Foreign running marker: untouched by reconciliation, and a spawn
+			// marker must never surface as an outcome.
+			writeRecord(tmp, {
+				id: "sa-foreign",
+				label: "lab",
+				task: "t",
+				cwd: "/tmp/w",
+				status: "running",
+				startedAt: 1,
+				parentSession: "other-session",
+				lastAssistantText: { text: "x".repeat(LAST_TEXT_MAX + 1), updatedAt: 1 },
+			});
+			// Own running marker: finalized as lost by the constructor, malformed
+			// optional field dropped from the finalized record.
+			writeRecord(tmp, {
+				id: "sa-own",
+				label: "lab",
+				task: "t",
+				cwd: "/tmp/w",
+				status: "running",
+				startedAt: 1,
+				parentSession: "session-boundary",
+				lastAssistantText: { text: 7, updatedAt: 1 },
+			});
+		// The runtime's startup reconciliation finalizes this marker at
+		// construction, so both markers must be on disk before it is created.
+		const rt = makeRuntime("session-boundary", tmp);
+		try {
+			expect(await rt.runtime.result("sa-foreign")).toBeNull();
+			const lost = await rt.runtime.result("sa-own");
+			expect(lost!.status).toBe("failed");
+			expect(lost!.failureReason).toBe("child lost across parent restart");
+			expect("lastAssistantText" in lost!).toBe(false);
+		} finally {
+			await rt.runtime.shutdown();
+			rt.cleanup();
+		}
+	});
+
+	test("terminal fragment from a real run survives a full controller restart", async () => {
+		const rt = makeRuntime();
+		let id = "";
+		try {
+			const { id: spawnedId, proc } = await spawnRunning(rt);
+			id = spawnedId;
+			assistantMessage(proc, [textBlock("words before the end")]);
+			await tick(10);
+			settleRun(proc, "all done");
+			await tick(60);
+			expect((await rt.runtime.result(id))!.lastAssistantText!.text).toBe("words before the end");
+		} finally {
+			await rt.runtime.shutdown();
+		}
+		const second = makeRuntime(undefined, rt.tmp);
+		try {
+			const result = await second.runtime.result(id);
+			expect(result!.status).toBe("completed");
+			expect(result!.lastAssistantText!.text).toBe("words before the end");
+		} finally {
+			await second.runtime.shutdown();
 			rt.cleanup();
 		}
 	});
