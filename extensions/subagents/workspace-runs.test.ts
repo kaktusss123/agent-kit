@@ -21,6 +21,11 @@ import {
 	settleRun,
 } from "./fake-rpc";
 import { envelopeFileName, type Envelope } from "./envelope";
+import { saveProgress } from "./progress";
+import { loadResult } from "./result-store";
+import { agentDetailView } from "./index";
+import { handleInspectionRequest } from "../inspection-channel";
+import { inspectionRegistry, setSubagentInspectionSource } from "./inspection-seam";
 import { resetOwnDeliveryMark, setOwnDeliveryWindowMs } from "./steering-wake";
 import { attachDelivery } from "./wiring";
 import {
@@ -28,6 +33,7 @@ import {
 	defaultProfileEntries,
 	managedAgentOpPolicy,
 	type WorkspaceRuns,
+	type GitState,
 } from "./workspace-runs";
 
 const tick = (ms = 30) => new Promise((r) => setTimeout(r, ms));
@@ -69,6 +75,7 @@ function makeLayer(layerOpts?: {
 	profileEntries?: () => string[];
 	killGraceMs?: number;
 	steeringWakePollMs?: number;
+	readGitState?: (workspace: string) => Promise<GitState>;
 }): Harness {
 	const harness = createFakeSpawnFactory();
 	const base = fs.mkdtempSync(path.join(os.tmpdir(), "wsagent-test-"));
@@ -174,6 +181,7 @@ function dispatchCall(
 		workspace: params.workspace as string,
 		task: params.task as string,
 		deadlineSec: params.timeout_ms !== undefined ? (params.timeout_ms as number) / 1000 : undefined,
+		waitTimeoutSec: params.waitTimeoutSec as number | undefined,
 		signal,
 		hasPendingMessages,
 		modelClass: params.modelClass as string | undefined,
@@ -209,7 +217,7 @@ async function driveToRunning(
 		);
 	}
 	const proc = h.lastProc();
-	confirmReadiness(proc, { tools: ["web_search", "task_status", "ensure_task_repo", "checkpoint_commit", "remove_task_lane", "report_result", "subagent"] });
+	confirmReadiness(proc, { tools: ["web_search", "task_status", "ensure_task_repo", "checkpoint_commit", "remove_task_lane", "report_result", "report_progress", "subagent"] });
 	autoAcceptPrompt(proc);
 	await tick(20);
 	return { pending, proc };
@@ -778,7 +786,7 @@ describe("needs_input", () => {
 			const pending = dispatchCall(h, { workspace: ws, task: "t" });
 			for (let i = 0; i < 100 && h.harness.spawned.length === 0; i++) await tick(20);
 			const proc = h.lastProc();
-			confirmReadiness(proc, { tools: ["web_search", "task_status", "ensure_task_repo", "checkpoint_commit", "remove_task_lane", "report_result", "subagent"] });
+			confirmReadiness(proc, { tools: ["web_search", "task_status", "ensure_task_repo", "checkpoint_commit", "remove_task_lane", "report_result", "report_progress", "subagent"] });
 			autoAcceptPrompt(proc);
 			await tick(20);
 			proc.writeToStdout({
@@ -819,7 +827,7 @@ describe("detach and cancel", () => {
 			const pending = dispatchCall(h, { workspace: ws, task: "t" }, ac.signal);
 			for (let i = 0; i < 100 && h.harness.spawned.length === 0; i++) await tick(20);
 			const proc = h.lastProc();
-			confirmReadiness(proc, { tools: ["web_search", "task_status", "ensure_task_repo", "checkpoint_commit", "remove_task_lane", "report_result", "subagent"] });
+			confirmReadiness(proc, { tools: ["web_search", "task_status", "ensure_task_repo", "checkpoint_commit", "remove_task_lane", "report_result", "report_progress", "subagent"] });
 			autoAcceptPrompt(proc);
 			await tick(20);
 
@@ -1290,7 +1298,7 @@ describe("N1 profile order and sequential report", () => {
 			// everything EXCEPT the nested subagent tool: the subagents entry
 			// is unsatisfied → the task must never reach this child's model.
 			confirmReadiness(proc, {
-				tools: ["web_search", "task_status", "ensure_task_repo", "checkpoint_commit", "remove_task_lane", "report_result", "task"],
+				tools: ["web_search", "task_status", "ensure_task_repo", "checkpoint_commit", "remove_task_lane", "report_result", "report_progress", "task"],
 			});
 			// spawnRun surfaces the readiness failure as an unsupported result
 			// (dispatched:false) — the classification of a broken profile.
@@ -1318,7 +1326,7 @@ describe("N2 deadline vs retire race", () => {
 			for (let i = 0; i < 100 && h.harness.spawned.length === 0; i++) await tick(20);
 			const proc = h.lastProc();
 			proc.ignoreSigterm = true;
-			confirmReadiness(proc, { tools: ["web_search", "task_status", "ensure_task_repo", "checkpoint_commit", "remove_task_lane", "report_result", "subagent"] });
+			confirmReadiness(proc, { tools: ["web_search", "task_status", "ensure_task_repo", "checkpoint_commit", "remove_task_lane", "report_result", "report_progress", "subagent"] });
 			autoAcceptPrompt(proc);
 			await tick(30);
 			const agentId = h.agentId();
@@ -1387,7 +1395,7 @@ describe("N3 pre-dispatch abort", () => {
 	});
 });
 
-	describe("run registry and allow-list", () => {
+describe("run registry and allow-list", () => {
 	test("unknown agent id has no run view; policy matrix matches the contract", async () => {
 		const h = makeLayer();
 		try {
@@ -1398,13 +1406,284 @@ describe("N3 pre-dispatch abort", () => {
 			expect(managedAgentOpPolicy("result").allowed).toBe(true);
 			expect(managedAgentOpPolicy("respond").allowed).toBe(true);
 			expect(managedAgentOpPolicy("cancel").allowed).toBe(true);
-			expect(managedAgentOpPolicy("wait").allowed).toBe(false);
-			expect(String(managedAgentOpPolicy("wait").reason)).toContain("op=status / op=result");
-			expect(managedAgentOpPolicy("steer").allowed).toBe(false);
+			expect(managedAgentOpPolicy("wait").allowed).toBe(true);
+			expect(managedAgentOpPolicy("steer").allowed).toBe(true);
 			expect(managedAgentOpPolicy("follow_up").allowed).toBe(false);
 			expect(managedAgentOpPolicy("spawn").allowed).toBe(true);
 		} finally {
 			h.cleanup();
 		}
+	});
+});
+
+const reportedProgress = { achieved: "tests pass", currentWork: "checking races", blocker: "agent claim", nextStep: "commit" };
+const testFacts = { branch: "feat/test", headSha: "abcdef", dirty: { staged: [], unstaged: [] } };
+
+function askNow(proc: FakeRpcProcess) {
+	proc.writeToStdout({ type: "extension_ui_request", id: "question", method: "input", title: "ask",
+		placeholder: JSON.stringify({ questions: [{ id: "q", question: "Which?", options: [{ label: "yes" }] }] }) });
+}
+
+describe("ZAVOD-39 continuous wait and progress", () => {
+	test("timeout and repeated wait retain same child, deadline, ownership and later notification", async () => {
+		const h = makeLayer();
+		try {
+			const ws = makeWorktree(h.taskRoot, "wait-progress");
+			const { pending, proc } = await driveToRunning(h, { workspace: ws, task: "work", waitTimeoutSec: 0.05, timeout_ms: 10000 });
+			const id = h.agentId();
+			const deadline = h.runs.runView(id)!.deadlineAt;
+			const first = saveProgress(id, reportedProgress, h.tmp);
+			const previous = inspectionRegistry.subagents;
+			setSubagentInspectionSource({ inspect: () => h.runtime.inspect(), view: (s) => agentDetailView(s, h.runs.runView(s.id)) });
+			try {
+				const read = await handleInspectionRequest('{"v":1,"id":"live","op":"snapshot","area":"subagents"}', { cwd: ws }) as any;
+				expect(read.result.data.agents[0].run).toMatchObject({ progress: first, deadlineAt: deadline });
+				expect(read.result.data.agents[0].run).not.toHaveProperty("git_facts");
+			} finally { inspectionRegistry.subagents = previous; }
+			const released = await pending;
+			expect(released.details).toMatchObject({ status: "running", agentId: id, deadlineAt: deadline, progress: first });
+			expect(String(released.details.reason)).toContain("wait_timeout");
+			expect(proc.closed).toBe(false);
+			expect((await dispatchCall(h, { workspace: ws, task: "duplicate" })).details).toMatchObject({ status: "blocked", dispatched: false });
+			const second = saveProgress(id, { achieved: "second result", currentWork: "verification", nextStep: "report" }, h.tmp);
+			const repeated = await h.runs.waitRun(id, { timeoutSec: 0.01 });
+			expect(repeated.details).toMatchObject({ status: "running", agentId: id, deadlineAt: deadline, progress: second });
+			expect(h.runs.runView(id)!.progress?.blocker).toBeUndefined();
+			writeEnvelope(h, id);
+			settleRun(proc, "done");
+			expect(await waitForMessage(h.messages, (m) => String(m.message.content).includes("[subagent completed]"))).toBeDefined();
+			const terminal = await h.runs.waitRun(id, { timeoutSec: 0.01 });
+			expect(terminal.details).toMatchObject({ status: "done", progress: second, git_facts: { branch: "feat/wait-progress" } });
+			expect(h.harness.spawned).toHaveLength(1);
+			expect(loadResult(id, h.tmp)?.run).toMatchObject({ state: "settled", deadlineAt: deadline, progress: second, terminal: { status: "done" } });
+			expect(loadResult(id, h.tmp)?.run).not.toHaveProperty("progressAgeMs");
+			const restored = new LocalSubagentRuntime({ defaultCwd: h.tmp, resultsDir: h.tmp, piCommand: { command: "node", args: [] } });
+			expect((await restored.result(id))?.run?.progress).toEqual(second);
+			expect(restored.inspect()).toEqual([]); // history is not reattached execution
+			await restored.shutdown();
+		} finally { await h.runtime.shutdown(); h.cleanup(); }
+	});
+
+	test("needs_input beats release, repeated wait observes it, respond resumes the original deadline", async () => {
+		const h = makeLayer();
+		try {
+			const ws = makeWorktree(h.taskRoot, "wait-ask");
+			const { pending, proc } = await driveToRunning(h, { workspace: ws, task: "work", waitTimeoutSec: 0.08 });
+			const id = h.agentId();
+			const deadline = h.runs.runView(id)!.deadlineAt;
+			const progress = saveProgress(id, reportedProgress, h.tmp);
+			askNow(proc);
+			expect((await pending).details).toMatchObject({ status: "needs_input", progress });
+			expect((await h.runs.waitRun(id, { timeoutSec: 0.01 })).details).toMatchObject({ status: "needs_input", deadlineAt: deadline });
+			await h.runtime.respond(id, "yes");
+			expect((await h.runs.waitRun(id, { timeoutSec: 0.01 })).details).toMatchObject({ status: "running", deadlineAt: deadline });
+			await h.runs.cancelRun(id);
+		} finally { await h.runtime.shutdown(); h.cleanup(); }
+	});
+
+	test("question after wait timeout is notified, and parallel waits/abort do not consume terminal delivery", async () => {
+		const h = makeLayer();
+		try {
+			const ws = makeWorktree(h.taskRoot, "late-question");
+			const { pending, proc } = await driveToRunning(h, { workspace: ws, task: "work", waitTimeoutSec: 0.01 });
+			await pending;
+			const id = h.agentId();
+			askNow(proc);
+			expect(h.messages.filter((m) => String(m.message.content).includes("[subagent needs input]"))).toHaveLength(1);
+			expect((await h.runs.waitRun(id)).details.status).toBe("needs_input");
+			await h.runtime.respond(id, "yes");
+			const ac = new AbortController();
+			const abortedWait = h.runs.waitRun(id, { signal: ac.signal });
+			const waiting = h.runs.waitRun(id, { timeoutSec: 1 });
+			ac.abort();
+			expect((await abortedWait).details.status).toBe("running");
+			writeEnvelope(h, id);
+			settleRun(proc, "done");
+			expect((await waiting).details.status).toBe("done");
+			expect(h.messages.filter((m) => String(m.message.content).includes("[subagent completed]"))).toHaveLength(1);
+		} finally { await h.runtime.shutdown(); h.cleanup(); }
+	});
+
+	test.each(["cancel", "deadline"] as const)("%s stops child before facts, preserves progress and returns one terminal", async (cause) => {
+		let release!: (state: GitState) => void;
+		let reading = false;
+		const factsGate = new Promise<GitState>((r) => { release = r; });
+		const h = makeLayer({ killGraceMs: 30, readGitState: async () => {
+			expect(h.lastProc().closed).toBe(true);
+			reading = true;
+			return factsGate;
+		} });
+		try {
+			const ws = makeWorktree(h.taskRoot, `facts-${cause}`);
+			const { pending, proc } = await driveToRunning(h, { workspace: ws, task: "work", waitTimeoutSec: 0.01, timeout_ms: cause === "deadline" ? 1000 : 10000 });
+			const id = h.agentId();
+			const progress = saveProgress(id, reportedProgress, h.tmp);
+			await pending;
+			proc.ignoreSigterm = true;
+			const cancellation = cause === "cancel" ? h.runs.cancelRun(id) : undefined;
+			for (let i = 0; !reading && i < 200; i++) await tick(10);
+			expect(reading).toBe(true);
+			const view = h.runs.runView(id)!;
+			expect(view.terminal).toBeUndefined();
+			expect(view.state).toBe("terminating");
+			expect(view.progress).toEqual(progress);
+			expect((await h.runs.waitRun(id, { timeoutSec: 0.01 })).details).toMatchObject({ status: "running" });
+			expect((await dispatchCall(h, { workspace: ws, task: "duplicate during facts" })).details).toMatchObject({ status: "blocked", dispatched: false });
+			await expect(h.runs.steerRun(id, "explain")).rejects.toThrow("terminating");
+			release({ ok: true, facts: testFacts });
+			await cancellation;
+			const terminal = await h.runs.waitRun(id, { timeoutSec: 1 });
+			expect(terminal.details).toMatchObject({ status: cause === "cancel" ? "blocked" : "partial", reason: cause === "cancel" ? "cancelled_by_main" : "deadline", progress, git_facts: testFacts });
+			expect(h.messages.filter((m) => String(m.message.content).includes("[subagent completed]"))).toHaveLength(1);
+			expect(loadResult(id, h.tmp)?.run?.progress).toEqual(progress);
+			const age = h.runs.runView(id)!.progressAgeMs!;
+			await tick(5);
+			expect(h.runs.runView(id)!.progressAgeMs).toBeGreaterThan(age);
+		} finally { release({ ok: true, facts: testFacts }); await h.runtime.shutdown(); h.cleanup(); }
+	});
+});
+
+describe("ZAVOD-39 ownership races", () => {
+	test("concurrent duplicate dispatch (including symlink alias) reserves before readiness", async () => {
+		const h = makeLayer();
+		try {
+			const ws = makeWorktree(h.taskRoot, "two-dispatch");
+			const alias = path.join(path.dirname(ws), "alias");
+			fs.symlinkSync(ws, alias);
+			const ac = new AbortController();
+			const calls = [dispatchCall(h, { workspace: ws, task: "a" }, ac.signal), dispatchCall(h, { workspace: alias, task: "b" }, ac.signal)];
+			for (let i = 0; h.harness.spawned.length === 0 && i < 100; i++) await tick(10);
+			await tick(30);
+			expect(h.harness.spawned).toHaveLength(1);
+			expect(h.lastProc().commands.some((c) => c.type === "prompt")).toBe(false);
+			ac.abort();
+			const results = await Promise.all(calls);
+			expect(results.every((r) => r.details.dispatched === false)).toBe(true);
+			expect(results.some((r) => String(r.details.reason).includes("already has"))).toBe(true);
+			expect(h.lastProc().closed).toBe(true);
+			// Failed dispatch released only after the child stopped.
+			h.harness.onSpawn((proc) => { confirmReadiness(proc, { tools: ["web_search", "task_status", "ensure_task_repo", "checkpoint_commit", "remove_task_lane", "report_result", "report_progress", "subagent"] }); autoAcceptPrompt(proc); });
+			const next = await dispatchCall(h, { workspace: ws, task: "retry", waitTimeoutSec: 0.01 });
+			expect(next.details).toMatchObject({ status: "running", dispatched: true });
+			await h.runs.cancelRun(h.agentId());
+		} finally { await h.runtime.shutdown(); h.cleanup(); }
+	});
+
+	test("fresh settlement holds reservation during stop and facts, ignores cancel/deadline races", async () => {
+		let release!: (state: GitState) => void;
+		let reading = false;
+		const gate = new Promise<GitState>((r) => { release = r; });
+		const h = makeLayer({ killGraceMs: 60, readGitState: async () => { reading = true; expect(h.lastProc().closed).toBe(true); return gate; } });
+		try {
+			const ws = makeWorktree(h.taskRoot, "fresh-facts");
+			const { pending, proc } = await driveToRunning(h, { workspace: ws, task: "work", waitTimeoutSec: 0.01, timeout_ms: 1000 });
+			await pending;
+			const id = h.agentId();
+			proc.ignoreSigterm = true;
+			writeEnvelope(h, id);
+			settleRun(proc, "done");
+			await tick(20);
+			expect(proc.closed).toBe(false);
+			expect(h.runs.runView(id)!.terminal).toBeUndefined();
+			await expect(h.runs.steerRun(id, "late")).rejects.toThrow();
+			for (let i = 0; !reading && i < 100; i++) await tick(10);
+			expect(reading).toBe(true);
+			const cancel = h.runs.cancelRun(id);
+			const wait = h.runs.waitRun(id, { timeoutSec: 2 });
+			await tick(1000); // absolute deadline falls DURING Git settlement
+			expect(h.runs.runView(id)!.terminal).toBeUndefined();
+			expect(h.messages).toHaveLength(0);
+			expect((await dispatchCall(h, { workspace: ws, task: "duplicate" })).details.dispatched).toBe(false);
+			release({ ok: true, facts: testFacts });
+			expect((await wait).details).toMatchObject({ status: "done", git_facts: testFacts });
+			await cancel;
+			expect(h.messages).toHaveLength(1);
+			await expect(h.runtime.followUp(id, "restart")).rejects.toThrow("cannot restart");
+		} finally { release({ ok: true, facts: testFacts }); await h.runtime.shutdown(); h.cleanup(); }
+	});
+
+	test.each(["before", "after"] as const)("needs_input %s acceptance in the same stdout turn cannot be lost", async (order) => {
+		const h = makeLayer();
+		try {
+			const ws = makeWorktree(h.taskRoot, "immediate-ask");
+			h.harness.onSpawn((proc) => {
+				confirmReadiness(proc, { tools: ["web_search", "task_status", "ensure_task_repo", "checkpoint_commit", "remove_task_lane", "report_result", "report_progress", "subagent"] });
+				proc.writeToStdout({ type: "agent_start" });
+				if (order === "before") askNow(proc);
+				proc.writeToStdout({ id: "spawn-prompt", type: "response", command: "prompt", success: true });
+				if (order === "after") askNow(proc);
+			});
+			const result = await dispatchCall(h, { workspace: ws, task: "ask", waitTimeoutSec: 0.03 });
+			expect(result.details).toMatchObject({ status: "needs_input", question: "q: Which? (yes)" });
+			await h.runs.cancelRun(h.agentId());
+		} finally { await h.runtime.shutdown(); h.cleanup(); }
+	});
+
+	test("completion before acceptance is replayed once without resetting the controller terminal record", async () => {
+		const h = makeLayer();
+		try {
+			const ws = makeWorktree(h.taskRoot, "fast-completion");
+			h.harness.onSpawn((proc) => {
+				confirmReadiness(proc, { tools: ["web_search", "task_status", "ensure_task_repo", "checkpoint_commit", "remove_task_lane", "report_result", "report_progress", "subagent"] });
+				proc.writeToStdout({ type: "agent_start" });
+				writeEnvelope(h, h.agentId());
+				proc.writeToStdout({ type: "agent_settled" });
+				proc.writeToStdout({ type: "response", command: "get_last_assistant_text", id: "ctl-last-text", success: true, data: { text: "fast final" } });
+				proc.writeToStdout({ id: "spawn-prompt", type: "response", command: "prompt", success: true });
+			});
+			const result = await dispatchCall(h, { workspace: ws, task: "fast", waitTimeoutSec: 2 });
+			expect(result.details.status).toBe("done");
+			expect(h.runtime.inspect(h.agentId())[0]!.state).toBe("completed");
+			expect(h.lastProc().closed).toBe(true);
+			expect(h.messages).toHaveLength(1);
+		} finally { await h.runtime.shutdown(); h.cleanup(); }
+	});
+
+	test("steer while bash is active queues without abort/new prompt or changed deadline; settling window rejects", async () => {
+		const h = makeLayer();
+		try {
+			const ws = makeWorktree(h.taskRoot, "safe-steer");
+			const { pending, proc } = await driveToRunning(h, { workspace: ws, task: "work", waitTimeoutSec: 0.01 });
+			await pending;
+			const id = h.agentId();
+			const deadline = h.runs.runView(id)!.deadlineAt;
+			proc.writeToStdout({ type: "tool_execution_start", toolCallId: "long", toolName: "bash", args: { command: "sleep 90" } });
+			await h.runs.steerRun(id, "Explain the delay using report_progress");
+			expect(proc.commands.filter((c) => c.type === "prompt")).toHaveLength(1);
+			expect(proc.commands.some((c) => c.type === "steer")).toBe(true);
+			expect(proc.commands.some((c) => c.type === "abort")).toBe(false);
+			expect(proc.signalsReceived).toEqual([]);
+			expect(h.runtime.inspect(id)[0]!.activeTool?.name).toBe("bash");
+			expect(h.runs.runView(id)!.deadlineAt).toBe(deadline);
+			proc.writeToStdout({ type: "agent_settled" }); // controller still says running until last text response
+			await expect(h.runs.steerRun(id, "unsafe idle race")).rejects.toThrow("settling");
+			await h.runs.cancelRun(id);
+		} finally { await h.runtime.shutdown(); h.cleanup(); }
+	});
+
+	test("broken stdin cannot release ownership before real SIGKILL/close", async () => {
+		let reads = 0;
+		const h = makeLayer({ killGraceMs: 80, readGitState: async () => {
+			expect(h.lastProc().closed).toBe(true);
+			reads++;
+			return { ok: true, facts: testFacts };
+		} });
+		try {
+			const ws = makeWorktree(h.taskRoot, "epipe-stop");
+			const { pending, proc } = await driveToRunning(h, { workspace: ws, task: "work", waitTimeoutSec: 0.01 });
+			await pending;
+			const id = h.agentId();
+			proc.ignoreSigterm = true;
+			proc.emitStdinError(new Error("write EPIPE"));
+			await tick(10);
+			expect(proc.closed).toBe(false);
+			expect(reads).toBe(0);
+			expect(h.runs.runView(id)!.terminal).toBeUndefined();
+			const terminal = await h.runs.waitRun(id, { timeoutSec: 1 });
+			expect(terminal.details).toMatchObject({ status: "blocked", reason: "child_failed", git_facts: testFacts });
+			expect(proc.signalsReceived).toContain("SIGKILL");
+			expect(reads).toBe(1);
+			expect(h.messages).toHaveLength(1);
+		} finally { await h.runtime.shutdown(); h.cleanup(); }
 	});
 });

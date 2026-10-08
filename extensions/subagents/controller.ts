@@ -55,6 +55,7 @@ import type {
 	WaitOutcome,
 } from "./types";
 import { summarizeToolActivity } from "./activity";
+import { loadProgress, type RunHistory } from "./progress";
 
 /** Live tool-activity bounds: status telemetry, never a log buffer. */
 const ACTIVE_TOOLS_MAX = 8;
@@ -177,6 +178,8 @@ interface AgentRecord {
 	readinessDone: boolean;
 	acceptTimer?: NodeJS.Timeout;
 	readinessTimer?: NodeJS.Timeout;
+	onAccepted?: (snapshot: AgentSnapshot) => void;
+	run?: RunHistory;
 }
 
 const ASK_TOOL = "ask";
@@ -349,8 +352,10 @@ export class LocalSubagentRuntime {
 			idleExitMs: opts.idleExitMs ?? this.defaultIdleExitMs,
 			readinessExpected: new Map(Object.entries(readinessEntries)),
 			readinessDone: false,
+			onAccepted: opts.onAccepted,
 		};
 		this.records.set(id, record);
+		opts.onCreated?.(this.snapshot(record));
 
 		// Spawn-time partial marker (F003): persist a minimal "running" record
 		// AT process creation. If the parent dies before the child settles,
@@ -525,11 +530,15 @@ export class LocalSubagentRuntime {
 			if (cmd === "prompt" && ev.id === "spawn-prompt") {
 				if (!record.spawnSettled) {
 					record.spawnSettled = true;
-					record.state = "running";
+					record.state = isTerminal(record.state) ? record.state : record.pendingQuestion ? "waiting_input" : "running";
 					// Session identity is fetched EARLY (single RPC request, no
 					// polling) so the live operator view can show the session id
 					// while the child runs — not only after settlement.
-					if (ev.success === true) connGetState(record, "ctl-state-early");
+					if (ev.success === true) {
+						record.onAccepted?.(this.snapshot(record));
+						connGetState(record, "ctl-state-early");
+					}
+					record.onAccepted = undefined;
 					for (const w of record.spawnWaiters.splice(0)) w(ev.success === true);
 					if (ev.success !== true) {
 						record.lastError = `initial prompt rejected: ${String(ev.error ?? "unknown")}`;
@@ -825,12 +834,26 @@ export class LocalSubagentRuntime {
 			signal: record.signal,
 			...(record.processKilledAt !== undefined ? { processKilledAt: record.processKilledAt } : {}),
 			...(this.parentSession ? { parentSession: this.parentSession } : {}),
+			...(record.run ? { run: this.runHistory(record) } : {}),
 		};
 		try {
 			saveResult(result, this.resultsDir);
 		} catch {
 			// Persistence is best-effort; the in-memory record still serves results.
 		}
+	}
+
+	/** Persist workspace history without taking lifecycle ownership. */
+	setRunHistory(agentId: string, run: RunHistory): void {
+		const record = this.mustGet(agentId);
+		record.run = structuredClone(run);
+		if (isTerminal(record.state)) this.persistResult(record, record.state);
+		else this.persistSpawnMarker(record);
+	}
+
+	private runHistory(record: AgentRecord): RunHistory {
+		const progress = loadProgress(record.id, this.resultsDir) ?? record.run?.progress;
+		return { ...record.run!, ...(progress ? { progress } : {}) };
 	}
 
 	/**
@@ -850,6 +873,7 @@ export class LocalSubagentRuntime {
 			startedAt: record.startedAt,
 			...(record.conn.pid !== undefined ? { pid: record.conn.pid } : {}),
 			...(this.parentSession ? { parentSession: this.parentSession } : {}),
+			...(record.run ? { run: this.runHistory(record) } : {}),
 		};
 		try {
 			saveResult(marker, this.resultsDir);
@@ -908,7 +932,17 @@ export class LocalSubagentRuntime {
 	}
 
 	async steer(agentId: string, message: string): Promise<void> {
-		await this.dispatchInput(this.mustGet(agentId), "steer", message);
+		const record = this.mustGet(agentId);
+		if (record.eventRoute === "workspace") {
+			if (!record.runActive || isTerminal(record.state) || record.cancelRequested || record.retireRequested) {
+				throw new Error(`cannot steer workspace-owned agent ${agentId}: run is settling or terminating`);
+			}
+			// Queue-only RPC, never prompt: an idle race must not start a new run
+			// or execute an extension command. Pi delivers at the safe tool boundary.
+			await this.dispatchInput(record, "steer", message, true);
+			return;
+		}
+		await this.dispatchInput(record, "steer", message);
 	}
 
 	/**
@@ -922,6 +956,7 @@ export class LocalSubagentRuntime {
 	async followUp(agentId: string, message: string): Promise<{ agentId: string; respawned: boolean }> {
 		const record = this.mustGet(agentId);
 		if ((record.conn.exit || record.retireRequested) && isTerminal(record.state)) {
+			if (record.eventRoute === "workspace") throw new Error("workspace-owned agents cannot restart through follow_up");
 			const fresh = await this.spawn({
 				task: message,
 				label: record.label,
@@ -985,6 +1020,7 @@ export class LocalSubagentRuntime {
 		record: AgentRecord,
 		behavior: "steer" | "followUp",
 		message: string,
+		queueOnly = false,
 	): Promise<void> {
 		this.assertAlive(record, behavior === "steer" ? "steer" : "follow_up");
 		// Live input reuses the child: any armed idle-exit is stale now. If the
@@ -1002,7 +1038,9 @@ export class LocalSubagentRuntime {
 				}, this.dispatchTimeoutMs);
 				timer.unref?.();
 				record.dispatchWaiters.set(id, resolve);
-				this.conn(record).send({ id, type: "prompt", message, streamingBehavior: behavior });
+				this.conn(record).send(queueOnly
+					? { id, type: "steer", message }
+					: { id, type: "prompt", message, streamingBehavior: behavior });
 			});
 			if (resp.success !== true) {
 				throw new Error(`pi rejected the ${behavior}: ${String(resp.error ?? "unknown")}`);
@@ -1028,10 +1066,10 @@ export class LocalSubagentRuntime {
 		if (record.eventRoute === "workspace") {
 			// Event ownership: wait() consumes the one lifecycle event; for a
 			// workspace child that event belongs to the run registry. The
-			// subagent tool rejects wait for workspace children; the runtime
-			// enforces the same rule here (defense in depth).
+			// subagent tool routes workspace wait through its registry; direct
+			// generic waits remain forbidden here (defense in depth).
 			throw new Error(
-				`agent ${agentId} is workspace-owned; the workspace spawn owns the run outcome — use op=status / op=result`,
+				`agent ${agentId} is workspace-owned; use the workspace registry wait or op=status / op=result`,
 			);
 		}
 		// Already meaningful: resolve from current state. A pending dispatch
@@ -1121,6 +1159,7 @@ export class LocalSubagentRuntime {
 			exitCode: record.exitCode,
 			signal: record.signal,
 			...(this.parentSession ? { parentSession: this.parentSession } : {}),
+			...(record.run ? { run: this.runHistory(record) } : {}),
 		};
 	}
 
@@ -1233,8 +1272,10 @@ export class LocalSubagentRuntime {
 	private reconcileLostChildren(): void {
 		for (const marker of runningMarkers(this.resultsDir)) {
 			if (marker.parentSession !== this.parentSession) continue;
+			const progress = loadProgress(marker.id, this.resultsDir) ?? marker.run?.progress;
 			const finalized: AgentResult = {
 				...marker,
+				...(marker.run ? { run: { ...marker.run, state: "lost", ...(progress ? { progress } : {}) } } : {}),
 				status: "failed",
 				failureReason: "child lost across parent restart",
 				endedAt: Date.now(),
@@ -1435,7 +1476,7 @@ export class LocalSubagentRuntime {
 			stats: record.stats,
 			exitCode: record.exitCode,
 			signal: record.signal,
-			activeTool: newestActiveTool(record),
+			activeTool: record.conn.exit ? undefined : newestActiveTool(record),
 			recentActivity: record.recentActivity.map((entry) => ({ ...entry })),
 		};
 	}

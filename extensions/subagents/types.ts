@@ -5,6 +5,7 @@
  * can import it without the pi package being resolvable.
  */
 import type { AskInput } from "../ask/contract";
+import type { RunHistory } from "./progress";
 
 /** Logical agent state. Process liveness is tracked separately (`alive`). */
 export type AgentState =
@@ -62,6 +63,9 @@ export interface SpawnOptions {
 	 * to the caller (abort = detach).
 	 */
 	signal?: AbortSignal;
+	/** Runtime-only publication hooks; workspace registration must precede child lifecycle events. */
+	onCreated?: (snapshot: AgentSnapshot) => void;
+	onAccepted?: (snapshot: AgentSnapshot) => void;
 	/**
 	 * Idle-exit delay (F003): ms after this child settles into a terminal
 	 * state before its (never-self-exiting) process is retired. The terminal
@@ -173,6 +177,8 @@ export interface AgentResult {
 	pid?: number;
 	/** Main session file that spawned this agent; enables per-session cost rollup. */
 	parentSession?: string;
+	/** Optional bounded workspace history. Not a resumable execution handle. */
+	run?: RunHistory;
 }
 
 /**

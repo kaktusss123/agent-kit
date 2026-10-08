@@ -60,6 +60,7 @@ import { markOwnDelivery, ownDeliveryInFlight } from "./steering-wake";
 import type { AgentSnapshot, SubagentModelEvent } from "./types";
 import type { LocalSubagentRuntime } from "./controller";
 import type { AskInput } from "../ask/contract";
+import { loadProgress, type Progress, type RunHistory } from "./progress";
 
 // ============================================================ configuration
 
@@ -67,6 +68,7 @@ import type { AskInput } from "../ask/contract";
 const LADDER_MAX = 3;
 
 const DEFAULT_DEADLINE_MS = 600000;
+const DEFAULT_WAIT_MS = 600000;
 const MIN_FINALIZATION_RESERVE_MS = 30000;
 
 /** Live status refresh cadence: modest — a few seconds, not a spinner. */
@@ -132,9 +134,11 @@ interface WorkspaceAgentRun {
 	terminal?: TerminalOutcome;
 	deadlineFired: boolean;
 	deadlineTimer?: NodeJS.Timeout;
-	/** Live tool-progress refresh loop (operator observability); dead on terminal/needs_input/detach. */
-	statusTimer?: NodeJS.Timeout;
-	waiters: Array<(outcome: "settled" | "needs_input" | "detached") => void>;
+	/** Only one settlement may fetch Git facts/publish/release ownership. */
+	finishing?: Promise<void>;
+	reservation: symbol;
+	progress?: Progress;
+	waiters: Array<() => void>;
 }
 
 /** Protocol outcome of a workspace run, as returned by spawn and op=result. */
@@ -148,6 +152,9 @@ export interface WorkspaceRunOutcome {
 	/** Structured canonical ask request when status is needs_input. */
 	request?: AskInput;
 	deadlineMsLeft?: number;
+	deadlineAt?: number;
+	progress?: Progress;
+	progressAgeMs?: number;
 	result?: Envelope;
 	last_output?: string;
 	reason?: string;
@@ -163,6 +170,9 @@ export interface WorkspaceRunView {
 	state: string;
 	workspace: string;
 	deadlineMsLeft: number;
+	deadlineAt?: number;
+	progress?: Progress;
+	progressAgeMs?: number;
 	ladder?: { step: number; max: number };
 	question?: string;
 	/** Structured canonical ask request while the run waits for input. */
@@ -171,20 +181,12 @@ export interface WorkspaceRunView {
 
 /**
  * Cross-tool allow-list for RepoOwner children on the `subagent` tool.
- * status/result/respond/cancel stay available to Main. The workspace spawn
- * call owns the run's outcome (wait would steal lifecycle events that belong
- * to this registry); steer/follow_up would bypass the run's deadline and
- * task contract.
+ * Main waits through this registry, never the controller's generic waiter.
+ * Safe steering queues into the active run. follow_up is forbidden: it could
+ * restart an owner outside its deadline and task contract.
  */
 export function managedAgentOpPolicy(op: string): { allowed: boolean; reason?: string } {
 	switch (op) {
-		case "wait":
-			return {
-				allowed: false,
-				reason:
-					"wait is not allowed for workspace runs (workspace-owned agent): the workspace spawn call owns the run outcome — use op=status / op=result",
-			};
-		case "steer":
 		case "follow_up":
 			return {
 				allowed: false,
@@ -211,6 +213,8 @@ export interface WorkspaceSpawnArgs {
 	task: string;
 	/** Run deadline in seconds (covers the whole run including the report ladder). */
 	deadlineSec?: number;
+	/** Continuous Main wait cap; independent of the absolute run deadline. */
+	waitTimeoutSec?: number;
 	signal?: AbortSignal;
 	onUpdate?: ToolUpdateCallback;
 	/**
@@ -253,16 +257,28 @@ export interface WorkspaceRunsOptions {
 	statusRefreshMs?: number;
 	/** Steering wake poll interval override (tests: fast cadence). */
 	steeringWakePollMs?: number;
+	/** Deterministic settlement test seam; production always reads real Git. */
+	readGitState?: (workspace: string) => Promise<GitState>;
 }
 
 /** RepoOwner policy surface for workspace-mode subagent spawns. */
 export interface WorkspaceRuns {
-	/** Validate, spawn, and (unless aborted) block until terminal/needs_input. */
+	/** Validate, reserve, spawn, and block until terminal/needs_input or the independent wait cap. */
 	spawnRun(args: WorkspaceSpawnArgs): Promise<WorkspaceToolResult>;
+	waitRun(agentId: string, args?: WorkspaceWaitArgs): Promise<WorkspaceToolResult>;
+	steerRun(agentId: string, message: string): Promise<void>;
+	cancelRun(agentId: string): Promise<void>;
 	/** Current view of a run (undefined when the agent is not workspace-owned). */
 	runView(agentId: string): WorkspaceRunView | undefined;
 	/** True when the agent id belongs to a workspace-routed RepoOwner. */
 	isManaged(agentId: string): boolean;
+}
+
+export interface WorkspaceWaitArgs {
+	timeoutSec?: number;
+	signal?: AbortSignal;
+	onUpdate?: ToolUpdateCallback;
+	hasPendingMessages?: () => boolean;
 }
 
 export function createWorkspaceRuns(
@@ -271,6 +287,12 @@ export function createWorkspaceRuns(
 	opts?: WorkspaceRunsOptions,
 ): WorkspaceRuns {
 	const runsByAgentId = new Map<string, WorkspaceAgentRun>();
+	// Reserved synchronously before dispatch, retained through stop and Git reads.
+	const reservations = new Map<string, symbol>();
+	// A fast child may emit lifecycle before prompt acceptance is acknowledged.
+	// Buffer only known dispatching identities, bounded and discarded on refusal.
+	const dispatchEvents = new Map<string, SubagentModelEvent[]>();
+	const gitState = opts?.readGitState ?? readGitState;
 
 	// The runtime is created lazily by the host, but children can only exist
 	// after the layer acquired it. Once acquired, bind it and subscribe the
@@ -282,7 +304,7 @@ export function createWorkspaceRuns(
 			boundRt = rt;
 			rt.onWorkspaceEvent((ev) => {
 				try {
-					void handleEvent(ev);
+					void handleEvent(ev).catch(() => { /* query remains the recovery path */ });
 				} catch {
 					// settlement must never crash the runtime event path
 				}
@@ -309,7 +331,12 @@ export function createWorkspaceRuns(
 
 	async function handleEvent(ev: SubagentModelEvent): Promise<void> {
 		const run = runsByAgentId.get(ev.agentId);
-		if (!run) return;
+		if (!run) {
+			const pending = dispatchEvents.get(ev.agentId);
+			if (pending) { pending.push(ev); if (pending.length > 16) pending.shift(); }
+			return;
+		}
+		if (run.terminal || run.deadlineFired) return;
 		switch (ev.kind) {
 			case "needs_input":
 				// Non-terminal: the child is suspended on ask. A blocking
@@ -321,7 +348,7 @@ export function createWorkspaceRuns(
 				run.question = ev.question;
 				run.request = ev.request;
 				if (run.waiters.length > 0) {
-					resolveWaiters(run, "needs_input");
+					resolveWaiters(run);
 				} else {
 					notifyNeedsInput(run);
 				}
@@ -343,7 +370,7 @@ export function createWorkspaceRuns(
 				// Semantic cancel: deadline (already handled by its own path)
 				// or explicit cancel by Main. The child is already dead when
 				// this arrives.
-				if (run.terminal || run.deadlineFired) return;
+				if (!claimTermination(run)) return;
 				await finish(run, {
 					status: "blocked",
 					reason: "cancelled_by_main",
@@ -357,7 +384,7 @@ export function createWorkspaceRuns(
 	// ------------------------------------------------------------ settlement
 
 	async function settle(run: WorkspaceAgentRun, childOutcome: "completed" | "failed"): Promise<void> {
-		if (run.terminal || run.state === "settling") return;
+		if (run.terminal || run.deadlineFired || run.state === "settling") return;
 		run.state = "settling";
 		const record = readEnvelopeRecord(run.agentId);
 		// A newer report generation means the child reported again: the ladder
@@ -373,12 +400,7 @@ export function createWorkspaceRuns(
 			// retire: the deadline must not fire mid-retire and turn the
 			// already-decided done into a cancel/partial. After the claim the
 			// deadline timer is dead; first claimer wins the run outcome.
-			if (run.terminal) return;
-			run.deadlineFired = true;
-			if (run.deadlineTimer) {
-				clearTimeout(run.deadlineTimer);
-				run.deadlineTimer = undefined;
-			}
+			if (!claimTermination(run)) return;
 			// Terminal lifecycle (F4): the completion is published only after
 			// the settled child is actually gone — which is also what keeps
 			// the settled-state check below free of concurrent mutation.
@@ -388,7 +410,7 @@ export function createWorkspaceRuns(
 				// accepted only when Git reads the worktree as settled —
 				// accessible repository, current HEAD, clean tree. Read after
 				// the child stopped, so it cannot mutate during the check.
-				const state = await readGitState(run.workspace);
+				const state = await gitState(run.workspace);
 				if (!state.ok) {
 					await finish(run, {
 						status: "blocked",
@@ -427,7 +449,7 @@ export function createWorkspaceRuns(
 			try {
 				await rt().followUp(run.agentId, ladderMessage(run.ladder));
 			} catch {
-				if (!run.terminal && !run.deadlineFired) {
+				if (claimTermination(run)) {
 					await retireChild(run);
 					await finish(run, {
 						status: "blocked",
@@ -439,6 +461,7 @@ export function createWorkspaceRuns(
 			}
 			return;
 		}
+		if (!claimTermination(run)) return;
 		const last = await lastOutput(run.agentId);
 		if (childOutcome === "completed") {
 			if (deadlinePassed) {
@@ -484,20 +507,30 @@ export function createWorkspaceRuns(
 		);
 	}
 
+	function claimTermination(run: WorkspaceAgentRun): boolean {
+		if (run.terminal || run.deadlineFired) return false;
+		run.deadlineFired = true;
+		run.state = "terminating";
+		run.question = undefined;
+		run.request = undefined;
+		if (run.deadlineTimer) clearTimeout(run.deadlineTimer);
+		return true;
+	}
+
 	async function finish(run: WorkspaceAgentRun, outcome: TerminalOutcome): Promise<void> {
 		if (run.terminal) return;
-		// Claim the outcome BEFORE any await: a concurrent terminal event
-		// (cancel racing a settle) must observe `terminal` and back off. The
-		// Git-facts fetch between claim and resolution only refines the record.
-		run.terminal = outcome;
-		// Objective Git facts (ADR-0002 §10): runtime-read, never model-
-		// reported. The fresh-envelope settle path passes them explicitly
-		// (it needs the verdict anyway); every other terminal outcome gets
-		// a best-effort read here. A failed read leaves them undefined.
-		outcome.gitFacts = outcome.gitFacts ?? (await readGitFacts(run.workspace));
-		if (run.deadlineTimer) clearTimeout(run.deadlineTimer);
-		resolveWaiters(run, "settled");
-		notifyCompleted(run);
+		if (run.finishing) return run.finishing;
+		run.finishing = (async () => {
+			// No terminal projection, waiter resolution or ownership release until
+			// the child is stopped AND the entire Git read has finished.
+			outcome.gitFacts = outcome.gitFacts ?? (await gitState(run.workspace)).facts;
+			run.terminal = outcome;
+			persistHistory(run);
+			if (reservations.get(run.workspace) === run.reservation) reservations.delete(run.workspace);
+			resolveWaiters(run);
+			notifyCompleted(run);
+		})();
+		return run.finishing;
 	}
 
 	/**
@@ -601,8 +634,8 @@ export function createWorkspaceRuns(
 		}
 	}
 
-	function resolveWaiters(run: WorkspaceAgentRun, outcome: "settled" | "needs_input" | "detached"): void {
-		for (const w of run.waiters.splice(0)) w(outcome);
+	function resolveWaiters(run: WorkspaceAgentRun): void {
+		for (const w of run.waiters.splice(0)) w();
 	}
 
 	// -------------------------------------------------------------- deadline
@@ -614,26 +647,22 @@ export function createWorkspaceRuns(
 	 * the tool call via Pi's transient onUpdate channel. No context
 	 * propagation — the child transcript stays isolated; this is progress UI.
 	 */
-	function startLiveStatus(run: WorkspaceAgentRun, onUpdate: ToolUpdateCallback | undefined): void {
-		if (!onUpdate) return; // no progress channel (e.g. bare execute callers)
+	function startLiveStatus(run: WorkspaceAgentRun, onUpdate: ToolUpdateCallback | undefined): () => void {
+		if (!onUpdate) return () => {};
 		emitStatus(run, onUpdate);
 		const timer = setInterval(() => emitStatus(run, onUpdate), statusRefreshMs);
 		timer.unref?.();
-		run.statusTimer = timer;
-	}
-
-	function stopLiveStatus(run: WorkspaceAgentRun): void {
-		if (run.statusTimer) {
-			clearInterval(run.statusTimer);
-			run.statusTimer = undefined;
-		}
+		return () => clearInterval(timer);
 	}
 
 	function emitStatus(run: WorkspaceAgentRun, onUpdate: ToolUpdateCallback): void {
 		try {
 			const snap = rt().inspect(run.agentId)[0];
 			if (!snap) return;
-			onUpdate({ content: [{ type: "text" as const, text: formatRunStatus(buildStatusView(run, snap)) }] });
+			onUpdate({
+				content: [{ type: "text" as const, text: formatRunStatus(buildStatusView(run, snap)) }],
+				details: { run: compactRunView(runView(run.agentId)!) },
+			});
 		} catch {
 			// Rendering must never break the run.
 		}
@@ -656,6 +685,7 @@ export function createWorkspaceRuns(
 			sessionFile: snap.sessionFile,
 			activeTool: snap.activeTool,
 			recentActivity: snap.recentActivity,
+			progress: observations(run).progress,
 			now,
 		};
 	}
@@ -663,8 +693,7 @@ export function createWorkspaceRuns(
 	function armDeadline(run: WorkspaceAgentRun): void {
 		const remaining = Math.max(0, run.deadline - Date.now());
 		run.deadlineTimer = setTimeout(() => {
-			if (run.terminal || run.deadlineFired) return;
-			run.deadlineFired = true;
+			if (!claimTermination(run)) return;
 			// Publish the terminal outcome only AFTER the child actually
 			// stopped (F4): Main must not start inspection/repair against a
 			// child that is still running. Semantic cancel — the real
@@ -832,7 +861,11 @@ export function createWorkspaceRuns(
 		// and rejects (child killed, prompt never sent) on any readiness or
 		// startup failure. This is the dispatch point: everything before is
 		// dispatched:false, everything after is dispatched:true forever.
+		if (reservations.has(realWorkspace)) return fail("blocked", realWorkspace, "workspace already has an active or dispatching RepoOwner");
+		const reservation = Symbol(realWorkspace);
+		reservations.set(realWorkspace, reservation);
 		const base = path.basename(realWorkspace);
+		let createdId: string | undefined;
 		let snap: AgentSnapshot;
 		try {
 			snap = await R(args.cwd).spawn({
@@ -848,8 +881,33 @@ export function createWorkspaceRuns(
 				readinessEntries: PROFILE_READINESS,
 				eventRoute: "workspace",
 				signal,
+				onCreated: (s) => { createdId = s.id; dispatchEvents.set(s.id, []); },
+				onAccepted: (s) => {
+					// Synchronous publication BEFORE the next child line: an ask or
+					// completion in the same stdout chunk cannot escape the registry.
+					const now = Date.now();
+					const run: WorkspaceAgentRun = {
+						agentId: s.id, workspace: realWorkspace, task,
+						deadline: now + deadlineMs, startedAt: now, state: "running",
+						ladder: 0, lastSeenGeneration: 0, deadlineFired: false,
+						reservation, waiters: [],
+					};
+					runsByAgentId.set(s.id, run);
+					persistHistory(run);
+					armDeadline(run);
+					const pending = dispatchEvents.get(s.id) ?? [];
+					dispatchEvents.delete(s.id);
+					for (const ev of pending) void handleEvent(ev).catch(() => {});
+				},
 			});
 		} catch (e) {
+			// Rejection may arrive BEFORE the failed process exits. Keep the
+			// reservation until physical stop, even for readiness/accept failures.
+			if (createdId) {
+				await rt().retire(createdId);
+				dispatchEvents.delete(createdId);
+			}
+			if (reservations.get(realWorkspace) === reservation) reservations.delete(realWorkspace);
 			const message = e instanceof Error ? e.message : String(e);
 			// Missing provider extension: fail fast BEFORE any process existed.
 			// blocked, not unsupported — the profile itself is fine; the requested
@@ -880,108 +938,75 @@ export function createWorkspaceRuns(
 			return fail(startupFailure ? "unsupported" : "error", workspace, message);
 		}
 
-		const run: WorkspaceAgentRun = {
-			agentId: snap.id,
-			workspace: realWorkspace,
-			task,
-			deadline: Date.now() + deadlineMs,
-			startedAt: Date.now(),
-			state: "running",
-			ladder: 0,
-			lastSeenGeneration: 0,
-			deadlineFired: false,
-			waiters: [],
-		};
-		runsByAgentId.set(snap.id, run);
-		armDeadline(run);
-		startLiveStatus(run, onUpdate);
+		return waitRun(snap.id, { timeoutSec: args.waitTimeoutSec, signal, onUpdate, hasPendingMessages });
+	}
 
-		// Blocking wait: terminal or needs_input. Abort = detach (the run
-		// keeps going; completion arrives as an event / via op=status|result).
-		// A pending user message (steering wake) detaches too, with its own
-		// reason; wokeBySteering distinguishes the two detach causes.
-		let wokeBySteering = false;
-		let wakeTimer: ReturnType<typeof setInterval> | undefined;
+	async function waitRun(agentId: string, args: WorkspaceWaitArgs = {}): Promise<WorkspaceToolResult> {
+		const run = mustRun(agentId);
+		if (run.terminal || run.state === "waiting_input") return ok(runOutcome(run));
+		const stopStatus = startLiveStatus(run, args.onUpdate);
 		try {
-			const waitOutcome = await new Promise<"settled" | "needs_input" | "detached">((resolve) => {
-				const w = (outcome: "settled" | "needs_input" | "detached") => {
-					// Self-remove: a detached/resolved waiter must not linger in the
-					// run's waiter list (it would swallow later needs_input
-					// notifications that Main still has to see).
+			const reason = await new Promise<string | undefined>((resolve) => {
+				let done = false;
+				let wakeTimer: ReturnType<typeof setInterval> | undefined;
+				let timer: ReturnType<typeof setTimeout> | undefined;
+				const finishWait = (reason?: string) => {
+					if (done) return;
+					done = true;
+					if (timer) clearTimeout(timer);
+					if (wakeTimer) clearInterval(wakeTimer);
+					args.signal?.removeEventListener("abort", onAbort);
 					const idx = run.waiters.indexOf(w);
 					if (idx !== -1) run.waiters.splice(idx, 1);
-					cleanup();
-					resolve(outcome);
+					resolve(reason);
 				};
+				const w = () => finishWait();
+				const onAbort = () => finishWait(ABORT_DETACH_REASON);
 				run.waiters.push(w);
-				const onAbort = () => w("detached");
-				function cleanup() {
-					signal?.removeEventListener("abort", onAbort);
-					if (wakeTimer) {
-						clearInterval(wakeTimer);
-						wakeTimer = undefined;
-					}
+				timer = setTimeout(() => finishWait("wait_timeout: run continues under the same deadline"),
+					(args.timeoutSec ?? DEFAULT_WAIT_MS / 1000) * 1000);
+				timer.unref?.();
+				args.signal?.addEventListener("abort", onAbort, { once: true });
+				if (args.signal?.aborted) { onAbort(); return; }
+				if (args.hasPendingMessages) {
+					wakeTimer = setInterval(() => {
+						if (ownDeliveryInFlight()) return;
+						try { if (args.hasPendingMessages!()) finishWait(STEERING_WAKE_REASON); } catch {}
+					}, steeringWakePollMs);
+					wakeTimer.unref?.();
 				}
-				signal?.addEventListener("abort", onAbort, { once: true });
-				// The abort may have fired while spawn was still resolving
-				// (acceptance won the race): detach immediately.
-				if (signal?.aborted) {
-					w("detached");
-					return;
-				}
-				// Steering wake: armed only HERE, after dispatch acceptance —
-				// polling only matters while this call blocks. ANY pending user
-				// message (steering or follow-up) resolves the call as a detach
-				// so the agent loop reaches a turn boundary, delivers the queued
-				// text, and Main stays responsive; the run continues under its
-				// deadline and its terminal outcome arrives as the usual
-				// background delivery. Follow-up waking too is accepted
-				// semantics: the queue kind is not observable from here, and any
-				// queued text deserves a turn boundary. Own deliveries (wiring
-				// events, notifyCompleted/notifyNeedsInput) must not wake: the
-				// shared marker in ./steering-wake suppresses the window around
-				// each own enqueue. A settle that raced the poll wins cleanly:
-				// cleanup() kills this timer, and finish() resolving the waiter
-				// first makes a later w() a no-op with the terminal outcome
-				// returned instead.
-				if (!hasPendingMessages) return;
-				wakeTimer = setInterval(() => {
-					if (ownDeliveryInFlight()) return;
-					try {
-						if (!hasPendingMessages()) return;
-					} catch {
-						return; // a broken probe must never break the wait
-					}
-					wokeBySteering = true;
-					w("detached");
-				}, steeringWakePollMs);
-				wakeTimer.unref?.();
 			});
+			// Meaningful state wins over a simultaneous release/timeout. During
+			// stop/Git reads this remains running, never an incomplete terminal.
+			const outcome = runOutcome(run);
+			return ok(outcome.status === "running" && reason ? { ...outcome, reason } : outcome);
+		} finally { stopStatus(); }
+	}
 
-			if (waitOutcome === "detached") {
-				return ok({
-					status: run.terminal ? run.terminal.status : "running",
-					dispatched: true,
-					workspace: realWorkspace,
-					agentId: run.agentId,
-					state: run.state,
-					deadlineMsLeft: Math.max(0, run.deadline - Date.now()),
-					...(run.terminal
-						? {}
-						: { reason: wokeBySteering ? STEERING_WAKE_REASON : ABORT_DETACH_REASON }),
-				});
-			}
-			return ok(runOutcome(run));
-		} finally {
-			// The progress loop dies on EVERY exit: terminal, needs_input,
-			// detach, and thrown errors. No leaked timers, no updates after the
-			// tool call settled. The steering-wake poll dies with it.
-			stopLiveStatus(run);
-			if (wakeTimer) {
-				clearInterval(wakeTimer);
-				wakeTimer = undefined;
-			}
+	function mustRun(agentId: string): WorkspaceAgentRun {
+		const run = runsByAgentId.get(agentId);
+		if (!run) throw new Error(`unknown workspace agent id: ${agentId}`);
+		return run;
+	}
+
+	async function steerRun(agentId: string, message: string): Promise<void> {
+		const run = mustRun(agentId);
+		if (run.terminal || run.deadlineFired || (run.state !== "running" && run.state !== "waiting_input")) {
+			throw new Error(`cannot steer workspace-owned agent ${agentId}: run is settling or terminating`);
 		}
+		await rt().steer(agentId, message);
+	}
+
+	async function cancelRun(agentId: string): Promise<void> {
+		const run = mustRun(agentId);
+		if (!claimTermination(run)) {
+			// Cancellation must not report success while another claimer is still
+			// stopping the process or collecting facts. This is not a Main wait cap.
+			if (!run.terminal) await new Promise<void>((resolve) => run.waiters.push(resolve));
+			return;
+		}
+		await rt().cancel(agentId);
+		await finish(run, { status: "blocked", reason: "cancelled_by_main", lastOutput: await lastOutput(agentId), childMayHaveMutatedRepo: true });
 	}
 
 	// ----------------------------------------------------------------- query
@@ -992,6 +1017,7 @@ export function createWorkspaceRuns(
 			dispatched: true,
 			workspace: run.workspace,
 			agentId: run.agentId,
+			...observations(run),
 		};
 		if (run.terminal) {
 			return {
@@ -1014,10 +1040,8 @@ export function createWorkspaceRuns(
 				deadlineMsLeft: Math.max(0, run.deadline - Date.now()),
 			};
 		}
-		// Query-only in-progress status: never returned by the blocking
-		// spawn (which resolves only on terminal/needs_input), so the shared
-		// orchestration rule "partial/blocked means inspect + repair" cannot
-		// be triggered by a merely running owner.
+		// A bounded wait may return while running/terminating; this is never
+		// partial/blocked and must not trigger inspect + repair orchestration.
 		return {
 			...base,
 			status: "running",
@@ -1035,9 +1059,25 @@ export function createWorkspaceRuns(
 			...(outcome.status === "needs_input" ? { question: run.question, request: run.request } : {}),
 			state: run.terminal ? "settled" : run.state,
 			workspace: run.workspace,
-			deadlineMsLeft: Math.max(0, run.deadline - Date.now()),
-			...(run.ladder > 0 ? { ladder: { step: run.ladder, max: LADDER_MAX } } : {}),
+			...observations(run),
+			...(!run.terminal && run.ladder > 0 ? { ladder: { step: run.ladder, max: LADDER_MAX } } : {}),
 		};
+	}
+
+	function observations(run: WorkspaceAgentRun) {
+		const now = Date.now();
+		run.progress = loadProgress(run.agentId, rt().getResultsDir()) ?? run.progress;
+		return {
+			deadlineAt: run.deadline,
+			deadlineMsLeft: Math.max(0, run.deadline - now),
+			...(run.progress ? { progress: { ...run.progress }, progressAgeMs: Math.max(0, now - run.progress.updatedAt) } : {}),
+		};
+	}
+
+	function persistHistory(run: WorkspaceAgentRun): void {
+		const view = runView(run.agentId)!;
+		const { deadlineMsLeft: _left, progressAgeMs: _age, ladder: _ladder, ...history } = compactRunView(view);
+		rt().setRunHistory(run.agentId, history);
 	}
 
 	// --------------------------------------------------------------- helpers
@@ -1055,12 +1095,35 @@ export function createWorkspaceRuns(
 
 	return {
 		spawnRun,
+		waitRun,
+		steerRun,
+		cancelRun,
 		runView,
 		isManaged: (agentId: string) => runsByAgentId.has(agentId),
 	};
 }
 
 // -------------------------------------------------------------------- helpers
+
+/** Shared narrow projection for status, inherited inspection and persisted history. */
+export function compactRunView(view: WorkspaceRunView): RunHistory & {
+	deadlineMsLeft: number; progressAgeMs?: number; ladder?: { step: number; max: number };
+} {
+	return {
+		workspace: view.workspace, state: view.state, deadlineMsLeft: view.deadlineMsLeft,
+		...(view.deadlineAt !== undefined ? { deadlineAt: view.deadlineAt } : {}),
+		...(view.progress ? { progress: { ...view.progress }, progressAgeMs: view.progressAgeMs } : {}),
+		...(view.terminal ? {
+			status: view.terminal.status as "done" | "partial" | "blocked",
+			terminal: {
+				status: view.terminal.status as "done" | "partial" | "blocked",
+				...(view.terminal.reason !== undefined ? { reason: view.terminal.reason } : {}),
+				...(view.terminal.result ? { result: { status: view.terminal.result.status, summary: view.terminal.result.summary } } : {}),
+			},
+		} : {}),
+		...(view.ladder ? { ladder: view.ladder } : {}),
+	};
+}
 
 /** Add deterministic time-budget instructions only to the dispatched prompt. */
 function repoOwnerPrompt(task: string, deadlineMs: number): string {
@@ -1091,7 +1154,7 @@ function repoOwnerPrompt(task: string, deadlineMs: number): string {
  * output, caches — do not). `facts` is present whenever Git could read
  * at least status, so even a rejected done carries what Main needs.
  */
-type GitState = { ok: true; facts: GitFacts } | { ok: false; problem: string; facts?: GitFacts };
+export type GitState = { ok: true; facts: GitFacts } | { ok: false; problem: string; facts?: GitFacts };
 
 async function readGitState(workspace: string): Promise<GitState> {
 	try {
@@ -1123,11 +1186,6 @@ async function readGitState(workspace: string): Promise<GitState> {
 		// git missing or unspawnable: fail closed, never silently "clean"
 		return { ok: false, problem: `git state unreadable: ${e instanceof Error ? e.message : String(e)}` };
 	}
-}
-
-/** Best-effort facts for terminal outcomes that carry no acceptance verdict. */
-async function readGitFacts(workspace: string): Promise<GitFacts | undefined> {
-	return (await readGitState(workspace)).facts;
 }
 
 /** Bounded human summary of the dirty state (reason lines, notifications). */

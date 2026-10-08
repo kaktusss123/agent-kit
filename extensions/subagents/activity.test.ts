@@ -202,6 +202,7 @@ describe("formatRunStatus", () => {
 			"RepoOwner sa-1-q625 · running · 10m39s · deadline 4m21s",
 			"agent-kit · zai/glm-5.3-flash · high · $0.4231 · ctx 87.5k/200k (44%)",
 			"▸ bash · bun test extensions/subagents · 18s",
+			"progress: not reported",
 			"  edit · extensions/subagents/reporting-bridge.ts · 29s",
 			"  edit · extensions/subagents/readiness.ts · 1m4s",
 		]);
@@ -225,11 +226,11 @@ describe("formatRunStatus", () => {
 			}),
 		);
 		const lines = text.split("\n");
-		expect(lines).toHaveLength(6); // 1 head + 1 meta + 1 current + 3 recent
+		expect(lines).toHaveLength(7); // head + meta + current + progress absence + 3 recent
 		// Over cap: the OLDEST entries are dropped, the newest 3 render newest-first.
 		expect(text).not.toContain("read");
 		expect(text).not.toContain("edit");
-		expect(lines.slice(3)).toEqual(["  write · 50s", "  grep · 1m0s", "  bash · 1m10s"]);
+		expect(lines.slice(4)).toEqual(["  write · 50s", "  grep · 1m0s", "  bash · 1m10s"]);
 	});
 
 	test("optional segments omitted — view never fabricates, never emits blank lines", () => {
@@ -243,7 +244,7 @@ describe("formatRunStatus", () => {
 				recentActivity: undefined,
 			}),
 		);
-		expect(text).toBe("RepoOwner sa-1-q625 · running · 10m39s");
+		expect(text).toBe("RepoOwner sa-1-q625 · running · 10m39s\nactivity: unknown (no active tool observed)\nprogress: not reported");
 		expect(text).not.toContain("\n\n");
 	});
 
@@ -299,14 +300,14 @@ describe("formatRunStatus", () => {
 				],
 			}),
 		);
-		expect(text.split("\n")[3]).toBe(`  edit · ${"x".repeat(48)}… · 1s`);
+		expect(text.split("\n")[4]).toBe(`  edit · ${"x".repeat(48)}… · 1s`);
 	});
 
 	test("recent age falls back to startedAt when endedAt is absent", () => {
 		const text = formatRunStatus(
 			view({ recentActivity: [{ name: "bash", startedAt: BASE_NOW - 5_000 }] }),
 		);
-		expect(text.split("\n")[3]).toBe("  bash · 5s");
+		expect(text.split("\n")[4]).toBe("  bash · 5s");
 	});
 
 	test("type shape: recent entries expose endedAt only (ToolActivity contract)", () => {

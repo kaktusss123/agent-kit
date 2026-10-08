@@ -7,6 +7,7 @@
  */
 import type { AgentResult, AgentSnapshot, ForeignRunningMarker, SessionStats, SubagentModelEvent } from "./types";
 import { formatAskRequestJson, type AskInput } from "../ask/contract";
+import type { Progress } from "./progress";
 
 /**
  * Structured workspace-run facts for the status view. Structural twin of the
@@ -16,6 +17,8 @@ export interface StatusRunView {
 	state: string;
 	workspace: string;
 	deadlineMsLeft: number;
+	progress?: Progress;
+	progressAgeMs?: number;
 	ladder?: { step: number; max: number };
 }
 
@@ -109,6 +112,7 @@ export function formatSnapshot(s: AgentSnapshot, run?: StatusRunView): string {
 		const runParts = [run.workspace, `state ${run.state}`, `deadline ${formatDuration(run.deadlineMsLeft)}`];
 		if (run.ladder && run.ladder.step > 0) runParts.push(`report recovery ${run.ladder.step}/${run.ladder.max}`);
 		lines.push(`  run: ${runParts.join(" · ")}`);
+		lines.push(...formatProgress(run.progress, run.progressAgeMs));
 	}
 	return lines.join("\n");
 }
@@ -243,6 +247,18 @@ export function formatLiveSnapshot(s: AgentSnapshot): string {
 		}
 	}
 	return lines.join("\n");
+}
+
+/** Agent-reported progress is distinct from runtime activity and environment facts. */
+export function formatProgress(progress?: Progress, ageMs?: number): string[] {
+	if (!progress) return ["progress: not reported"];
+	return [
+		`progress: agent-reported${ageMs !== undefined ? ` · age ${formatDuration(ageMs)}` : ""}`,
+		`achieved: ${progress.achieved}`,
+		`current work: ${progress.currentWork}`,
+		...(progress.blocker !== undefined ? [`blocker (agent-reported): ${progress.blocker}`] : []),
+		`next step: ${progress.nextStep}`,
+	];
 }
 
 /** Compact human duration ("18s", "10m39s", "2h5m") shared by status views. */

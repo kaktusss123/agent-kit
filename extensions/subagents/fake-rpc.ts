@@ -54,13 +54,13 @@ export class FakeRpcProcess implements ChildProcessLike {
 			this.events.emit("command", cmd);
 			if (
 				this.autoRespondPrompts &&
-				cmd.type === "prompt" &&
-				typeof cmd.streamingBehavior === "string"
+				(cmd.type === "steer" || (cmd.type === "prompt" &&
+				typeof cmd.streamingBehavior === "string"))
 			) {
 				const response = {
 					id: cmd.id,
 					type: "response",
-					command: "prompt",
+					command: cmd.type,
 					success: true,
 				};
 				queueMicrotask(() => {

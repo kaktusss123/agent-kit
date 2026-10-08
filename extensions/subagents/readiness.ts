@@ -83,7 +83,7 @@ export const PROFILE_READINESS: Record<string, string[]> = {
 		"checkpoint_commit",
 		"remove_task_lane",
 	],
-	[REPORTING_ENTRY_ID]: ["report_result"],
+	[REPORTING_ENTRY_ID]: ["report_result", "report_progress"],
 	[SUBAGENTS_ENTRY_ID]: ["subagent"],
 };
 

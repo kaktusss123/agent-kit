@@ -313,6 +313,9 @@ function makeLayer(): Harness {
 	const taskRoot = fs.realpathSync(taskRootRaw);
 	const previousTaskRoot = process.env.AGENT_TASK_ROOT;
 	process.env.AGENT_TASK_ROOT = taskRoot;
+	const previousAgentDir = process.env.PI_CODING_AGENT_DIR;
+	process.env.PI_CODING_AGENT_DIR = path.join(base, "agent-dir");
+	fs.mkdirSync(process.env.PI_CODING_AGENT_DIR, { recursive: true });
 
 	const updates: Update[] = [];
 	const messages: Harness["messages"] = [];
@@ -347,6 +350,8 @@ function makeLayer(): Harness {
 		cleanup() {
 			if (previousTaskRoot === undefined) delete process.env.AGENT_TASK_ROOT;
 			else process.env.AGENT_TASK_ROOT = previousTaskRoot;
+			if (previousAgentDir === undefined) delete process.env.PI_CODING_AGENT_DIR;
+			else process.env.PI_CODING_AGENT_DIR = previousAgentDir;
 			fs.rmSync(base, { recursive: true, force: true });
 		},
 		agentId() {
@@ -403,7 +408,7 @@ async function driveToRunning(h: Harness, params: Record<string, unknown>, signa
 	for (let i = 0; i < 100 && h.spawned.length === 0; i++) await tick(20);
 	if (h.spawned.length === 0) throw new Error("dispatch never spawned a child");
 	const proc = h.lastProc();
-	confirmReadiness(proc, { tools: ["web_search", "task_status", "ensure_task_repo", "checkpoint_commit", "remove_task_lane", "report_result", "subagent"] });
+	confirmReadiness(proc, { tools: ["web_search", "task_status", "ensure_task_repo", "checkpoint_commit", "remove_task_lane", "report_result", "report_progress", "subagent"] });
 	autoAcceptPrompt(proc);
 	await tick(40);
 	return { pending, proc };

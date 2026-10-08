@@ -117,6 +117,8 @@ describe("subagent tool surface", () => {
 		const shape = JSON.stringify(def.parameters);
 		expect(shape).toContain('"workspace"');
 		expect(shape).toContain('"deadlineSec"');
+		expect(shape).toContain('"waitTimeoutSec"');
+		expect(shape).toContain("independent of deadlineSec");
 		expect(shape).toContain('"cwd"');
 		expect(shape).toContain('"modelClass"');
 		// modelClass is a free-form string (R4): no enum — runtime validation
