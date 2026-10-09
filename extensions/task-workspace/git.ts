@@ -198,6 +198,30 @@ export async function getRepoBranch(repoRoot: string): Promise<string> {
   return r.ok ? r.stdout : "";
 }
 
+/** Explicit HEAD facts for projections that must not fake a branch: detached
+ *  HEAD is reported directly, and a failed read is `available: false` so
+ *  callers never render an unknown state as a clean known one. `branch` is
+ *  empty on detached HEAD and whenever the read failed. */
+export interface HeadFacts {
+  available: boolean;
+  branch: string;
+  detached: boolean;
+  sha: string | null;
+}
+
+export async function getHeadFacts(repoRoot: string): Promise<HeadFacts> {
+  const abbrev = await git(repoRoot, "rev-parse", "--abbrev-ref", "HEAD");
+  const sha = await git(repoRoot, "rev-parse", "HEAD");
+  const available = abbrev.ok && sha.ok;
+  const detached = available && abbrev.stdout === "HEAD";
+  return {
+    available,
+    branch: available && !detached ? abbrev.stdout : "",
+    detached,
+    sha: available ? sha.stdout : null,
+  };
+}
+
 export async function getRepoSha(repoRoot: string): Promise<string> {
   const r = await git(repoRoot, "rev-parse", "HEAD");
   return r.ok ? r.stdout : "";
@@ -381,6 +405,47 @@ export async function getLaneFacts(
 
 
 
+/** Linked worktrees directly inside one workspace directory: entries whose
+ *  `.git` is a gitdir pointer file, with their resolved common dir. The
+ *  single repo-set definition shared by the global catalog scan
+ *  (scanTaskWorkspaces) and the single-workspace current-task projection
+ *  (readWorkspaceRepos in ./current). */
+export async function linkedWorktreeFacts(
+  wsPath: string,
+  options: { strict?: boolean } = {},
+): Promise<{ name: string; path: string; commonDir: string | null }[]> {
+  let subEntries: string[];
+  try {
+    subEntries = await readdir(wsPath);
+  } catch (error) {
+    if (!options.strict || (error as NodeJS.ErrnoException).code === "ENOENT") return [];
+    throw error;
+  }
+  const facts: { name: string; path: string; commonDir: string | null }[] = [];
+  for (const sub of subEntries) {
+    const subPath = join(wsPath, sub);
+    let gitContent: string;
+    try {
+      gitContent = readFileSync(join(subPath, ".git"), "utf-8");
+    } catch (error) {
+      const code = (error as NodeJS.ErrnoException).code;
+      if (!options.strict || code === "ENOENT" || code === "ENOTDIR") continue;
+      throw error;
+    }
+    if (!gitContent.startsWith("gitdir:")) continue;
+    try {
+      facts.push({
+        name: sub,
+        path: subPath,
+        commonDir: await getRepoCommonDir(subPath),
+      });
+    } catch (error) {
+      if (options.strict) throw error;
+    }
+  }
+  return facts;
+}
+
 export async function scanTaskWorkspaces(taskRoot: string): Promise<
   {
     workspace: string;
@@ -407,27 +472,11 @@ export async function scanTaskWorkspaces(taskRoot: string): Promise<
 
   for (const entry of entries) {
     const wsPath = join(taskRoot, entry);
-    let subEntries: string[];
-    try {
-      subEntries = await readdir(wsPath);
-    } catch {
-      continue;
-    }
 
-    const linked = new Map<string, LinkedWorktreeFact>();
-    for (const sub of subEntries) {
-      const subPath = join(wsPath, sub);
-      try {
-        const gitContent = readFileSync(join(subPath, ".git"), "utf-8");
-        if (!gitContent.startsWith("gitdir:")) continue;
-        linked.set(sub, {
-          path: subPath,
-          commonDir: await getRepoCommonDir(subPath),
-        });
-      } catch {
-        continue;
-      }
-    }
+    const linkedList = await linkedWorktreeFacts(wsPath);
+    const linked = new Map<string, LinkedWorktreeFact>(
+      linkedList.map((f) => [f.name, { path: f.path, commonDir: f.commonDir }]),
+    );
 
     const repos: ManagedRepoStatus[] = [];
     for (const [sub, worktree] of linked) {

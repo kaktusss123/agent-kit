@@ -7,6 +7,16 @@ default `~/.agent-kit/tasks`. The same task identity resolves to the same
 filesystem location for every session. All state lives in git (branches +
 worktrees); no manifest files.
 
+## Session-scoped current task (inspection contract)
+
+The inherited inspection channel exposes `data.task.current` for the current inspected session only; `task_current` reads this projection without scanning the host-wide catalog, while legacy `task` and `all` retain their existing catalog fields and add `current`.
+
+Schema: `{ state: "none" | "ok" | "missing", identity: string | null, workspace: string | null, source: "cwd" | "session" | null, repos: Repo[] }`. `identity` is the canonical task-workspace directory key (for example `feat_work`), not the Git branch (`feat/work`); `workspace` is its absolute directory. Each repo has `{ name, path, kind: "canonical" | "lane", slot, classification, branch, detached, headSha, upstream, dirty: { staged, unstaged, available }, gitAvailable, owners: [{ id, label, state }] }`. Failed Git reads have `gitAvailable: false` and/or `dirty.available: false`; empty dirty arrays are not proof of clean state. Missing/none always has `repos: []`. Owner references are active RepoOwner runs from this session matched to the exact repository worktree.
+
+Selection uses a managed session cwd first, otherwise the most recent successful `ensure_task_repo` custom history entry on the current session branch. Entries are appended with `pi.appendEntry`, so branch switching and forks are isolated and compaction preserves the session history. For resumed histories predating custom entries, task-workspace narrowly recognizes successful `ensure_task_repo` tool results on that branch. No association means `none`; no host-catalog or branch-name fallback is performed.
+
+`task_current` is a version-1 inherited read-only snapshot area: `{v:1, area:"task_current", data:{task:{current}}}`. Its projection is session-scoped; while no session is bound (including after shutdown), cwd-derived snapshots are disabled. Selected workspace read failures return `snapshot_failed` rather than being mislabeled `missing`; `ENOENT` remains a truthful missing workspace. `task` and `all` retain their legacy catalog fields and add `data.task.current`.
+
 ## Surfaces
 
 - **`task_status`** — classify the current path and report current Git facts;

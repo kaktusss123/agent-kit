@@ -45,6 +45,10 @@ import { fileURLToPath } from "node:url";
 import { Type as tb } from "typebox";
 import { resolveTaskRoot } from "./task-root";
 import {
+  SESSION_SELECTION_ENTRY_TYPE,
+  isRecordableEnsureStatus,
+} from "./current";
+import {
   checkpointCommit,
   ensureTaskRepo,
   removeTaskLane,
@@ -84,6 +88,29 @@ function respond(result: Record<string, unknown>, details?: unknown): {
 
 function errorResult(e: unknown): Record<string, unknown> {
   return { status: "error", message: (e as Error).message };
+}
+
+/** Session-current persistence (the ZAVOD-5 selection contract): one custom
+ *  session-history entry per SUCCESSFUL ensure_task_repo, recorded through
+ *  pi.appendEntry. The inspection channel reconstructs the session-scoped
+ *  current-task projection from these entries via the session manager's
+ *  current branch — no manifest files, no writable inspection API. Failed
+ *  calls never append, so they never replace the current task. Best-effort:
+ *  a persistence failure must not fail an already-successful ensure; the
+ *  projection then truthfully reports no session association. */
+function recordSessionSelection(
+  pi: ExtensionAPI,
+  result: Record<string, unknown>,
+): void {
+  if (!isRecordableEnsureStatus(result.status)) return;
+  try {
+    pi.appendEntry(SESSION_SELECTION_ENTRY_TYPE, {
+      task: result.task,
+      worktree: result.worktree,
+    });
+  } catch {
+    // Selection stays absent — "none" is the truthful projection.
+  }
 }
 
 /** Worktree dependency provisioning configuration (host-owned; the core
@@ -272,6 +299,7 @@ export default function (pi: ExtensionAPI): void {
           taskRoot: TASK_ROOT,
           bootstrap: { config: BOOTSTRAP_CONFIG, env: process.env },
         });
+        recordSessionSelection(pi, result);
         return respond(result, detailsFor("ensure_task_repo", result));
       } catch (e) {
         return respond(errorResult(e));

@@ -16,6 +16,12 @@ export type InspectionRegistry = {
 	channel?: { input: fs.ReadStream; output: fs.WriteStream };
 	cwd: string;
 	subagents?: { owner: unknown; source: SubagentInspectionSource };
+	/** Current session's branch reader, captured by the inspection channel
+	 *  on session_start (owner token: the registering channel graph) and
+	 *  cleared on session_shutdown, so task inspection can reconstruct the
+	 *  session-scoped current-task projection without leaking another
+	 *  session's selection. */
+	session?: { owner: unknown; manager: { getBranch: () => unknown[] } };
 };
 
 export const INSPECTION_REGISTRY_KEY = Symbol.for("agentkit.inspection");
