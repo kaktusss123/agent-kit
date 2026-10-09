@@ -54,7 +54,7 @@ describe("RpcChildConnection stdin EPIPE handling (F001)", () => {
 		}
 	});
 
-	test("fake stdin error: settles exactly once with code -1; send() returns false afterwards", () => {
+	test("fake stdin error is not exit proof: killing remains possible and only real close settles", async () => {
 		const proc = new FakeRpcProcess({ command: "fake-pi", args: [], cwd: "." });
 		const conn = new RpcChildConnection({
 			command: "fake-pi",
@@ -68,15 +68,20 @@ describe("RpcChildConnection stdin EPIPE handling (F001)", () => {
 		expect(conn.send({ type: "prompt" })).toBe(true);
 		proc.emitStdinError(Object.assign(new Error("write EPIPE"), { code: "EPIPE" }));
 
-		expect(exits).toEqual([{ code: -1, signal: null }]);
-		expect(conn.exit).toEqual({ code: -1, signal: null });
+		expect(exits).toEqual([]);
+		expect(conn.exit).toBeNull();
+		let stopped = false;
+		const wait = conn.waitForExit().then(() => { stopped = true; });
+		await Promise.resolve();
+		expect(stopped).toBe(false);
 		expect(conn.stderr).toContain("child stdin error: write EPIPE");
 		expect(conn.send({ type: "prompt" })).toBe(false);
 
-		// The later close must not double-settle or overwrite the exit info.
-		proc.close(143, null);
-		expect(exits).toHaveLength(1);
-		expect(conn.exit).toEqual({ code: -1, signal: null });
+		conn.kill("SIGTERM");
+		await wait;
+		expect(proc.closed).toBe(true);
+		expect(exits).toEqual([{ code: 143, signal: null }]);
+		expect(conn.exit).toEqual({ code: 143, signal: null });
 	});
 
 	test("close before a stdin error keeps the real exit info (idempotent settle)", () => {

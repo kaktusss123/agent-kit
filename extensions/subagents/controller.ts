@@ -55,6 +55,13 @@ import type {
 	WaitOutcome,
 } from "./types";
 import { summarizeToolActivity } from "./activity";
+import { loadProgress, type RunHistory } from "./progress";
+import {
+	normalizeLastText,
+	publicAssistantText,
+	validateLastAssistantText,
+	type LastAssistantText,
+} from "./last-text";
 
 /** Live tool-activity bounds: status telemetry, never a log buffer. */
 const ACTIVE_TOOLS_MAX = 8;
@@ -131,6 +138,8 @@ interface AgentRecord {
 	pendingSessionFile?: string;
 	sessionId?: string;
 	finalText?: string;
+	/** Last PUBLIC assistant text (bounded automatic projection, accepted from completed message_end events). */
+	lastAssistantText?: LastAssistantText;
 	/** Failure of the current run; cleared by `agent_start` and on success. */
 	runError?: string;
 	/** Process-level failure (spawn, watchdog, unexpected exit). */
@@ -177,6 +186,8 @@ interface AgentRecord {
 	readinessDone: boolean;
 	acceptTimer?: NodeJS.Timeout;
 	readinessTimer?: NodeJS.Timeout;
+	onAccepted?: (snapshot: AgentSnapshot) => void;
+	run?: RunHistory;
 }
 
 const ASK_TOOL = "ask";
@@ -349,8 +360,10 @@ export class LocalSubagentRuntime {
 			idleExitMs: opts.idleExitMs ?? this.defaultIdleExitMs,
 			readinessExpected: new Map(Object.entries(readinessEntries)),
 			readinessDone: false,
+			onAccepted: opts.onAccepted,
 		};
 		this.records.set(id, record);
+		opts.onCreated?.(this.snapshot(record));
 
 		// Spawn-time partial marker (F003): persist a minimal "running" record
 		// AT process creation. If the parent dies before the child settles,
@@ -525,11 +538,15 @@ export class LocalSubagentRuntime {
 			if (cmd === "prompt" && ev.id === "spawn-prompt") {
 				if (!record.spawnSettled) {
 					record.spawnSettled = true;
-					record.state = "running";
+					record.state = isTerminal(record.state) ? record.state : record.pendingQuestion ? "waiting_input" : "running";
 					// Session identity is fetched EARLY (single RPC request, no
 					// polling) so the live operator view can show the session id
 					// while the child runs — not only after settlement.
-					if (ev.success === true) connGetState(record, "ctl-state-early");
+					if (ev.success === true) {
+						record.onAccepted?.(this.snapshot(record));
+						connGetState(record, "ctl-state-early");
+					}
+					record.onAccepted = undefined;
 					for (const w of record.spawnWaiters.splice(0)) w(ev.success === true);
 					if (ev.success !== true) {
 						record.lastError = `initial prompt rejected: ${String(ev.error ?? "unknown")}`;
@@ -586,7 +603,7 @@ export class LocalSubagentRuntime {
 
 		if (type === "message_end") {
 			const msg = ev.message as
-				| { role?: string; stopReason?: string; errorMessage?: string }
+				| { role?: string; stopReason?: string; errorMessage?: string; content?: unknown }
 				| undefined;
 			if (msg?.role === "assistant") {
 				// Persistence can lag this event. inspect() retries the same check.
@@ -602,6 +619,7 @@ export class LocalSubagentRuntime {
 				// cumulative token/cost/context numbers. Fire-and-forget — the
 				// response handler is command-keyed and replaces record.stats.
 				connGetStats(record);
+				this.acceptLastAssistantText(record, msg);
 			}
 			return;
 		}
@@ -824,13 +842,30 @@ export class LocalSubagentRuntime {
 			exitCode: record.exitCode,
 			signal: record.signal,
 			...(record.processKilledAt !== undefined ? { processKilledAt: record.processKilledAt } : {}),
+			...(record.lastAssistantText !== undefined
+				? { lastAssistantText: { ...record.lastAssistantText } }
+				: {}),
 			...(this.parentSession ? { parentSession: this.parentSession } : {}),
+			...(record.run ? { run: this.runHistory(record) } : {}),
 		};
 		try {
 			saveResult(result, this.resultsDir);
 		} catch {
 			// Persistence is best-effort; the in-memory record still serves results.
 		}
+	}
+
+	/** Persist workspace history without taking lifecycle ownership. */
+	setRunHistory(agentId: string, run: RunHistory): void {
+		const record = this.mustGet(agentId);
+		record.run = structuredClone(run);
+		if (isTerminal(record.state)) this.persistResult(record, record.state);
+		else this.persistSpawnMarker(record);
+	}
+
+	private runHistory(record: AgentRecord): RunHistory {
+		const progress = loadProgress(record.id, this.resultsDir) ?? record.run?.progress;
+		return { ...record.run!, ...(progress ? { progress } : {}) };
 	}
 
 	/**
@@ -849,7 +884,11 @@ export class LocalSubagentRuntime {
 			status: "running",
 			startedAt: record.startedAt,
 			...(record.conn.pid !== undefined ? { pid: record.conn.pid } : {}),
+			...(record.lastAssistantText !== undefined
+				? { lastAssistantText: { ...record.lastAssistantText } }
+				: {}),
 			...(this.parentSession ? { parentSession: this.parentSession } : {}),
+			...(record.run ? { run: this.runHistory(record) } : {}),
 		};
 		try {
 			saveResult(marker, this.resultsDir);
@@ -908,7 +947,17 @@ export class LocalSubagentRuntime {
 	}
 
 	async steer(agentId: string, message: string): Promise<void> {
-		await this.dispatchInput(this.mustGet(agentId), "steer", message);
+		const record = this.mustGet(agentId);
+		if (record.eventRoute === "workspace") {
+			if (!record.runActive || isTerminal(record.state) || record.cancelRequested || record.retireRequested) {
+				throw new Error(`cannot steer workspace-owned agent ${agentId}: run is settling or terminating`);
+			}
+			// Queue-only RPC, never prompt: an idle race must not start a new run
+			// or execute an extension command. Pi delivers at the safe tool boundary.
+			await this.dispatchInput(record, "steer", message, true);
+			return;
+		}
+		await this.dispatchInput(record, "steer", message);
 	}
 
 	/**
@@ -922,6 +971,7 @@ export class LocalSubagentRuntime {
 	async followUp(agentId: string, message: string): Promise<{ agentId: string; respawned: boolean }> {
 		const record = this.mustGet(agentId);
 		if ((record.conn.exit || record.retireRequested) && isTerminal(record.state)) {
+			if (record.eventRoute === "workspace") throw new Error("workspace-owned agents cannot restart through follow_up");
 			const fresh = await this.spawn({
 				task: message,
 				label: record.label,
@@ -985,6 +1035,7 @@ export class LocalSubagentRuntime {
 		record: AgentRecord,
 		behavior: "steer" | "followUp",
 		message: string,
+		queueOnly = false,
 	): Promise<void> {
 		this.assertAlive(record, behavior === "steer" ? "steer" : "follow_up");
 		// Live input reuses the child: any armed idle-exit is stale now. If the
@@ -1002,7 +1053,9 @@ export class LocalSubagentRuntime {
 				}, this.dispatchTimeoutMs);
 				timer.unref?.();
 				record.dispatchWaiters.set(id, resolve);
-				this.conn(record).send({ id, type: "prompt", message, streamingBehavior: behavior });
+				this.conn(record).send(queueOnly
+					? { id, type: "steer", message }
+					: { id, type: "prompt", message, streamingBehavior: behavior });
 			});
 			if (resp.success !== true) {
 				throw new Error(`pi rejected the ${behavior}: ${String(resp.error ?? "unknown")}`);
@@ -1028,10 +1081,10 @@ export class LocalSubagentRuntime {
 		if (record.eventRoute === "workspace") {
 			// Event ownership: wait() consumes the one lifecycle event; for a
 			// workspace child that event belongs to the run registry. The
-			// subagent tool rejects wait for workspace children; the runtime
-			// enforces the same rule here (defense in depth).
+			// subagent tool routes workspace wait through its registry; direct
+			// generic waits remain forbidden here (defense in depth).
 			throw new Error(
-				`agent ${agentId} is workspace-owned; the workspace spawn owns the run outcome — use op=status / op=result`,
+				`agent ${agentId} is workspace-owned; use the workspace registry wait or op=status / op=result`,
 			);
 		}
 		// Already meaningful: resolve from current state. A pending dispatch
@@ -1120,7 +1173,11 @@ export class LocalSubagentRuntime {
 			tokens: statsToResultTokens(record.stats),
 			exitCode: record.exitCode,
 			signal: record.signal,
+			...(record.lastAssistantText !== undefined
+				? { lastAssistantText: { ...record.lastAssistantText } }
+				: {}),
 			...(this.parentSession ? { parentSession: this.parentSession } : {}),
+			...(record.run ? { run: this.runHistory(record) } : {}),
 		};
 	}
 
@@ -1233,8 +1290,15 @@ export class LocalSubagentRuntime {
 	private reconcileLostChildren(): void {
 		for (const marker of runningMarkers(this.resultsDir)) {
 			if (marker.parentSession !== this.parentSession) continue;
+			const progress = loadProgress(marker.id, this.resultsDir) ?? marker.run?.progress;
+			// Malformed optional fields are dropped, never forwarded: the lost
+			// record keeps the last PUBLIC speech only when it is well-formed.
+			const { lastAssistantText: rawLastText, ...markerFields } = marker;
+			const lastText = validateLastAssistantText(rawLastText);
 			const finalized: AgentResult = {
-				...marker,
+				...markerFields,
+				...(marker.run ? { run: { ...marker.run, state: "lost", ...(progress ? { progress } : {}) } } : {}),
+				...(lastText ? { lastAssistantText: lastText } : {}),
 				status: "failed",
 				failureReason: "child lost across parent restart",
 				endedAt: Date.now(),
@@ -1400,6 +1464,29 @@ export class LocalSubagentRuntime {
 		return record;
 	}
 
+	/**
+	 * Automatic bounded projection of the child's last PUBLIC assistant text
+	 * (plain and workspace children alike): completed `message_end` text
+	 * blocks only. Thinking, tool calls, tool results, error/aborted/deferred
+	 * messages and empty text never replace an accepted fragment; the runtime
+	 * assigns updatedAt. Acceptance is bounded to non-terminal records, so a
+	 * late event after settlement cannot mutate a terminal record. Persistence
+	 * rides the existing result path: the running marker is rewritten on every
+	 * accepted change and the terminal write keeps the fragment.
+	 */
+	private acceptLastAssistantText(
+		record: AgentRecord,
+		msg: { stopReason?: string; content?: unknown },
+	): void {
+		if (isTerminal(record.state)) return; // never mutate a terminal record late
+		const raw = publicAssistantText(msg);
+		if (raw === undefined) return;
+		const text = normalizeLastText(raw);
+		if (text === undefined) return;
+		record.lastAssistantText = { text, updatedAt: Date.now() };
+		this.persistSpawnMarker(record);
+	}
+
 	private promoteSessionFile(record: AgentRecord): void {
 		const candidate = record.pendingSessionFile;
 		if (!candidate) return;
@@ -1435,8 +1522,11 @@ export class LocalSubagentRuntime {
 			stats: record.stats,
 			exitCode: record.exitCode,
 			signal: record.signal,
-			activeTool: newestActiveTool(record),
+			activeTool: record.conn.exit ? undefined : newestActiveTool(record),
 			recentActivity: record.recentActivity.map((entry) => ({ ...entry })),
+			...(record.lastAssistantText !== undefined
+				? { lastAssistantText: { ...record.lastAssistantText } }
+				: {}),
 		};
 	}
 }

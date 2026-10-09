@@ -26,9 +26,9 @@
  * - `subagent` tool (LLM): spawn / status / steer / follow_up / wait / result /
  *   respond / cancel. Plain `spawn` is async by default; blocking is modeled
  *   as spawn + wait (workspace spawns block themselves). Spawn time management
- *   ops (status/result/respond/cancel) are identical for both modes; wait/
- *   steer/follow_up are rejected for workspace runs (the workspace spawn call
- *   owns the run outcome and its deadline).
+ *   ops (status/result/respond/cancel) work for both modes. Workspace wait
+ *   continues a bounded wait through its registry; steer is queue-only and
+ *   rejects settling/terminating owners. follow_up stays forbidden.
  * - Background delivery: completed / failed / needs_input events reach the
  *   main model through pi.sendMessage with deliverAs:"steer" + triggerTurn,
  *   which pi 0.85.1 delivers at the next safe turn boundary when busy and as
@@ -73,6 +73,7 @@ import {
 import {
 	createWorkspaceRuns,
 	managedAgentOpPolicy,
+	compactRunView,
 	type WorkspaceRunView,
 	type WorkspaceRuns,
 } from "./workspace-runs";
@@ -146,7 +147,7 @@ function buildSubagentParams(savedClasses: string) {
 		workspace: Type.Optional(
 			Type.String({
 				description:
-					"spawn: run this child as the OWNER of a managed task worktree (RepoOwner mode). The spawn call blocks until a terminal outcome (done/partial/blocked) or needs_input, with live progress in the tool call. The child's model follows modelClass, else the repoOwner routing default, else the saved `heavy` class, else the current session model (/model-class route)",
+					"spawn: run this child as the OWNER of a managed task worktree (RepoOwner mode). Blocks until terminal, needs_input, or the independent waitTimeoutSec cap (returns running); the child continues under its enforced deadline. The child's model follows modelClass, else the repoOwner routing default, else the saved `heavy` class, else the current session model (/model-class route)",
 			}),
 		),
 		deadlineSec: Type.Optional(
@@ -156,6 +157,10 @@ function buildSubagentParams(savedClasses: string) {
 				minimum: 1,
 			}),
 		),
+		waitTimeoutSec: Type.Optional(Type.Integer({
+			description: "spawn (workspace only): max continuous Main wait in seconds (default 600), independent of deadlineSec; timeout returns running without stopping the child",
+			minimum: 1, maximum: 3600,
+		})),
 		modelClass: Type.Optional(
 			Type.String({
 				description: `spawn (both plain and workspace): model class for the child — a saved class name (currently: ${savedClasses}) or "default" (the live main session model + thinking); an explicit value always overrides the defaults. Omitted — plain: the plain routed default, else the current session model; workspace: the repoOwner routed default, else the saved class heavy, else the current session model (see the subagent_model_defaults prompt section for the current pairs). Omit on workspace (RepoOwner) spawns unless the user explicitly asks for a class; on plain spawns pick a class yourself when it fits the work — smart suits review and complex/nontrivial reasoning`,
@@ -404,9 +409,9 @@ export default function (pi: ExtensionAPI) {
 			"background. Workspace spawn (workspace=<managed task worktree>) starts a child that OWNS that worktree:",
 			"the call blocks until a terminal outcome (done/partial/blocked) or needs_input, with live progress in the",
 			"tool call, an enforced deadline, and a structured report envelope (the child must finish by reporting).",
-			"A user message sent while the call blocks detaches it early; the run continues and completion arrives via event.",
+			"A user message or the continuous wait cap (waitTimeoutSec, default 600s) releases Main without stopping the workspace run or extending its deadline; completion arrives via event. Workspace wait continues the same run; steer queues safely between actions, never aborts a tool; follow_up is forbidden for workspace runs.",
 			"Ops: spawn, status, steer (redirect a running child), follow_up (queue work for after the current run),",
-			"wait (block until completed/failed/needs_input; plain spawns only — a workspace spawn already blocks),",
+			"wait (continue a bounded wait on the same plain or workspace run),",
 			"result (fetch the full persisted result; workspace runs return the report envelope + Git facts), respond",
 			"(answer a child's pending question), cancel (abort and terminate).",
 			"Large parallel waves of children on one provider + model class can hit provider 429 rate limits — mix",
@@ -420,7 +425,7 @@ export default function (pi: ExtensionAPI) {
 		promptGuidelines: [
 			"Use subagent op=spawn to delegate self-contained work that does not need your direct involvement, especially parallelizable or exploratory tasks.",
 			"spawn (plain cwd) returns immediately; keep working or spawn more agents, then use subagent op=wait to block for a specific child when you need its outcome.",
-			"Workspace spawn: dispatch independent repo owners in parallel with multiple subagent calls with workspace=<worktree> in one block. The call blocks until a terminal outcome; its JSON carries the protocol outcome in `status`, and the owner's product outcome lives in `result.status` (present only when status is done). If the user sends a message while the call blocks, it detaches early (run continues; completion arrives via event) — handle the user's message then, and use op=cancel only if they asked to stop.",
+			"Workspace spawn: dispatch independent repo owners in parallel with multiple subagent calls with workspace=<worktree> in one block. The call blocks until terminal, needs_input, or the independent wait cap (running); its JSON carries the protocol outcome in `status`, and the owner's product outcome lives in `result.status` (present only when status is done). If the user sends a message while the call blocks, it detaches early (run continues; completion arrives via event) — handle the user's message then, and use op=cancel only if they asked to stop.",
 			`Spawn model selection: omit modelClass on workspace (RepoOwner) spawns unless the user explicitly requests a class (currently saved: ${savedClasses}) — those children then use the repoOwner routed default, else the saved class heavy, else your current session model. On plain spawns choose freely: omitting uses the plain routed default (else your current session model), and picking a class yourself is fine — smart suits review and complex/nontrivial reasoning work. The subagent_model_defaults prompt section lists the current saved class/model pairs and effective defaults (refreshed from storage when they change). heavy is the normal RepoOwner implementation class. An explicit class or "default" always overrides. Save classes with /model-class <class> set; route spawn modes with /model-class route <plain|repoOwner> <class|inherit> (inherit resets the mode to its normal default chain, not forced inheritance).`,
 			"Workspace terminal results include runtime-read `git_facts` (branch, HEAD SHA, dirty paths) — never ask the model for these; trust `git_facts` over any textual self-report about repository state.",
 			"When a child reports needs_input, first try to resolve the request from your own conversation and task context — do not ask the user again for information that is already known.",
@@ -438,11 +443,8 @@ export default function (pi: ExtensionAPI) {
 				parentSessionFile;
 			const rt = getRuntime(ctx.cwd);
 			const op = params.op;
-			// Cross-tool allow-list for workspace-owned children: their lifecycle
-			// events belong to the workspace run registry, so wait would steal
-			// the one lifecycle event, and steer/follow_up would bypass the
-			// run's deadline and task contract. status/result/respond/cancel
-			// remain the Main-facing surface for both modes.
+			// Workspace lifecycle belongs to its registry. Wait/steer/cancel are
+			// routed there; follow_up is forbidden (never restart an owner).
 			if (params.id && runs?.isManaged(params.id)) {
 				const policy = managedAgentOpPolicy(op);
 				if (!policy.allowed) return err(policy.reason!);
@@ -482,6 +484,7 @@ export default function (pi: ExtensionAPI) {
 								workspace: params.workspace,
 								task: params.task,
 								deadlineSec: params.deadlineSec,
+								waitTimeoutSec: params.waitTimeoutSec,
 								signal,
 								onUpdate,
 								hasPendingMessages:
@@ -494,8 +497,8 @@ export default function (pi: ExtensionAPI) {
 							});
 							return res;
 						}
-						if (params.deadlineSec) {
-							return err("deadlineSec applies to workspace spawns only (plain spawns are managed via wait)");
+						if (params.deadlineSec !== undefined || params.waitTimeoutSec !== undefined) {
+							return err("deadlineSec and waitTimeoutSec apply to workspace spawns only (plain spawns are managed via wait)");
 						}
 						// Resolve the class (or the plain-mode routing default) BEFORE
 						// spawning: an unknown class, an unroutable route, or a model
@@ -540,7 +543,8 @@ export default function (pi: ExtensionAPI) {
 					case "steer": {
 						requireId(params);
 						if (!params.message) return err("steer requires `message`");
-						await rt.steer(params.id!, params.message);
+						if (runs?.isManaged(params.id!)) await runs.steerRun(params.id!, params.message);
+						else await rt.steer(params.id!, params.message);
 						return ok(`Steering delivered to ${params.id}.`);
 					}
 					case "follow_up": {
@@ -567,6 +571,10 @@ export default function (pi: ExtensionAPI) {
 					case "wait": {
 						requireId(params);
 						const id = params.id!;
+						if (runs?.isManaged(id)) return runs.waitRun(id, {
+							timeoutSec: params.timeoutSec, signal, onUpdate,
+							hasPendingMessages: typeof ctx.hasPendingMessages === "function" ? () => ctx.hasPendingMessages() : undefined,
+						});
 						// Live progress: while blocked, periodically render a
 						// truthful snapshot of the child (state, current tool,
 						// bounded recent activity) into the tool call. Display-only;
@@ -689,8 +697,8 @@ export default function (pi: ExtensionAPI) {
 							// Git facts) is the result surface.
 							if (!view.terminal) {
 								return ok(
-									`Workspace run ${params.id} has no final result yet (state: ${view.state}). It settles under its deadline; completion arrives as an event.`,
-									{ run: { workspace: view.workspace, state: view.state, deadlineMsLeft: view.deadlineMsLeft } },
+									JSON.stringify({ status: view.state === "waiting_input" ? "needs_input" : "running", agentId: params.id, dispatched: true, ...compactRunView(view) }),
+									{ run: compactRunView(view) },
 								);
 							}
 							return ok(JSON.stringify(view.terminal), { result: view.terminal });
@@ -715,7 +723,8 @@ export default function (pi: ExtensionAPI) {
 					}
 					case "cancel": {
 						requireId(params);
-						await rt.cancel(params.id!);
+						if (runs?.isManaged(params.id!)) await runs.cancelRun(params.id!);
+						else await rt.cancel(params.id!);
 						return ok(`Subagent ${params.id} cancelled and terminated.`);
 					}
 				}
@@ -799,7 +808,10 @@ export default function (pi: ExtensionAPI) {
 				ctx.ui.notify("All subagents cancelled and terminated.", "warning");
 				return;
 			}
-			ctx.ui.notify(formatStatusList(runtime.inspect()), "info");
+			const snapshots = runtime.inspect();
+			const views = new Map<string, WorkspaceRunView>();
+			for (const s of snapshots) { const view = runs?.runView(s.id); if (view) views.set(s.id, view); }
+			ctx.ui.notify(formatStatusList(snapshots, views), "info");
 		},
 	});
 }
@@ -837,22 +849,7 @@ export function agentDetailView(s: AgentSnapshot, view?: WorkspaceRunView) {
 	return view
 		? {
 				...clipSnapshot(s),
-				run: {
-					workspace: view.workspace,
-					state: view.state,
-					...(view.terminal ? {
-						status: view.terminal.status,
-						terminal: {
-							status: view.terminal.status,
-							...(view.terminal.reason !== undefined ? { reason: view.terminal.reason } : {}),
-							...(view.terminal.result ? {
-								result: { status: view.terminal.result.status, summary: view.terminal.result.summary },
-							} : {}),
-						},
-					} : {}),
-					deadlineMsLeft: view.deadlineMsLeft,
-					...(view.ladder ? { ladder: view.ladder } : {}),
-				},
+				run: compactRunView(view),
 			}
 		: clipSnapshot(s);
 }

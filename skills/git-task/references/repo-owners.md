@@ -9,7 +9,7 @@ Deterministic contract of workspace-mode `subagent` spawns (subagents extension,
 - `workspace` — the absolute managed worktree path from `ensure_task_repo`; the owner works with relative paths there and sees the repository's own project instructions.
 - `task` — the complete owner assignment: intent, applicable contract artifacts (e.g. SPEC.md), the worker report contract from SKILL.md, and the instruction to change only this repository. The registry retains this canonical text unchanged.
 - `deadlineSec` — the hard runtime deadline. The runtime appends a budget block only to the dispatched child prompt. It states the deadline and a finalization reserve equal to 20% of the duration, raised to at least 30 seconds when possible and capped by the hard deadline. It tells the owner to stop new scope at that boundary, commit coherent work, run only checks that fit, and report `partial` instead of being killed mid-change.
-- The call blocks until a terminal outcome (`done`, `partial`, `blocked`) or `needs_input`.
+- `waitTimeoutSec` — maximum continuous Main wait (default 600 seconds), independent of `deadlineSec`. The call returns a terminal outcome (`done`, `partial`, `blocked`), `needs_input`, or `running` on wait expiry. A `running` return does not stop the child, release ownership, or extend the deadline; use `subagent op=wait id=<agentId> timeoutSec=<seconds>` to continue waiting on the SAME run. Completion still arrives through the existing notification.
 
 Dispatch is strict and fail closed: a subagents-owned readiness probe (the last profile entry in the child) confirms initialization from the child's actual session tool set before the task prompt reaches a model; any refusal kills the child with `dispatched: false` and the task is never sent. After the prompt is accepted there is no automatic fallback — an abort detaches and the run keeps going; repair is a fresh dispatch.
 
@@ -18,7 +18,9 @@ A workspace spawn is the only owner dispatch. If it returns `unsupported`, fails
 ## During a run
 
 - `needs_input` suspends the owner without finishing the run: the owner asked a decision it cannot resolve. Resolve it from Main's own conversation and task context first; only escalate an unknown decision to the user via Main's `ask`. Answer with `subagent` op `respond` (allowed on RepoOwners); the same run resumes under the same deadline. Never re-dispatch to "fix" a pending question.
-- `subagent` op `status` shows the run state (`running`, `waiting_input`, settling/terminating) with deadline left; op `result` returns the current or terminal outcome (envelope + `git_facts`) of any run of this session, anytime. The completion notification is not the only API.
+- `report_progress` records achieved results, current work, an optional agent-reported blocker, and the next step (maximum 1000 characters per text). It replaces the previous progress with a runtime timestamp, is not approval, and never substitutes for the final `report_result` or changes its last-action requirements.
+- `subagent` op `status` / `result` expose the last progress separately from observed tool activity and the remaining deadline, including after termination. `deadlineAt` is absolute Unix milliseconds; `progressAgeMs` is computed at read time. Missing progress means not reported, not a guessed blocker or proof of thinking.
+- `subagent op=steer` queues a request through Pi's safe steering RPC between actions, without aborting a tool or changing the deadline. Settling, terminating and settled owners reject steering. `follow_up` remains forbidden; it cannot restart an owner.
 
 ## Terminal outcomes
 
@@ -60,7 +62,8 @@ Repair means a NEW workspace spawn whose task begins with inspecting the existin
 ## Restrictions the runtime enforces
 
 - RepoOwner children may spawn repo-local helpers through the same `subagent` tool: plain `cwd` spawns only, with the full `modelClass` choice (any saved class or `"default"`). Helpers are part of the owner's execution and may use ordinary tools inside this workspace, but they cannot create workspace spawns: a managed worktree has exactly one owning RepoOwner, and helpers never become separate RepoOwners.
-- On an owner, the `subagent` tool accepts only `status`, `result`, `respond`, `cancel`; `wait`, `steer`, `follow_up` are rejected (owner lifecycle events belong to the workspace registry; steering would bypass the deadline).
-- Workspace runs produce no generic `[subagent ...]` deliveries; do not `wait()` on them.
+- Main may use `status`, `result`, `respond`, `cancel`, workspace `wait`, and safe `steer`; only `follow_up` is rejected. Workspace wait uses the workspace registry, never the generic controller waiter that consumes lifecycle events.
+- A canonical worktree is reserved before dispatch and remains owned until actual child stop and completion of runtime Git reads. Concurrent duplicate spawns (including canonical path aliases) are refused. No incomplete terminal outcome is exposed while Git facts are being read; one completion notification is sent.
+- Last progress is preserved in terminal outcomes and optional persisted history (see `extensions/subagents/README.md`, ZAVOD-39 consumer contract). History never means a live run can be reattached after Main restarts.
 
 Generic (non-owner) `cwd` spawns keep the full op set — that path is outside the workspace mode and out of scope for this reference.

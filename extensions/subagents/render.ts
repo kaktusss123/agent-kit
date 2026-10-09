@@ -15,6 +15,8 @@ import { keyHint } from "@earendil-works/pi-coding-agent";
 import type { Theme } from "@earendil-works/pi-coding-agent";
 import type { DirtyState } from "../task-workspace/types";
 import type { WorkspaceRunOutcome } from "./workspace-runs";
+import { validateProgress } from "./progress";
+import { formatProgress } from "./delivery";
 
 /** Collapsed summary cap (chars, like the model-visible blob budget). */
 const SUMMARY_CAP = 280;
@@ -193,9 +195,13 @@ function renderOutcomeCard(outcome: WorkspaceRunOutcome, expanded: boolean, them
 		if (outcome.agentId) {
 			lines.push(theme.fg("dim", `answer via subagent op=respond id=${outcome.agentId}`));
 		}
-		if (outcome.deadlineMsLeft !== undefined) {
-			lines.push(theme.fg("dim", `deadline ${formatDuration(outcome.deadlineMsLeft)}`));
-		}
+	}
+	if ((outcome.status === "running" || outcome.status === "needs_input") && outcome.deadlineMsLeft !== undefined) {
+		lines.push(theme.fg("dim", `deadline ${formatDuration(outcome.deadlineMsLeft)}`));
+	}
+	if (outcome.dispatched !== false) {
+		const progress = validateProgress(outcome.progress);
+		for (const line of formatProgress(progress, outcome.progressAgeMs)) lines.push(theme.fg("dim", forDisplay(line)));
 	}
 
 	const envelope = outcome.result;

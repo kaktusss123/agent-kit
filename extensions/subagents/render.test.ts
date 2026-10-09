@@ -176,6 +176,18 @@ describe("renderSubagentResult — non-card paths", () => {
 });
 
 describe("renderSubagentResult — workspace outcome card", () => {
+	test.each(["running", "done", "partial", "blocked", "needs_input"] as const)("%s retains all bounded progress independently of runtime reason", (status) => {
+		const progress = { achieved: "achieved result", currentWork: "current work", blocker: "claimed blocker", nextStep: "next step", updatedAt: 1000 };
+		const details = outcome({ status, result: undefined, progress, progressAgeMs: 5000, deadlineMsLeft: 60000, reason: "runtime reason" });
+		const before = structuredClone(details);
+		const text = lines(renderSubagentResult({ details }, { expanded: false, isPartial: false }, theme));
+		for (const field of ["achieved result", "current work", "claimed blocker", "next step", "age 5s", "runtime reason", "blocker (agent-reported)"]) expect(text).toContain(field);
+		expect(details).toEqual(before);
+		const absent = lines(renderSubagentResult({ details: { ...details, progress: undefined } }, { expanded: true, isPartial: false }, theme));
+		expect(absent).toContain("progress: not reported");
+		const malformed = lines(renderSubagentResult({ details: { ...details, progress: { ...progress, updatedAt: "bad" } } }, { expanded: true, isPartial: false }, theme));
+		expect(malformed).toContain("progress: not reported");
+	});
 	test("collapsed done card shows status, repo identity, sha, clean tree, metrics, expand hint", () => {
 		const text = lines(renderSubagentResult({ details: outcome() }, { expanded: false, isPartial: false }, theme));
 		expect(text).toContain("✓ done");

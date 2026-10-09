@@ -23,7 +23,8 @@
  */
 import { homedir } from "node:os";
 import type { SessionStats, ToolActivity } from "./types";
-import { formatDuration, formatStatsBrief } from "./delivery";
+import { formatDuration, formatStatsBrief, formatProgress } from "./delivery";
+import type { Progress } from "./progress";
 
 /**
  * Tool-aware argument exposure policy: tool name -> the argument keys that
@@ -177,6 +178,7 @@ export interface RunStatusView {
 	sessionFile?: string;
 	activeTool?: ToolActivity;
 	recentActivity?: ToolActivity[];
+	progress?: Progress;
 	/** Clock used for all live durations (injected for deterministic tests). */
 	now: number;
 }
@@ -218,7 +220,10 @@ export function formatRunStatus(v: RunStatusView): string {
 		if (v.activeTool.summary) parts.push(v.activeTool.summary);
 		parts.push(formatDuration(Math.max(0, v.now - v.activeTool.startedAt)));
 		lines.push(`▸ ${parts.join(" · ")}`);
+	} else {
+		lines.push("activity: unknown (no active tool observed)");
 	}
+	lines.push(...formatProgress(v.progress, v.progress ? Math.max(0, v.now - v.progress.updatedAt) : undefined));
 
 	// Top-down timeline: the producer appends finishes chronologically and trims
 	// from the front, so the tail holds the newest entries — take it, then read

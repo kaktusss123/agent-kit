@@ -9,6 +9,7 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { envelopeFileName, validateEnvelopeRecord } from "./envelope";
+import { loadProgress } from "./progress";
 
 const VALID_ENVELOPE = {
 	status: "done",
@@ -20,6 +21,7 @@ const VALID_ENVELOPE = {
 
 interface Harness {
 	tool: { execute: Function; executionMode?: string };
+	tools: Map<string, any>;
 	toolCall(toolName: string): { block?: boolean; reason?: string } | undefined;
 	handlers: Record<string, Array<(event: any) => unknown>>;
 	dir: string;
@@ -34,8 +36,9 @@ function makeBridge(opts?: { agentId?: string }): Harness {
 	process.env.PI_SUBAGENT_RESULTS_DIR = dir;
 	const handlers: Record<string, Array<(event: any) => unknown>> = {};
 	let tool: any;
+	const tools = new Map<string, any>();
 	const pi: any = {
-		registerTool: (def: any) => { tool = def; },
+		registerTool: (def: any) => { tools.set(def.name, def); if (def.name === "report_result") tool = def; },
 		on: (event: string, cb: (event: any) => unknown) => {
 			(handlers[event] ??= []).push(cb);
 		},
@@ -46,6 +49,7 @@ function makeBridge(opts?: { agentId?: string }): Harness {
 
 	const h: Harness = {
 		tool,
+		tools,
 		handlers,
 		toolCall(toolName: string) {
 			let last: any;
@@ -222,12 +226,51 @@ describe("reporting bridge staleness (F2)", () => {
 			// Boundary (SPEC R2): capability extensions declare nothing about
 			// readiness — the factory must not register a session_start handler
 			// (the subagents-owned readiness probe covers the contract), and its
-			// only tool is report_result.
+			// reporting tools have no readiness hooks of their own.
 			expect(h.handlers.session_start).toBeUndefined();
 			expect(h.tool).toBeDefined();
 			expect(h.tool.name).toBe("report_result");
+			expect([...h.tools.keys()].sort()).toEqual(["report_progress", "report_result"]);
 		} finally {
 			h.cleanup();
 		}
+	});
+});
+
+describe("bounded independent progress", () => {
+	test("two reports replace, normalize controls, timestamp at runtime and leave final reporting intact", async () => {
+		const h = makeBridge();
+		try {
+			const tool = h.tools.get("report_progress")!;
+			const before = Date.now();
+			await tool.execute("p1", { achieved: "first\nresult", currentWork: "testing\u001b", blocker: "agent claim", nextStep: "commit" });
+			const first = loadProgress("sa-test-bridge", h.dir)!;
+			expect(first).toMatchObject({ achieved: "first result", currentWork: "testing", blocker: "agent claim" });
+			expect(first.updatedAt).toBeGreaterThanOrEqual(before);
+			await new Promise((r) => setTimeout(r, 2));
+			await tool.execute("p2", { achieved: "second", currentWork: "verifying", nextStep: "report" });
+			const second = loadProgress("sa-test-bridge", h.dir)!;
+			expect(second.updatedAt).toBeGreaterThan(first.updatedAt);
+			expect(second.achieved).toBe("second");
+			expect(second.blocker).toBeUndefined();
+			await report(h, "final");
+			expect(h.readRecord()?.stale).toBe(false);
+			expect(loadProgress("sa-test-bridge", h.dir)).toEqual(second);
+			h.toolCall("report_progress");
+			expect(h.readRecord()?.stale).toBe(true);
+		} finally { h.cleanup(); }
+	});
+	test("invalid input cannot replace last progress", async () => {
+		const h = makeBridge();
+		try {
+			const tool = h.tools.get("report_progress")!;
+			const input = { achieved: "ok", currentWork: "work", nextStep: "next" };
+			await tool.execute("p", input);
+			const saved = loadProgress("sa-test-bridge", h.dir);
+			for (const bad of [{ ...input, updatedAt: 1 }, { ...input, output: "private" }, { ...input, achieved: "x".repeat(1001) }, { ...input, blocker: null }, { achieved: "incomplete" }]) {
+				await expect(tool.execute("bad", bad)).rejects.toThrow("invalid progress");
+				expect(loadProgress("sa-test-bridge", h.dir)).toEqual(saved);
+			}
+		} finally { h.cleanup(); }
 	});
 });

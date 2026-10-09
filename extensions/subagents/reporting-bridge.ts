@@ -2,7 +2,7 @@
  * Reporting bridge — additional extension entry for RepoOwner children.
  *
  * Loaded per-spawn via `additionalExtensions` next to the shared base bridge
- * (which keeps providing `ask`). Adds exactly one capability:
+ * (which keeps providing `ask`). Adds bounded `report_progress` and
  * `report_result`, the trusted structured outcome channel of the
  * workspace-mode (RepoOwner) protocol.
  *
@@ -23,6 +23,8 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { EnvelopeSchema } from "./envelope-schema";
+import { Type } from "typebox";
+import { saveProgress } from "./progress";
 import {
 	envelopeFileName,
 	validateEnvelopeRecord,
@@ -99,6 +101,28 @@ export default function (pi: ExtensionAPI) {
 			};
 		}
 		reported = false;
+	});
+
+	pi.registerTool({
+		name: "report_progress",
+		label: "Report Progress",
+		executionMode: "sequential",
+		description:
+			"Report a meaningful achieved result, current work, an explicitly known blocker (optional), and next step. " +
+			"This replaces your previous progress, does not ask approval or release ownership, and does not replace " +
+			"the final report_result. Report significant results, blockers or approach changes, not every tool call. " +
+			"Do not include transcripts, hidden reasoning or command output. Each text is limited to 1000 characters.",
+		parameters: Type.Object({
+			achieved: Type.String({ maxLength: 1000 }),
+			currentWork: Type.String({ maxLength: 1000 }),
+			blocker: Type.Optional(Type.String({ maxLength: 1000 })),
+			nextStep: Type.String({ maxLength: 1000 }),
+		}, { additionalProperties: false }),
+		async execute(_toolCallId, params) {
+			if (!agentId) throw new Error("report_progress requires PI_SUBAGENT_ID");
+			const progress = saveProgress(agentId, params, resultsDir());
+			return { content: [{ type: "text" as const, text: "Progress recorded; continue autonomously under the same deadline." }], details: { progress } };
+		},
 	});
 
 	pi.registerTool({

@@ -25,6 +25,7 @@ import {
 } from "./fake-rpc";
 import { envelopeFileName, type Envelope } from "./envelope";
 import { createWorkspaceRuns, type WorkspaceRuns } from "./workspace-runs";
+import { loadResult } from "./result-store";
 
 const tick = (ms = 20) => new Promise((r) => setTimeout(r, ms));
 
@@ -313,6 +314,9 @@ function makeLayer(): Harness {
 	const taskRoot = fs.realpathSync(taskRootRaw);
 	const previousTaskRoot = process.env.AGENT_TASK_ROOT;
 	process.env.AGENT_TASK_ROOT = taskRoot;
+	const previousAgentDir = process.env.PI_CODING_AGENT_DIR;
+	process.env.PI_CODING_AGENT_DIR = path.join(base, "agent-dir");
+	fs.mkdirSync(process.env.PI_CODING_AGENT_DIR, { recursive: true });
 
 	const updates: Update[] = [];
 	const messages: Harness["messages"] = [];
@@ -347,6 +351,8 @@ function makeLayer(): Harness {
 		cleanup() {
 			if (previousTaskRoot === undefined) delete process.env.AGENT_TASK_ROOT;
 			else process.env.AGENT_TASK_ROOT = previousTaskRoot;
+			if (previousAgentDir === undefined) delete process.env.PI_CODING_AGENT_DIR;
+			else process.env.PI_CODING_AGENT_DIR = previousAgentDir;
 			fs.rmSync(base, { recursive: true, force: true });
 		},
 		agentId() {
@@ -403,7 +409,7 @@ async function driveToRunning(h: Harness, params: Record<string, unknown>, signa
 	for (let i = 0; i < 100 && h.spawned.length === 0; i++) await tick(20);
 	if (h.spawned.length === 0) throw new Error("dispatch never spawned a child");
 	const proc = h.lastProc();
-	confirmReadiness(proc, { tools: ["web_search", "task_status", "ensure_task_repo", "checkpoint_commit", "remove_task_lane", "report_result", "subagent"] });
+	confirmReadiness(proc, { tools: ["web_search", "task_status", "ensure_task_repo", "checkpoint_commit", "remove_task_lane", "report_result", "report_progress", "subagent"] });
 	autoAcceptPrompt(proc);
 	await tick(40);
 	return { pending, proc };
@@ -617,6 +623,54 @@ describe("workspace run live updates", () => {
 				String(m.message.content ?? "").includes("[subagent completed]"),
 			);
 			expect(done).toBeDefined();
+		} finally {
+			await h.runtime.shutdown();
+			h.cleanup();
+		}
+	});
+
+	test("lastAssistantText: workspace owner's public speech rides the snapshot root and survives settlement", async () => {
+		const h = makeLayer();
+		try {
+			const ws = makeWorktree(h.taskRoot, "obs-lasttext-ws");
+			const { pending } = await driveToRunning(h, { workspace: ws, task: "work" });
+			const agentId = h.agentId();
+			const proc = h.lastProc();
+			expect(h.runtime.inspect(agentId)[0]!.lastAssistantText).toBeUndefined();
+			proc.writeToStdout({
+				type: "message_end",
+				message: {
+					role: "assistant",
+					stopReason: "toolUse",
+					content: [
+						{ type: "thinking", thinking: "hidden reasoning" },
+						{ type: "text", text: "  Environment and spec are clear;\nrunning the focused tests now." },
+						{ type: "toolCall", id: "tc", name: "bash" },
+					],
+				},
+			});
+			// Live snapshot root (the seam the narrow inspection reads): the text
+			// is normalized, thinking/tool calls never enter.
+			expect(h.runtime.inspect(agentId)[0]!.lastAssistantText).toEqual({
+				text: "Environment and spec are clear; running the focused tests now.",
+				updatedAt: expect.any(Number),
+			});
+			// Running marker persisted on the accepted change.
+			expect(loadResult(agentId, h.tmp)).toMatchObject({
+				status: "running",
+				lastAssistantText: { text: "Environment and spec are clear; running the focused tests now." },
+			});
+
+			writeEnvelope(h, agentId);
+			settleRun(proc, "finished");
+			const res = await pending;
+			expect(res.details).toMatchObject({ status: "done" });
+			// Terminal record keeps the fragment; the run projection stays a
+			// separate channel (no lastAssistantText inside run).
+			const persisted = loadResult(agentId, h.tmp)!;
+			expect(persisted.lastAssistantText!.text).toBe("Environment and spec are clear; running the focused tests now.");
+			expect(persisted.run).toMatchObject({ state: "settled" });
+			expect("lastAssistantText" in persisted.run!).toBe(false);
 		} finally {
 			await h.runtime.shutdown();
 			h.cleanup();

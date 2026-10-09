@@ -97,14 +97,14 @@ export class RpcChildConnection {
 		// The child's stdin stream has no other owner; an unhandled "error"
 		// here would crash the host process (EPIPE after the child died under
 		// a pending write). Swallow it into diagnostics, mark the stream
-		// broken so send() stops writing, and settle the exit (idempotent —
-		// when "close" already fired with the real code, this is a no-op;
-		// otherwise -1 stands until the controller interprets it).
+		// broken so send() stops writing. A broken pipe is NOT proof of process
+		// exit: keep kill/waitForExit usable until the real close event, so a
+		// workspace cannot publish Git facts while its child is still alive.
 		this.proc.stdin.on("error", (err: Error) => {
 			if (this.stdinBroken) return;
 			this.stdinBroken = true;
 			this.stderrTail = (this.stderrTail + `\nchild stdin error: ${err.message}`).slice(-8000);
-			this.settleExit({ code: -1, signal: null });
+			if (!this.exited) this.onError(new Error(`child stdin error: ${err.message}`));
 		});
 	}
 

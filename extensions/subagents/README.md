@@ -12,7 +12,8 @@ the main process. No daemon, no shared hub.
   child works in parallel; blocking on a child is `wait`, and the wait call
   renders live progress (state, current tool, bounded recent activity) into
   the tool call. Workspace `spawn` (`workspace=<managed worktree>`) is the
-  RepoOwner mode: the call blocks until a terminal outcome or `needs_input`
+  RepoOwner mode: the call blocks until terminal, `needs_input`, or the
+  independent continuous wait cap (`waitTimeoutSec`, default 600 seconds)
   with the same live progress, an enforced deadline, and the report-envelope
   contract (see the workspace section below). Management ops work uniformly
   for both modes.
@@ -206,10 +207,30 @@ nothing started).
   Everything before is `dispatched:false`; after it there is no fallback —
   abort detaches (the run continues), repair is a new RepoOwner spawn.
 - **Event ownership**: RepoOwner lifecycle events route to the workspace run
-  registry only — no generic `[subagent ...]` deliveries — and `wait()`,
-  `steer`, and `follow_up` are rejected on workspace runs (the workspace
-  spawn call owns the run outcome and its deadline). `status`, `result`,
-  `respond`, and `cancel` work uniformly for both modes.
+  registry only. `subagent op=wait` continues a bounded wait on the SAME run
+  through this registry (not the generic controller waiter). `steer` uses
+  queue-only RPC steering between actions, never aborts a tool or starts a
+  new run, and rejects settling/terminating/settled owners. `follow_up` is
+  forbidden. `status`, `result`, `respond`, and `cancel` work in both modes.
+- **Independent wait cap**: `waitTimeoutSec` on workspace spawn and
+  `timeoutSec` on workspace wait cap continuous Main waiting (default 600s),
+  independently of `deadlineSec`. Expiry returns `running`, `agentId`, the
+  last progress, and deadline left. It does not release ownership, stop the
+  child, or extend its absolute deadline. Terminal/needs_input already
+  observed at release take priority; completion still arrives as an event.
+- **Ownership**: canonical worktree paths are reserved synchronously before
+  dispatch; duplicate concurrent spawns (including aliases) fail closed.
+  Ownership is held through physical child stop and runtime Git reads. During
+  reads, queries return a nonterminal settling/terminating state, never
+  incomplete Git facts or a premature terminal; notification is sent once.
+- **Progress**: separate `report_progress` replaces the previous bounded,
+  runtime-timestamped progress atomically. It reports results, current work,
+  an explicitly agent-reported blocker (optional), and next step, not command
+  output or reasoning. It is not approval or an ownership release. Missing
+  progress is explicitly not reported; missing observed active tool means
+  activity unknown, not thinking/hung. Progress and observed tool durations
+  remain separate in status, result, inherited inspection and `onUpdate`,
+  including terminal/history views. See the additive consumer contract below.
 - **Envelope**: the child reports its product outcome via `report_result`
   (typebox-validated, atomic file handoff). Any later tool call invalidates
   the report — settlement accepts only fresh envelopes, so "finish by
@@ -260,7 +281,7 @@ nothing started).
   Session identity is fetched with a single `get_state` right after prompt
   acceptance, so it is visible while the child runs, not only after
   settlement. The refresh loop ticks every 3 s and is stopped on every exit
-  path: terminal, needs_input, detach, and thrown errors. Plain spawns get
+  path: terminal, needs_input, wait timeout, detach, and thrown errors. Plain spawns get
   the same live progress on `subagent op=wait` (state, current tool, bounded
   recent activity) — observability is a property of `subagent`, not a reason
   to pick a workspace spawn.
@@ -270,6 +291,110 @@ process and real children on the default model; covering the acceptance
 scenarios A1–A3b, A5–A9, A11–A14 plus the fail-closed profile proof L10 —
 missing entry → no process; broken capability → readiness fails, child
 killed, task never dispatched).
+
+## ZAVOD-39 additive consumer contract
+
+All additions are optional; old snapshots, outcomes and history remain valid.
+The existing producer is `agentDetailView()` → inherited inspection
+`area=subagents` → `data.agents[].run` (also `subagent op=status`). No
+`task_current` changes or new transport. The same narrow projection appears
+in `onUpdate.details.run` and ongoing `op=result.details.run`.
+
+```ts
+type Progress = {
+  achieved: string;
+  currentWork: string;
+  blocker?: string; // only an explicit agent claim, never an environment verdict
+  nextStep: string;
+  updatedAt: number; // Unix ms, assigned by runtime
+};
+// Optional additions to live run and workspace protocol outcomes:
+// progress?: Progress; progressAgeMs?: number; deadlineAt?: number;
+```
+
+Each text is at most 1000 UTF-16 code units; control characters are normalized
+and whitespace flattened. `report_progress` accepts only the four input
+keys above, never `updatedAt`. `progressAgeMs = max(0, now - updatedAt)` is
+computed on reads, never persisted as truth. `deadlineAt` is absolute Unix
+ms; existing `deadlineMsLeft` is preserved. Snapshot `activeTool.startedAt`
+and bounded `recentActivity` remain independently observed activity. No
+child identity is inferred from a tool argument.
+
+Persistence has two additive forms:
+
+1. Independent atomic handoff at `results/progress-<sanitizedAgentId>.json`:
+   `{ "agentId": string, "progress": Progress }`. It is bounded and validated
+   on reads and survives final reporting, cancel and deadline.
+2. Existing `results/<sanitizedAgentId>.json` (`AgentResult`) gains optional
+   `run?: RunHistory`, containing precisely:
+
+```ts
+type RunHistory = {
+  workspace: string;
+  state: string; // running at accepted marker, settled at final publication;
+                 // lost when a running marker is reconciled after parent restart
+  deadlineAt?: number;
+  progress?: Progress;
+  status?: "done" | "partial" | "blocked"; // protocol, not product status
+  terminal?: {
+    status: "done" | "partial" | "blocked";
+    reason?: string;
+    result?: { status: "done" | "partial" | "blocked"; summary: string };
+  };
+};
+```
+
+`run` contains no transcript, tool output, Git facts, recovery ladder,
+`deadlineMsLeft` or `progressAgeMs`. Controller result writes preserve this
+metadata; final workspace publication rewrites it only after child stop and
+Git reads. A restart can recover last progress from the independent handoff
+for a reconciled lost marker. The base `AgentResult.status` is the child
+controller result, not workspace protocol settlement: only `run.terminal`
+records workspace terminal publication. History is a frozen observation,
+NEVER proof of a live/resumable owner, even when its saved state is running.
+
+Workspace spawn/wait outcomes persist naturally in Pi tool-result `details`
+(the outcome itself; `op=result` wraps it in `details.result`). These outcomes
+also carry optional `progress`, `progressAgeMs`, `deadlineAt`, compatible
+`deadlineMsLeft`, and terminal `git_facts`. Their saved age/deadline-left are
+point-in-time values: consumers recompute elapsed age from `updatedAt`, and
+must not infer liveness from history. Absent/malformed optional progress
+should be displayed as not reported; no progress is required for completion.
+
+### `lastAssistantText` — automatic last public speech (UX revision)
+
+Optional additive channel at the **AgentSnapshot/AgentResult root** (plain and
+workspace children alike), separate from `Progress`/`RunHistory` and from the
+product report:
+
+```ts
+type LastAssistantText = {
+  text: string; // normalized, max 512 UTF-16 code units
+  updatedAt: number; // Unix ms, assigned by the runtime at acceptance
+};
+// AgentSnapshot.lastAssistantText? / AgentResult.lastAssistantText?
+```
+
+Single source: the child's completed RPC `message_end` with `role=assistant` —
+`type=text` content blocks only, joined in order. Thinking, tool calls, tool
+results, delta streams and full transcripts never enter. Messages with
+`stopReason` error/aborted/deferred (or pending) and empty-after-normalization
+text never replace an accepted fragment. Text is normalized (control
+characters → space, whitespace folded, trimmed) and capped AFTER
+normalization at 512 UTF-16 code units; only the single last fragment is
+kept and a newer completed message replaces it.
+
+Acceptance is bounded to non-terminal records: a `message_end` arriving after
+the record settled cannot mutate the terminal record. No new sidecar or log:
+persistence rides the existing result path — the spawn-time `running` marker
+is rewritten on every accepted change, the terminal write keeps the fragment,
+and lost-run reconciliation (`run.state: "lost"`) retains it when well-formed
+(malformed optional values are dropped, never forwarded). The projection is
+available immediately in narrow inspection `area=subagents`
+(`data.agents[].lastAssistantText`, via `agentDetailView`), `subagent
+op=status`, `subagent op=result` (`details.result` root for plain agents) and
+persisted history. Absence is meaningful: the child has produced no public
+speech yet — it is never inferred from silence about blockers or activity.
 
 Dev note: `bun test` needs `typebox` resolvable from the repo tree —
 `ln -s <pi-package>/node_modules/typebox node_modules/typebox` (gitignored).
