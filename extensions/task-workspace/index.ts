@@ -55,7 +55,8 @@ import {
   taskStatus,
   teardownTaskRepo,
 } from "./flows";
-import type { BootstrapConfig } from "./bootstrap";
+import { BOOTSTRAP_CONFIG } from "./bootstrap-config";
+export { BOOTSTRAP_CONFIG } from "./bootstrap-config";
 import { guardManagedWriteTarget } from "./guard";
 import {
   renderCheckpointCommitCall,
@@ -112,23 +113,6 @@ function recordSessionSelection(
     // Selection stays absent — "none" is the truthful projection.
   }
 }
-
-/** Worktree dependency provisioning configuration (host-owned; the core
- *  stays name-free). agent-kit has no root package.json, so its extension
- *  tests resolve the host runtime's packages through node_modules links,
- *  which ensure_task_repo provisions automatically. AGENT_KIT_PI_ROOT
- *  overrides discovery with an explicit package directory. */
-export const BOOTSTRAP_CONFIG: BootstrapConfig = {
-  packages: [
-    "@earendil-works/pi-coding-agent",
-    "@earendil-works/pi-ai",
-    "@earendil-works/pi-tui",
-    "typebox",
-  ],
-  overrideEnv: "AGENT_KIT_PI_ROOT",
-  legacyRoot: "~/.local/lib/node_modules/@earendil-works/pi-coding-agent",
-  cliName: "pi",
-};
 
 // ─── Bash git guard: PATH shim wiring ────────────────────────────────
 

@@ -1,8 +1,6 @@
 ---
 name: git-commit
 description: "Safe repository checkpoint commit policy for implementation workflows and explicit commit requests. Use when an agent must stage and commit a coherent change while enforcing branch and push policy, ticket extraction for any tracker, ticketless mode for personal repositories, concise English commit messages, explicit staging, secret-file exclusions, and repository hooks."
-metadata:
-  hosts: pi
 ---
 
 # Git commit
@@ -13,9 +11,9 @@ Create a checkpoint from the repository state without broadening its scope.
 
 Judgment (model): whether a checkpoint is warranted, where it belongs, the semantic message, ticket policy, and choosing the exact intended path set.
 
-Mechanics (runtime): the `checkpoint_commit` tool enforces exact staging, secret-path rejection, ambiguous-staged detection, hook execution, primary-checkout protection, and post-commit scope verification of the created commit, and reports a structured result. Read `references/checkpoint.md` before the first checkpoint commit in a session; it is the operative contract for inputs, statuses, and the deferred-hook evidence path. Do not duplicate those guarantees by hand.
+Mechanics (runtime): the `checkpoint_commit` tool enforces exact staging, secret-path rejection, ambiguous-staged detection, hook execution, primary-checkout protection, and post-commit scope verification of the created commit, and reports a structured result. Read `references/checkpoint.md` before the first checkpoint commit in a session (in Claude Code also `references/claude-code/checkpoint.md`, the `agent-kit task commit` binding of the same tool); it is the operative contract for inputs, statuses, and the deferred-hook evidence path. Do not duplicate those guarantees by hand.
 
-The by-hand procedure in this skill is the fallback for repositories outside any Pi-managed task workspace (no `checkpoint_commit` target). Everywhere else the runtime tool is the path.
+The by-hand procedure in this skill is the fallback for repositories outside any managed task workspace (no `checkpoint_commit` target). Everywhere else the runtime tool is the path.
 
 ## Hard policy
 

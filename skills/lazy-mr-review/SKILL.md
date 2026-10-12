@@ -5,7 +5,7 @@ description: "Review GitLab MRs from URLs and report findings in chat; publish c
 
 # Lazy MR review
 
-Review GitLab MRs end-to-end: snapshot, verify findings by execution, report in chat — publish only on the user's explicit choice. Deterministic mechanics (preflight, metadata, diff, checkout at the review SHA, publication payloads, anchoring verification) live in `scripts/review_snapshot.py` and `scripts/publish_comments.py`; run `scripts/selftest.sh` there if the tools misbehave. This file is the judgment layer.
+Review GitLab MRs end-to-end: snapshot, verify findings by execution, report in chat — publish only on the user's explicit choice. Deterministic mechanics (preflight, metadata, diff, checkout at the review SHA, publication payloads, anchoring verification) live in `scripts/review_snapshot.py` and `scripts/publish_comments.py`; run `scripts/selftest.sh` there if the tools misbehave. This file is the judgment layer. Every `scripts/...` path in this skill is relative to the skill directory (the directory holding this SKILL.md), never to the current working directory: run the scripts by their absolute path under it.
 
 ## Hard rules
 

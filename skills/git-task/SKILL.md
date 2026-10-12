@@ -1,20 +1,19 @@
 ---
 name: git-task
 description: "Judgment layer for Git task workspaces: decide task mode vs read-only chat, resolve ticket/branch identity, route single-repo vs multi-repo implementation through managed task worktrees and repository owners. Use before any task-oriented specification or code mutation in a Git repository."
-metadata:
-  hosts: pi
 ---
 
 # Git task workspaces
 
-Decide whether the conversation is a task; establish its Git identity; route implementation across managed task worktrees and repository owners. Deterministic safety lives in Pi extensions; this skill is judgment only.
+Decide whether the conversation is a task; establish its Git identity; route implementation across managed task worktrees and repository owners. Deterministic safety lives in the task-workspace runtime (the Pi extension; in Claude Code the `agent-kit task` CLI and the agent-kit plugin hooks over the same core); this skill is judgment only.
 
 ## Mandatory references
 
-This skill states policy only. The Pi runtime contracts it relies on are normative, not "see also":
+This skill states policy only. The runtime contracts it relies on are normative, not "see also":
 
 - Before resolving or creating a task workspace, read `references/task-workspace.md`.
 - Before dispatching or interacting with repository owners, read `references/repo-owners.md`.
+- In Claude Code, additionally read the host binding of each: `references/claude-code/task-workspace.md` and `references/claude-code/repo-owners.md`. They map the Pi tool and subagent mechanics named in this skill onto Claude Code; where they differ, the host binding wins.
 
 If a required deterministic capability is missing on this install (tool absent, dispatch refused), fail closed: report the task as unsupported. Do not improvise a degraded fallback.
 

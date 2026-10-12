@@ -1,8 +1,12 @@
 # agent-kit in Claude Code
 
-agent-kit skills and AGENTS.md are written for the Pi harness. In Claude Code:
+agent-kit skills and AGENTS.md are written for both Pi and Claude Code; Pi tool names in them map as follows:
 
 - `skill://<name>` means the skill `<name>`; load it with the Skill tool.
 - "the ask tool" / `ask` means `AskUserQuestion`. Subagents cannot ask the user; they return the open question to the caller.
-- The agent-kit task-workspace runtime is not available here: there is no `task_status`, `ensure_task_repo`, `remove_task_lane`, `checkpoint_commit`, `subagent` workspace spawn, RepoOwner, or git mutation guard. Rules that depend on them (primary-checkout ban, RepoOwner routing, `checkpoint_commit`, deferred hooks) are inactive. Do not emulate that runtime by hand; work in the current checkout unless the user directs otherwise. Skills `git-task` and `git-commit` are not installed.
-- Still in force: never invent a ticket or `base_ref`; never commit with `--no-verify`; a blocked or denied action is never authorization to reach the same result another way.
+- The task-workspace runtime is `agent-kit task <op>` through Bash (`status`, `ensure`, `remove-lane`, `teardown`, `commit`; JSON params and output). Contracts: `git-task` → `references/claude-code/task-workspace.md` and `references/claude-code/repo-owners.md`; `git-commit` → `references/claude-code/checkpoint.md`. Each binds the same contract as the Pi reference beside it.
+- The git mutation guard and the primary-checkout write guard come from the agent-kit plugin hooks. A denial names the managed worktree; it is a routing failure, never permission to reach the same result another way.
+- A RepoOwner is an Agent-tool subagent rooted by explicit path in its managed worktree; there is no `subagent` workspace spawn, readiness handshake, or enforced deadline. Main reads git facts with `agent-kit task status`.
+- `/spec` and `/dev` are Claude Code commands with the same workflow as in Pi.
+- If `agent-kit` is not on the Bash PATH (plugin not loaded, `bun` missing), the runtime is unavailable: report it instead of emulating the runtime by hand.
+- Always: never invent a ticket or `base_ref`; never commit with `--no-verify`.

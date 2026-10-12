@@ -95,9 +95,10 @@ fi
 
 # --- prompt templates are thin entrypoints into existing skills ----------------
 
-for prompt in "$SELF_DIR"/prompts/*.md; do
+# Pi prompts and their Claude Code command counterparts follow one contract.
+for prompt in "$SELF_DIR"/prompts/*.md "$SELF_DIR"/claude-code/commands/*.md; do
 	[ -f "$prompt" ] || continue
-	name="$(basename "$prompt" .md)"
+	name="${prompt#"$SELF_DIR"/}"
 
 	if [ -n "$(awk 'NR == 1 && $0 != "---" { exit 1 } NR > 1 { if ($0 == "---") exit; print }' "$prompt" | sed -n 's/^description:[[:space:]]*//p')" ]; then
 		ok "$name: description present"

@@ -14,6 +14,9 @@
 #     skills/*             -> skills/*
 #     rules/AGENTS.md      -> rules/agent-kit.md
 #     rules/claude-code.md -> rules/agent-kit-claude-code.md
+#     claude-code/plugin   -> skills/agent-kit  (skills-directory plugin:
+#                                                hooks + bin/, loaded in place)
+#     claude-code/commands/* -> commands/*      (/spec, /dev entrypoints)
 #
 # A skill limits its hosts with `metadata.hosts` in its SKILL.md frontmatter
 # (comma-separated host names); without it the skill goes to every host.
@@ -173,10 +176,18 @@ entities() {
 		emit_file     "$REPO/rules/AGENTS.md" "AGENTS.md"
 		;;
 	claude-code)
-		emit_file "$REPO/rules/AGENTS.md"      "rules/agent-kit.md"
-		emit_file "$REPO/rules/claude-code.md" "rules/agent-kit-claude-code.md"
+		emit_file     "$REPO/rules/AGENTS.md"      "rules/agent-kit.md"
+		emit_file     "$REPO/rules/claude-code.md" "rules/agent-kit-claude-code.md"
+		emit_dir      "$REPO/claude-code/plugin"   "skills/agent-kit"
+		emit_category "$REPO/claude-code/commands" "commands"
 		;;
 	esac
+}
+
+emit_dir() { # <repo-dir> <dest-rel> — one canonical directory
+	local d="$1" rel="$2"
+	[ -d "$d" ] || return 0
+	printf '%s%s%s\n' "$rel" "$TAB" "$d"
 }
 
 validate_entity() { # <dest-rel> <source-abs>
@@ -592,6 +603,25 @@ cmd_uninstall() {
 	return 0
 }
 
+# --- task -------------------------------------------------------------------------
+#
+# Task-workspace CLI for hosts without pi extensions (Claude Code): the
+# deterministic core under extensions/task-workspace, run by bun. JSON on
+# stdout; see extensions/task-workspace/cli.ts for the contract.
+
+cmd_task() {
+	local cli="$REPO/extensions/task-workspace/cli.ts" bun
+	bun="$(command -v bun || true)"
+	if [ -z "$bun" ]; then
+		# Hooks fail open: a missing runtime never disturbs the host session.
+		[ "${1:-}" = "hook" ] && exit 0
+		printf '{"status":"error","message":"agent-kit task requires bun on PATH"}\n'
+		exit 1
+	fi
+	[ -f "$cli" ] || { printf '{"status":"error","message":"task-workspace CLI missing: %s"}\n' "$cli"; exit 1; }
+	exec "$bun" "$cli" "$@"
+}
+
 # --- update -----------------------------------------------------------------------
 #
 # Bring the active checkout up to date and reconcile the managed links to
@@ -616,7 +646,9 @@ cmd_update() {
 	if ! git -C "$REPO" pull --ff-only; then
 		die "update: 'git pull --ff-only' failed in $REPO; resolve it manually, then re-run 'agent-kit update'"
 	fi
-	cmd_install
+	# The pull may have changed this very script: reconcile with the updated
+	# installer, never with the functions loaded before the pull.
+	AGENT_KIT_ROOT="$REPO" exec "$REPO/bin/agent-kit" install
 }
 
 usage() {
@@ -627,10 +659,13 @@ Usage:
   agent-kit install     link the checkout into every host:
                         pi          -> ~/.pi/agent (skills, extensions,
                                        prompts, AGENTS.md)
-                        claude-code -> ~/.claude (skills, rules/)
+                        claude-code -> ~/.claude (skills, rules/, the
+                                       agent-kit plugin, commands/)
   agent-kit update      git pull --ff-only in this checkout, then reconcile
   agent-kit uninstall   remove owned links from every host
   agent-kit status      show link state and launcher ownership
+  agent-kit task <op>   task-workspace CLI (status, ensure, remove-lane,
+                        teardown, commit, hook); JSON in, JSON out
   agent-kit help        this text
 
 The repository layout is the desired state; entities are symlinked, never
@@ -648,7 +683,8 @@ install)   shift; [ $# -eq 0 ] || die "install always targets every host; '${1:-
 uninstall) shift; [ $# -eq 0 ] || die "uninstall always targets every host; '${1:-}' is not a valid argument (see: agent-kit help)"; cmd_uninstall ;;
 update)    shift; [ $# -eq 0 ] || die "update takes no arguments (see: agent-kit help)"; cmd_update ;;
 status)    shift; [ $# -eq 0 ] || die "status takes no arguments (see: agent-kit help)"; status_all ;;
+task)      shift; cmd_task "$@" ;;
 -h|--help|help) usage ;;
 "")        usage ;;
-*)         die "unknown command '$1' (try: install, uninstall, update, status, help)" ;;
+*)         die "unknown command '$1' (try: install, uninstall, update, status, task, help)" ;;
 esac

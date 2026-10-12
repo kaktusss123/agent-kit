@@ -15,7 +15,7 @@ const SHIM_MARKER = "# task-workspace git PATH shim";
  * with a shebang followed by the marker comment, so both of its first two
  * lines are checked against the marker. Unreadable candidates are simply
  * not excluded by content; the lookup stays fail-open. */
-function isShimScript(candidate: string): boolean {
+export function isShimScript(candidate: string): boolean {
   let content: string;
   try {
     content = readFileSync(candidate, "utf8");
