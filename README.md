@@ -1,14 +1,13 @@
 # agent-kit
 
-Мой личный agent framework, ориентированный на **Pi** (pi-coding-agent).
+Мой личный agent framework для **Pi** (pi-coding-agent) и **Claude Code**.
 Один обычный git-репозиторий: canonical skills, deterministic Pi extensions,
-инсталлер с честной моделью владения ссылками.
+инсталлер с честной моделью владения ссылками, который ставит один checkout
+во все hosts сразу (ADR-0007).
 
-Это не multi-harness distribution. OMP и OpenCode были промежуточными
-этапами и больше не являются целями этого репозитория: их assets удалены
-из active architecture, а git history сохраняет их прошлое. Port под другой
-harness — это отдельный downstream-проект, который адаптирует canonical
-agent-kit под себя, а не уровень абстракции здесь.
+Pi — основной runtime: только в нём есть extensions (task-workspace,
+subagents, …). Claude Code получает skills и правила; skills, которым нужен
+Pi runtime, помечены `metadata.hosts: pi` и в Claude Code не ставятся.
 
 ## Структура
 
@@ -23,9 +22,10 @@ extensions/<name>/       Pi extensions: deterministic runtime mechanics
 prompts/                 тонкие Pi prompt templates — workflow entrypoints
                            /spec и /dev; связывают существующие skills,
                            а не дублируют их policy
-rules/AGENTS.md          канонический глобальный instructions-файл,
-                           единый источник ~/.pi/agent/AGENTS.md; присутствует,
-                           только когда файл существует
+rules/AGENTS.md          канонический глобальный instructions-файл:
+                           ~/.pi/agent/AGENTS.md и ~/.claude/rules/agent-kit.md
+rules/claude-code.md     mapping Pi-терминов на Claude Code:
+                           ~/.claude/rules/agent-kit-claude-code.md
 bin/agent-kit            инсталлер (install / uninstall / status)
 tests/                   verification:
                            installer/ — ownership-семантика инсталлера
@@ -150,19 +150,26 @@ upstream ссылки не ломают: pull отказывает, инстал
 Это терминальная команда: из pi-сессий мутирующий git в primary checkout может
 блокировать bash git guard — и это осознанно.
 
-Инсталлер обслуживает ровно один runtime — Pi. Аргументов вида
-`install <runtime>`, autodetection бинарей и runtime marker-файлов больше
-нет. Раскладка репозитория и есть desired state:
+Инсталлер всегда обслуживает все hosts сразу; аргументов выбора host и
+autodetection нет. Раскладка репозитория и есть desired state:
 
 ```
-skills/*     -> ~/.pi/agent/skills/*
-extensions/* -> ~/.pi/agent/extensions/*
-prompts/*    -> ~/.pi/agent/prompts/*   (если категория существует)
-rules/AGENTS.md -> ~/.pi/agent/AGENTS.md   (если файл существует)
+pi (~/.pi/agent, override PI_AGENT_DIR):
+  skills/*        -> skills/*
+  extensions/*    -> extensions/*
+  prompts/*       -> prompts/*           (если категория существует)
+  rules/AGENTS.md -> AGENTS.md           (если файл существует)
+
+claude-code (~/.claude, override CLAUDE_CONFIG_DIR):
+  skills/*             -> skills/*       (кроме metadata.hosts без claude-code)
+  rules/AGENTS.md      -> rules/agent-kit.md
+  rules/claude-code.md -> rules/agent-kit-claude-code.md
 ```
 
-Установка — это symlinks из `~/.pi/agent` в этот checkout, никогда
-копирование. Override корня: `PI_AGENT_DIR` (по умолчанию `~/.pi/agent`).
+Установка — это symlinks из корня host в этот checkout, никогда
+копирование. Конфигурация host не ссылается ни на путь checkout'а, ни на
+каталог другого host: Claude Code подхватывает `~/.claude/rules/*`
+автоматически, импорт в `CLAUDE.md` не нужен.
 - Каждый `install` заодно ставит команду
   `~/.local/bin/agent-kit -> <этот checkout>/bin/agent-kit`. Повторный
   `install` из другого checkout'а/worktree переносит управляемые ссылки и
@@ -173,8 +180,11 @@ rules/AGENTS.md -> ~/.pi/agent/AGENTS.md   (если файл существуе
 
 ### Ownership model
 
-Состояние — `~/.local/state/agent-kit/links.tsv` (или `$XDG_STATE_HOME`),
-одна строка на ссылку: `<dest-rel>\t<source>`. Инварианты:
+Состояние — отдельный файл на host в `~/.local/state/agent-kit/` (или
+`$XDG_STATE_HOME`): `links.tsv` для pi, `links-claude-code.tsv` для Claude
+Code; одна строка на ссылку: `<dest-rel>\t<source>`, путь относительно корня
+host. Существующая ссылка, уже указывающая ровно на нужный источник,
+принимается во владение. Инварианты:
 
 1. Управляется только ownership set — то, что записано в state. Содержимое
    `~/.pi/agent` никогда не сканируется «на предмет всего своего».
@@ -239,7 +249,7 @@ ln -s ~/.local/lib/node_modules/@earendil-works/pi-coding-agent/node_modules/@ea
 ## Тесты
 
 ```sh
-tests/installer/run.sh    # 20 сценариев ownership-семантики и legacy-миграции
+tests/installer/run.sh    # 25 сценариев ownership-семантики и legacy-миграции
 tests/layout/run.sh       # retired-архитектура (shared/, runtimes/, markers,
                           # runtime-ветки в инсталлере) не возвращается
 tests/skills/run.sh       # SKILL.md, references, skill://-цели, stale-язык

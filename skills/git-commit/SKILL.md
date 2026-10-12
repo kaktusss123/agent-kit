@@ -1,6 +1,8 @@
 ---
 name: git-commit
 description: "Safe repository checkpoint commit policy for implementation workflows and explicit commit requests. Use when an agent must stage and commit a coherent change while enforcing branch and push policy, ticket extraction for any tracker, ticketless mode for personal repositories, concise English commit messages, explicit staging, secret-file exclusions, and repository hooks."
+metadata:
+  hosts: pi
 ---
 
 # Git commit

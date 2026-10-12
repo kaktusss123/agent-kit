@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
 #
-# Layout regression tests: the retired multi-harness architecture must not
-# reappear. agent-kit is a Pi-first framework; the canonical tree is
-# skills/, extensions/, bin/, tests/, plus rules/AGENTS.md as the canonical
-# root instructions file linked to ~/.pi/agent/AGENTS.md (+ prompts/ and
-# scripts/ only when a category actually has content).
+# Layout regression tests: the retired multi-harness architecture (shared/,
+# runtimes/, bindings, runtime markers) must not reappear. One canonical tree
+# — skills/, extensions/, bin/, tests/, rules/ (+ prompts/ and scripts/ only
+# when a category actually has content) — is linked into every host by the
+# installer (ADR-0007).
 #
 # Exit code: 0 when all checks pass, 1 otherwise.
 set -euo pipefail
@@ -45,13 +45,13 @@ check "no vendor metadata dirs under skills/" \
 check "every entry under skills/ is a directory" \
 	bash -c "! find '$REPO/skills' -mindepth 1 -maxdepth 1 ! -type d | grep -q ."
 
-# --- installer is Pi-only ---------------------------------------------------------
+# --- installer hosts ---------------------------------------------------------
 
 # The legacy state migration legitimately names retired runtimes; that
 # knowledge must stay confined to the legacy_* functions. Strip them and
 # require the remainder to be free of any retired-runtime or old-tree
 # references.
-REST="$(mktemp)"
+REST="$(mktemp "${TMPDIR:-/tmp}/agent-kit-layout.XXXXXX")"
 awk '
 	/^legacy_roots\(\) \{/ || /^legacy_retire\(\) \{/ || /^migrate_legacy_state\(\) \{/ { skip = 1; next }
 	skip { if (/^}/) skip = 0; next }
@@ -63,8 +63,10 @@ check "installer has retired-runtime knowledge only inside legacy_* functions" \
 	bash -c "! grep -iqE '\bomp\b|opencode|runtimes/' '$REST'"
 check "installer declares a single Pi root" \
 	bash -c "grep -q 'PI_AGENT_DIR:.*/.pi/agent' '$REPO/bin/agent-kit'"
-check "installer accepts no runtime arguments" \
-	bash -c "grep -q 'manages a single runtime' '$REPO/bin/agent-kit'"
+check "installer always targets every host (no host arguments)" \
+	bash -c "grep -q 'install always targets every host' '$REPO/bin/agent-kit'"
+check "installer declares the claude-code root" \
+	bash -c "grep -q 'CLAUDE_CONFIG_DIR:.*/.claude' '$REPO/bin/agent-kit'"
 rm -f "$REST"
 
 # --- task root carries no retired-run location legacy ----------------------------

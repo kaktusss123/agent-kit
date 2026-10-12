@@ -1,6 +1,8 @@
 ---
 name: git-task
 description: "Judgment layer for Git task workspaces: decide task mode vs read-only chat, resolve ticket/branch identity, route single-repo vs multi-repo implementation through managed task worktrees and repository owners. Use before any task-oriented specification or code mutation in a Git repository."
+metadata:
+  hosts: pi
 ---
 
 # Git task workspaces

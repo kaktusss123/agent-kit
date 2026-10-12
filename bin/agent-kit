@@ -1,22 +1,31 @@
 #!/usr/bin/env bash
 #
-# agent-kit — install the Pi agent framework assets into ~/.pi/agent.
+# agent-kit — install the agent framework assets into every supported host.
 #
-# agent-kit is a personal Pi-first framework. There is exactly one runtime:
+# One install links the same checkout into each host (ADR-0007):
 #
-#   skills/*     -> $PI_AGENT_DIR/skills/*
-#   extensions/* -> $PI_AGENT_DIR/extensions/*
-#   prompts/*    -> $PI_AGENT_DIR/prompts/*   (only if the category exists)
-#   rules/AGENTS.md -> $PI_AGENT_DIR/AGENTS.md   (only if the file exists)
+#   pi (root $PI_AGENT_DIR, default ~/.pi/agent):
+#     skills/*        -> skills/*
+#     extensions/*    -> extensions/*
+#     prompts/*       -> prompts/*        (only if the category exists)
+#     rules/AGENTS.md -> AGENTS.md        (only if the file exists)
+#
+#   claude-code (root $CLAUDE_CONFIG_DIR, default ~/.claude):
+#     skills/*             -> skills/*
+#     rules/AGENTS.md      -> rules/agent-kit.md
+#     rules/claude-code.md -> rules/agent-kit-claude-code.md
+#
+# A skill limits its hosts with `metadata.hosts` in its SKILL.md frontmatter
+# (comma-separated host names); without it the skill goes to every host.
 #
 # The repository layout IS the desired state: no manifests, no lists.
 # Entities are symlinked, never copied.
 #
-# Ownership is tracked in a local state file
-# ($XDG_STATE_HOME/agent-kit/links.tsv, one "<dest-rel>\t<source>" per
-# line). Only paths recorded there — and only while the target still
+# Ownership is tracked per host in a local state file
+# ($XDG_STATE_HOME/agent-kit/links.tsv for pi, links-<host>.tsv for other
+# hosts; one "<dest-rel>\t<source>" per line, relative to the host root). Only paths recorded there — and only while the target still
 # points where agent-kit last linked it — are ever replaced or removed.
-# Everything else in the Pi directories (your own skills, other tools'
+# Everything else in the host directories (your own skills, other tools'
 # links, plain files) is left alone and reported as a conflict if the
 # repository wants its place.
 #
@@ -28,7 +37,7 @@
 # to the current format once and, for rows of retired runtimes, removes
 # links whose target is still provably the one agent-kit created (same
 # ownership proof as everything else). Anything manually redirected is
-# released, never deleted. There are no other install targets anymore.
+# released, never deleted. Retired runtimes are never install targets.
 #
 # Usage:
 #   agent-kit install
@@ -36,7 +45,8 @@
 #   agent-kit uninstall
 #   agent-kit status
 #
-# Root override: PI_AGENT_DIR (default ~/.pi/agent).
+# Root overrides: PI_AGENT_DIR (default ~/.pi/agent),
+# CLAUDE_CONFIG_DIR (default ~/.claude).
 # AGENT_KIT_ROOT roots the installer at a different checkout (tests).
 
 set -euo pipefail
@@ -61,11 +71,23 @@ REPO="$(cd "$REPO" && pwd -P)"
 REPO="${AGENT_KIT_ROOT:-$REPO}"
 
 STATE_HOME="${XDG_STATE_HOME:-$HOME/.local/state}"
-STATE_FILE="$STATE_HOME/agent-kit/links.tsv"
+PI_STATE_FILE="$STATE_HOME/agent-kit/links.tsv"
+STATE_FILE="$PI_STATE_FILE"
 CMD_STATE_FILE="$STATE_HOME/agent-kit/command.tsv"
 
 TAB="$(printf '\t')"
 PI_ROOT="${PI_AGENT_DIR:-$HOME/.pi/agent}"
+CLAUDE_ROOT="${CLAUDE_CONFIG_DIR:-$HOME/.claude}"
+HOSTS="pi claude-code"
+
+use_host() { # <host> — selects HOST, ROOT and STATE_FILE for the shared operations
+	HOST="$1"
+	case "$HOST" in
+	pi)          ROOT="$PI_ROOT";     STATE_FILE="$PI_STATE_FILE" ;;
+	claude-code) ROOT="$CLAUDE_ROOT"; STATE_FILE="$STATE_HOME/agent-kit/links-claude-code.tsv" ;;
+	*)           die "unknown host: $HOST" ;;
+	esac
+}
 
 msg()  { printf '%s\n' "$*"; }
 warn() { printf 'warning: %s\n' "$*" >&2; }
@@ -75,7 +97,7 @@ die()  { printf 'error: %s\n' "$*" >&2; exit 2; }
 
 LAUNCHER="$HOME/.local/bin/agent-kit"
 
-is_safe_rel() { # <path> — usable as a destination relative to the Pi root
+is_safe_rel() { # <path> — usable as a destination relative to a host root
 	case "$1" in
 	""|/*|*..*) return 1 ;;
 	esac
@@ -100,10 +122,32 @@ line_count() { # stdin -> number of non-empty lines
 
 # --- entity enumeration -------------------------------------------------------
 #
-# The desired state: every top-level entry of each category, linked 1:1
-# by entry name. Categories absent from the repository simply contribute
-# nothing. A single canonical root file (rules/AGENTS.md -> AGENTS.md)
-# follows the same philosophy.
+# The desired state per host: every top-level entry of each category, linked
+# 1:1 by entry name, plus single canonical files. Categories absent from the
+# repository simply contribute nothing.
+
+skill_hosts() { # <skill-dir> — metadata.hosts from the SKILL.md frontmatter, or empty
+	[ -f "$1/SKILL.md" ] || return 0
+	awk '
+		NR == 1 { if ($0 != "---") exit; next }
+		$0 == "---" { exit }
+		/^metadata:[ \t]*$/ { meta = 1; next }
+		meta && /^[^ \t]/ { meta = 0 }
+		meta && /^[ \t]+hosts:/ { sub(/^[ \t]+hosts:[ \t]*/, ""); gsub(/[]["'"'"' \t]/, ""); print; exit }
+	' "$1/SKILL.md"
+}
+
+emit_skills() { # skills/* that target $HOST
+	local e hosts
+	[ -d "$REPO/skills" ] || return 0
+	for e in "$REPO/skills"/*; do
+		[ -e "$e" ] || continue
+		hosts="$(skill_hosts "$e")"
+		case ",$hosts," in
+		,,|*",$HOST,"*) printf 'skills/%s%s%s\n' "$(basename "$e")" "$TAB" "$e" ;;
+		esac
+	done
+}
 
 emit_category() { # <repo-dir> <dest-rel-dir>
 	local src="$1" rel="$2" e
@@ -114,17 +158,25 @@ emit_category() { # <repo-dir> <dest-rel-dir>
 	done
 }
 
-emit_root_file() { # <repo-file> <dest-rel> — one canonical file at the Pi root
+emit_file() { # <repo-file> <dest-rel> — one canonical file
 	local f="$1" rel="$2"
 	[ -f "$f" ] || return 0
 	printf '%s%s%s\n' "$rel" "$TAB" "$f"
 }
 
 entities() {
-	emit_category "$REPO/skills"     "skills"
-	emit_category "$REPO/extensions" "extensions"
-	emit_category "$REPO/prompts"    "prompts"
-	emit_root_file  "$REPO/rules/AGENTS.md" "AGENTS.md"
+	emit_skills
+	case "$HOST" in
+	pi)
+		emit_category "$REPO/extensions" "extensions"
+		emit_category "$REPO/prompts"    "prompts"
+		emit_file     "$REPO/rules/AGENTS.md" "AGENTS.md"
+		;;
+	claude-code)
+		emit_file "$REPO/rules/AGENTS.md"      "rules/agent-kit.md"
+		emit_file "$REPO/rules/claude-code.md" "rules/agent-kit-claude-code.md"
+		;;
+	esac
 }
 
 validate_entity() { # <dest-rel> <source-abs>
@@ -279,7 +331,7 @@ reconcile() { # exits 1 if conflicts were found
 		[ -n "$line" ] || continue
 		rel="${line%%"$TAB"*}"
 		src="${line#*"$TAB"}"
-		dst="$PI_ROOT/$rel"
+		dst="$ROOT/$rel"
 		if printf '%s\n' "$desired" | awk -F '\t' -v r="$rel" '$1 == r { found = 1 } END { exit !found }'; then
 			still_desired="${still_desired}${rel}${TAB}${src}"$'\n'   # handled in pass 2
 			continue
@@ -304,7 +356,7 @@ EOF
 		rel="${line%%"$TAB"*}"
 		src="${line#*"$TAB"}"
 		validate_entity "$rel" "$src"
-		dst="$PI_ROOT/$rel"
+		dst="$ROOT/$rel"
 		mkdir -p "$(dirname "$dst")"
 		if [ -L "$dst" ]; then
 			cur="$(readlink "$dst")"
@@ -370,7 +422,7 @@ uninstall() {
 		[ -n "$line" ] || continue
 		rel="${line%%"$TAB"*}"
 		src="${line#*"$TAB"}"
-		dst="$PI_ROOT/$rel"
+		dst="$ROOT/$rel"
 		if [ -L "$dst" ] && [ "$(readlink "$dst")" = "$src" ]; then
 			rm "$dst"
 			msg "  removed  $rel"
@@ -408,7 +460,7 @@ status() {
 		[ -n "$line" ] || continue
 		rel="${line%%"$TAB"*}"
 		src="${line#*"$TAB"}"
-		dst="$PI_ROOT/$rel"
+		dst="$ROOT/$rel"
 		if [ -L "$dst" ]; then
 			cur="$(readlink "$dst")"
 			if printf '%s\n' "$desired" | awk -F '\t' -v r="$rel" -v s="$cur" '$1 == r && $2 == s { found = 1 } END { exit !found }'; then
@@ -425,10 +477,19 @@ status() {
 $STATE_OWN
 EOF
 
-	printf '  pi root: %s\n' "$PI_ROOT"
+	printf '  %s root: %s\n' "$HOST" "$ROOT"
 	printf '    repository wants %s entity(ies)\n' "$total"
 	printf '    state: %s managed — %s up to date, %s relink needed, %s missing, %s redirected\n' \
 		"$managed" "$uptodate" "$stale" "$missing" "$foreign"
+	printf '    state file: %s\n' "$STATE_FILE"
+}
+
+status_all() {
+	local h
+	for h in $HOSTS; do
+		use_host "$h"
+		status
+	done
 
 	command_state_load
 	msg ""
@@ -439,7 +500,6 @@ EOF
 	else
 		msg "command: not bootstrapped ($LAUNCHER)"
 	fi
-	msg "state file: $STATE_FILE"
 }
 
 # --- launcher ----------------------------------------------------------------------
@@ -508,17 +568,27 @@ bootstrap_self() { # own ~/.local/bin/agent-kit via its own ownership record
 # --- commands ----------------------------------------------------------------------
 
 cmd_install() {
-	msg "Installing (pi root: $PI_ROOT):"
+	local rc=0 h
+	use_host pi
 	migrate_legacy_state
-	local rc=0
-	reconcile || rc=1
+	for h in $HOSTS; do
+		use_host "$h"
+		msg "Installing ($HOST root: $ROOT):"
+		reconcile || rc=1
+	done
 	bootstrap_self
 	return "$rc"
 }
 
 cmd_uninstall() {
+	local h
+	use_host pi
 	migrate_legacy_state
-	uninstall
+	for h in $HOSTS; do
+		use_host "$h"
+		msg "Uninstalling ($HOST root: $ROOT):"
+		uninstall
+	done
 	return 0
 }
 
@@ -551,13 +621,15 @@ cmd_update() {
 
 usage() {
 	cat <<'EOF'
-agent-kit — install the personal Pi agent framework
+agent-kit — install the personal agent framework into Pi and Claude Code
 
 Usage:
-  agent-kit install     link skills/, extensions/, prompts/, rules/AGENTS.md
-                        into ~/.pi/agent
+  agent-kit install     link the checkout into every host:
+                        pi          -> ~/.pi/agent (skills, extensions,
+                                       prompts, AGENTS.md)
+                        claude-code -> ~/.claude (skills, rules/)
   agent-kit update      git pull --ff-only in this checkout, then reconcile
-  agent-kit uninstall   remove owned links from ~/.pi/agent
+  agent-kit uninstall   remove owned links from every host
   agent-kit status      show link state and launcher ownership
   agent-kit help        this text
 
@@ -572,10 +644,10 @@ EOF
 }
 
 case "${1:-}" in
-install)   shift; [ $# -eq 0 ] || die "agent-kit manages a single runtime; '${1:-}' is not a valid argument (see: agent-kit help)"; cmd_install ;;
-uninstall) shift; [ $# -eq 0 ] || die "agent-kit manages a single runtime; '${1:-}' is not a valid argument (see: agent-kit help)"; cmd_uninstall ;;
+install)   shift; [ $# -eq 0 ] || die "install always targets every host; '${1:-}' is not a valid argument (see: agent-kit help)"; cmd_install ;;
+uninstall) shift; [ $# -eq 0 ] || die "uninstall always targets every host; '${1:-}' is not a valid argument (see: agent-kit help)"; cmd_uninstall ;;
 update)    shift; [ $# -eq 0 ] || die "update takes no arguments (see: agent-kit help)"; cmd_update ;;
-status)    shift; [ $# -eq 0 ] || die "status takes no arguments (see: agent-kit help)"; status ;;
+status)    shift; [ $# -eq 0 ] || die "status takes no arguments (see: agent-kit help)"; status_all ;;
 -h|--help|help) usage ;;
 "")        usage ;;
 *)         die "unknown command '$1' (try: install, uninstall, update, status, help)" ;;
