@@ -1,0 +1,7 @@
+#!/bin/sh
+# agent-kit plugin launcher: Claude Code puts this plugin's bin/ on the Bash
+# tool's PATH and runs the plugin hooks through it. The plugin directory is
+# installed as a symlink into the checkout, so the physical location of this
+# script names the checkout; everything is delegated to its bin/agent-kit.
+here=$(CDPATH='' cd -- "$(dirname -- "$0")" && pwd -P) || exit 1
+exec "$here/../../../bin/agent-kit" "$@"

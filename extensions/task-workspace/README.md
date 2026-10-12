@@ -51,7 +51,12 @@ Selection uses a managed session cwd first, otherwise the most recent successful
 
 ## Layout
 
-`index.ts` is the pi binding (ExtensionAPI tool registration, TypeBox
+`cli.ts` is the second binding — `agent-kit task <op>` for Claude Code:
+the same flows with JSON params/output, plus the Claude Code hooks
+(`hook session-start` arms the git shim through `CLAUDE_ENV_FILE`,
+`hook pre-tool-use` returns the write guard verdict); it never imports the pi
+SDK. `bootstrap-config.ts` is the provisioning package list both bindings
+share. `index.ts` is the pi binding (ExtensionAPI tool registration, TypeBox
 schemas, result `details`, host bootstrap configuration, and the bash tool
 override that arms the git PATH shim); `task-root.ts` is the task-root
 resolution policy

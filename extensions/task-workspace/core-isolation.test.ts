@@ -47,9 +47,10 @@ describe("task-workspace core host independence", () => {
     const taskRootPolicy = /AGENT_TASK_ROOT|process\.env/;
     // index.ts (extension wiring) and render.ts (TUI card rendering) are
     // host-facing by design: importing the pi SDK is their job, like every
-    // other extension's render.ts. The host-free invariant covers the core
-    // modules only.
-    const hostFacing = new Set(["index.ts", "render.ts"]);
+    // other extension's render.ts. cli.ts is the second binding (Claude
+    // Code) and bootstrap-config.ts the binding-owned package list both
+    // bindings share. The host-free invariant covers the core modules only.
+    const hostFacing = new Set(["index.ts", "render.ts", "cli.ts", "bootstrap-config.ts"]);
     for (const file of readdirSync(CORE_DIR).filter(
       (f) => f.endsWith(".ts") && !f.endsWith(".test.ts") && !hostFacing.has(f),
     )) {
@@ -67,6 +68,14 @@ describe("task-workspace core host independence", () => {
         taskRootPolicy.test(src),
         `${file} must not reference host task-root configuration`,
       ).toBe(false);
+    }
+  });
+
+  test("the CLI binding runs without pi installed: no pi SDK imports in its module graph", () => {
+    for (const file of ["cli.ts", "bootstrap-config.ts"]) {
+      const src = readFileSync(join(CORE_DIR, file), "utf8");
+      expect(/from\s+["']@earendil-works|require\(["']@earendil-works|from\s+["']typebox/.test(src), file).toBe(false);
+      expect(/from\s+["']\.\/(index|render)["']/.test(src), file).toBe(false);
     }
   });
 

@@ -6,8 +6,10 @@
 во все hosts сразу (ADR-0007).
 
 Pi — основной runtime: только в нём есть extensions (task-workspace,
-subagents, …). Claude Code получает skills и правила; skills, которым нужен
-Pi runtime, помечены `metadata.hosts: pi` и в Claude Code не ставятся.
+subagents, …). Claude Code получает skills, правила, команды `/spec` и `/dev`
+и plugin `agent-kit`: тот же task-workspace core как CLI `agent-kit task`
+плюс hooks git guard'а и write guard'а (A9). Skill, которому нужен только Pi,
+помечается `metadata.hosts: pi` и в Claude Code не ставится.
 
 ## Структура
 
@@ -26,6 +28,9 @@ rules/AGENTS.md          канонический глобальный instructi
                            ~/.pi/agent/AGENTS.md и ~/.claude/rules/agent-kit.md
 rules/claude-code.md     mapping Pi-терминов на Claude Code:
                            ~/.claude/rules/agent-kit-claude-code.md
+claude-code/plugin/      Claude Code plugin (hooks + bin/agent-kit),
+                           ставится ссылкой ~/.claude/skills/agent-kit
+claude-code/commands/    /spec и /dev для Claude Code
 bin/agent-kit            инсталлер (install / uninstall / status)
 tests/                   verification:
                            installer/ — ownership-семантика инсталлера
@@ -54,6 +59,34 @@ tests/                   verification:
 
 Промпты задают mode и связывают существующие capabilities (`skill://git-task`,
 `skill://implementation`, …); вся policy живет в skills/references.
+
+## Claude Code host
+
+В Claude Code тот же task workflow держится на трёх механизмах, все поверх
+общего ядра `extensions/task-workspace` (Pi extension — лишь другая обёртка
+над ним):
+
+- **CLI** `agent-kit task <status|ensure|remove-lane|teardown|commit> '<json>'`
+  (`extensions/task-workspace/cli.ts`, нужен `bun`). Параметры — ровно
+  параметры Pi-инструментов, статусы те же, вывод — один JSON на stdout; код
+  выхода 0 — meaningful status, 1 — ошибка инструмента, 2 — usage.
+- **Plugin** `claude-code/plugin`, установленный ссылкой
+  `~/.claude/skills/agent-kit` (skills-directory plugin, грузится на месте,
+  `settings.json` не трогается): `SessionStart` через `CLAUDE_ENV_FILE` ставит
+  тот же git PATH shim первым в PATH всех Bash-команд сессии и субагентов,
+  `PreToolUse` отклоняет `Edit`/`Write` tracked-файлов primary checkout'а
+  репозитория с managed worktrees; `bin/agent-kit` попадает в PATH Bash.
+  Без `bun` или без plugin'а guard fail-open. `uninstall` снимает ссылку —
+  hooks уходят вместе с ней.
+- **RepoOwner** — Agent-tool субагент с managed worktree как единственным
+  домом (абсолютные пути); Main проверяет итог объективными git-фактами
+  `agent-kit task status`, вопрос владельца продолжает через `SendMessage`.
+  Контракты — `skills/git-task/references/claude-code/`,
+  `skills/git-commit/references/claude-code/`.
+
+Последствие: после `install` Claude Code-сессия в primary checkout'е
+репозитория с managed worktrees (включая сам agent-kit) не может править
+tracked-файлы и мутировать git там — как в Pi.
 
 ## Semantic policy vs deterministic mechanics
 
@@ -145,7 +178,8 @@ agent-kit uninstall
 ```
 
 `agent-kit update` — одна команда обновления: `git pull --ff-only` в активном
-checkout'е и затем обычный reconcile. Diverged checkout или отсутствие
+checkout'е и затем обычный reconcile — уже кодом инсталлера из обновлённого
+checkout'а (новые hosts применяются тем же запуском). Diverged checkout или отсутствие
 upstream ссылки не ломают: pull отказывает, инсталлер не запускается.
 Это терминальная команда: из pi-сессий мутирующий git в primary checkout может
 блокировать bash git guard — и это осознанно.
@@ -161,9 +195,11 @@ pi (~/.pi/agent, override PI_AGENT_DIR):
   rules/AGENTS.md -> AGENTS.md           (если файл существует)
 
 claude-code (~/.claude, override CLAUDE_CONFIG_DIR):
-  skills/*             -> skills/*       (кроме metadata.hosts без claude-code)
-  rules/AGENTS.md      -> rules/agent-kit.md
-  rules/claude-code.md -> rules/agent-kit-claude-code.md
+  skills/*               -> skills/*     (кроме metadata.hosts без claude-code)
+  rules/AGENTS.md        -> rules/agent-kit.md
+  rules/claude-code.md   -> rules/agent-kit-claude-code.md
+  claude-code/plugin     -> skills/agent-kit
+  claude-code/commands/* -> commands/*
 ```
 
 Установка — это symlinks из корня host в этот checkout, никогда
@@ -249,7 +285,7 @@ ln -s ~/.local/lib/node_modules/@earendil-works/pi-coding-agent/node_modules/@ea
 ## Тесты
 
 ```sh
-tests/installer/run.sh    # 25 сценариев ownership-семантики и legacy-миграции
+tests/installer/run.sh    # 27 сценариев ownership-семантики и legacy-миграции
 tests/layout/run.sh       # retired-архитектура (shared/, runtimes/, markers,
                           # runtime-ветки в инсталлере) не возвращается
 tests/skills/run.sh       # SKILL.md, references, skill://-цели, stale-язык

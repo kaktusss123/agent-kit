@@ -1,0 +1,5 @@
+{
+  "name": "agent-kit",
+  "description": "agent-kit task-workspace runtime for Claude Code: git mutation guard (PATH shim armed at session start), primary-checkout write guard, and the agent-kit CLI on the Bash PATH.",
+  "author": { "name": "agent-kit" }
+}

@@ -32,7 +32,7 @@ Create one standalone HTML5 document that is easy to scan, easy to share, and vi
 
 A finished report is upload-ready but not published. Publication is a separate public side effect: a prior explicit ask counts as approval; otherwise ask before any upload and make the exposure clear.
 
-Only after approval: read `references/publishing.md` and run the bundled `scripts/publish-report.sh` (pass `--project <name>` when the project is obvious). Never publish secrets, credentials, private source excerpts, internal-only URLs, or personal data. If the script says the upload succeeded but public verification failed, report both the failure and the candidate URL; do not retry blindly. Do not delete the local report automatically after publication.
+Only after approval: read `references/publishing.md` and run the bundled `scripts/publish-report.sh` by its absolute path under this skill's directory (the directory holding this SKILL.md, not the current working directory) (pass `--project <name>` when the project is obvious). Never publish secrets, credentials, private source excerpts, internal-only URLs, or personal data. If the script says the upload succeeded but public verification failed, report both the failure and the candidate URL; do not retry blindly. Do not delete the local report automatically after publication.
 
 ## Safety and portability
 

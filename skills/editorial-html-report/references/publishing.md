@@ -33,10 +33,10 @@ Cloud.ru requires the S3 API endpoint `https://s3.cloud.ru`; the publisher passe
 
 ## Publish
 
-Run the bundled script from the skill package:
+Run the bundled script from the skill package. `scripts/` is relative to the skill directory (the directory holding `SKILL.md`), not to the current working directory, so call it by absolute path:
 
 ```bash
-bash scripts/publish-report.sh --project zavod /path/to/report.html
+bash <skill-dir>/scripts/publish-report.sh --project zavod /path/to/report.html
 ```
 
 `--project` is optional and defaults to `reports`. The script:

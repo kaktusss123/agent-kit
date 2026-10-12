@@ -773,5 +773,61 @@ run_install
 	grep -q "skills/alpha" "$HOME/.local/state/agent-kit/links-claude-code.tsv" || fail "adopted link is owned"
 pass
 
+# ==============================================================================
+# T24: update reconciles with the installer the pull brought, not the one
+# that was running before it (A9 W0)
+
+new_test "T24 update runs the freshly pulled installer"
+make_kit "$SANDBOX/seed"
+git -C "$SANDBOX/seed" init -q -b main
+git_commit_all "$SANDBOX/seed" init
+git init --bare -q -b main "$SANDBOX/origin.git"
+git -C "$SANDBOX/seed" push -q "$SANDBOX/origin.git" main
+git clone -q "$SANDBOX/origin.git" "$SANDBOX/kit"
+run_install_from "$SANDBOX/kit"
+	assert_eq "$RC" 0 "install from cloned checkout"
+# upstream ships a changed installer: its install announces itself
+awk '{ print } /^cmd_install\(\) \{$/ { print "\tmsg \"fresh installer reconcile\"" }' \
+	"$SANDBOX/seed/bin/agent-kit" > "$SANDBOX/agent-kit.new"
+cat "$SANDBOX/agent-kit.new" > "$SANDBOX/seed/bin/agent-kit"
+git_commit_all "$SANDBOX/seed" "change installer"
+git -C "$SANDBOX/seed" push -q "$SANDBOX/origin.git" main
+run_update
+	assert_eq "$RC" 0 "update succeeds"
+	case "$OUT" in
+	*"fresh installer reconcile"*) : ;;
+	*) fail "reconcile must run the pulled installer, got: $OUT" ;;
+	esac
+pass
+
+# ==============================================================================
+# T25: the claude-code host gets the agent-kit plugin (skills-directory
+# plugin, linked as one directory) and the commands, with ownership
+
+new_test "T25 claude-code plugin and commands"
+use_path_empty
+make_kit "$SANDBOX/kit"
+	CLAUDE_ROOT="$HOME/.claude"
+	CLAUDE_STATE="$HOME/.local/state/agent-kit/links-claude-code.tsv"
+	mkdir -p "$SANDBOX/kit/claude-code/plugin/.claude-plugin" "$SANDBOX/kit/claude-code/commands"
+	printf '{"name":"agent-kit"}\n' > "$SANDBOX/kit/claude-code/plugin/.claude-plugin/plugin.json"
+	printf 'spec\n' > "$SANDBOX/kit/claude-code/commands/spec.md"
+	printf 'dev\n' > "$SANDBOX/kit/claude-code/commands/dev.md"
+	mkdir -p "$CLAUDE_ROOT/commands"
+	printf 'mine\n' > "$CLAUDE_ROOT/commands/dev.md"
+run_install
+	assert_eq "$RC" 1 "user command file is a conflict"
+	assert_link "$CLAUDE_ROOT/skills/agent-kit" "$SANDBOX/kit/claude-code/plugin" "plugin dir linked under skills/"
+	assert_link "$CLAUDE_ROOT/commands/spec.md" "$SANDBOX/kit/claude-code/commands/spec.md" "spec command linked"
+	assert_eq "$(cat "$CLAUDE_ROOT/commands/dev.md")" "mine" "user command untouched"
+	awk -F "\t" '$1 == "skills/agent-kit"' "$CLAUDE_STATE" | grep -q . || fail "plugin link owned"
+	assert_no_file "$PI_ROOT/skills/agent-kit" "plugin stays out of pi"
+	assert_no_file "$PI_ROOT/commands" "commands stay out of pi"
+run_uninstall
+	assert_no_file "$CLAUDE_ROOT/skills/agent-kit" "plugin link removed on uninstall"
+	assert_no_file "$CLAUDE_ROOT/commands/spec.md" "command link removed on uninstall"
+	assert_eq "$(cat "$CLAUDE_ROOT/commands/dev.md")" "mine" "user command survives uninstall"
+pass
+
 printf '\n%d passed, %d failed\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]
