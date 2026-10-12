@@ -9,4 +9,5 @@ agent-kit skills and AGENTS.md are written for both Pi and Claude Code; Pi tool 
 - A RepoOwner is an Agent-tool subagent rooted by explicit path in its managed worktree; there is no `subagent` workspace spawn, readiness handshake, or enforced deadline. Main reads git facts with `agent-kit task status`.
 - `/spec` and `/dev` are Claude Code commands with the same workflow as in Pi.
 - If `agent-kit` is not on the Bash PATH (plugin not loaded, `bun` missing), the runtime is unavailable: report it instead of emulating the runtime by hand.
+- Sandboxed Bash: when Bash runs in a sandbox, operations that need the network or credentials outside it — `git push`/`fetch` over SSH, `gh`, `glab` — fail there. Do not attempt them, retry them, or route around the sandbox. Finish everything local (commit, PR/MR body file), then hand the user one combined `! <command>` that runs the remaining steps. Without a sandbox, run them directly.
 - Always: never invent a ticket or `base_ref`; never commit with `--no-verify`.
