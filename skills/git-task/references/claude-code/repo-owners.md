@@ -8,7 +8,8 @@ A RepoOwner is an Agent-tool subagent (`general-purpose`, or a custom agent with
 
 - the absolute managed worktree path as the owner's only home: every file path absolute under it, every Bash command run as `cd <worktree> && …` (a subagent's Bash cwd is not guaranteed to persist between calls);
 - intent, the `SPEC.md` path when it exists, the worker report contract from `references/repo-owners.md`, and the instruction to change only this repository;
-- commits only through `agent-kit task commit` (`skills/git-commit/references/claude-code/checkpoint.md`).
+- commits only through `agent-kit task commit` (`skills/git-commit/references/claude-code/checkpoint.md`);
+- when the session is unguarded, the manual routing rules from `references/claude-code/task-workspace.md` ("Without the guard") copied into the assignment verbatim — the owner does not load this reference by itself.
 
 Do not use `isolation: worktree` for owners: it creates a separate Claude-managed worktree on its own branch instead of the task worktree. Model choice: omit the model unless the user chose one; `modelClass=smart` for an independent reviewer means the strongest available model.
 
