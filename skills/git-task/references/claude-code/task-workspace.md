@@ -28,6 +28,19 @@ The agent-kit plugin applies the same policy as Pi through Claude Code hooks:
 
 A guard denial is a routing failure: address the managed worktree instead; never repeat the mutation through another tool, `cp`, `sed`, Python, or another agent.
 
+## Without the guard
+
+Managed Claude Code settings can forbid non-managed hooks (`allowManagedHooksOnly`); then the plugin loads but its hooks never run. Check once per session: `[ -n "$AGENT_KIT_POLICY" ] && echo guarded || echo unguarded`. When unguarded, the routing rules still hold — only the mechanical enforcement is gone, so apply them yourself (and put them in every owner assignment):
+
+- Before every `Edit`/`Write`/`MultiEdit`/`NotebookEdit`, the target is an absolute path inside the managed worktree. A primary-checkout path of a repository with managed worktrees is a routing error even when nothing stops it — correct the path, do not write there.
+- Every mutating git command is `git -C <managed worktree> …`; never a bare `git` that depends on the Bash cwd, never `--git-dir`/`--work-tree`/`GIT_DIR`.
+- Commits go only through `agent-kit task commit`: it still refuses primary-checkout commits and secret-like paths and always runs hooks. Never raw `git commit`, never `--no-verify`.
+- Before reporting work as done, `agent-kit task status` and `git -C <primary checkout> status --short`: the primary checkout of the task repository has no new changes from this task.
+
+## Sandboxed Bash
+
+When Bash runs in a sandbox that cannot write the task root (`ensure`/`remove-lane`/`teardown` fail with `EPERM`/`Operation not permitted` on a path under it), do not retry, relocate the task root, or create worktrees by hand. Hand the user the exact `! agent-kit task <op> '<json>'` command, then continue from its JSON output. Status, commit, and work inside an existing worktree are affected only if the sandbox forbids that worktree too; report which path was refused.
+
 ## Mutation in subagents
 
 `agent-kit task status` / `ensure` are Main's calls. Repository mutation inside the managed worktree is done by RepoOwner subagents per `references/claude-code/repo-owners.md`.
