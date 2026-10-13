@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 #
-# Ownership-semantics tests for bin/agent-kit (Pi-only installer).
+# Ownership-semantics tests for bin/agent-kit (installer for the pi and
+# claude-code hosts).
 #
 # Every test runs in a fresh sandbox: fake $HOME, and a minimal synthetic
 # agent-kit tree. Nothing outside the sandbox is read or written (the real
@@ -151,7 +152,7 @@ outside_skill() { # a real directory outside any checkout
 
 # ==============================================================================
 # T1: fresh install links every category, records ownership, bootstraps the
-# launcher, and rejects runtime-style arguments
+# launcher, and rejects retired runtime names as host arguments
 
 new_test "T1 fresh install"
 use_path_empty
@@ -172,8 +173,6 @@ run_install
 	*"wants 6 entity"*) : ;;
 	*) fail "bootstrapped launcher must resolve its own checkout, got: $OUT" ;;
 	esac
-	run_install pi
-	assert_eq "$RC" 2 "runtime-style argument rejected"
 	run_install omp
 	assert_eq "$RC" 2 "retired runtime name rejected as argument"
 run_uninstall
@@ -717,10 +716,10 @@ run_update
 pass
 
 # ==============================================================================
-# T22: the claude-code host gets skills (minus metadata.hosts exclusions) and
+# T24: the claude-code host gets skills (minus metadata.hosts exclusions) and
 # rules, with its own ownership state
 
-new_test "T22 claude-code host"
+new_test "T24 claude-code host"
 use_path_empty
 make_kit "$SANDBOX/kit"
 	CLAUDE_ROOT="$HOME/.claude"
@@ -754,10 +753,10 @@ run_uninstall
 pass
 
 # ==============================================================================
-# T23: CLAUDE_CONFIG_DIR relocates the claude-code root; a pre-existing link
+# T25: CLAUDE_CONFIG_DIR relocates the claude-code root; a pre-existing link
 # that already points at the checkout is adopted, a foreign file is a conflict
 
-new_test "T23 claude-code root override and adoption"
+new_test "T25 claude-code root override and adoption"
 use_path_empty
 make_kit "$SANDBOX/kit"
 	export CLAUDE_CONFIG_DIR="$SANDBOX/claude conf"
@@ -774,10 +773,10 @@ run_install
 pass
 
 # ==============================================================================
-# T24: update reconciles with the installer the pull brought, not the one
+# T26: update reconciles with the installer the pull brought, not the one
 # that was running before it (A9 W0)
 
-new_test "T24 update runs the freshly pulled installer"
+new_test "T26 update runs the freshly pulled installer"
 make_kit "$SANDBOX/seed"
 git -C "$SANDBOX/seed" init -q -b main
 git_commit_all "$SANDBOX/seed" init
@@ -801,10 +800,10 @@ run_update
 pass
 
 # ==============================================================================
-# T25: the claude-code host gets the agent-kit plugin (skills-directory
+# T27: the claude-code host gets the agent-kit plugin (skills-directory
 # plugin, linked as one directory) and the commands, with ownership
 
-new_test "T25 claude-code plugin and commands"
+new_test "T27 claude-code plugin and commands"
 use_path_empty
 make_kit "$SANDBOX/kit"
 	CLAUDE_ROOT="$HOME/.claude"
@@ -827,6 +826,208 @@ run_uninstall
 	assert_no_file "$CLAUDE_ROOT/skills/agent-kit" "plugin link removed on uninstall"
 	assert_no_file "$CLAUDE_ROOT/commands/spec.md" "command link removed on uninstall"
 	assert_eq "$(cat "$CLAUDE_ROOT/commands/dev.md")" "mine" "user command survives uninstall"
+pass
+
+# ==============================================================================
+# Host selection: install/uninstall take host names; the selection is
+# remembered in $XDG_STATE_HOME/agent-kit/hosts and reused by bare install
+# and update.
+
+use_selection_paths() {
+	CLAUDE_ROOT="$HOME/.claude"
+	CLAUDE_STATE="$HOME/.local/state/agent-kit/links-claude-code.tsv"
+	SELECTION="$HOME/.local/state/agent-kit/hosts"
+}
+
+# ==============================================================================
+# T28: install claude-code on a fresh machine links only Claude Code and
+# records the selection; a following bare install keeps it
+
+new_test "T28 install a single host"
+use_path_empty
+make_kit "$SANDBOX/kit"
+use_selection_paths
+run_install claude-code
+	assert_eq "$RC" 0 "exit code"
+	assert_link "$CLAUDE_ROOT/skills/alpha" "$SANDBOX/kit/skills/alpha" "claude skill linked"
+	assert_no_file "$PI_ROOT" "pi root untouched"
+	assert_eq "$(state_entries)" 0 "no pi ownership recorded"
+	assert_eq "$(cat "$SELECTION")" "claude-code" "selection records claude-code"
+	assert_link "$HOME/.local/bin/agent-kit" "$SANDBOX/kit/bin/agent-kit" "launcher bootstrapped"
+run_install
+	assert_eq "$RC" 0 "bare install"
+	assert_no_file "$PI_ROOT" "bare install keeps pi unselected"
+	assert_link "$CLAUDE_ROOT/skills/alpha" "$SANDBOX/kit/skills/alpha" "claude link kept"
+	assert_eq "$(cat "$SELECTION")" "claude-code" "selection unchanged"
+pass
+
+# ==============================================================================
+# T29: install pi adds Pi to the selection; uninstall pi removes only Pi's
+# links and its selection entry
+
+new_test "T29 add and remove a host"
+use_path_empty
+make_kit "$SANDBOX/kit"
+use_selection_paths
+run_install claude-code
+	assert_eq "$RC" 0 "claude-code install"
+run_install pi
+	assert_eq "$RC" 0 "pi install"
+	assert_link "$PI_ROOT/skills/alpha" "$SANDBOX/kit/skills/alpha" "pi skill linked"
+	assert_link "$CLAUDE_ROOT/skills/alpha" "$SANDBOX/kit/skills/alpha" "claude skill still linked"
+	assert_eq "$(sort "$SELECTION" | tr '\n' ' ')" "claude-code pi " "selection holds both hosts"
+run_uninstall pi
+	assert_eq "$RC" 0 "uninstall pi"
+	assert_no_file "$PI_ROOT/skills/alpha" "pi link removed"
+	assert_eq "$(state_entries)" 0 "pi ownership cleared"
+	assert_link "$CLAUDE_ROOT/skills/alpha" "$SANDBOX/kit/skills/alpha" "claude link untouched"
+	assert_eq "$(cat "$SELECTION")" "claude-code" "pi dropped from the selection"
+run_install
+	assert_no_file "$PI_ROOT/skills/alpha" "bare install does not bring pi back"
+pass
+
+# ==============================================================================
+# T30: bare uninstall removes every host's links and the selection file; an
+# emptied selection behaves like a fresh machine on the next bare install
+
+new_test "T30 uninstall everything"
+use_path_empty
+make_kit "$SANDBOX/kit"
+use_selection_paths
+run_install pi
+	assert_eq "$RC" 0 "pi install"
+run_uninstall pi
+	assert_eq "$(grep -c . "$SELECTION" || true)" 0 "selection emptied, file kept"
+run_install
+	assert_link "$PI_ROOT/skills/alpha" "$SANDBOX/kit/skills/alpha" "empty selection: pi installed"
+	assert_link "$CLAUDE_ROOT/skills/alpha" "$SANDBOX/kit/skills/alpha" "empty selection: claude installed"
+run_uninstall
+	assert_eq "$RC" 0 "bare uninstall"
+	assert_no_file "$PI_ROOT/skills/alpha" "pi link removed"
+	assert_no_file "$CLAUDE_ROOT/skills/alpha" "claude link removed"
+	assert_no_file "$SELECTION" "selection file removed"
+pass
+
+# ==============================================================================
+# T31: an unknown host name fails with exit 2 before anything changes
+
+new_test "T31 unknown host"
+use_path_empty
+make_kit "$SANDBOX/kit"
+use_selection_paths
+run_install claude-code
+	assert_eq "$RC" 0 "claude-code install"
+	SEL_BEFORE="$(cat "$SELECTION")"
+	CLAUDE_STATE_BEFORE="$(cat "$CLAUDE_STATE")"
+run_install pi bogus
+	assert_eq "$RC" 2 "install with an unknown host"
+	assert_no_file "$PI_ROOT" "valid host in the same call not installed"
+	assert_eq "$(cat "$SELECTION")" "$SEL_BEFORE" "selection unchanged"
+run_install "pi claude-code"
+	assert_eq "$RC" 2 "one argument naming two hosts is not a host"
+	assert_no_file "$PI_ROOT" "pi still not installed"
+run_uninstall claude-code bogus
+	assert_eq "$RC" 2 "uninstall with an unknown host"
+	assert_link "$CLAUDE_ROOT/skills/alpha" "$SANDBOX/kit/skills/alpha" "claude link kept"
+	assert_eq "$(cat "$CLAUDE_STATE")" "$CLAUDE_STATE_BEFORE" "claude state unchanged"
+	assert_eq "$(cat "$SELECTION")" "$SEL_BEFORE" "selection still unchanged"
+	case "$OUT" in
+	*"unknown host"*) : ;;
+	*) fail "should name the unknown host, got: $OUT" ;;
+	esac
+pass
+
+# ==============================================================================
+# T32: an install made before host selection existed (both link state files,
+# no selection file) keeps both hosts on a bare install; a link state file
+# without valid rows does not count as selected
+
+new_test "T32 legacy install without a selection file"
+use_path_empty
+make_kit "$SANDBOX/kit"
+use_selection_paths
+run_install
+	assert_eq "$RC" 0 "base install"
+	rm "$SELECTION"
+run_install
+	assert_eq "$RC" 0 "bare install"
+	assert_link "$PI_ROOT/skills/alpha" "$SANDBOX/kit/skills/alpha" "pi kept"
+	assert_link "$CLAUDE_ROOT/skills/alpha" "$SANDBOX/kit/skills/alpha" "claude kept"
+	assert_eq "$(sort "$SELECTION" | tr '\n' ' ')" "claude-code pi " "derived selection recorded"
+	# only claude-code has owned links; pi's state holds garbage
+	rm "$SELECTION"
+	rm -rf "$PI_ROOT"
+	printf 'garbage line without tabs\n' > "$STATE"
+run_install
+	assert_eq "$RC" 0 "bare install with claude-only legacy state"
+	assert_no_file "$PI_ROOT/skills/alpha" "pi not derived from invalid rows"
+	assert_eq "$(cat "$SELECTION")" "claude-code" "only claude-code derived"
+pass
+
+# ==============================================================================
+# T33: update keeps the recorded selection
+
+new_test "T33 update honors the selection"
+make_kit "$SANDBOX/seed"
+git -C "$SANDBOX/seed" init -q -b main
+git_commit_all "$SANDBOX/seed" init
+git init --bare -q -b main "$SANDBOX/origin.git"
+git -C "$SANDBOX/seed" push -q "$SANDBOX/origin.git" main
+git clone -q "$SANDBOX/origin.git" "$SANDBOX/kit"
+use_selection_paths
+run_install claude-code
+	assert_eq "$RC" 0 "claude-code install"
+mkdir -p "$SANDBOX/seed/skills/gamma"
+echo "# gamma" > "$SANDBOX/seed/skills/gamma/SKILL.md"
+git_commit_all "$SANDBOX/seed" "add gamma"
+git -C "$SANDBOX/seed" push -q "$SANDBOX/origin.git" main
+run_update
+	assert_eq "$RC" 0 "update succeeds"
+	assert_link "$CLAUDE_ROOT/skills/gamma" "$SANDBOX/kit/skills/gamma" "new entity linked into claude"
+	assert_no_file "$PI_ROOT" "update keeps pi unselected"
+	assert_eq "$(cat "$SELECTION")" "claude-code" "selection unchanged"
+pass
+
+# ==============================================================================
+# T34: status reports where the selection comes from and marks unselected
+# hosts; invalid selection lines are ignored with a warning
+
+new_test "T34 status reports the selection"
+use_path_empty
+make_kit "$SANDBOX/kit"
+use_selection_paths
+run_status() {
+	if OUT="$(AGENT_KIT_ROOT="$SANDBOX/kit" "$SANDBOX/kit/bin/agent-kit" status 2>&1)"; then RC=0; else RC=$?; fi
+	[ "$VERBOSE" = 1 ] && printf '%s\n' "$OUT"
+	return 0
+}
+run_status
+	case "$OUT" in
+	*"hosts: pi claude-code (default"*) : ;;
+	*) fail "fresh status should report the default selection, got: $OUT" ;;
+	esac
+run_install claude-code
+	printf 'omp\n' >> "$SELECTION"
+run_status
+	assert_eq "$RC" 0 "status exit code"
+	case "$OUT" in
+	*"hosts: claude-code (recorded"*) : ;;
+	*) fail "status should report the recorded selection, got: $OUT" ;;
+	esac
+	case "$OUT" in
+	*"pi root: $PI_ROOT (not selected)"*) : ;;
+	*) fail "status should mark pi as not selected, got: $OUT" ;;
+	esac
+	case "$OUT" in
+	*"ignoring invalid host selection line: omp"*) : ;;
+	*) fail "invalid selection line should be reported, got: $OUT" ;;
+	esac
+	rm "$SELECTION"
+run_status
+	case "$OUT" in
+	*"hosts: claude-code (derived"*) : ;;
+	*) fail "status should report the derived selection, got: $OUT" ;;
+	esac
 pass
 
 printf '\n%d passed, %d failed\n' "$PASS" "$FAIL"

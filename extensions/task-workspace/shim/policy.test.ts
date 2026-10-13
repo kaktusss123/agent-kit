@@ -73,6 +73,27 @@ describe("policy: verdict corpus on the primary checkout (managed worktrees exis
     }
   });
 
+  test("inspection subcommands without a mutating mode pass", () => {
+    for (const argv of [
+      ["check-ignore", "-v", "node_modules"],
+      ["check-attr", "-a", "README.md"],
+      ["merge-base", "HEAD", "main"],
+      ["merge-base", "--fork-point", "main"],
+      ["rev-list", "--count", "HEAD"],
+      ["blame", "README.md"],
+      ["shortlog", "-sn", "HEAD"],
+      ["name-rev", "HEAD"],
+    ]) {
+      const verdict = decide(fx.primary, argv);
+      expect(verdict.verdict, argv.join(" ")).toBe("ALLOW");
+    }
+  });
+
+  test("grep stays ambiguous → fail closed (-O runs an arbitrary pager command)", () => {
+    expect(decide(fx.primary, ["grep", "-n", "TODO"]).verdict).toBe("BLOCK");
+    expect(decide(fx.primary, ["grep", "-Ovim", "TODO"]).verdict).toBe("BLOCK");
+  });
+
   test("push is an external side effect: allowed", () => {
     expect(decide(fx.primary, ["push", "origin", "main"]).verdict).toBe("ALLOW");
     expect(decide(fx.primary, ["push", "--force", "origin", "main"]).verdict).toBe(

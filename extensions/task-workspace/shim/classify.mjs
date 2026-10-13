@@ -24,15 +24,29 @@ export const GIT_VALUE_FLAGS = {
   "--super-prefix": true,
 };
 
+/**
+ * Subcommands that pass regardless of their arguments. Only subcommands
+ * with NO mutating mode belong here (no write/delete flag, no option that
+ * runs an arbitrary program); anything else stays unlisted and falls into
+ * `ambiguous` (fail closed). `grep` is deliberately absent: its
+ * `-O/--open-files-in-pager` runs an arbitrary command.
+ */
 export const READ_ONLY_GIT_SUBCOMMANDS = {
+  blame: true,
   "cat-file": true,
+  "check-attr": true,
+  "check-ignore": true,
   describe: true,
   diff: true,
   "for-each-ref": true,
   log: true,
   "ls-files": true,
   "ls-tree": true,
+  "merge-base": true,
+  "name-rev": true,
+  "rev-list": true,
   "rev-parse": true,
+  shortlog: true,
   show: true,
   "show-ref": true,
   status: true,

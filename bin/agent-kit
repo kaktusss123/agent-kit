@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
 #
-# agent-kit — install the agent framework assets into every supported host.
+# agent-kit — install the agent framework assets into the selected hosts.
 #
-# One install links the same checkout into each host (ADR-0007):
+# One install links the same checkout into each selected host (ADR-0007,
+# host selection: ADR-0009):
 #
 #   pi (root $PI_AGENT_DIR, default ~/.pi/agent):
 #     skills/*        -> skills/*
@@ -26,11 +27,23 @@
 #
 # Ownership is tracked per host in a local state file
 # ($XDG_STATE_HOME/agent-kit/links.tsv for pi, links-<host>.tsv for other
-# hosts; one "<dest-rel>\t<source>" per line, relative to the host root). Only paths recorded there — and only while the target still
-# points where agent-kit last linked it — are ever replaced or removed.
+# hosts; one "<dest-rel>\t<source>" per line, relative to the host root).
+# Only paths recorded there — and only while the target still points where
+# agent-kit last linked it — are ever replaced or removed.
 # Everything else in the host directories (your own skills, other tools'
 # links, plain files) is left alone and reported as a conflict if the
 # repository wants its place.
+#
+# Host selection: not every machine needs every host. The selected hosts are
+# recorded in $XDG_STATE_HOME/agent-kit/hosts (one host name per line).
+# Without that file (installs made before host selection existed) the
+# selection is derived from the link state: every host whose state file
+# holds at least one valid row. "install <host>..." adds hosts to the
+# selection; a bare install or update reconciles exactly the selected
+# hosts. An empty selection — a fresh machine, or one whose hosts were all
+# removed with "uninstall <host>..." — means "nothing chosen yet", so a bare
+# install then installs every host. Links of unselected hosts are never
+# touched by install or update.
 #
 # Re-running install from another checkout or worktree repoints the managed
 # links to that checkout — the previous target is never modified.
@@ -43,11 +56,15 @@
 # released, never deleted. Retired runtimes are never install targets.
 #
 # Usage:
-#   agent-kit install
-#   agent-kit update
-#   agent-kit uninstall
+#   agent-kit install [<host>...]    reconcile the selected hosts; named
+#                                    hosts are added to the selection
+#   agent-kit update                 git pull --ff-only, then a bare install
+#   agent-kit uninstall [<host>...]  remove the named hosts' links and drop
+#                                    them from the selection; without hosts
+#                                    remove every host and the selection
 #   agent-kit status
 #
+# Hosts: pi, claude-code.
 # Root overrides: PI_AGENT_DIR (default ~/.pi/agent),
 # CLAUDE_CONFIG_DIR (default ~/.claude).
 # AGENT_KIT_ROOT roots the installer at a different checkout (tests).
@@ -77,6 +94,7 @@ STATE_HOME="${XDG_STATE_HOME:-$HOME/.local/state}"
 PI_STATE_FILE="$STATE_HOME/agent-kit/links.tsv"
 STATE_FILE="$PI_STATE_FILE"
 CMD_STATE_FILE="$STATE_HOME/agent-kit/command.tsv"
+SELECTION_FILE="$STATE_HOME/agent-kit/hosts"
 
 TAB="$(printf '\t')"
 PI_ROOT="${PI_AGENT_DIR:-$HOME/.pi/agent}"
@@ -317,6 +335,78 @@ state_mentions() { # <dest-rel> — exact-field check: does the state contain th
 	printf '%s' "$STATE_OWN" | awk -F '\t' -v r="$1" '$1 == r { found = 1 } END { exit !found }'
 }
 
+# --- host selection ----------------------------------------------------------------
+#
+# Host lists are space-separated and always kept in $HOSTS order, so the
+# selection file content does not depend on argument order or duplicates.
+
+is_host() { # <name> — exactly one known host name
+	local h
+	for h in $HOSTS; do
+		[ "$1" = "$h" ] && return 0
+	done
+	return 1
+}
+
+validate_hosts() { # <name>... — dies (exit 2) on the first unknown name, before any change
+	local h
+	for h in "$@"; do
+		is_host "$h" || die "unknown host: '$h' (hosts: $HOSTS)"
+	done
+}
+
+host_list() { # <name>... — the known hosts among the arguments, in $HOSTS order
+	local h out=""
+	for h in $HOSTS; do
+		case " $* " in
+		*" $h "*) out="$out $h" ;;
+		esac
+	done
+	printf '%s' "${out# }"
+}
+
+host_has_links() { # <host> — its link state file holds at least one valid row
+	use_host "$1"
+	state_load 2>/dev/null
+	[ "$(printf '%s' "$STATE_OWN" | line_count)" -gt 0 ]
+}
+
+selection_load() { # sets SELECTION (host list) and SELECTION_SOURCE (recorded|derived)
+	local line h derived=""
+	SELECTION=""
+	if [ -f "$SELECTION_FILE" ]; then
+		SELECTION_SOURCE=recorded
+		while IFS= read -r line || [ -n "$line" ]; do
+			[ -n "$line" ] || continue
+			if is_host "$line"; then
+				SELECTION="$SELECTION $line"
+			else
+				warn "ignoring invalid host selection line: $line"
+			fi
+		done < "$SELECTION_FILE"
+	else
+		# Installs made before host selection existed: every host that already
+		# owns links stays selected.
+		SELECTION_SOURCE=derived
+		for h in $HOSTS; do
+			host_has_links "$h" && derived="$derived $h"
+		done
+		SELECTION="$derived"
+	fi
+	# shellcheck disable=SC2086 # word splitting of the host list is intended
+	SELECTION="$(host_list $SELECTION)"
+}
+
+selection_save() { # <host>... — record exactly these hosts (none: an empty selection)
+	local h
+	mkdir -p "$(dirname "$SELECTION_FILE")"
+	: > "$SELECTION_FILE.tmp"
+	for h in "$@"; do
+		printf '%s\n' "$h" >> "$SELECTION_FILE.tmp"
+	done
+	mv "$SELECTION_FILE.tmp" "$SELECTION_FILE"
+}
+
 # --- install (reconcile) --------------------------------------------------------
 #
 # Link/delete decisions are made only for paths in the ownership state, and
@@ -459,8 +549,8 @@ EOF
 
 # --- status ----------------------------------------------------------------------
 
-status() {
-	local desired total
+status() { # [<note>] — appended to the host line
+	local desired total note="${1:-}"
 	desired="$(entities)"
 	total="$(printf '%s\n' "$desired" | line_count)"
 
@@ -488,7 +578,7 @@ status() {
 $STATE_OWN
 EOF
 
-	printf '  %s root: %s\n' "$HOST" "$ROOT"
+	printf '  %s root: %s%s\n' "$HOST" "$ROOT" "${note:+ ($note)}"
 	printf '    repository wants %s entity(ies)\n' "$total"
 	printf '    state: %s managed — %s up to date, %s relink needed, %s missing, %s redirected\n' \
 		"$managed" "$uptodate" "$stale" "$missing" "$foreign"
@@ -496,10 +586,24 @@ EOF
 }
 
 status_all() {
-	local h
+	local h selected label
+	selection_load
+	selected="$SELECTION"
+	if [ -z "$selected" ]; then
+		selected="$HOSTS"
+		label="default: nothing selected yet, a bare install installs every host"
+	elif [ "$SELECTION_SOURCE" = recorded ]; then
+		label="recorded in $SELECTION_FILE"
+	else
+		label="derived from existing links; recorded on the next install"
+	fi
+	msg "hosts: $selected ($label)"
 	for h in $HOSTS; do
 		use_host "$h"
-		status
+		case " $selected " in
+		*" $h "*) status ;;
+		*)         status "not selected" ;;
+		esac
 	done
 
 	command_state_load
@@ -578,28 +682,60 @@ bootstrap_self() { # own ~/.local/bin/agent-kit via its own ownership record
 
 # --- commands ----------------------------------------------------------------------
 
+# cmd_install [<host>...] — host names are validated by the caller.
 cmd_install() {
-	local rc=0 h
+	local rc=0 h selected
 	use_host pi
 	migrate_legacy_state
+	selection_load
+	# shellcheck disable=SC2086 # word splitting of the host list is intended
+	selected="$(host_list $SELECTION "$@")"
+	# Nothing selected (fresh machine or an emptied selection): every host.
+	[ -n "$selected" ] || selected="$HOSTS"
 	for h in $HOSTS; do
+		case " $selected " in
+		*" $h "*) : ;;
+		*) msg "Skipping $h (not selected; 'agent-kit install $h' adds it)"; continue ;;
+		esac
 		use_host "$h"
 		msg "Installing ($HOST root: $ROOT):"
 		reconcile || rc=1
 	done
+	# shellcheck disable=SC2086
+	selection_save $selected
 	bootstrap_self
 	return "$rc"
 }
 
-cmd_uninstall() {
-	local h
+cmd_uninstall() { # [<host>...] — validated by the caller; none means every host
+	local h targets remaining=""
 	use_host pi
 	migrate_legacy_state
+	# Read the selection before uninstalling: without a selection file it is
+	# derived from the link state that uninstall is about to empty.
+	selection_load
+	if [ $# -eq 0 ]; then targets="$HOSTS"; else targets="$(host_list "$@")"; fi
 	for h in $HOSTS; do
+		case " $targets " in
+		*" $h "*) : ;;
+		*) continue ;;
+		esac
 		use_host "$h"
 		msg "Uninstalling ($HOST root: $ROOT):"
 		uninstall
 	done
+	if [ $# -eq 0 ]; then
+		rm -f "$SELECTION_FILE"
+	else
+		for h in $SELECTION; do
+			case " $targets " in
+			*" $h "*) : ;;
+			*) remaining="$remaining $h" ;;
+			esac
+		done
+		# shellcheck disable=SC2086
+		selection_save $remaining
+	fi
 	return 0
 }
 
@@ -656,14 +792,21 @@ usage() {
 agent-kit — install the personal agent framework into Pi and Claude Code
 
 Usage:
-  agent-kit install     link the checkout into every host:
+  agent-kit install [<host>...]
+                        link the checkout into the selected hosts; named
+                        hosts are added to the selection (default: all):
                         pi          -> ~/.pi/agent (skills, extensions,
                                        prompts, AGENTS.md)
                         claude-code -> ~/.claude (skills, rules/, the
                                        agent-kit plugin, commands/)
   agent-kit update      git pull --ff-only in this checkout, then reconcile
-  agent-kit uninstall   remove owned links from every host
-  agent-kit status      show link state and launcher ownership
+                        the selected hosts
+  agent-kit uninstall [<host>...]
+                        remove owned links of the named hosts and drop them
+                        from the selection; without hosts: every host, and
+                        the selection is cleared
+  agent-kit status      show the host selection, link state and launcher
+                        ownership
   agent-kit task <op>   task-workspace CLI (status, ensure, remove-lane,
                         teardown, commit, hook); JSON in, JSON out
   agent-kit help        this text
@@ -671,7 +814,9 @@ Usage:
 The repository layout is the desired state; entities are symlinked, never
 copied. Install is a reconcile operation: re-running it from another
 checkout or worktree repoints agent-kit's own links to that checkout.
-Links and files agent-kit does not own are never touched. State left by
+Links and files agent-kit does not own are never touched, and neither
+are the links of hosts that are not selected. The selection lives in
+$XDG_STATE_HOME/agent-kit/hosts. State left by
 older multi-runtime versions of agent-kit is migrated once: links
 agent-kit provably owns are cleaned up or repointed, anything else is
 released.
@@ -679,8 +824,8 @@ EOF
 }
 
 case "${1:-}" in
-install)   shift; [ $# -eq 0 ] || die "install always targets every host; '${1:-}' is not a valid argument (see: agent-kit help)"; cmd_install ;;
-uninstall) shift; [ $# -eq 0 ] || die "uninstall always targets every host; '${1:-}' is not a valid argument (see: agent-kit help)"; cmd_uninstall ;;
+install)   shift; validate_hosts "$@"; cmd_install "$@" ;;
+uninstall) shift; validate_hosts "$@"; cmd_uninstall "$@" ;;
 update)    shift; [ $# -eq 0 ] || die "update takes no arguments (see: agent-kit help)"; cmd_update ;;
 status)    shift; [ $# -eq 0 ] || die "status takes no arguments (see: agent-kit help)"; status_all ;;
 task)      shift; cmd_task "$@" ;;

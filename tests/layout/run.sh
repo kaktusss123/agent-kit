@@ -3,8 +3,8 @@
 # Layout regression tests: the retired multi-harness architecture (shared/,
 # runtimes/, bindings, runtime markers) must not reappear. One canonical tree
 # — skills/, extensions/, bin/, tests/, rules/ (+ prompts/ and scripts/ only
-# when a category actually has content) — is linked into every host by the
-# installer (ADR-0007).
+# when a category actually has content) — is linked into every selected host
+# by the installer (ADR-0007, ADR-0009).
 #
 # Exit code: 0 when all checks pass, 1 otherwise.
 set -euo pipefail
@@ -63,8 +63,8 @@ check "installer has retired-runtime knowledge only inside legacy_* functions" \
 	bash -c "! grep -iqE '\bomp\b|opencode|runtimes/' '$REST'"
 check "installer declares a single Pi root" \
 	bash -c "grep -q 'PI_AGENT_DIR:.*/.pi/agent' '$REPO/bin/agent-kit'"
-check "installer always targets every host (no host arguments)" \
-	bash -c "grep -q 'install always targets every host' '$REPO/bin/agent-kit'"
+check "installer host arguments are limited to the known hosts (ADR-0009)" \
+	bash -c "grep -q '^HOSTS=\"pi claude-code\"\$' '$REPO/bin/agent-kit' && grep -q 'validate_hosts \"\$@\"; cmd_install' '$REPO/bin/agent-kit'"
 check "installer declares the claude-code root" \
 	bash -c "grep -q 'CLAUDE_CONFIG_DIR:.*/.claude' '$REPO/bin/agent-kit'"
 rm -f "$REST"
