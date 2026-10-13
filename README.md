@@ -1,573 +1,265 @@
 # agent-kit
 
-Мой личный agent framework для **Pi** (pi-coding-agent) и **Claude Code**.
-Один обычный git-репозиторий: canonical skills, deterministic Pi extensions,
-инсталлер с честной моделью владения ссылками, который ставит один checkout
-во все hosts сразу (ADR-0007).
+Личный агентный фреймворк для Pi (`@earendil-works/pi-coding-agent`)
+и Claude Code. Один git-репозиторий, который ставится в оба host'а
+симлинками и даёт:
 
-Pi — основной runtime: только в нём есть extensions (task-workspace,
-subagents, …). Claude Code получает skills, правила, команды `/spec` и `/dev`
-и plugin `agent-kit`: тот же task-workspace core как CLI `agent-kit task`
-плюс hooks git guard'а и write guard'а (A9). Skill, которому нужен только Pi,
-помечается `metadata.hosts: pi` и в Claude Code не ставится.
+- **skills** — инструкции для агента по спецификации, реализации, ревью,
+  отладке, исследованию и git-дисциплине;
+- **правила** — общий контракт общения и работы с git (`rules/AGENTS.md`);
+- **task-workspace runtime** — детерминированный слой, который ведёт каждую
+  задачу в отдельном управляемом git worktree, не даёт агенту писать в
+  основной checkout и коммитит только явно перечисленные файлы с прогоном
+  hooks;
+- **workflow `/spec` и `/dev`** — спецификация в Main-сессии, реализация
+  субагентами-владельцами репозиториев;
+- **расширения Pi** — субагенты, `ask`, todo, классы моделей, footer,
+  web search и прочее.
 
-## Структура
+Pi — основной host: всё, что требует расширений, живёт там. Claude Code
+получает skills, правила, `/spec` и `/dev`, а task-workspace runtime — в виде
+CLI `agent-kit task` и hooks плагина `agent-kit`.
 
-```
-skills/<name>/           canonical skill packages:
-                           SKILL.md      — semantic policy и judgment
-                           references/   — operating contracts (могут быть
-                                           Pi-specific, это нормально)
-                           scripts/      — только если skill'у реально нужны
-                                           свои скрипты
-extensions/<name>/       Pi extensions: deterministic runtime mechanics
-prompts/                 тонкие Pi prompt templates — workflow entrypoints
-                           /spec и /dev; связывают существующие skills,
-                           а не дублируют их policy
-rules/AGENTS.md          канонический глобальный instructions-файл:
-                           ~/.pi/agent/AGENTS.md и ~/.claude/rules/agent-kit.md
-rules/claude-code.md     mapping Pi-терминов на Claude Code:
-                           ~/.claude/rules/agent-kit-claude-code.md
-claude-code/plugin/      Claude Code plugin (hooks + bin/agent-kit),
-                           ставится ссылкой ~/.claude/skills/agent-kit
-claude-code/commands/    /spec и /dev для Claude Code
-bin/agent-kit            инсталлер (install / uninstall / status)
-tests/                   verification:
-                           installer/ — ownership-семантика инсталлера
-                           layout/    — бывшая multi-harness архитектура
-                                        не возвращается
-                           skills/    — валидация skill-пакетов и промптов
-```
+## Установка
 
-Категория `scripts/` появляется в корне только тогда, когда в ней есть
-реальный контент; пустые директории ради схемы не создаются.
-
-## Workflow entrypoints
-
-`/spec` и `/dev` — тонкие Pi prompt templates (`~/.pi/agent/prompts/`):
-
-- **`/spec`** — Main владеет discovery: разговор с пользователем, product
-  и design решения, синтез evidence, canonical `SPEC.md`. Repository
-  analysis — по состоянию managed task worktree (explicit paths или
-  bounded research subagents с `cwd=<worktree>`), не dirty source
-  checkout. cwd Main-сессии не меняется.
-- **`/dev`** — Main — task controller: intent, решения, оркестрация,
-  review, integration. Мутация репозиториев выполняется RepoOwner'ами
-  (`subagent` op `spawn` с `workspace=<worktree>`, по одному на writable
-  repository). Owner'ы реализуют и верифицируют внутри своих worktrees;
-  Main ревьюит результат и чинит через fresh owner.
-
-Промпты задают mode и связывают существующие capabilities (`skill://git-task`,
-`skill://implementation`, …); вся policy живет в skills/references.
-
-## Claude Code host
-
-В Claude Code тот же task workflow держится на трёх механизмах, все поверх
-общего ядра `extensions/task-workspace` (Pi extension — лишь другая обёртка
-над ним):
-
-- **CLI** `agent-kit task <status|ensure|remove-lane|teardown|commit> '<json>'`
-  (`extensions/task-workspace/cli.ts`, нужен `bun`). Параметры — ровно
-  параметры Pi-инструментов, статусы те же, вывод — один JSON на stdout; код
-  выхода 0 — meaningful status, 1 — ошибка инструмента, 2 — usage.
-- **Plugin** `claude-code/plugin`, установленный ссылкой
-  `~/.claude/skills/agent-kit` (skills-directory plugin, грузится на месте,
-  `settings.json` не трогается): `SessionStart` через `CLAUDE_ENV_FILE` ставит
-  тот же git PATH shim первым в PATH всех Bash-команд сессии и субагентов,
-  `PreToolUse` отклоняет `Edit`/`Write` tracked-файлов primary checkout'а
-  репозитория с managed worktrees; `bin/agent-kit` попадает в PATH Bash.
-  Без `bun` или без plugin'а guard fail-open. `uninstall` снимает ссылку —
-  hooks уходят вместе с ней.
-- **RepoOwner** — Agent-tool субагент с managed worktree как единственным
-  домом (абсолютные пути); Main проверяет итог объективными git-фактами
-  `agent-kit task status`, вопрос владельца продолжает через `SendMessage`.
-  Контракты — `skills/git-task/references/claude-code/`,
-  `skills/git-commit/references/claude-code/`.
-
-Последствие: после `install` Claude Code-сессия в primary checkout'е
-репозитория с managed worktrees (включая сам agent-kit) не может править
-tracked-файлы и мутировать git там — как в Pi.
-
-## Semantic policy vs deterministic mechanics
-
-Разделение сохранено, но это разделение не про portability:
-
-- **SKILL.md** — когда skill применяется, semantic policy, decision rules,
-  требования к результату. То, что решает модель.
-- **references/** — конкретные operating contracts, нужные для исполнения:
-  имена Pi-инструментов, аргументы, meaningful statuses, lifecycle
-  semantics, гарантии extension-кода. Модель не обязана знать реализацию —
-  только observable contract: какая гарантия существует и на что можно
-  положиться.
-
-Skill может быть Pi-specific, может требовать конкретную Pi extension и
-может не иметь смысла без deterministic capability. Правильный вопрос —
-«хорошо ли этот skill работает как часть agent-kit?», а не «можно ли
-скопировать его в произвольный harness?».
-
-Пилоты этого разделения:
-
-- `skills/git-task/` — `SKILL.md` (task policy, identity, base selection,
-  owners, review/repair) + `references/task-workspace.md` (контракт
-  `task_status` / `ensure_task_repo` / `remove_task_lane` и mutation guard)
-  + `references/repo-owners.md` (контракт workspace-спавна `subagent`, `needs_input`,
-  terminal lifecycle, repair).
-- `skills/git-commit/` — `SKILL.md` (checkpoint judgment, branch/ticket/
-  message policy, secrets) + `references/checkpoint.md` (контракт
-  `checkpoint_commit`: inputs, statuses, deferred-hook evidence).
-
-Где начинается конкретная Pi-механика, SKILL.md требует reference как
-mandatory: например, перед работой с task workspace — прочитать
-`references/task-workspace.md`.
-
-## Extensions
-
-`extensions/` — обычный Pi extension tree (глобальные расширения Pi живут
-в `~/.pi/agent/extensions/`):
-
-- **task-workspace** — managed task worktrees: `task_status`,
-  `ensure_task_repo`, `remove_task_lane`, `checkpoint_commit` и mutation
-  guard (PATH-shim для git в bash-сессиях: policy на реальном argv + cwd,
-  без парсинга shell). Ядро (`flows.ts`, `git.ts`, `guard.ts`, `types.ts`)
-  host-independent и тестируется без Pi (`core-isolation.test.ts`); второй
-  real consumer у него отсутствует, поэтому library-уровень не выделяется.
-- **subagents** — единый subagent runtime; workspace-режим того же `subagent`
-  (RepoOwner-протокол: readiness handshake, deadline, terminal envelope,
-  settled-state verification). Жизненный цикл: в момент спавна пишется
-  marker-запись `running` (при старте контроллера записи этого родителя без
-  терминального результата финализируются как `failed` — «child lost across
-  parent restart», чужие видны в `op=status` как orphans), а осевший ребёнок
-  завершает свой процесс после idle-задержки (`idleExitMs`, по умолчанию
-  30 минут; `0` — выключить) с сохранением терминального результата;
-  `follow_up` на уже завершённого ребёнка порождает свежий спавн с задачей.
-- **proxy-toggle** — машинная proxy-preference для окружения Pi
-  (`/proxy on|off|status`). По умолчанию выключен: свежая машина без
-  `proxy-state.json` работает напрямую, включать нужно только на
-  корпоративной машине за ai-proxy. Состояние — `~/.pi/agent/proxy-state.json`;
-  применяется в каждом Pi-процессе (Main и subagent-дети), bash-дети остаются
-  прямыми, NO_PROXY-хосты не проксируются. Для TLS через MITM-прокси нужен
-  `corp-ca.pem` в agent dir.
-- **ask** — структурные вопросы модели к пользователю/владельцу сессии.
-- **todo**, **continue-shortcut**, **agent-events**, **web-search**,
-  **perf-stats**, **footer** — task list, shortcut, events/статусы, поиск,
-  производительность, кастомный footer.
-- **update-check** — одноразовые toast-уведомления при старте сессии о
-  состоянии активного checkout'а (в духе родного уведомления pi о новой
-  версии): checkout отстаёт от своего upstream — сеть трогает не чаще раза
-  в `CHECK_INTERVAL_MS` (1 ч) на машину, состояние —
-  `~/.local/state/agent-kit/update-check.json`; пока кэш говорит «outdated»,
-  напоминание повторяется на каждом старте без сети, а после
-  `agent-kit update` (сдвинулся HEAD) уходит в свежую проверку. Активный
-  checkout остался на не-дефолтной ветке (например, `agent-kit install` из
-  task worktree, о переключении обратно забыли) — локальная проверка без
-  сети напоминает на каждом старте и даёт готовую команду `git -C … switch
-  <default> && agent-kit update`. Все неудачи (оффлайн, недоступный remote,
-  не-git checkout, detached HEAD) молчаливы и сессию никогда не задерживают.
-
-`footer.ts` раньше назывался `omp-footer.ts`; имя отражало происхождение
-визуального дизайна, а не назначение — расширение переименовано.
-
-## Install
+Нужны `bash`, `git` и [`bun`](https://bun.sh) (на нём работают `agent-kit task`
+и hooks Claude Code). Для Pi-части — установленный Pi.
 
 ```sh
-./bin/agent-kit install      # из checkout'а; после этого доступно как agent-kit
-agent-kit install            # reconcile
-agent-kit update             # git pull --ff-only в этом checkout + reconcile
-agent-kit status
-agent-kit uninstall
+git clone <url> ~/src/agent-kit
+~/src/agent-kit/bin/agent-kit install
 ```
 
-`agent-kit update` — одна команда обновления: `git pull --ff-only` в активном
-checkout'е и затем обычный reconcile — уже кодом инсталлера из обновлённого
-checkout'а (новые hosts применяются тем же запуском). Diverged checkout или отсутствие
-upstream ссылки не ломают: pull отказывает, инсталлер не запускается.
-Это терминальная команда: из pi-сессий мутирующий git в primary checkout может
-блокировать bash git guard — и это осознанно.
+`install` линкует checkout в оба host'а и кладёт лаунчер
+`~/.local/bin/agent-kit` (симлинк на `bin/agent-kit` этого checkout'а):
 
-Инсталлер всегда обслуживает все hosts сразу; аргументов выбора host и
-autodetection нет. Раскладка репозитория и есть desired state:
+| Источник | Pi (`~/.pi/agent`) | Claude Code (`~/.claude`) |
+| --- | --- | --- |
+| `skills/*` | `skills/*` | `skills/*` |
+| `extensions/*` | `extensions/*` | — |
+| `prompts/*` | `prompts/*` | — |
+| `rules/AGENTS.md` | `AGENTS.md` | `rules/agent-kit.md` |
+| `rules/claude-code.md` | — | `rules/agent-kit-claude-code.md` |
+| `claude-code/plugin` | — | `skills/agent-kit` (плагин) |
+| `claude-code/commands/*` | — | `commands/*` |
 
-```
-pi (~/.pi/agent, override PI_AGENT_DIR):
-  skills/*        -> skills/*
-  extensions/*    -> extensions/*
-  prompts/*       -> prompts/*           (если категория существует)
-  rules/AGENTS.md -> AGENTS.md           (если файл существует)
-
-claude-code (~/.claude, override CLAUDE_CONFIG_DIR):
-  skills/*               -> skills/*     (кроме metadata.hosts без claude-code)
-  rules/AGENTS.md        -> rules/agent-kit.md
-  rules/claude-code.md   -> rules/agent-kit-claude-code.md
-  claude-code/plugin     -> skills/agent-kit
-  claude-code/commands/* -> commands/*
-```
-
-Установка — это symlinks из корня host в этот checkout, никогда
-копирование. Конфигурация host не ссылается ни на путь checkout'а, ни на
-каталог другого host: Claude Code подхватывает `~/.claude/rules/*`
-автоматически, импорт в `CLAUDE.md` не нужен.
-- Каждый `install` заодно ставит команду
-  `~/.local/bin/agent-kit -> <этот checkout>/bin/agent-kit`. Повторный
-  `install` из другого checkout'а/worktree переносит управляемые ссылки и
-  команду на него (предыдущий checkout не модифицируется) — так удобно
-  переключаться между primary checkout'ом и task worktree.
-- Отдельных `--prune`/`--force` нет: item, удалённый из репозитория,
-  убирается при следующем `install`.
-
-### Ownership model
-
-Состояние — отдельный файл на host в `~/.local/state/agent-kit/` (или
-`$XDG_STATE_HOME`): `links.tsv` для pi, `links-claude-code.tsv` для Claude
-Code; одна строка на ссылку: `<dest-rel>\t<source>`, путь относительно корня
-host. Существующая ссылка, уже указывающая ровно на нужный источник,
-принимается во владение. Инварианты:
-
-1. Управляется только ownership set — то, что записано в state. Содержимое
-   `~/.pi/agent` никогда не сканируется «на предмет всего своего».
-2. Запись в state не даёт права удалить путь. Ссылка снимается/переносится
-   только если её текущая цель — в точности та, которую agent-kit записал
-   последним `install`. Ссылка, перенаправленная вручную, не трогается:
-   ownership освобождается, место сообщается как conflict.
-3. Item удалён из репозитория: если ссылка всё ещё наша — снимается; если
-   цель уже отсутствует — чистится state; если цель подменили — не
-   трогается.
-4. Real files, каталоги и чужие symlinks на желаемом пути — conflict,
-   молча не перезаписываются никогда.
-5. Corrupt state не может расширить множество допустимых удалений — только
-   сузить: каждая запись валидируется (ровно два поля, безопасный
-   относительный путь без traversal, абсолютный source), мусор отбрасывается
-   с warning'ом.
-6. `~/.local/bin/agent-kit` подчиняется тем же правилам через отдельную
-   запись (`command.tsv`): чужой real file или symlink не трогается, свой
-   launcher переносится при переключении checkout'а. `uninstall` команду не
-   снимает.
-
-### Legacy ownership state
-
-Версии agent-kit эпохи нескольких runtime'ов писали state в формате
-`<runtime>\t<dest-rel>\t<source>` для pi, omp и opencode. Первый же
-`install` или `uninstall` мигрирует его один раз:
-
-- строки pi переходят в текущий формат без потери владения;
-- строки omp/opencode убираются под их историческими корнями
-  (`~/.omp/agent`, `~/.config/opencode`) с тем же proof: удаляется
-  только ссылка, чья цель всё ещё в точности равна записанной; всё
-  остальное освобождается без удаления.
-
-Это разовая очистка, а не второй install target: никаких omp/opencode
-целей у инсталлера больше нет.
-
-## Разработка из worktree
-
-`agent-kit install` из task worktree переключает управляемые ссылки на этот
-worktree; ссылки и state — единственное, что меняется. `status` показывает,
-какой checkout сейчас активен. Юнит-тесты расширений запускаются из репо
-так: `bun test extensions/<name>`.
-
-Тестам расширений нужны пакеты pi в `node_modules` (gitignored). Для
-репозитория без корневого `package.json` (как agent-kit) их проставляет сам
-`ensure_task_repo`: при создании или переиспользовании managed worktree он
-находит установку pi на машине (порядок: `AGENT_KIT_PI_ROOT` → полный
-`node_modules` основного checkout'а → окружение запущенного runtime'а → CLI
-`pi` на PATH → legacy-каталог) и создаёт симлинки в `node_modules` worktree,
-не трогая основной checkout. Повторный ensure — no-op. После ensure свежий
-worktree agent-kit проходит `bun test extensions/task-workspace` без ручных
-шагов. Если ensure недоступен, те же ссылки можно создать руками:
+Остальные команды:
 
 ```sh
-mkdir -p node_modules/@earendil-works
-ln -s ~/.local/lib/node_modules/@earendil-works/pi-coding-agent/node_modules/typebox node_modules/typebox
-ln -s ~/.local/lib/node_modules/@earendil-works/pi-coding-agent node_modules/@earendil-works/pi-coding-agent
-ln -s ~/.local/lib/node_modules/@earendil-works/pi-coding-agent/node_modules/@earendil-works/pi-ai node_modules/@earendil-works/pi-ai
-ln -s ~/.local/lib/node_modules/@earendil-works/pi-coding-agent/node_modules/@earendil-works/pi-tui node_modules/@earendil-works/pi-tui
+agent-kit update      # git pull --ff-only в checkout'е, затем install
+agent-kit status      # состояние ссылок по host'ам и владелец лаунчера
+agent-kit uninstall   # удалить ссылки agent-kit из обоих host'ов
 ```
 
-## Тесты
+Корни host'ов переопределяются через `PI_AGENT_DIR` и `CLAUDE_CONFIG_DIR`.
+
+Модель владения. Инсталлер записывает, какие ссылки создал он сам
+(`~/.local/state/agent-kit/links*.tsv`, база переопределяется через
+`$XDG_STATE_HOME`), и трогает только их — и только пока ссылка указывает туда,
+куда он её поставил. Чужие файлы, свои skills и ссылки других инструментов он
+не перезаписывает: если репозиторию нужно их место, это conflict и `install`
+завершается с кодом 1. Повторный `install` из другого checkout'а или worktree
+перенаправляет ссылки agent-kit на него. Подробности — [ADR-0007](docs/adr/adr-0007.md).
+
+Skill можно ограничить host'ами полем `metadata.hosts` (через запятую) во
+frontmatter `SKILL.md`; без поля он ставится везде.
+
+## Задачи и worktree
+
+Центральная идея: агент не правит основной checkout. Любая изменяющая задача
+получает свой git worktree, а изменения в нём делает субагент-владелец.
+
+- **Задача** идентифицируется веткой. Ветка берётся от пользователя или из
+  тикета (`feat/KEY-123_short_slug`); без тикета агент спрашивает, разрешена ли
+  работа без него (`chore/short_slug`). Тикеты и `base_ref` агент не
+  придумывает: базу выбирает runtime, если пользователь или спецификация не
+  назвали её явно.
+- **Task workspace** — каталог задачи в `~/.agent-kit/tasks/` (имя — ветка,
+  `/` заменяется на `_`; корень переопределяется `AGENT_TASK_ROOT`). Там лежат worktree всех затронутых
+  репозиториев и артефакты задачи: `SPEC.md`, ADR, `specs/<repo>.md`.
+- **Managed worktree** — worktree репозитория внутри task workspace,
+  единственная цель записи. Основной checkout (primary checkout) остаётся как
+  был, даже если он грязный.
+- **Lane** — дополнительный worktree той же задачи на другой ветке. Только для
+  настоящей второй ветки (backport, release/hotfix), а не «чтобы отдельно
+  потестить».
+- **RepoOwner** — субагент, который владеет ровно одним managed worktree и
+  делает в нём все изменения. Main-сессия управляет задачей, ревьюит и
+  интегрирует, но сама репозитории задачи не редактирует.
+- **Checkpoint commit** — коммит через runtime: стейджит ровно перечисленные
+  пути, отказывается коммитить в primary checkout и файлы, похожие на секреты,
+  всегда прогоняет hooks, не пушит. `--no-verify` запрещён везде.
+- **Candidate commit** — граница верификации. RepoOwner может отчитаться
+  `done` только с закоммиченного и проверенного после коммита состояния; runtime
+  проверяет, что HEAD сдвинулся, а дерево чистое
+  ([ADR-0002](docs/adr/adr-0002.md), [ADR-0003](docs/adr/adr-0003.md)).
+- **Guard** — git-shim в `PATH` блокирует изменяющие git-команды на primary
+  checkout репозитория, у которого есть managed worktree, а также
+  `--no-verify` и перенаправление через `--git-dir`/`--work-tree`. Второй
+  guard запрещает инструментам редактирования писать в отслеживаемые файлы
+  primary checkout. Это защита от ошибок маршрутизации, а не песочница: блок
+  означает «иди в worktree», а не «сделай то же самое через `sed`».
+
+Операции runtime: `status`, `ensure` (создать или переиспользовать worktree),
+`remove-lane`, `teardown`, `commit`. В Pi это инструменты `task_status`,
+`ensure_task_repo`, `remove_task_lane`, `teardown_task_repo`,
+`checkpoint_commit`; в Claude Code — `agent-kit task <op> '<json>'` с JSON на
+входе и выходе. Ядро одно: [`extensions/task-workspace`](extensions/task-workspace/README.md).
+
+### `/spec` и `/dev`
+
+- **`/spec [задача]`** — Main определяет задачу, создаёт worktree и исследует
+  код уже в нём. По ходу использует `grilling`, `system-understanding`,
+  `engineering-research`, `code-archaeology`, `prototype`, а итог оформляет
+  через `specification` в `SPEC.md` в task workspace. Продуктовый код в этом
+  режиме не пишется. Готово, когда реализация не требует угадывать намерения.
+- **`/dev [задача]`** — Main переиспользует worktree и `SPEC.md`, запускает по
+  одному RepoOwner на каждый изменяемый репозиторий (независимые —
+  параллельно), проверяет объективные git-факты после их отчёта, решает,
+  нужен ли независимый ревьюер, и чинит дефекты через нового владельца.
+  Внутри владельцев работают `implementation`, `tdd`, `verification-design`
+  и `git-commit`.
+
+Политика целиком — в skill [`git-task`](skills/git-task/SKILL.md) и его
+`references/`.
+
+## Pi
+
+В Pi ставятся расширения из `extensions/` и промпты из `prompts/`
+(`/spec`, `/dev`, `/neponel` — пересказать предыдущий ответ проще).
+
+| Расширение | Что делает |
+| --- | --- |
+| [`task-workspace`](extensions/task-workspace/README.md) | Инструменты task workspace, git-shim в `bash`, guard на `write`/`edit` |
+| [`subagents`](extensions/subagents/README.md) | Инструмент `subagent` (`spawn`, `status`, `steer`, `follow_up`, `wait`, `result`, `respond`, `cancel`); workspace-режим для RepoOwner с проверкой готовности, дедлайном и проверкой settled-состояния; `/subagents [kill-all]` |
+| [`ask`](extensions/ask/README.md) | Инструмент `ask`: диалог с пользователем в TUI, select/input в RPC, fail-closed без интерфейса; у субагентов вопрос уходит в Main |
+| [`model-classes`](extensions/model-classes/README.md) | Именованные классы моделей (`/model-class`, `Ctrl+Alt+P`) и маршрутизация моделей для субагентов |
+| [`todo`](extensions/todo/README.md) | Инструмент `todo` с фазами, HUD-виджет, напоминания, `/todo` |
+| [`web-search`](extensions/web-search/README.md) | Инструмент `web_search` через бэкенд ChatGPT Codex по логину `/login openai-codex` |
+| [`session-title`](extensions/session-title/README.md) | Имя сессии и заголовок терминала по первому промпту, дешёвой моделью |
+| [`footer`](extensions/footer/index.ts) | Footer: модель, thinking, ветка, стоимость, заполненность контекста; `/footer` |
+| [`perf-stats`](extensions/perf-stats/index.ts) | Под ответом: время до первого токена, tok/s, токены, cache reads |
+| [`continue-shortcut`](extensions/continue-shortcut/README.md) | Ввод `.` или `c` — скрытая команда «продолжай незаконченное» вместо сообщения |
+| [`update-check`](extensions/update-check/index.ts) | Тост при старте, если checkout отстал от upstream или стоит не на основной ветке |
+| `proxy-toggle.ts`, [`proxy`](extensions/proxy/proxy-lib.ts) | `/proxy on\|off\|status`, адрес из `PI_PROXY`; настройка доходит и до живых субагентов |
+| [`inspection-channel`](extensions/inspection-channel/README.md) | Read-only канал инспекции субагентов и задач по унаследованным fd ([ADR-0006](docs/adr/adr-0006.md)) |
+| [`agent-events`](extensions/agent-events/README.md) | Телеметрия жизненного цикла в Warp (OSC 777) |
+
+Субагенты запускаются как `pi --mode rpc --no-extensions` со своим
+bridge-расширением; остальные расширения в них не грузятся.
+
+## Claude Code
+
+Claude Code получает:
+
+- skills из `skills/` и правила в `~/.claude/rules/` (подхватываются
+  автоматически, `CLAUDE.md` остаётся под личные инструкции);
+- `rules/claude-code.md` — как Pi-термины из skills ложатся на Claude Code:
+  `skill://<name>` → Skill tool, `ask` → `AskUserQuestion`, task-инструменты →
+  `agent-kit task`, RepoOwner → субагент Agent tool с абсолютным путём к
+  worktree;
+- команды `/spec` и `/dev` (`claude-code/commands/`);
+- плагин `agent-kit` (`claude-code/plugin`, ставится как
+  `~/.claude/skills/agent-kit`): кладёт `agent-kit` в `PATH` для Bash и
+  регистрирует hooks:
+  - `SessionStart` → `agent-kit task hook session-start`: включает git-shim для
+    всех Bash-команд сессии и её субагентов и экспортирует `AGENT_KIT_POLICY`;
+  - `PreToolUse` на `Edit|Write|MultiEdit|NotebookEdit` → `agent-kit task hook
+    pre-tool-use`: guard записи в primary checkout.
+
+Ограничения ([ADR-0008](docs/adr/adr-0008.md)):
+
+- Без `bun` hooks молча пропускают всё (fail-open), а `agent-kit task`
+  возвращает ошибку.
+- Если управляемые настройки запрещают сторонние hooks
+  (`allowManagedHooksOnly`), плагин загружается, но guard не работает.
+  Проверка: `[ -n "$AGENT_KIT_POLICY" ] && echo guarded || echo unguarded`.
+  В режиме unguarded правила маршрутизации те же, их соблюдает сам агент.
+- В Claude Code нет протокола субагентов Pi: ни проверки готовности, ни
+  дедлайна, ни `needs_input`. Владелец с вопросом возвращает `blocked`, Main
+  отвечает ему через `SendMessage`.
+- В sandbox-режиме Bash сетевые операции (`git push`/`fetch` по SSH, `gh`,
+  `glab`) агент не выполняет, а отдаёт пользователю готовую команду `! …`.
+
+## Skills
+
+Процесс и git:
+
+- [`git-task`](skills/git-task/SKILL.md) — режим задачи, идентичность, worktree, RepoOwner, ревью
+- [`git-commit`](skills/git-commit/SKILL.md) — политика checkpoint-коммитов
+- [`change-request`](skills/change-request/SKILL.md) — PR в GitHub / MR в GitLab через `gh`/`glab`
+- [`lazy-mr-review`](skills/lazy-mr-review/SKILL.md) — ревью MR по ссылке, комментарии публикуются только по явному выбору
+- [`handoff`](skills/handoff/SKILL.md) — сжать разговор для следующей сессии
+
+Спецификация и исследование:
+
+- [`grilling`](skills/grilling/SKILL.md) — выяснить решения вопросами, не угадывая
+- [`specification`](skills/specification/SKILL.md) — превратить намерения и решения в контракт реализации
+- [`system-understanding`](skills/system-understanding/SKILL.md) — как подсистема работает на самом деле
+- [`code-archaeology`](skills/code-archaeology/SKILL.md) — почему код устроен именно так
+- [`engineering-research`](skills/engineering-research/SKILL.md) — исследование по первоисточникам
+- [`prototype`](skills/prototype/SKILL.md) — одноразовый spike, чтобы закрыть неопределённость
+
+Реализация и отладка:
+
+- [`implementation`](skills/implementation/SKILL.md) — реализация по согласованному плану минимальными связными диффами
+- [`tdd`](skills/tdd/SKILL.md) — red-green от поведения, где есть тестовый шов
+- [`verification-design`](skills/verification-design/SKILL.md) — минимальный достоверный план проверки
+- [`diagnosing-bugs`](skills/diagnosing-bugs/SKILL.md) — отладка от воспроизведения и ранжированных гипотез
+- [`project-verification`](skills/project-verification/SKILL.md) — локальный способ запустить и проверить приложение
+
+Ревью и проверка:
+
+- [`code-review`](skills/code-review/SKILL.md) — верность контракту и инженерное качество
+- [`change-verification`](skills/change-verification/SKILL.md) — независимая проверка закоммиченного кандидата, `PASS`/`FAIL`
+- [`blast-radius`](skills/blast-radius/SKILL.md) — неочевидные поломки ниже по течению
+- [`security-review`](skills/security-review/SKILL.md) — security-линза
+
+Дизайн:
+
+- [`simple-design`](skills/simple-design/SKILL.md) — минимально достаточный дизайн
+- [`codebase-design`](skills/codebase-design/SKILL.md) — где живут ответственность, состояние и интерфейсы, когда сложность оправдана
+
+Тексты и мета:
+
+- [`unslop`](skills/unslop/SKILL.md) — редакторская правка текста от AI-паттернов
+- [`editorial-html-report`](skills/editorial-html-report/SKILL.md) — отчёт одним HTML-файлом
+- [`skill-design`](skills/skill-design/SKILL.md) — проектирование и чистка skills и AGENTS-инструкций
+
+Skills ссылаются друг на друга как `skill://<name>`.
+
+## Разработка
+
+Раскладка репозитория и есть желаемое состояние установки: манифестов и
+списков нет. Новый skill — каталог в `skills/` с `SKILL.md` (`name` совпадает
+с именем каталога, есть `description`); новое расширение Pi — каталог в
+`extensions/`. После добавления — `agent-kit install`.
+
+Тесты:
 
 ```sh
-tests/installer/run.sh    # 27 сценариев ownership-семантики и legacy-миграции
-tests/layout/run.sh       # retired-архитектура (shared/, runtimes/, markers,
-                          # runtime-ветки в инсталлере) не возвращается
-tests/skills/run.sh       # SKILL.md, references, skill://-цели, stale-язык
-bun test extensions       # юнит-тесты расширений
+tests/installer/run.sh [-v]     # инсталлер в песочнице $HOME
+tests/layout/run.sh             # запрещённые каталоги и инварианты раскладки
+tests/skills/run.sh             # frontmatter, references, ссылки skill://
+bun test extensions/<name>/     # расширения (bun:test)
 ```
 
-Сценарии installer-тестов: fresh install, идемпотентность, переключение
-checkout'ов, prune удалённых items (включая подменённую ссылку), нетронутость
-чужих ссылок и real-file конфликтов, corrupt/traversal state, пути с
-пробелами, launcher bootstrap/switch/ownership, legacy-миграция omp/opencode
-state, отказ от runtime-аргументов, линк канонического AGENTS.md в корень
-Pi-каталога.
-
-## Переезд со старой схемы
-
-- pi-ссылки переключаются на новый checkout обычным `agent-kit install`
-  (relink); расположение `shared/skills/<skill>` больше не используется.
-- omp/opencode-ссылки, созданные старым инсталлером, убираются
-  автоматически при первом `install`/`uninstall` (см. Legacy ownership
-  state). Ссылки, созданные другими инструментами (chezmoi, старые
-  install-скрипты), инсталлер не трогает — их снимает вручную владелец.
-
-## Публикация HTML-отчётов
-
-`editorial-html-report` умеет публиковать готовые HTML-отчёты в S3-совместимое хранилище и возвращать ссылку, которая открывается в браузере как обычная веб-страница.
-
-Сейчас готовая конфигурация рассчитана на Cloud.ru Evolution Object Storage.
-
-Публикация никогда не выполняется автоматически. После подготовки отчёта агент может предложить его опубликовать и загрузит файл только после явного подтверждения пользователя.
-
-### Что понадобится
-
-На машине с agent-kit должны быть доступны:
-
-```bash
-aws --version
-curl --version
-cksum --version
-````
-
-На macOS AWS CLI можно установить через Homebrew:
-
-```bash
-brew install awscli
-```
-
-`curl` и `cksum` уже входят в стандартную систему.
-
-### 1. Создать бакет
-
-В Cloud.ru Evolution Object Storage создайте отдельный бакет для отчётов, например:
-
-```text
-agent-reports
-```
-
-Для бакета:
-
-1. Задайте доменное имя.
-2. Включите Static Website Hosting.
-3. Разрешите публичное чтение объектов.
-4. Не разрешайте публичную запись.
-
-Для хостинга можно указать:
-
-```text
-Главная страница: index.html
-Страница ошибки: 404.html
-```
-
-Отчёты будут доступны по адресам вида:
-
-```text
-https://<bucket-dns-name>.s3-website.cloud.ru/<object-key>
-```
-
-Бакет является публичным: любой человек, получивший URL отчёта, сможет его открыть.
-
-### 2. Создать учётные данные для загрузки
-
-Рекомендуется создать отдельный service account, например:
-
-```text
-agent-report-publisher
-```
-
-Дайте ему права на запись объектов только в бакет с отчётами.
-
-После этого создайте для service account ключ доступа Object Storage и сохраните:
-
-```text
-Key ID
-Key Secret
-```
-
-Также потребуется `tenant_id` проекта.
-
-Для Evolution Object Storage значение AWS Access Key ID имеет вид:
-
-```text
-<tenant_id>:<key_id>
-```
-
-### 3. Настроить AWS CLI
-
-Создайте отдельный профиль:
-
-```bash
-aws configure --profile cloudru-reports
-```
-
-Введите:
-
-```text
-AWS Access Key ID:     <tenant_id>:<key_id>
-AWS Secret Access Key: <key_secret>
-Default region name:   ru-central-1
-Default output format: json
-```
-
-Проверьте доступ:
-
-```bash
-aws s3 ls s3://agent-reports \
-  --profile cloudru-reports \
-  --endpoint-url https://s3.cloud.ru
-```
-
-Команда должна завершиться без ошибки.
-
-Секретный ключ хранится штатными средствами AWS CLI в `~/.aws/credentials`. Не добавляйте его в конфигурацию agent-kit или Git.
-
-### 4. Настроить agent-kit
-
-Создайте каталог конфигурации:
-
-```bash
-mkdir -p "${XDG_CONFIG_HOME:-$HOME/.config}/agent-kit"
-```
-
-Создайте файл:
-
-```text
-${XDG_CONFIG_HOME:-$HOME/.config}/agent-kit/reports.env
-```
-
-с содержимым:
-
-```bash
-AWS_PROFILE=cloudru-reports
-REPORTS_ENDPOINT_URL=https://s3.cloud.ru
-REPORTS_BUCKET=agent-reports
-REPORTS_PUBLIC_URL=https://<bucket-dns-name>.s3-website.cloud.ru
-```
-
-Замените:
-
-```text
-agent-reports
-```
-
-на имя своего бакета, если оно отличается, а:
-
-```text
-<bucket-dns-name>
-```
-
-на доменное имя бакета из Evolution Object Storage.
-
-В `reports.env` секретов нет. Он содержит только профиль AWS CLI и адрес назначения.
-
-Если конфигурацию нужно хранить в другом месте, путь можно переопределить:
-
-```bash
-export AGENT_KIT_REPORTS_CONFIG=/path/to/reports.env
-```
-
-### 5. Проверить публикацию
-
-Создайте тестовый отчёт:
-
-```bash
-cat > /tmp/report-smoke.html <<'EOF'
-<!doctype html>
-<html>
-<head>
-  <meta charset="utf-8">
-  <title>agent-kit smoke test</title>
-</head>
-<body>
-  <h1>It works</h1>
-</body>
-</html>
-EOF
-```
-
-Запустите publisher:
-
-```bash
-bash ~/.pi/agent/skills/editorial-html-report/scripts/publish-report.sh \
-  --project smoke \
-  /tmp/report-smoke.html
-```
-
-При успешной публикации команда напечатает только итоговый URL:
-
-```text
-https://<bucket-dns-name>.s3-website.cloud.ru/smoke/2026-09-22/report-smoke-....html
-```
-
-Откройте его в браузере. Должна отобразиться HTML-страница, а не начаться скачивание файла.
-
-Publisher также сам проверяет:
-
-* успешность загрузки в S3;
-* доступность публичного URL;
-* что сервер возвращает `Content-Type: text/html`.
-
-### Как это используется агентом
-
-После настройки никакие команды вручную выполнять не нужно.
-
-Обычный сценарий:
-
-```text
-пользователь просит HTML-отчёт
-        ↓
-editorial-html-report создаёт и проверяет файл
-        ↓
-агент решает, полезна ли публичная ссылка
-        ↓
-"Опубликовать отчёт в публичном хранилище?"
-        ↓
-пользователь подтверждает
-        ↓
-publish-report.sh
-        ↓
-агент возвращает публичный URL
-```
-
-Если пользователь уже явно попросил создать **и опубликовать** отчёт, отдельное повторное подтверждение не требуется.
-
-### Где хранятся отчёты
-
-Publisher создаёт ключи примерно такой структуры:
-
-```text
-<project>/<UTC-date>/<report-name>-<timestamp>-<checksum>.html
-```
-
-Например:
-
-```text
-zavod/2026-09-22/a11-verification-1790030123-381729182.html
-```
-
-Параметр проекта передаётся через:
-
-```bash
-publish-report.sh --project zavod report.html
-```
-
-Если проект не указан, используется:
-
-```text
-reports
-```
-
-Локальный HTML после публикации автоматически не удаляется.
-
-### Безопасность
-
-Публикуемые отчёты доступны без авторизации.
-
-Не публикуйте таким способом документы, содержащие:
-
-* пароли, токены и ключи;
-* персональные данные;
-* закрытые внутренние URL;
-* приватные исходники или документы;
-* другую информацию, которую нельзя размещать в публичном интернете.
-
-Сам бакет должен разрешать анонимное чтение, но загрузка новых объектов должна оставаться доступной только через авторизованный AWS CLI profile.
-
-```
+Тестам расширений нужны пакеты Pi в `node_modules/` (gitignored): симлинки
+`@earendil-works/pi-coding-agent`, `pi-ai`, `pi-tui` и `typebox` на
+установленный Pi. В managed worktree runtime создаёт их сам. Live-проверки в
+`extensions/*/live/` запускают настоящий `pi` и в обычный прогон не входят.
+
+## Документация
+
+- [`docs/design-progress.md`](docs/design-progress.md) — индекс архитектурных этапов A1–A9 и их статус
+- [`docs/adr/`](docs/adr/) — решения:
+  - [0001](docs/adr/adr-0001.md) — agent-kit как самостоятельный Pi-first фреймворк
+  - [0002](docs/adr/adr-0002.md) — candidate commit как граница финальной верификации
+  - [0003](docs/adr/adr-0003.md) — проверка settled-состояния при `done` RepoOwner
+  - [0004](docs/adr/adr-0004.md) — восстановление после падения через Pi session + Git, без durable Run runtime
+  - [0005](docs/adr/adr-0005.md) — headless-режим на штатном `pi --mode rpc`
+  - [0006](docs/adr/adr-0006.md) — read-only канал инспекции
+  - [0007](docs/adr/adr-0007.md) — один checkout в несколько host'ов
+  - [0008](docs/adr/adr-0008.md) — task-workspace runtime в Claude Code: CLI + плагин
+- [`docs/specs/`](docs/specs/) и [`docs/research/`](docs/research/) — спецификации и исследования этапов
+- README расширений в `extensions/*/README.md` — контракты конкретных расширений
