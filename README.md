@@ -30,7 +30,7 @@ git clone <url> ~/src/agent-kit
 ~/src/agent-kit/bin/agent-kit install
 ```
 
-`install` линкует checkout в оба host'а и кладёт лаунчер
+`install` без аргументов линкует checkout в оба host'а и кладёт лаунчер
 `~/.local/bin/agent-kit` (симлинк на `bin/agent-kit` этого checkout'а):
 
 | Источник | Pi (`~/.pi/agent`) | Claude Code (`~/.claude`) |
@@ -43,20 +43,31 @@ git clone <url> ~/src/agent-kit
 | `claude-code/plugin` | — | `skills/agent-kit` (плагин) |
 | `claude-code/commands/*` | — | `commands/*` |
 
-Остальные команды:
+Не каждой машине нужны оба host'а: можно поставить только один и добавить
+второй позже.
 
 ```sh
-agent-kit update      # git pull --ff-only в checkout'е, затем install
-agent-kit status      # состояние ссылок по host'ам и владелец лаунчера
-agent-kit uninstall   # удалить ссылки agent-kit из обоих host'ов
+agent-kit install claude-code   # только Claude Code
+agent-kit install pi            # добавить Pi к выбранным host'ам
+agent-kit install               # обновить ссылки выбранных host'ов
+agent-kit update                # git pull --ff-only в checkout'е, затем install
+agent-kit status                # выбор host'ов, состояние ссылок, владелец лаунчера
+agent-kit uninstall pi          # удалить ссылки одного host'а и убрать его из выбора
+agent-kit uninstall             # удалить ссылки всех host'ов и забыть выбор
 ```
+
+Выбор host'ов запоминается: `install` и `update` без аргументов работают только
+с выбранными host'ами и не трогают ссылки остальных. Если выбор пуст (свежая
+машина или все host'ы удалены по одному), `install` ставит оба. Установки,
+сделанные до появления выбора, сохраняют оба host'а. Подробности —
+[ADR-0009](docs/adr/adr-0009.md).
 
 Корни host'ов переопределяются через `PI_AGENT_DIR` и `CLAUDE_CONFIG_DIR`.
 
 Модель владения. Инсталлер записывает, какие ссылки создал он сам
-(`~/.local/state/agent-kit/links*.tsv`, база переопределяется через
-`$XDG_STATE_HOME`), и трогает только их — и только пока ссылка указывает туда,
-куда он её поставил. Чужие файлы, свои skills и ссылки других инструментов он
+(`~/.local/state/agent-kit/links*.tsv`; рядом лежит выбор host'ов `hosts`,
+база переопределяется через `$XDG_STATE_HOME`), и трогает только их — и только
+пока ссылка указывает туда, куда он её поставил. Чужие файлы, свои skills и ссылки других инструментов он
 не перезаписывает: если репозиторию нужно их место, это conflict и `install`
 завершается с кодом 1. Повторный `install` из другого checkout'а или worktree
 перенаправляет ссылки agent-kit на него. Подробности — [ADR-0007](docs/adr/adr-0007.md).
@@ -261,5 +272,6 @@ bun test extensions/<name>/     # расширения (bun:test)
   - [0006](docs/adr/adr-0006.md) — read-only канал инспекции
   - [0007](docs/adr/adr-0007.md) — один checkout в несколько host'ов
   - [0008](docs/adr/adr-0008.md) — task-workspace runtime в Claude Code: CLI + плагин
+  - [0009](docs/adr/adr-0009.md) — выбор host'ов при установке
 - [`docs/specs/`](docs/specs/) и [`docs/research/`](docs/research/) — спецификации и исследования этапов
 - README расширений в `extensions/*/README.md` — контракты конкретных расширений
