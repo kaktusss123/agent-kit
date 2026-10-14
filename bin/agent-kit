@@ -18,6 +18,7 @@
 #     claude-code/plugin   -> skills/agent-kit  (skills-directory plugin:
 #                                                hooks + bin/, loaded in place)
 #     claude-code/commands/* -> commands/*      (/spec, /dev entrypoints)
+#     claude-code/agents/*   -> agents/*        (Explore, repo-owner subagents)
 #
 # A skill limits its hosts with `metadata.hosts` in its SKILL.md frontmatter
 # (comma-separated host names); without it the skill goes to every host.
@@ -198,6 +199,7 @@ entities() {
 		emit_file     "$REPO/rules/claude-code.md" "rules/agent-kit-claude-code.md"
 		emit_dir      "$REPO/claude-code/plugin"   "skills/agent-kit"
 		emit_category "$REPO/claude-code/commands" "commands"
+		emit_category "$REPO/claude-code/agents" "agents"
 		;;
 	esac
 }
@@ -798,7 +800,7 @@ Usage:
                         pi          -> ~/.pi/agent (skills, extensions,
                                        prompts, AGENTS.md)
                         claude-code -> ~/.claude (skills, rules/, the
-                                       agent-kit plugin, commands/)
+                                       agent-kit plugin, commands/, agents/)
   agent-kit update      git pull --ff-only in this checkout, then reconcile
                         the selected hosts
   agent-kit uninstall [<host>...]
