@@ -829,6 +829,29 @@ run_uninstall
 pass
 
 # ==============================================================================
+# T27b: claude-code agents are linked into agents/; a user's plain file with
+# the same name is a conflict and stays untouched; pi never gets them
+
+new_test "T27b claude-code agents"
+use_path_empty
+make_kit "$SANDBOX/kit"
+	CLAUDE_ROOT="$HOME/.claude"
+	mkdir -p "$SANDBOX/kit/claude-code/agents"
+	printf 'explore\n' > "$SANDBOX/kit/claude-code/agents/Explore.md"
+	printf 'owner\n' > "$SANDBOX/kit/claude-code/agents/repo-owner.md"
+	mkdir -p "$CLAUDE_ROOT/agents"
+	printf 'mine\n' > "$CLAUDE_ROOT/agents/Explore.md"
+run_install
+	assert_eq "$RC" 1 "user agent file is a conflict"
+	assert_link "$CLAUDE_ROOT/agents/repo-owner.md" "$SANDBOX/kit/claude-code/agents/repo-owner.md" "repo-owner agent linked"
+	assert_eq "$(cat "$CLAUDE_ROOT/agents/Explore.md")" "mine" "user agent untouched"
+	assert_no_file "$PI_ROOT/agents" "agents stay out of pi"
+run_uninstall
+	assert_no_file "$CLAUDE_ROOT/agents/repo-owner.md" "agent link removed on uninstall"
+	assert_eq "$(cat "$CLAUDE_ROOT/agents/Explore.md")" "mine" "user agent survives uninstall"
+pass
+
+# ==============================================================================
 # Host selection: install/uninstall take host names; the selection is
 # remembered in $XDG_STATE_HOME/agent-kit/hosts and reused by bare install
 # and update.

@@ -42,6 +42,7 @@ git clone <url> ~/src/agent-kit
 | `rules/claude-code.md` | — | `rules/agent-kit-claude-code.md` |
 | `claude-code/plugin` | — | `skills/agent-kit` (плагин) |
 | `claude-code/commands/*` | — | `commands/*` |
+| `claude-code/agents/*` | — | `agents/*` |
 
 Не каждой машине нужны оба host'а: можно поставить только один и добавить
 второй позже.
@@ -170,6 +171,13 @@ Claude Code получает:
   `agent-kit task`, RepoOwner → субагент Agent tool с абсолютным путём к
   worktree;
 - команды `/spec` и `/dev` (`claude-code/commands/`);
+- роли субагентов (`claude-code/agents/`, симлинки в `~/.claude/agents/`):
+  `Explore` переопределяет встроенный (haiku, `effort: low`, только Read/Grep/Glob),
+  `repo-owner` — RepoOwner для managed worktree (sonnet, `effort: medium`).
+  Всё остальное — встроенный `general-purpose`, уровень цены задаётся параметром
+  `model` вызова Agent (`haiku` — дешёвые ограниченные задачи, без `model` —
+  модель сессии, `opus` — независимый ревьюер). Новый тип агента заводится только
+  ради своего system prompt или набора tools ([ADR-0010](docs/adr/adr-0010.md));
 - плагин `agent-kit` (`claude-code/plugin`, ставится как
   `~/.claude/skills/agent-kit`): кладёт `agent-kit` в `PATH` для Bash и
   регистрирует hooks:
@@ -177,6 +185,21 @@ Claude Code получает:
     всех Bash-команд сессии и её субагентов и экспортирует `AGENT_KIT_POLICY`;
   - `PreToolUse` на `Edit|Write|MultiEdit|NotebookEdit` → `agent-kit task hook
     pre-tool-use`: guard записи в primary checkout.
+
+Рекомендуемая настройка пользователя в `~/.claude/settings.json` (agent-kit
+`settings.json` не пишет): уровень effort по моделям.
+
+```json
+"modelSettings": {
+  "claude-haiku-5-5":  { "autoCompactWindow": 130000, "effortLevel": "high" },
+  "claude-sonnet-5-5": { "effortLevel": "medium" },
+  "claude-opus-5-5":   { "effortLevel": "medium" }
+}
+```
+
+Открытый вопрос: документация не говорит, перекрывает ли `effort` во
+frontmatter агента `modelSettings.<model>.effortLevel`; если нет, `Explore`
+работает на haiku high. Проверяется эмпирически после установки.
 
 Ограничения ([ADR-0008](docs/adr/adr-0008.md)):
 
@@ -273,5 +296,6 @@ bun test extensions/<name>/     # расширения (bun:test)
   - [0007](docs/adr/adr-0007.md) — один checkout в несколько host'ов
   - [0008](docs/adr/adr-0008.md) — task-workspace runtime в Claude Code: CLI + плагин
   - [0009](docs/adr/adr-0009.md) — выбор host'ов при установке
+  - [0010](docs/adr/adr-0010.md) — роли субагентов в Claude Code
 - [`docs/specs/`](docs/specs/) и [`docs/research/`](docs/research/) — спецификации и исследования этапов
 - README расширений в `extensions/*/README.md` — контракты конкретных расширений

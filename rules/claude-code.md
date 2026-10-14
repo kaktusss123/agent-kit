@@ -11,3 +11,11 @@ agent-kit skills and AGENTS.md are written for both Pi and Claude Code; Pi tool 
 - If `agent-kit` is not on the Bash PATH (plugin not loaded, `bun` missing), the runtime is unavailable: report it instead of emulating the runtime by hand.
 - Sandboxed Bash: when Bash runs in a sandbox, operations that need the network or credentials outside it — `git push`/`fetch` over SSH, `gh`, `glab` — fail there. Do not attempt them, retry them, or route around the sandbox. Finish everything local (commit, PR/MR body file), then hand the user one combined `! <command>` that runs the remaining steps. Without a sandbox, run them directly.
 - Always: never invent a ticket or `base_ref`; never commit with `--no-verify`.
+
+## Subagents
+
+- `Explore` (agent-kit override, cheap): read-only research. `repo-owner`: RepoOwners only.
+- Everything else is `general-purpose`; pick the cost tier with the per-call `model`: `haiku` for cheap bounded tasks, omitted for the session model, `opus` for an independent reviewer (independence comes from fresh context, not an agent type).
+- Never pass `model` to an agent whose definition sets its own `model`; the parameter overrides it.
+- Add a new agent type only when a role needs its own system prompt or tool set, never for price or effort alone.
+- Do not use the haiku tier as the sole authority for root-cause analysis, security review, or design decisions.
