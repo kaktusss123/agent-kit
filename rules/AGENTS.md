@@ -61,6 +61,10 @@
 * Raw `git commit --no-verify` is forbidden everywhere; the only hook-bypass path is `checkpoint_commit`'s deferred hook verification after a real, current hook failure.
 * A RepoOwner that changed repository state may yield `done` only from a committed candidate that was finally verified after that commit; any later repository change means a new candidate commit and a new final verification.
 
+# Durable references
+
+* Committed code, comments, docstrings, tests, and docs must stay meaningful without access to untracked or private task artifacts: never cite workspace-only SPECs, bare decision or stage labels, or other references that do not resolve to a tracked repo-local path, an ADR, or an explicit upstream URL with a version. State the actual invariant or rationale inline; link a tracked path or anchor only when it helps. Real upstream documentation and standards with explicit URLs and versions are fine. Transient discovery IDs belong in task reports, not in product code.
+
 # Environment boundaries
 
 * Dependency and library sources come from the project under analysis only: read its environment metadata (`pyproject.toml`, `uv.lock`, `requirements.txt`), then inspect its own environment (`.venv/lib/python*/site-packages/`, or `<project>/.venv/bin/python -c "import pkg; print(pkg.__file__)"`).

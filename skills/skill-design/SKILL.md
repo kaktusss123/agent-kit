@@ -42,15 +42,9 @@ Delete:
 
 ## Durable references
 
-Committed code, comments, docstrings, tests, and docs must stay meaningful
-without access to untracked or private task artifacts: never cite workspace-only
-SPECs, bare decision or stage labels (such as `D4` or `R2` without context),
-or other references that do not resolve to a tracked repo-local path, an
-ADR, or an explicit upstream URL with a version. State the actual
-invariant or rationale inline; link a tracked path or anchor only when it
-helps. Real upstream documentation and standards with explicit URLs and
-versions are fine. Transient discovery IDs belong in task reports, not in
-product code. Workspace orchestration itself (task branches, SPEC.md paths in
-assignments, ticket identifiers the repo convention uses) is unaffected.
+Apply the shared invariant from `rules/AGENTS.md` at authoring time: keep the
+main SKILL.md self-contained (state the invariant inline) and link only
+tracked repo-local paths or versioned upstream URLs. Skill-specific review
+of dangling references lives in `skill://code-review`.
 
 Test skills on real sessions and revise from observed failure, not aesthetic preference.

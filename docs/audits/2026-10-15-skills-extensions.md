@@ -1,165 +1,173 @@
 # Аудит skills и расширений — 2026-10-15
 
-База: `origin/main`, `b1ab96a`. Ветка: `chore/audit_skills_extensions` (ticketless, авторизовано пользователем).
+База: `origin/main`, `b1ab96a`. Ветка `chore/audit_skills_extensions` (работа без тикета авторизована).
 Охват: все 25 skills, все 15 точек расширений Pi (14 каталогов в `extensions/` плюс корневой `proxy-toggle.ts`),
-Claude Code ассеты (`claude-code/agents`, `claude-code/commands`, `claude-code/plugin`), контракт установщика
-(`tests/installer`), раскладка (`tests/layout`), валидация skills (`tests/skills`).
+ассеты Claude Code, контракт установщика, раскладка, валидация skills.
 
-Метод по каждому пункту — один из четырёх, без подмен:
-инспекция исходников; детерминированные тесты; проверка на реальном host;
-недоступная live-проверка (честно отмечена как пропуск, не как «зелёная»).
+Метод для каждого пункта — один из четырёх, без подмен:
+инспекция исходников; детерминированные тесты; проверка на живом host;
+недоступная live-проверка (отмечена как пропуск, не как «зелёная»).
+
+## Покрытие
+
+Проверены все 25 skills. Дефекты найдены и исправлены в 7:
+`change-request`, `code-review`, `git-commit` (reference `checkpoint.md`),
+`git-task`, `lazy-mr-review`, `security-review`, `skill-design`.
+Без дефектов, подтверждены инспекцией и тестами, остальные 18:
+`blast-radius`, `change-verification`, `code-archaeology`, `codebase-design`,
+`diagnosing-bugs`, `editorial-html-report`, `engineering-research`, `grilling`,
+`handoff`, `implementation`, `project-verification`, `prototype`, `simple-design`,
+`specification`, `system-understanding`, `tdd`, `unslop`, `verification-design`.
+
+Проверены все 15 точек расширений. Исправлены 7:
+`agent-events`, `session-title`, `todo` (падения на custom-событиях),
+`proxy` (тестовый стенд CONNECT-туннеля), `model-classes`, `subagents`,
+`task-workspace` (непрозрачные ссылки в комментариях).
+Без дефектов остальные 8: `ask`, `continue-shortcut`, `footer`,
+`inspection-channel`, `perf-stats`, `proxy-toggle.ts`, `update-check`, `web-search`.
+Дополнительно: `prompts/dev.md` (формулировка ревьюера), `rules/AGENTS.md`
+(общее правило), `tests/skills/run.sh` (вложенные ссылки), отчёт `docs/audits/`.
+
+Ассеты Claude Code (`agents/`, `commands/`, `plugin`) и установщик проверены
+инспекцией и тестами установщика; подозрение «хуки skills-dir не грузятся»
+опровергнуто живым host 2.1.300 (`plugin list` показывает
+`agent-kit@skills-dir · loaded`, оба хука находятся, `plugin validate` проходит).
+Архитектура установки, SDK host-провайдеров, настройки пользователя не менялись.
 
 ## Исправленные дефекты
 
-### 1. Снапшот ревью (skills/lazy-mr-review/scripts/review_snapshot.py)
+### Снимок ревью MR (`lazy-mr-review/scripts/review_snapshot.py`)
 
-Нарушение обещанной read-only дисциплины: переданный `--clone` получал `fetch` в себя
-и регистрировал worktree в метаданных пользовательского клона.
-Дополнительно: общий чекаут на проект затирал соседние MR; свежий `--no-clone`
-не забирал MR-head ref; молчаливый `fetch origin` вместо совпавшего remote;
-грязный переиспользуемый чекаут мог выдать SHA, не соответствующий содержимому;
-коллизии слагов (`group/a-b` vs `group-a/b`); чужой каталог на месте чекаута
-молча использовался.
+Нарушение обещанной read-only дисциплины: переданный `--clone` получал `fetch`
+в себя и регистрировал worktree в своём каталоге. Плюс: общий чекаут на проект
+затирал соседние MR; свежий `--no-clone` не забирал head-ссылку MR;
+молчаливый `fetch origin` вместо совпавшего remote; грязный переиспользуемый
+чекаут мог отчитаться верным SHA при чужом содержимом; коллизии слагов
+(`group/a-b` против `group-a/b`); чужой каталог на месте чекаута молча
+использовался.
 
-Исправление: изолированный стор под temp root (seed локальным клоном из
-пользовательского пути либо свежим клоном с сервера); пользовательский клон —
-только источник, в него нет fetch и нет регистраций. Fetch MR-head ref явно в
-обоих путях с проверкой `FETCH_HEAD == head_sha`; remote для fetch — совпавший
-remote клона, а не всегда `origin`. Идентичность чекаута — `host/project/iid`
-плюс короткий хэш точной пары host/project (коллизии слагов исключены); та же
-идентичность у diff-файлов. Переиспользуемый чекаут проверяет принадлежность
-стору через `git-common-dir`, отказывается от грязного состояния с явной ошибкой
-(без автосброса) и от чужого каталога. Покрытие — офлайн `scripts/selftest.sh`
-на локальных git-фикстурах: грязный клон-источник нетронут (status, worktree list,
-отсутствие FETCH_HEAD), два MR одного проекта на разных SHA, MR-only ref,
-повторное использование, сдвинувшийся head, коллизия слагов, чужой каталог,
-грязный чекаут. Итог: 55/55.
+Исправление: изолированное хранилище под temp-каталогом (начальное наполнение —
+локальным клоном из пользовательского пути либо свежим клоном с сервера);
+пользовательский клон — только источник чтения. Head-ссылка MR забирается явно
+в обоих путях с проверкой `FETCH_HEAD == head_sha`; для fetch берётся совпавший
+remote клона, а не всегда `origin`. Идентичность чекаута — host/project/iid плюс
+короткий хэш точной пары host/project; та же идентичность у diff-файлов.
+Переиспользуемый чекаут проверяет принадлежность хранилищу через `git-common-dir`,
+отказывается от грязного состояния с явной ошибкой (без автосброса) и от чужого
+каталога. Покрытие — офлайн `scripts/selftest.sh` на локальных git-фикстурах:
+грязный клон-источник нетронут, два MR одного проекта на разных SHA, ссылка
+только уровня MR, повторное использование, сдвинувшийся head, коллизия слагов,
+чужой каталог, грязный чекаут. Итог: 55/55.
 
-### 2. Падения на custom-событиях (agent-events, session-title, todo)
+### Падения на custom-событиях (`agent-events`, `session-title`, `todo`)
 
-Host при idle custom-поворотах (например скрытая continue-директива через
+Host при фоновых custom-запусках (например скрытая continue-директива через
 `sendMessage(..., { triggerTurn: true })`) шлёт `before_agent_start` с сообщением,
-а не с `prompt`: `agent-events` падал в `truncateCodePoints(undefined)`,
-`session-title` — на `event.prompt.trim()`, у `todo` та же точка в dormant-ветке
-eager-prelude (`eager: "off"`). Исправление: защитное чтение `prompt`,
-совместимое с обеими формами события — старый user-shape и новый custom-shape.
-Поведение: `agent-events` всё равно открывает логический ран (без текста запроса),
-`session-title` пропускает генерацию заголовка и ждёт первый реальный промпт,
-`todo` сохраняет `resetCycle()` на каждом повороте и пропускает prelude без текста.
-Покрытие: поведенческие тесты вызова обработчиков (`index.test.ts`,
-`handler.test.ts` в обоих расширениях). Для `todo` eager-ветка dormant —
-тест фиксирует границу контракта (нет падения, нет инъекций), а не сам prelude;
-это ограничение указано честно.
+а не с `prompt`: падали `agent-events` (`truncateCodePoints(undefined)`),
+`session-title` (`event.prompt.trim()`), та же точка в спящей ветке `todo`
+(eager-prelude при `eager: "off"`). Исправление: защитное чтение `prompt`,
+совместимое со старой пользовательской формой и новой custom-формой, без версий
+окружения в комментариях. Поведение: `agent-events` всё равно открывает
+логический запуск (без текста запроса), `session-title` пропускает генерацию
+заголовка и ждёт первый настоящий промпт, `todo` сохраняет сброс цикла на каждом
+запуске и пропускает прелюдию без текста. Покрытие — поведенческие тесты вызова
+обработчиков. Ветка eager-prelude спит, поэтому тест `todo` фиксирует границу
+контракта (нет падения, нет инъекций), а не саму прелюдию — ограничение указано
+честно.
 
-### 3. Прокси-стенд (extensions/proxy/rig-child.mjs, proxy-rig.test.ts)
+### Стенд прокси (`extensions/proxy/`)
 
-Базовые падения ON-тестов (`UND_ERR_PRX_CONN` вместо `HEADERS_TIMEOUT`) —
-дефект стенда, а не продукта: диспетчер строился с `proxyTunnel: true`, а локальный
-прокси умел только plain forward без CONNECT. Исправление: loopback-прокси теперь
-говорит и absolute-form forwarding, и CONNECT-туннелирование (TCP-pipe с ответом
-502 вместо зависания); ON-кейсы доказуемо идут через прокси — в RESULT добавлены
-`connectCount`/`backendHits`, тесты ассертят их. Комментарий про absolute-form GET
-исправлен, недоступная ссылка на внешнее исследование убрана. Итог: 5/5, включая
-оба ON-кейса через реальный туннель.
+Падения ON-тестов (`UND_ERR_PRX_CONN` вместо `HEADERS_TIMEOUT`) — дефект стенда,
+а не продукта: диспетчер строился с включённым туннелированием, а локальный
+прокси не говорил CONNECT. Исправление: локальный прокси поддерживает и прямую
+пересылку, и CONNECT-туннель; ON-кейсы доказуемо идут через прокси — результат
+несёт счётчики туннелей и обращений к бэкенду, тесты их проверяют. Итог: 5/5.
 
-### 4. Противоречия между skills
+### Противоречия между skills
 
-- `git-commit/references/checkpoint.md` требовал светить deferred-hook gap в MR,
-  `change-request` запрещал и создавать MR, и упоминать незакрытые проверки.
-  Решение: publication gate сохраняется для required-проверок; deferred gap виден
-  в task-репортах и неопубликованных драфтах, создание блокируется до закрытия gap.
-  `description.md`: Verification — только позитивные факты, но материальные
-  ограничения optional/advisory-проверок допустимы коротко в `Review notes`;
-  незакрытый required-чек блокирует создание. `github.md`/`gitlab.md`: явное
-  требование смягчено до «resolved» — единственный remote с default-веткой при
-  запрошенной публикации ambiguity не создаёт; выбор среди нескольких кандидатов,
-  push/fork — только через пользователя.
+- `checkpoint.md` требовал светить отложенный hook-gap в MR, `change-request`
+  запрещал и создавать MR, и упоминать незакрытые проверки. Решение: gate для
+  обязательных проверок сохраняется; gap виден в отчётах о задаче и неопубликованных
+  черновиках, создание MR блокируется до закрытия gap (формулировка одинакова
+  в `checkpoint.md`, `SKILL.md` и `description.md`).
+- `description.md`: Verification — только позитивные факты, но материальные
+  ограничения необязательных проверок допустимы коротко в `Review notes`;
+  незакрытая обязательная проверка блокирует создание.
+- `github.md`/`gitlab.md`: «explicit» смягчено до «resolved» — единственный
+  remote с default-веткой при запрошенной публикации не требует переспроса;
+  выбор среди нескольких кандидатов, push/fork — только через пользователя.
 - Независимый ревьюер хардкодил опциональный класс `smart`: теперь `smart`, когда
-  он есть в текущем инвентаре, иначе явный `modelClass=default`; fail-closed при
-  неразрешимом классе сохранён (`git-task/SKILL.md`, `prompts/dev.md`).
-- `security-review/SKILL.md`: короткая progressive-disclosure маршрутизация по
-  reference-файлам границы/языка плюс обязательное чтение `finding-verification.md`
-  до публикации уязвимости.
-- `git-task/references/repo-owners.md`: несуществующий пример
-  `tests/dp_user_plane_api/trino` заменён описательным плейсхолдером.
-- Непрозрачные ссылки в активных комментариях (`SPEC R1/R2/R5/D4`, `b2-rig`)
-  заменены самодостаточными формулировками со смыслом; легитимные tracked-ссылки
-  (ADR, repo-local пути) и stage-метки в workspace-оркестрации не тронуты.
-  Общее правило — коротко в `skill-design` (уровень авторства) и одна строка-проверка
-  в `code-review` (уровень ревью), без копирования политики повсеместно.
+  он есть среди сохранённых классов, иначе явный `modelClass=default`;
+  неразрешимый класс по-прежнему останавливает запуск до отправки задачи.
+- `security-review`: короткая маршрутизация по reference-файлам границы/языка
+  плюс обязательное `finding-verification.md` до публикации уязвимости.
+- `repo-owners.md`: несуществующий пример команды заменён описательным шаблоном.
+- Непрозрачные ссылки в активных комментариях (`SPEC R1/R2/R5/D4`, внешняя
+  ссылка на исследование) заменены самодостаточными формулировками;
+  легитимные ссылки (ADR, пути в репозитории) и метки workspace-оркестрации
+  не тронуты. Канонический инвариант — в устанавливаемом `rules/AGENTS.md`
+  (виден обоим host), `skill-design` даёт авторскую конкретику ссылкой на него,
+  `code-review` — строку проверки.
 
-### 5. Валидация skills (tests/skills/run.sh)
+### Валидация skills (`tests/skills/run.sh`)
 
-Сканировались только `SKILL.md` + непосредственные `references/*.md`: вложенные
-байдинги (`references/claude-code/*.md`) и ссылки из agent-определений выпадали.
-Теперь: все `*.md` под каталогом skill для обоих видов file-refs и `skill://`;
-проверка `skill://` и `skills/.../references/...` в `claude-code/agents/*.md`;
-коммиттед-фикстуры `tests/skills/fixtures/nested-refs` + regression probe внутри
-`run.sh` (битый nested skill ловится, валидный проходит). Итог: 148/148.
+Проверялись только `SKILL.md` и файлы верхнего уровня `references/`: вложенные
+привязки (`references/claude-code/*.md`) и ссылки из описаний агентов выпадали.
+Теперь: все `*.md` под каталогом skill для обоих видов ссылок на файлы и для
+`skill://`; проверка `skill://` и путей `skills/.../references/...` в
+`claude-code/agents/*.md`. Зафиксированные фикстуры
+`tests/skills/fixtures/nested-refs` плюс regression probe внутри `run.sh`.
+Итог: 148/148.
 
-## Не дефекты (проверено, не чинилось)
+## Официальные источники (доступ 2026-10-15)
 
-- Подозрение «хуки skills-dir не грузятся» — опровергнуто: `claude plugin list`
-  показывает `agent-kit@skills-dir · loaded`, оба хука находятся, `plugin validate`
-  проходит (данные runtime-аудитора, host 2.1.300).
-- Архитектура установки/плагина, host provider SDK, пользовательские настройки —
-  вне скоупа, не менялись.
-
-## Официальные источники и сравнение (доступ 2026-10-15)
-
-Полные выгрузки — вне репозитория (`/tmp/agentkit-*`, сняты helper-агентом 2026-10-15):
-
-- GPT-6: `Using GPT-6` (семейство Astra/Sol/Luna),
-  https://developers.openai.com/api/docs/guides/latest-model/gpt-6-astra.md —
-  наблюдения: чувствительность к конфликтам skills, преждевременные уточнения,
-  многословность, избыточное тестирование, недоделегирование. Применено как
-  суждение (чёткие границы stop/completion, пропорциональное тестирование,
-  никаких лишних подтверждений), а не дословные шаблоны; выдуманной иерархии
-  инструкций, противоречащей host/system-правилам, не ввезено.
+- GPT-6: `Using GPT-6`,
+  https://developers.openai.com/api/docs/guides/latest-model/gpt-6-astra.md.
+  Учтено как суждение: чёткие границы завершения, пропорциональное тестирование,
+  без лишних подтверждений.
 - Общая: `Claude prompting best practices`,
-  https://platform.claude.com/docs/en/build-with-claude/prompt-engineering/claude-prompting-best-practices —
-  чёткость, прогрессивное раскрытие, проверяемые критерии готовности.
+  https://platform.claude.com/docs/en/build-with-claude/prompt-engineering/claude-prompting-best-practices.
 - Haiku 5.5: `Prompting Claude Haiku 5.5`,
-  https://platform.claude.com/docs/en/build-with-claude/prompt-engineering/prompting-claude-haiku-5-5 —
-  low-режим пропускает поиск/проверки и рано останавливается в длинных агентских
-  промптах. Роль Explore-агента оставлена узкой (только чтение, явный скоуп,
-  честные ограничения) вместо глобального повышения стоимости модели.
+  https://platform.claude.com/docs/en/build-with-claude/prompt-engineering/prompting-claude-haiku-5-5.
+  По умолчанию effort medium; на low в длинных агентских промптах пропускаются
+  поиск, проверки и ранняя остановка; факты о меняющемся мире требуют поиска
+  с датой; для структурированного JSON со своими инструментами — адаптивное
+  мышление. Роль Explore-агента оставлена узкой (только чтение, явный скоуп)
+  вместо повышения стоимости модели.
 - Sonnet 5.5: `Prompting Claude Sonnet 5.5`,
-  https://platform.claude.com/docs/en/build-with-claude/prompt-engineering/prompting-claude-sonnet-5-5 —
-  medium для чётких агентских кодинг-задач, low — пропуски валидации, high —
-  непрошеные дополнения. Роль RepoOwner на Sonnet-medium соответствует;
-  явное решение о ревью и проверка точных имён инструментов уже закрывают часть
-  рисков инициативы/скоупа.
+  https://platform.claude.com/docs/en/build-with-claude/prompt-engineering/prompting-claude-sonnet-5-5.
+  Medium — чёткие агентские кодинг-задачи, high — сложные и длинные; на low —
+  пропуски валидации и преждевременные отчёты о готовности; прогресс длинных
+  запусков может идти блоками мышления. Роль RepoOwner на medium соответствует;
+  явное решение о ревью и точные имена инструментов уже приняты в политике.
 - Opus 5.5: `Prompting Claude Opus 5.5`,
-  https://platform.claude.com/docs/en/build-with-claude/prompt-engineering/prompting-claude-opus-5-5 —
-  text-only end_turn не доказательство завершения, bounded 2–3 продолжения,
-  ожидание фоновой работы. Существующие `report_result`/settled Git-проверки уже
-  отвергают преждевременное prose-only завершение owner; новой provider/retry
-  архитектуры без воспроизводимой repo-проблемы не вводилось.
-- Замены 4.5/4.6-гайдами не делалось: сравнивались именно страницы 5.5
-  (существование подтверждено прямыми выгрузками, сомнений нет).
-- Model-specific API/provider-рычаги принадлежат host Pi/Claude, а не
-  generic-инструкциям репозитория — вынесены на owning boundary.
+  https://platform.claude.com/docs/en/build-with-claude/prompt-engineering/prompting-claude-opus-5-5.
+  Мышление всегда включено, стартовая точка — medium; текстовый `end_turn` не
+  доказывает завершение — чеклист плюс ограниченные 2–3 продолжения; фоновую
+  работу ждать, а не опрашивать. Существующие `report_result` и settled
+  Git-проверки уже отвергают преждевременное текстовое завершение owner.
+- Проверенные host-настройки API/провайдера рассмотрены и не изменялись:
+  специфичные для модели рычаги принадлежат host Pi/Claude, а не общим
+  инструкциям репозитория.
 
 ## Ограничения
 
-- Live-проверки недоступны там, где нет сети/кредов (glab/gh flows против
-  реального GitLab, публикация) — отмечены пропусками, не «пройдено».
-- `todo` eager-prelude dormant (`eager: "off"`): краш-ветка покрыта граничным
-  тестом, полный prelude при `preferred` — нет.
-- Контракт событий проверен по двум объявлениям: установленный host 1.2.0
-  (дискриминированный `messageType` user/custom) и SDK в worktree-node_modules
-  (1.0.4, только user-shape). Гарды написаны под обе формы; версии окружения в
-  продукт-комментарии не вшивались (меняются независимо) — факты здесь, в отчёте.
-  Полное live-покрытие обоих SDK тестами не заявляется.
-- Claude host-проверки (2.1.300, plugin list/details/validate, SessionStart/PreToolUse)
-  выполнены runtime-аудитором read-only и здесь пересказаны, а не перепрогонялись.
+- Реальные потоки GitLab MR (`glab`, публикация) офлайн не прогонялись:
+  выбранной GitLab-цели в задаче нет. `gh` аутентифицирован, публикацией
+  занимается Main.
+- Ветка eager-prelude `todo` спит (`eager: "off"`): покрыта граничным тестом,
+  полный прелюдий при `preferred` — нет.
+- Контракт событий сверен с двумя объявлениями (установленный host и SDK
+  в worktree-окружении); полное live-покрытие обоих тестами не заявляется.
+- Проверки host Claude (2.1.300) выполнены runtime-аудитором read-only
+  и здесь пересказаны, а не перепрогонялись.
 
 ## Верификация кандидата
 
-- `tests/layout/run.sh`: 18 pass.
-- `tests/installer/run.sh`: 35 pass.
-- `tests/skills/run.sh`: 148 pass (было 144: +2 agent-проверки, +2 probe).
-- `bash skills/lazy-mr-review/scripts/selftest.sh`: 55 pass, 0 fail (было 32/7 на старте до фикса фикстур).
-- `bun test extensions`: полный прогон в финальной проверке (база: 988 pass, 2 skip, 2 fail — оба fail были стендом прокси, исправлены).
-- Посткоммитная проверка — на точном коммите кандидата.
+- `bash tests/layout/run.sh`: 18 pass, 0 fail.
+- `bash tests/installer/run.sh`: 35 pass, 0 fail.
+- `bash tests/skills/run.sh`: 148 pass, 0 fail (было 144).
+- `bash skills/lazy-mr-review/scripts/selftest.sh`: 55 pass, 0 fail.
+- `bun test extensions`: 996 pass, 2 skip, 0 fail (база 988/2/2 — оба падения
+  были стендом прокси; пропуски штатные: платформенный socket-pair и
+  отсутствующий `AGENT_KIT_TSC`).

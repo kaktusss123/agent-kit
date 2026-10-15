@@ -42,7 +42,7 @@ The normal hooked commit is always attempted first, inside the same call; deferr
 - `manual_checks` — every hook check runnable without the blocker, executed by hand, each with `command` and a machine-readable pass result. Anything else (skipped, unknown, prose) does not authorize the bypass.
 - `remaining_gap` — written down.
 
-Downstream obligations on `committed_with_deferred_hook`: the repository is NOT fully verified; surface the gap in the task report and in any MR created from it; if the prerequisite becomes available later in the same run, rerun the deferred check — a pass closes the gap, a fail is a real verification failure requiring repair.
+Downstream obligations on `committed_with_deferred_hook`: the repository is NOT fully verified; surface the gap in the task report and in any unpublished draft, and do not create the MR until the deferred check is re-run and passes. If the prerequisite becomes available later in the same run, rerun the deferred check — a pass closes the gap, a fail is a real verification failure requiring repair.
 
 ## Relationship to the workspace guard
 
