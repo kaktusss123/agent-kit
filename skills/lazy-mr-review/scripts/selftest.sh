@@ -291,6 +291,48 @@ else
   check "untracked file preserved" test -e "$DCO/untracked.txt"
 fi
 
+echo "== snapshot: symlinked store pointing at the caller clone is refused"
+STORE_ID="$(python3 -c "import sys; sys.path.insert(0, '$HERE'); import review_snapshot as rs; print(rs.mr_identity('gitlab.test', 'group/proj'))")"
+ATROOT="$T/troot-alias-sym"
+mkdir -p "$ATROOT/repos"
+ln -s "$T/user" "$ATROOT/repos/$STORE_ID"
+USER_FETCH_BEFORE="$(git -C "$T/user" rev-parse FETCH_HEAD 2>&1 || true)"
+USER_WT_BEFORE="$(git -C "$T/user" worktree list)"
+USER_STATUS_BEFORE="$(git -C "$T/user" status --porcelain)"
+if python3 "$SNAP" "$URL" --clone "$T/user" --temp-root "$ATROOT" 2>"$T/err-alias-sym"; then
+  bad "symlinked store accepted"
+else
+  check "exit 1" test $? = 1
+  check "message names the symlink" grep -q 'is a symlink' "$T/err-alias-sym"
+  check "caller clone gained no FETCH_HEAD" test "$(git -C "$T/user" rev-parse FETCH_HEAD 2>&1 || true)" = "$USER_FETCH_BEFORE"
+  check "caller clone gained no worktrees" test "$(git -C "$T/user" worktree list)" = "$USER_WT_BEFORE"
+  check "caller clone status untouched" test "$(git -C "$T/user" status --porcelain)" = "$USER_STATUS_BEFORE"
+fi
+
+echo "== snapshot: store dir inside another repo is refused"
+BTROOT="$T/troot-alias-enc"
+mkdir -p "$BTROOT/repos/$STORE_ID"
+git init -q -b main "$BTROOT"
+ENC_FETCH_BEFORE="$(git -C "$BTROOT" rev-parse FETCH_HEAD 2>&1 || true)"
+ENC_WT_BEFORE="$(git -C "$BTROOT" worktree list)"
+if python3 "$SNAP" "$URL" --no-clone --temp-root "$BTROOT" 2>"$T/err-alias-enc"; then
+  bad "enclosing-repo store accepted"
+else
+  check "exit 1" test $? = 1
+  check "message names the standalone-root problem" grep -q 'not a standalone repository root' "$T/err-alias-enc"
+  check "enclosing repo gained no FETCH_HEAD" test "$(git -C "$BTROOT" rev-parse FETCH_HEAD 2>&1 || true)" = "$ENC_FETCH_BEFORE"
+  check "enclosing repo gained no worktrees" test "$(git -C "$BTROOT" worktree list)" = "$ENC_WT_BEFORE"
+fi
+
+echo "== snapshot: temp root inside the caller clone is refused"
+if python3 "$SNAP" "$URL" --clone "$T/user" --temp-root "$T/user/tmproot" 2>"$T/err-alias-tmp"; then
+  bad "in-clone temp root accepted"
+else
+  check "exit 1" test $? = 1
+  check "message names the alias" grep -q 'aliases the caller clone' "$T/err-alias-tmp"
+  check "nothing was created inside the caller clone" test ! -e "$T/user/tmproot"
+fi
+
 echo "== snapshot: non-MR URL rejected"
 if python3 "$SNAP" "https://github.com/a/b/pull/7" --no-clone 2>/dev/null; then
   bad "github URL accepted"

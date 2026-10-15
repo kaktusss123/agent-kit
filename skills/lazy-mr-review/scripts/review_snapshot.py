@@ -28,6 +28,7 @@ stdout, stderr. Nothing is normalized.
 import argparse
 import hashlib
 import json
+import os
 import re
 import shutil
 import subprocess
@@ -138,12 +139,53 @@ def mr_identity(host, project):
     return f"{slug}-{digest}"
 
 
+def _reject_clone_alias(label, path, clone_real):
+    """Refuse store/checkout paths that alias the caller's clone."""
+    rp = Path(os.path.realpath(path))
+    if rp == clone_real or clone_real in rp.parents:
+        die(
+            f"{label} {path} aliases the caller clone {clone_real}; "
+            "the isolated store and checkouts must live outside the clone"
+        )
+
+
+def _validate_store(store):
+    """Accept an existing store only as its own standalone repository root."""
+    if os.path.islink(store):
+        die(f"review store {store} is a symlink; remove it and re-run")
+    if not store.is_dir():
+        die(f"review store {store} exists and is not a directory; remove it and re-run")
+    if os.path.islink(store / ".git"):
+        die(f"review store {store} metadata is a symlink; remove it and re-run")
+    if git("rev-parse", "--is-inside-work-tree", cwd=store).strip() != "true":
+        die(f"review store {store} exists and is not a git working tree; remove it and re-run")
+    top = git("rev-parse", "--show-toplevel", cwd=store).strip()
+    if str(Path(top).resolve()) != str(store.resolve()):
+        die(
+            f"review store {store} is not a standalone repository root "
+            f"(top-level is {top}); remove it and re-run"
+        )
+    # The store metadata must be its own local .git directory: a linked
+    # worktree, a subdirectory of a foreign repo, or any other redirected
+    # gitdir would mutate foreign state on fetch/worktree registration.
+    for flag in ("--git-dir", "--git-common-dir"):
+        val = git("rev-parse", flag, cwd=store).strip()
+        if str((store / val).resolve()) != str((store / ".git").resolve()):
+            die(
+                f"review store {store} git metadata is redirected "
+                f"({flag} resolves to {val}); remove it and re-run"
+            )
+
+
 def ensure_store(host, project, seed_clone, temp_root):
     """Isolated object store under the temp root (never the caller clone)."""
     store = Path(temp_root) / "repos" / mr_identity(host, project)
-    if store.exists():
-        if git("rev-parse", "--is-inside-work-tree", cwd=store).strip() != "true":
-            die(f"review store {store} exists and is not a git working tree; remove it and re-run")
+    if os.path.islink(store):
+        die(f"review store {store} is a symlink; remove it and re-run")
+    if seed_clone is not None:
+        _reject_clone_alias("review store", store, Path(seed_clone).resolve())
+    if os.path.lexists(store):
+        _validate_store(store)
         return store
     store.parent.mkdir(parents=True, exist_ok=True)
     if seed_clone:
@@ -162,6 +204,8 @@ def prepare_checkout(host, project, iid, head_sha, clone, temp_root):
             die(f"--clone {clone} does not exist")
         if git("rev-parse", "--is-inside-work-tree", cwd=clone).strip() != "true":
             die(f"--clone {clone} is not a git working tree")
+        clone_real = Path(clone).resolve()
+        _reject_clone_alias("temp root", temp_root, clone_real)
         fetch_url = matching_remote_url(host, project, clone)
         if fetch_url is None:
             _, seen = remote_matches(host, project, clone)
@@ -169,7 +213,7 @@ def prepare_checkout(host, project, iid, head_sha, clone, temp_root):
                 f"clone {clone} remotes do not match {host}/{project}; remotes: {seen}\n"
                 "Do not proceed silently — report to the user and ask."
             )
-        store = ensure_store(host, project, Path(clone).resolve(), temp_root)
+        store = ensure_store(host, project, clone_real, temp_root)
     else:
         store = ensure_store(host, project, None, temp_root)
         fetch_url = server_url(host, project)
@@ -182,6 +226,10 @@ def prepare_checkout(host, project, iid, head_sha, clone, temp_root):
     # Distinct checkout identity per MR (host/project/iid): several MRs on one
     # project must never share — and overwrite — each other's checkout.
     wt = Path(temp_root) / "checkouts" / f"{identity}-mr{iid}"
+    if clone:
+        _reject_clone_alias("checkout", wt, clone_real)
+    if os.path.islink(wt):
+        die(f"checkout {wt} is a symlink; remove it and re-run")
     if wt.exists():
         if git("rev-parse", "--is-inside-work-tree", cwd=wt).strip() != "true":
             die(f"checkout {wt} exists and is not a git working tree; remove it and re-run")
@@ -290,6 +338,10 @@ def main():
 
     if args.temp_root:
         temp_root = str(Path(args.temp_root).resolve())
+        if args.clone:
+            # Refuse before creating anything: the temp root must not alias
+            # the caller clone (prepare_checkout re-checks store/checkouts).
+            _reject_clone_alias("temp root", temp_root, Path(args.clone).resolve())
         Path(temp_root).mkdir(parents=True, exist_ok=True)
     else:
         key = hashlib.sha1("\n".join(sorted(m["url"] for m in mrs)).encode()).hexdigest()[:10]

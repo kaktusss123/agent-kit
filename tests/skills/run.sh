@@ -84,14 +84,18 @@ validate_skill() { # <skill-dir> <skills-root>
 	[ "$stale_refs" -eq 0 ] && ok "$skill: all referenced files exist"
 
 	# skill:// cross-references must target existing skills (all .md scanned).
+	# One file at a time: filenames with spaces must not be split (xargs once
+	# divided them, silently hiding links and reporting false success).
 	stale_links=0
-	while IFS= read -r target; do
-		[ -n "$target" ] || continue
-		if [ ! -d "$root/$target" ]; then
-			bad "$skill: skill://$target does not exist"
-			stale_links=1
-		fi
-	done < <(skill_markdown "$skill_dir" | xargs grep -ohE 'skill://[A-Za-z0-9-]+' 2>/dev/null | sed 's|^skill://||' || true)
+	while IFS= read -r md; do
+		while IFS= read -r target; do
+			[ -n "$target" ] || continue
+			if [ ! -d "$root/$target" ]; then
+				bad "$skill: skill://$target does not exist"
+				stale_links=1
+			fi
+		done < <(grep -ohE 'skill://[A-Za-z0-9-]+' "$md" 2>/dev/null | sed 's|^skill://||' || true)
+	done < <(skill_markdown "$skill_dir")
 	[ "$stale_links" -eq 0 ] && ok "$skill: all skill:// targets exist"
 }
 
@@ -225,6 +229,33 @@ if grep -q '^FAIL' <<<"$probe_ok"; then
 else
 	ok "validator probe: valid nested skill passes"
 fi
+
+# --- regression probe: whitespace in paths must not hide dangling links -----
+
+# Filenames were once piped through xargs, which split on whitespace: a skill://
+# link inside a file with spaces in its name was silently missed (grep failed,
+# stderr was suppressed) and the validator reported false success.
+SPACE_T="$(mktemp -d "${TMPDIR:-/tmp}/space probe.XXXXXX")"
+mkdir -p "$SPACE_T/skills"
+cp -R "$FIXTURE_ROOT/ok-skill" "$SPACE_T/skills/ok-skill"
+mkdir -p "$SPACE_T/skills/bad-space"
+printf -- '---\nname: bad-space\ndescription: d\n---\n' > "$SPACE_T/skills/bad-space/SKILL.md"
+printf 'see skill://no-such-space-test\n' > "$SPACE_T/skills/bad-space/note with space.md"
+probe_space_ok="$(PASS=0; FAIL=0; validate_skill "$SPACE_T/skills/ok-skill" "$SPACE_T/skills"; true)"
+if grep -q '^FAIL' <<<"$probe_space_ok"; then
+	bad "whitespace probe: valid skill under a spaced path was flagged"
+	printf '%s\n' "$probe_space_ok" | sed 's/^/    /'
+else
+	ok "whitespace probe: valid skill under a spaced path passes"
+fi
+probe_space_bad="$(PASS=0; FAIL=0; validate_skill "$SPACE_T/skills/bad-space" "$SPACE_T/skills"; true)"
+if grep -q 'skill://no-such-space-test does not exist' <<<"$probe_space_bad"; then
+	ok "whitespace probe: dangling link in a spaced path is caught"
+else
+	bad "whitespace probe: dangling link in a spaced path was NOT caught"
+	printf '%s\n' "$probe_space_bad" | sed 's/^/    /'
+fi
+rm -rf "$SPACE_T"
 
 printf '\n%d passed, %d failed\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]
