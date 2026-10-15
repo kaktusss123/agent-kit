@@ -223,7 +223,7 @@ describe("reporting bridge staleness (F2)", () => {
 		const h = makeBridge();
 		try {
 			await report(h, "only concern is the report");
-			// Boundary (SPEC R2): capability extensions declare nothing about
+			// Boundary: capability extensions declare nothing about
 			// readiness — the factory must not register a session_start handler
 			// (the subagents-owned readiness probe covers the contract), and its
 			// reporting tools have no readiness hooks of their own.

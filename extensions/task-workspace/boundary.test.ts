@@ -1,5 +1,5 @@
 /**
- * Dependency-boundary regression (SPEC R2/R3.1): the task-workspace
+ * Dependency-boundary regression: the task-workspace
  * extension must have ZERO knowledge of the subagents controller — no
  * imports/requires of ../subagents/*, no mentions in active sources or the
  * README. The allowed direction is subagents -> task-workspace, never the

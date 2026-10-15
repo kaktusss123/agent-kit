@@ -1,5 +1,5 @@
 /**
- * Unit tests for model-classes persistence (SPEC R1, R3 storage): named
+ * Unit tests for model-classes persistence: named
  * classes (grammar + reserved words + insertion order), migration of old
  * cheap/smart files, routing read/write/reset, unset protection, atomic
  * failure keeping the previous value, corrupt-file handling, agent-dir

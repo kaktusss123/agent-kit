@@ -29,7 +29,7 @@ Ask the user (one question covering all repos) for local clone paths or "no loca
 python3 scripts/review_snapshot.py <url>... (--clone <path> | --no-clone) [--temp-root <dir>]
 ```
 
-The tool performs the glab preflight (auth failure → show raw output and stop, never log in), parses each URL into host/project/iid, records title/state/author/branches/description, `diff_refs`, saves the full diff, pipeline status, and existing discussions (for dedup), and produces a verified detached checkout of `head_sha` outside the user's repo. It refuses a clone whose remotes do not match the MR project — report that to the user and ask. The review is tied to `head_sha`; a re-review reuses the same temp root (fetch + fresh detach, no re-clone). Temp artifacts persist for the whole conversation (see Cleanup).
+The tool performs the glab preflight (auth failure → show raw output and stop, never log in), parses each URL into host/project/iid, records title/state/author/branches/description, `diff_refs`, saves the full diff, pipeline status, and existing discussions (for dedup), and produces a verified detached checkout per MR at `head_sha` in an isolated store outside the user's repo (the user's clone stays read-only: seeded from, never fetched into). It refuses a clone whose remotes do not match the MR project — report that to the user and ask. The review is tied to `head_sha`; a re-review reuses the same temp root (fetch + fresh detach, no re-clone). Temp artifacts persist for the whole conversation (see Cleanup).
 
 ### 3. Review
 

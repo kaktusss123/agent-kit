@@ -40,4 +40,17 @@ Delete:
 - ceremonial steps that do not change outcomes;
 - generic capability text copied into a role adapter.
 
+## Durable references
+
+Committed code, comments, docstrings, tests, and docs must stay meaningful
+without access to untracked or private task artifacts: never cite workspace-only
+SPECs, bare decision or stage labels (such as `D4` or `R2` without context),
+or other references that do not resolve to a tracked repo-local path, an
+ADR, or an explicit upstream URL with a version. State the actual
+invariant or rationale inline; link a tracked path or anchor only when it
+helps. Real upstream documentation and standards with explicit URLs and
+versions are fine. Transient discovery IDs belong in task reports, not in
+product code. Workspace orchestration itself (task branches, SPEC.md paths in
+assignments, ticket identifiers the repo convention uses) is unaffected.
+
 Test skills on real sessions and revise from observed failure, not aesthetic preference.

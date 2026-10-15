@@ -84,7 +84,12 @@ export default function agentEventsExtension(pi: ExtensionAPI): void {
 	});
 
 	pi.on("before_agent_start", (event) => {
-		query = truncateCodePoints(event.prompt);
+		// Newer hosts also fire this for idle custom turns, which carry a
+		// message instead of a prompt; older hosts only send the user shape.
+		// Read the prompt defensively so both behave the same: a custom turn
+		// still opens a logical run, with no user query text.
+		const raw = event as unknown as { prompt?: unknown };
+		query = typeof raw.prompt === "string" ? truncateCodePoints(raw.prompt) : undefined;
 	});
 
 	pi.on("agent_start", () => {

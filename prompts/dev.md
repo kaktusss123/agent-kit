@@ -13,6 +13,6 @@ Work per `skill://git-task`:
 - Load and follow `SPEC.md` from the task workspace when it exists.
 - Dispatch exactly one RepoOwner per writable repository — `subagent` op `spawn` with `workspace=<worktree>` rooted at that repository's managed worktree (parallel for independent repositories, dependency-ordered otherwise). Main does not edit task repositories itself.
 - Consume the structured results, perform task-level review and integration verification, and repair through a fresh owner that first inspects current state. Handle `needs_input` per the runtime protocol.
-- After each final-verified committed candidate, make the independent-review decision explicitly: Main's own review suffices for local, low-risk changes; substantial candidates expect an independent fresh-context reviewer — a plain `subagent` spawn with `modelClass=smart` (policy: `skill://git-task`).
+- After each final-verified committed candidate, make the independent-review decision explicitly: Main's own review suffices for local, low-risk changes; substantial candidates expect an independent fresh-context reviewer — a plain `subagent` spawn with `modelClass=smart` (or explicit `modelClass=default` where `smart` is not in the current inventory; policy: `skill://git-task`).
 
 Inside owners: `skill://implementation`, `skill://tdd`, `skill://verification-design` as the work demands; checkpoints per `skill://git-commit`. Finish with evidence, or a specific blocker.

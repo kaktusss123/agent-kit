@@ -308,4 +308,58 @@ describe("agent-events extension lifecycle", () => {
 			h.restore();
 		}
 	});
+
+	test("custom turn (messageType custom, no prompt) still opens a run without throwing", () => {
+		const h = harness();
+		try {
+			h.pi.emit({ type: "session_start", reason: "startup" }, tuiContext());
+			// Idle custom turn (e.g. a hidden continue directive): no `prompt` field.
+			expect(() =>
+				h.pi.emit(
+					{ type: "before_agent_start", messageType: "custom", message: { customType: "x", content: "go on" } },
+					{},
+				),
+			).not.toThrow();
+			h.pi.emit({ type: "agent_start" }, {});
+			h.pi.emit({ type: "agent_end", messages: [assistant({ text: "continued" })] }, {});
+			h.pi.emit({ type: "agent_settled" }, {});
+
+			const names = events(h.written).map((e) => e.event);
+			expect(names).toEqual(["session_start", "prompt_submit", "stop"]);
+			// No user query text exists for a custom turn — the run is still reported.
+			expect(events(h.written)[2]).toMatchObject({ response: "continued" });
+			expect("query" in events(h.written)[2] && events(h.written)[2].query).toBeFalsy();
+		} finally {
+			h.restore();
+		}
+	});
+
+	test("user turn after a custom turn carries its own query", () => {
+		const h = harness();
+		try {
+			h.pi.emit({ type: "session_start", reason: "startup" }, tuiContext());
+			h.pi.emit(
+				{ type: "before_agent_start", messageType: "custom", message: { customType: "x", content: "go on" } },
+				{},
+			);
+			h.pi.emit({ type: "agent_start" }, {});
+			h.pi.emit({ type: "agent_end", messages: [assistant({ text: "continued" })] }, {});
+			h.pi.emit({ type: "agent_settled" }, {});
+			h.pi.emit({ type: "before_agent_start", messageType: "user", prompt: "fix the bug" }, {});
+			h.pi.emit({ type: "agent_start" }, {});
+			h.pi.emit({ type: "agent_end", messages: [assistant({ text: "fixed" })] }, {});
+			h.pi.emit({ type: "agent_settled" }, {});
+
+			expect(events(h.written).map((e) => e.event)).toEqual([
+				"session_start",
+				"prompt_submit",
+				"stop",
+				"prompt_submit",
+				"stop",
+			]);
+			expect(events(h.written)[4]).toMatchObject({ query: "fix the bug", response: "fixed" });
+		} finally {
+			h.restore();
+		}
+	});
 });

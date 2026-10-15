@@ -44,11 +44,11 @@ export type ModelClassRef = "default" | ModelClassName;
 /** Routing target: a saved class name, or `inherit` (reset to session pair). */
 export type RouteTarget = ModelClassName | "inherit";
 
-/** Class-name grammar (SPEC R1). */
+/** Class-name grammar: lowercase alphanumeric segments with dashes. */
 export const CLASS_NAME_PATTERN = /^[a-z][a-z0-9-]{0,31}$/;
 
 /**
- * Reserved words that are not valid class names (SPEC R1): `default` is the
+ * Reserved words that are not valid class names: `default` is the
  * live session, `inherit` is the routing reset, the rest are subcommands or
  * the reserved storage key.
  */
@@ -161,7 +161,7 @@ function readStorageObject(file: string): Record<string, unknown> | undefined {
  * is preserved structurally even when it is not a valid/saved class name
  * (reserved words like `default`, garbage like `"INVALID!"`): a present
  * routing value is unknown-but-set state, not absent state, so it must
- * fail closed at spawn resolution with the routing-aware error (SPEC D4)
+ * fail closed at spawn resolution with the routing-aware error
  * and stay visibly flagged in status — never silently degrade to
  * inheritance. Write-time validation (`/model-class route`) is unchanged.
  * Non-string values (numbers, null, objects) cannot be a class reference
@@ -275,7 +275,7 @@ export type UnsetModelClassOutcome =
 	| { ok: false; error: string; referencedBy: SpawnMode[] };
 
 /**
- * Delete a saved class (SPEC R1 `unset`). Refuses while any routing entry
+ * Delete a saved class (`unset`). Refuses while any routing entry
  * references the class, naming the modes to reset first. Read-modify-write,
  * atomic; corrupt storage aborts. Deleting a name that is not saved (and not
  * routed) succeeds as a no-op.
