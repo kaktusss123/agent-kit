@@ -184,5 +184,10 @@ else
 	fi
 	check 'real-cli: keys lint reports with rc 0 or 1' lint_check
 fi
+if [ -n "${FLEET_TEST_CHECKOUT:-}" ] && [ -x "$FLEET_TEST_CHECKOUT/bin/fleet" ]; then
+	check 'registration: real-CLI fixture scenarios (profile refresh + verified known_hosts)' bash "$REPO/tests/fleet/registration.sh"
+else
+	skip 'registration: FLEET_TEST_CHECKOUT not provided'
+fi
 summary
 [ "$FAIL" -eq 0 ]

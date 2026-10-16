@@ -16,7 +16,7 @@ Fleet is the inventory and access layer of the homelab: `inventory/fleet.json` i
 
 - Explicit target only. Resolve a machine by its exact `name` from the current inventory; an unknown alias stops with candidates, never a guess. No random guests, no guessed IPs, no "similar enough" hosts.
 - Agent identity only. Administrative SSH uses the agent profile (`ssh -F ~/.fleet/ssh-agent.conf <name>`), proven effective with `ssh -G -F` before the first real connection. Never fall back to the human profile, `ssh_user`, or root identities; never copy private keys around. The sole narrow exception is an owner-approved baseline/bootstrap run (`references/maintenance.md`) — never an automatic fallback for ordinary diagnosis.
-- Strict host keys. An unknown or changed host key is a hard stop. Trusted comparison only via an independent console channel (`references/access.md`). Never auto-accept, never edit known_hosts to make a connection pass.
+- Strict host keys. An unknown or changed host key is a hard stop. Confirmation only via an independent trusted channel, and known_hosts edits only as the controlled, independently verified install or replacement defined in `references/access.md` — never auto-accept, never to make an unverified connection pass.
 - Side-effect isolation. OPNsense, DNS (Pi-hole), and Proxmox infrastructure are never changed as a side effect of a machine task; changes there are separate owner decisions (`references/maintenance.md`). Stopped guests are never started as a workaround — the agent profile excludes non-running guests by design.
 - Fleet repository mutations — registry edits, `inventory refresh` outputs, key policy files — go through `skill://git-task` managed worktrees, never the primary Fleet checkout.
 
