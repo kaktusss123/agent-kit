@@ -254,6 +254,10 @@ frontmatter агента `modelSettings.<model>.effortLevel`; если нет, `
 - [`simple-design`](skills/simple-design/SKILL.md) — минимально достаточный дизайн
 - [`codebase-design`](skills/codebase-design/SKILL.md) — где живут ответственность, состояние и интерфейсы, когда сложность оправдана
 
+Инфраструктура:
+
+- [`fleet`](skills/fleet/SKILL.md) — автономные задачи на домашнем кластере под управлением fleet: поиск машин и сервисов в инвентаре, диагностика через агентский SSH-профиль, ограниченные согласованные изменения с откатом и проверкой, baseline на одну явно указанную машину
+
 Тексты и мета:
 
 - [`unslop`](skills/unslop/SKILL.md) — редакторская правка текста от AI-паттернов
@@ -275,6 +279,9 @@ Skills ссылаются друг на друга как `skill://<name>`.
 tests/installer/run.sh [-v]     # инсталлер в песочнице $HOME
 tests/layout/run.sh             # запрещённые каталоги и инварианты раскладки
 tests/skills/run.sh             # frontmatter, references, ссылки skill://
+tests/fleet/run.sh              # скилл fleet: структурные инварианты, изолированная
+                                 # установка (реальный SDK-лоадер Pi), реальный CLI fleet
+                                 # через FLEET_TEST_CHECKOUT=<checkout fleet> (без него — пропуск)
 bun test extensions/<name>/     # расширения (bun:test)
 ```
 
