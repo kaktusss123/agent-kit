@@ -1,5 +1,5 @@
 /**
- * Unit tests for the subagent spawn modelClass boundary (SPEC R3): the
+ * Unit tests for the subagent spawn modelClass boundary: the
  * literal `default` and omitted-with-no-storage resolve the live session
  * pair without ever consulting stored classes, explicit and routed classes
  * resolve persisted state through the registry, routing is per spawn mode,

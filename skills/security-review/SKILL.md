@@ -34,4 +34,16 @@ For each real finding, state the vulnerable behavior, preconditions, likely impa
 
 Use authoritative primary documentation through `skill://engineering-research` when the verdict depends on external security semantics, protocol requirements, or library behavior.
 
+## References
+
+Load only what the change touches; do not load all references by default.
+
+- Trust boundaries, attacker capabilities: `references/context-and-trust-boundaries.md`.
+- Injection, execution, auth, session, tenancy, secrets, crypto, parsing, network: the matching `references/<topic>.md` (injection-and-code-execution, authentication-and-session, authorization-and-tenancy, secrets-crypto-and-data, requests-files-and-parsers).
+- Language-specific pitfalls: the matching `references/language-<name>.md`.
+- Comparing against a reference implementation: `references/differential-analysis.md`.
+- Agent/tool prompt-injection shape: `references/agentic-and-prompt-injection.md`.
+
+Before reporting a vulnerability, read `references/finding-verification.md` and verify the finding the way it requires.
+
 If no material issue is found, say so and name the trust boundaries or attack paths that were actually checked.

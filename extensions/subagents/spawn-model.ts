@@ -74,7 +74,7 @@ export function resolveSpawnPair(
 	}
 	// Everything else reads storage fresh. A read failure is unknown routing
 	// state, not absent routing: it must fail closed here rather than silently
-	// downgrade a possibly-routed mode to the session pair (SPEC D4). Only a
+	// downgrade a possibly-routed mode to the session pair. Only a
 	// missing/empty file legitimately means "no routing" — loadStoredFile
 	// returns an empty table for that case without throwing.
 	let stored: StoredModelClasses;

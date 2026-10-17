@@ -45,5 +45,6 @@ If the caller assigned lenses, apply those lenses and load their references. If 
 ## Findings
 
 Separate blocking correctness/contract issues from maintainability suggestions. Give a concrete mechanism and evidence. Do not manufacture findings to make a review look thorough.
+Flag dangling references: citations in committed code, comments, or docs that do not resolve to a tracked repo-local path, ADR, or explicit versioned upstream URL (authoring rule: `skill://skill-design`).
 
 Do not auto-apply fixes unless asked. Do not require multiple reviewers or models. The environment may add independent reviewers later without changing this review contract.

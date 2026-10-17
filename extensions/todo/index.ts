@@ -269,8 +269,13 @@ export default function (pi: ExtensionAPI) {
 		if (CONFIG.eager !== "preferred") return;
 		if (eagerFiredThisSession) return;
 		if (phases.length > 0) return;
+		// Idle custom turns carry a message, not a prompt: the cycle reset
+		// above still applies to every turn, but there is no user text to
+		// consider for the eager prelude.
+		const raw = event as unknown as { prompt?: unknown };
+		if (typeof raw.prompt !== "string") return;
 		// Skip prompts that are themselves questions or exclamations — OMP parity.
-		const trimmed = event.prompt.trimEnd();
+		const trimmed = raw.prompt.trimEnd();
 		if (trimmed.endsWith("?") || trimmed.endsWith("!")) return;
 		if (branchUserCount(ctx) > 1) return;
 		eagerFiredThisSession = true;

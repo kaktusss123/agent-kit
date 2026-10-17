@@ -40,4 +40,11 @@ Delete:
 - ceremonial steps that do not change outcomes;
 - generic capability text copied into a role adapter.
 
+## Durable references
+
+Apply the shared invariant from `rules/AGENTS.md` at authoring time: keep the
+main SKILL.md self-contained (state the invariant inline) and link only
+tracked repo-local paths or versioned upstream URLs. Skill-specific review
+of dangling references lives in `skill://code-review`.
+
 Test skills on real sessions and revise from observed failure, not aesthetic preference.

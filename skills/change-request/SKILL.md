@@ -11,7 +11,7 @@ Use a lightweight workflow. Prefer the installed forge CLI over custom API wrapp
 
 - Separate description drafting from publication. A user may ask for either one.
 - Keep git mutation outside this skill. Do not commit, push, rebase, merge, or create/delete branches here.
-- Never silently choose GitHub vs GitLab, a host, or a repository when the publication target is not explicit. Ask the user. Read-only remote inspection may be used to offer likely choices.
+- Never silently choose GitHub vs GitLab, a host, or a repository among several candidates. Ask the user when the target is genuinely ambiguous; a single resolving remote needs no question. Read-only remote inspection may be used to offer likely choices.
 - Support arbitrary GitHub and GitLab hosts. Never encode organization-specific hostnames as architecture.
 - Use `gh` for GitHub and `glab` for GitLab. Load only the matching provider reference.
 - Every GitLab MR creation MUST pass `--squash-before-merge=true` to `glab mr create`; do not rely on a GitLab UI or project default to enable squash.
@@ -27,7 +27,7 @@ Use a lightweight workflow. Prefer the installed forge CLI over custom API wrapp
 2. Gather facts from the current conversation and available repository evidence. Read-only git commands are allowed when they help understand the change or identify candidate remotes.
 3. Load [references/description.md](references/description.md) and prepare the title/body. If several sibling PRs/MRs are in scope, compare and normalize them together before finalizing any one draft.
 4. If the request is only `draft`, return the draft and stop.
-5. Resolve the publication target. Require provider, host, repository, source branch, and target branch to be known. If provider/host/repository are not explicit, ask the user instead of guessing. Candidate remotes may be shown as suggestions.
+5. Resolve the publication target. Require provider, host, repository, source branch, and target branch to be known. When several repositories or hosts are candidates, ask the user instead of guessing; candidate remotes may be shown as suggestions. When the user already requested publication for this repository and a single remote with its default branch resolves the target unambiguously, proceed without re-asking. Never push, fork, or select silently among several candidates.
 6. Load [references/github.md](references/github.md) for GitHub or [references/gitlab.md](references/gitlab.md) for GitLab.
 7. Run the minimal provider preflight: verify the CLI exists and verify authentication for the selected host. Use the installed CLI's `--help` when exact flags differ by version.
 8. For `create`, verify that the source branch already exists remotely. If it does not, stop and hand off to the git workflow. Do not push or let an interactive CLI flow push/fork on this skill's behalf.
@@ -41,7 +41,9 @@ Use a lightweight workflow. Prefer the installed forge CLI over custom API wrapp
 Treat verification as a publication gate, not a place to advertise failures.
 
 - If the current project/workflow defines required checks and any are known to be failing or incomplete, do not create the PR/MR.
-- Do not put failed, skipped, unknown, or not-run checks into the PR/MR description.
+- Do not put failed, skipped, unknown, or not-run required checks into the PR/MR description as if they passed.
+- Material limitations of optional or advisory checks (unavailable tooling, environment limits) may be noted briefly in `Review notes` per [references/description.md](references/description.md); they never substitute for a required check.
+- A deferred-hook gap recorded by the git workflow still blocks creation until the deferred check is re-run and passes; the gap stays visible in task reports and unpublished drafts meanwhile.
 - Do not invent a universal test command or require metrics the project does not provide.
 - A description may still be drafted before publication readiness is established.
 

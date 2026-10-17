@@ -4,9 +4,9 @@ Use this reference only after GitLab is the selected publication target.
 
 ## Target resolution
 
-Require the GitLab host and repository/project to be explicit before publication. Support gitlab.com, personal/self-hosted GitLab, and corporate GitLab instances equally. Never bake a specific organization hostname into the skill.
+Require the GitLab host and repository/project to be resolved before publication. Support gitlab.com, personal/self-hosted GitLab, and corporate GitLab instances equally. Never bake a specific organization hostname into the skill.
 
-If the target is ambiguous, inspect read-only remotes only to present candidates. Let the user choose.
+When several repositories or hosts are candidates, inspect read-only remotes only to present candidates and let the user choose. When the user already requested publication for this repository and a single remote with its default branch resolves the target unambiguously, proceed without re-asking. Never select silently among several candidates, and never push or fork to resolve ambiguity.
 
 ## Minimal preflight
 

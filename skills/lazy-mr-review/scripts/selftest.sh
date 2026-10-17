@@ -31,10 +31,13 @@ cat > "$T/bin/git" <<SHIM
 # Rewrite gitlab.test URLs (explicit or behind a remote name) to the local mirror.
 args=("\$@")
 if [ "\${1:-}" = "fetch" ] && [ -n "\${2:-}" ]; then
-  url="\$("$GIT_REAL" remote get-url "\$2" 2>/dev/null || true)"
+  url="\$2"
+  case "\$url" in
+    https://gitlab.test/*) : ;; # explicit server URL: rewrite below
+    *) url="\$("$GIT_REAL" remote get-url "\$2" 2>/dev/null || true)" ;;
+  esac
   case "\$url" in
     https://gitlab.test/*)
-      p="\${url#https://gitlab.test/}"; p="\${p%.git}"
       args=("\$1" "\$GIT_MIRROR" "\${@:3}") ;;
   esac
 fi
@@ -106,6 +109,11 @@ case "$path" in
       esac
     fi ;;
   *"merge_requests/"*)
+    if [[ "$path" =~ merge_requests/([0-9]+) ]]; then
+      iid="${BASH_REMATCH[1]}"
+      var="GLAB_STUB_MR_${iid}"
+      if [ -n "${!var:-}" ]; then echo "${!var}"; exit 0; fi
+    fi
     echo "${GLAB_STUB_MR}"; exit 0 ;;
 esac
 echo "stub: unhandled api path $path" >&2
@@ -135,14 +143,39 @@ MR_JSON="$(jq -cn --arg sha "$SHA" '{
               start_sha: "1111111111111111111111111111111111111111",
               head_sha: $sha}}')"
 export GLAB_STUB_MR="$MR_JSON"
+export GLAB_STUB_MR_7="$MR_JSON"
 
 URL="https://gitlab.test/group/proj/-/merge_requests/7"
+URL8="https://gitlab.test/group/proj/-/merge_requests/8"
+
+# Second commit: MR 8 head. MR 7 keeps pointing at the first SHA, so the two
+# same-project MRs sit at different SHAs (MR-only refs, not branches).
+echo "def g():" > "$T/seed/b.py"
+echo "    return 2" >> "$T/seed/b.py"
+git -C "$T/seed" add b.py && git -C "$T/seed" commit -qm second
+SHA2="$(git -C "$T/seed" rev-parse HEAD)"
+git -C "$T/mirror/proj.git" fetch -q "$T/seed" main:main
+git -C "$T/mirror/proj.git" update-ref refs/merge-requests/8/head "$SHA2"
+MR_JSON_8="$(jq -cn --arg sha "$SHA2" '{
+  title: "Add g", state: "opened", description: "",
+  source_branch: "feat/y", target_branch: "main",
+  author: {username: "someone"},
+  diff_refs: {base_sha: "0000000000000000000000000000000000000000",
+              start_sha: "1111111111111111111111111111111111111111",
+              head_sha: $sha}}')"
+export GLAB_STUB_MR_8="$MR_JSON_8"
 SNAP="$HERE/review_snapshot.py"
 PUB="$HERE/publish_comments.py"
 
 echo "== snapshot: provided clone, happy path"
 git clone -q "$T/mirror/proj.git" "$T/user"
 git -C "$T/user" remote set-url origin https://gitlab.test/group/proj.git
+# Dirty working tree: the caller's clone must stay read-only (no fetch into it,
+# no worktree registrations, dirty state preserved).
+echo "# local scratch" >> "$T/user/a.py"
+echo "scratch" > "$T/user/untracked.txt"
+USER_STATUS_BEFORE="$(git -C "$T/user" status --porcelain)"
+USER_WT_BEFORE="$(git -C "$T/user" worktree list)"
 export GLAB_STUB_LOG="$T/log-snap1.txt"; : > "$GLAB_STUB_LOG"
 if out=$(python3 "$SNAP" "$URL" --clone "$T/user" --temp-root "$T/troot" 2>"$T/err1"); then
   check "exit 0, head_sha matches" test "$(jq -r '.reviews[0].head_sha' <<<"$out")" = "$SHA"
@@ -152,6 +185,9 @@ if out=$(python3 "$SNAP" "$URL" --clone "$T/user" --temp-root "$T/troot" 2>"$T/e
   check "snapshot.json written" test -s "$T/troot/snapshot.json"
   check "hostname passed explicitly to glab api" grep -q -- '--hostname gitlab.test' "$GLAB_STUB_LOG"
   check "ci list got -R host/project" grep -q 'ci list -R gitlab.test/group/proj' "$GLAB_STUB_LOG"
+  check "caller clone status untouched" test "$(git -C "$T/user" status --porcelain)" = "$USER_STATUS_BEFORE"
+  check "caller clone gained no worktrees" test "$(git -C "$T/user" worktree list)" = "$USER_WT_BEFORE"
+  check "caller clone was never fetched into" bash -c '! git -C "$0" rev-parse FETCH_HEAD >/dev/null 2>&1' "$T/user"
 else
   bad "snapshot exited non-zero: $(cat "$T/err1")"
 fi
@@ -168,7 +204,8 @@ fi
 
 echo "== snapshot: --no-clone path and reuse on re-run"
 if out2=$("$SNAP" "$URL" --no-clone --temp-root "$T/troot2" 2>"$T/err3"); then
-  check "checkout source is clone" test "$(jq -r '.reviews[0].checkout.source' <<<"$out2")" = "clone"
+  check "checkout is an isolated worktree" test "$(jq -r '.reviews[0].checkout.source' <<<"$out2")" = "worktree"
+  check "fresh store fetched the MR-only ref" test "$(jq -r '.reviews[0].checkout.sha' <<<"$out2")" = "$SHA"
 else
   bad "no-clone failed: $(cat "$T/err3")"
 fi
@@ -176,6 +213,124 @@ if out3=$("$SNAP" "$URL" --no-clone --temp-root "$T/troot2" 2>"$T/err3b"); then
   check "re-run reuses the same checkout" test "$(jq -r '.reviews[0].checkout.path' <<<"$out2")" = "$(jq -r '.reviews[0].checkout.path' <<<"$out3")"
 else
   bad "re-run failed: $(cat "$T/err3b")"
+fi
+
+echo "== snapshot: two same-project MRs get distinct checkouts at their own SHAs"
+if outm=$(python3 "$SNAP" "$URL" "$URL8" --clone "$T/user" --temp-root "$T/trootm" 2>"$T/errm"); then
+  p7="$(jq -r '.reviews[0].checkout.path' <<<"$outm")"
+  p8="$(jq -r '.reviews[1].checkout.path' <<<"$outm")"
+  check "checkout paths differ" test "$p7" != "$p8"
+  check "MR 7 HEAD is its own SHA" test "$(jq -r '.reviews[0].checkout.sha' <<<"$outm")" = "$SHA"
+  check "MR 8 HEAD is its own SHA" test "$(jq -r '.reviews[1].checkout.sha' <<<"$outm")" = "$SHA2"
+  check "MR 7 files lack b.py" test ! -e "$p7/b.py"
+  check "MR 8 files have b.py" test -e "$p8/b.py"
+else
+  bad "multi-MR snapshot failed: $(cat "$T/errm")"
+fi
+if outm2=$(python3 "$SNAP" "$URL" "$URL8" --clone "$T/user" --temp-root "$T/trootm" 2>"$T/errm2"); then
+  check "re-run keeps both checkout paths" test "$(jq -r '.reviews[0].checkout.path' <<<"$outm2")" = "$p7"
+  check "re-run keeps MR 8 checkout path" test "$(jq -r '.reviews[1].checkout.path' <<<"$outm2")" = "$p8"
+  check "re-run keeps MR 7 SHA" test "$(jq -r '.reviews[0].checkout.sha' <<<"$outm2")" = "$SHA"
+else
+  bad "multi-MR re-run failed: $(cat "$T/errm2")"
+fi
+
+echo "== snapshot: moved MR head re-resolves the same checkout on re-run"
+git -C "$T/mirror/proj.git" update-ref refs/merge-requests/7/head "$SHA2"
+MR_JSON_MOVED="$(jq -cn --arg sha "$SHA2" '{title: "Add f", state: "opened", description: "",
+  source_branch: "feat/x", target_branch: "main", author: {username: "someone"},
+  diff_refs: {base_sha: "0000000000000000000000000000000000000000",
+              start_sha: "1111111111111111111111111111111111111111", head_sha: $sha}}')"
+export GLAB_STUB_MR_7="$MR_JSON_MOVED"
+if outmv=$(python3 "$SNAP" "$URL" --clone "$T/user" --temp-root "$T/troot" 2>"$T/errmv"); then
+  check "same checkout path reused" test "$(jq -r '.reviews[0].checkout.path' <<<"$outmv")" = "$(jq -r '.reviews[0].checkout.path' <<<"$out")"
+  check "checkout HEAD follows the moved ref" test "$(jq -r '.reviews[0].checkout.sha' <<<"$outmv")" = "$SHA2"
+else
+  bad "moved-head re-run failed: $(cat "$T/errmv")"
+fi
+# Restore the MR 7 head for the scenarios below (they pin $SHA).
+git -C "$T/mirror/proj.git" update-ref refs/merge-requests/7/head "$SHA"
+export GLAB_STUB_MR_7="$MR_JSON"
+
+echo "== snapshot: colliding project slugs get distinct identities"
+URL_AB="https://gitlab.test/group/a-b/-/merge_requests/7"
+URL_BA="https://gitlab.test/group-a/b/-/merge_requests/7"
+if outc1=$(python3 "$SNAP" "$URL_AB" --no-clone --temp-root "$T/trootc" 2>"$T/errc1") && \
+   outc2=$(python3 "$SNAP" "$URL_BA" --no-clone --temp-root "$T/trootc" 2>"$T/errc2"); then
+  check "checkout paths differ" test "$(jq -r '.reviews[0].checkout.path' <<<"$outc1")" != "$(jq -r '.reviews[0].checkout.path' <<<"$outc2")"
+  check "diff files differ" test "$(jq -r '.reviews[0].diff_path' <<<"$outc1")" != "$(jq -r '.reviews[0].diff_path' <<<"$outc2")"
+  check "both checkouts verified" test "$(jq -r '.reviews[0].checkout.sha' <<<"$outc2")" = "$SHA"
+else
+  bad "colliding-slug snapshots failed: $(cat "$T/errc1" "$T/errc2" 2>/dev/null)"
+fi
+
+echo "== snapshot: stray dir at the checkout path is refused"
+ROGUE="$(jq -r '.reviews[0].checkout.path' <<<"$outc1")"
+rm -rf "$ROGUE"
+git init -q "$ROGUE" && git -C "$ROGUE" commit -q --allow-empty -m rogue
+if python3 "$SNAP" "$URL_AB" --no-clone --temp-root "$T/trootc" 2>"$T/errrogue"; then
+  bad "stray checkout accepted"
+else
+  check "exit 1" test $? = 1
+  check "message names the store mismatch" grep -q 'not registered' "$T/errrogue"
+fi
+rm -rf "$ROGUE"
+
+echo "== snapshot: dirty reused checkout is refused, never reset"
+DIRTY_TROOT="$T/trootd"
+outd=$(python3 "$SNAP" "$URL" --no-clone --temp-root "$DIRTY_TROOT" 2>/dev/null)
+DCO="$(jq -r '.reviews[0].checkout.path' <<<"$outd")"
+echo "# review scratch" >> "$DCO/a.py"
+echo "scratch" > "$DCO/untracked.txt"
+if python3 "$SNAP" "$URL" --no-clone --temp-root "$DIRTY_TROOT" 2>"$T/errdirty"; then
+  bad "dirty checkout accepted"
+else
+  check "exit 1" test $? = 1
+  check "message names local changes" grep -q 'has local changes' "$T/errdirty"
+  check "dirty tracked change preserved" grep -q 'review scratch' "$DCO/a.py"
+  check "untracked file preserved" test -e "$DCO/untracked.txt"
+fi
+
+echo "== snapshot: symlinked store pointing at the caller clone is refused"
+STORE_ID="$(python3 -c "import sys; sys.path.insert(0, '$HERE'); import review_snapshot as rs; print(rs.mr_identity('gitlab.test', 'group/proj'))")"
+ATROOT="$T/troot-alias-sym"
+mkdir -p "$ATROOT/repos"
+ln -s "$T/user" "$ATROOT/repos/$STORE_ID"
+USER_FETCH_BEFORE="$(git -C "$T/user" rev-parse FETCH_HEAD 2>&1 || true)"
+USER_WT_BEFORE="$(git -C "$T/user" worktree list)"
+USER_STATUS_BEFORE="$(git -C "$T/user" status --porcelain)"
+if python3 "$SNAP" "$URL" --clone "$T/user" --temp-root "$ATROOT" 2>"$T/err-alias-sym"; then
+  bad "symlinked store accepted"
+else
+  check "exit 1" test $? = 1
+  check "message names the symlink" grep -q 'is a symlink' "$T/err-alias-sym"
+  check "caller clone gained no FETCH_HEAD" test "$(git -C "$T/user" rev-parse FETCH_HEAD 2>&1 || true)" = "$USER_FETCH_BEFORE"
+  check "caller clone gained no worktrees" test "$(git -C "$T/user" worktree list)" = "$USER_WT_BEFORE"
+  check "caller clone status untouched" test "$(git -C "$T/user" status --porcelain)" = "$USER_STATUS_BEFORE"
+fi
+
+echo "== snapshot: store dir inside another repo is refused"
+BTROOT="$T/troot-alias-enc"
+mkdir -p "$BTROOT/repos/$STORE_ID"
+git init -q -b main "$BTROOT"
+ENC_FETCH_BEFORE="$(git -C "$BTROOT" rev-parse FETCH_HEAD 2>&1 || true)"
+ENC_WT_BEFORE="$(git -C "$BTROOT" worktree list)"
+if python3 "$SNAP" "$URL" --no-clone --temp-root "$BTROOT" 2>"$T/err-alias-enc"; then
+  bad "enclosing-repo store accepted"
+else
+  check "exit 1" test $? = 1
+  check "message names the standalone-root problem" grep -q 'not a standalone repository root' "$T/err-alias-enc"
+  check "enclosing repo gained no FETCH_HEAD" test "$(git -C "$BTROOT" rev-parse FETCH_HEAD 2>&1 || true)" = "$ENC_FETCH_BEFORE"
+  check "enclosing repo gained no worktrees" test "$(git -C "$BTROOT" worktree list)" = "$ENC_WT_BEFORE"
+fi
+
+echo "== snapshot: temp root inside the caller clone is refused"
+if python3 "$SNAP" "$URL" --clone "$T/user" --temp-root "$T/user/tmproot" 2>"$T/err-alias-tmp"; then
+  bad "in-clone temp root accepted"
+else
+  check "exit 1" test $? = 1
+  check "message names the alias" grep -q 'aliases the caller clone' "$T/err-alias-tmp"
+  check "nothing was created inside the caller clone" test ! -e "$T/user/tmproot"
 fi
 
 echo "== snapshot: non-MR URL rejected"

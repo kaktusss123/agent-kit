@@ -94,9 +94,11 @@ Include dependency or repository-hygiene changes only when they are part of the 
 
 ## Verification
 
-Verification is positive-only. Publication readiness is handled before creating the PR/MR.
+Verification lists positive facts. Publication readiness is handled before creating the PR/MR.
 
 Include only facts supported by evidence already available from the project workflow. Omit unavailable metrics instead of writing `N/A`, `not run`, `unknown`, skipped checks, or failures.
+
+A material limitation of an optional or advisory check (for example tooling the environment cannot run) may be noted briefly in `Review notes` so reviewers are not misled; it never substitutes for a required check, and an unresolved required check still blocks creation.
 
 Use this order when the facts are available:
 
@@ -152,11 +154,12 @@ Good uses:
 - an existing compatibility quirk intentionally preserved;
 - a scope exclusion a reviewer is likely to question;
 - an external URL or domain fact that needs owner confirmation;
-- a deliberate deviation from a reference implementation and the reason for it.
+- a deliberate deviation from a reference implementation and the reason for it;
+- a material limitation of an optional or advisory check that reviewers should not mistake for coverage.
 
 Do not use `Review notes` for:
 
-- failed or unavailable tests;
+- failed required checks (they block creation instead);
 - dependency or environment problems unrelated to the change;
 - branch/rebase status;
 - facts already stated in `Changes` or `Verification`;
