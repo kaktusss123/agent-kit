@@ -38,8 +38,13 @@ check 'static: entrypoint references and discovery/routing instructions' has_all
 	'references/access.md' 'references/maintenance.md' 'command -v fleet' 'skill://git-task' 'ssh -G -F'
 check 'static: access semantics and failure vocabulary' has_all "$ACCESS" \
 	'absent or `none`' 'ProxyCommand /usr/bin/false' '(stopped' 'Connection refused' \
-	'Host key verification failed' 'Permission denied' 'not symlink-safe' 'config.py' \
+	'Host key verification failed' 'Permission denied' 'config.py' \
 	'counts as reachable' 'full public key lines'
+check 'static: install/update contract present in access reference' has_all "$ACCESS" \
+	'~/.local/bin/fleet' 'fleet install' 'fleet update' '--ff-only' 'never automatically' \
+	'no automatic Git rollback'
+check 'static: no obsolete wrapper claims in access/maintenance' no_match \
+	'not symlink-safe|no fleet installer|neutral cwd|searches the current directory first' "$ACCESS" "$MAINT"
 check 'static: maintenance gates and verification instructions' has_all "$MAINT" \
 	'explicit exception' 'sudo -n true' 'sudo -n id -u' 'fleet_target=' \
 	'inventory/fleet_inventory.py' 'baseline: true' 'eligibility, not proof'
@@ -169,6 +174,14 @@ lint_check() {
 	[ "$rc" -eq 0 ] || [ "$rc" -eq 1 ] || return 1
 	[ -s "$SANDBOX/lint.txt" ]
 }
+help_check() {
+	# --help only: argparse prints usage and exits; an actual fleet update
+	# is NEVER run against this or any other Git root by these tests.
+	"$CLI" install --help > "$SANDBOX/help-install.txt" 2>&1 &&
+	"$CLI" update --help > "$SANDBOX/help-update.txt" 2>&1 &&
+	has_all "$SANDBOX/help-install.txt" 'usage: fleet install' &&
+	has_all "$SANDBOX/help-update.txt" 'usage: fleet update'
+}
 if [ -z "$CLI" ]; then
 	skip 'real-cli: no Fleet CLI; set FLEET_TEST_CHECKOUT or add fleet to PATH'
 else
@@ -183,6 +196,45 @@ else
 		skip 'real-cli: ssh unavailable for local -G resolution'
 	fi
 	check 'real-cli: keys lint reports with rc 0 or 1' lint_check
+	check 'real-cli: top-level install/update recognized via --help (never run)' help_check
+fi
+if [ -n "$CHECKOUT" ]; then
+	# Real `fleet install` under an isolated TEMP HOME only; PYTHONDONTWRITEBYTECODE
+	# keeps the provided read-only source free of bytecode writes. The installed
+	# symlink is invoked AS A LINK from an unrelated cwd — no realpath before exec.
+	FHOME="$SANDBOX/fleet-home"
+	fleet_env() { env -i "PATH=$PATH" "HOME=$FHOME" PYTHONDONTWRITEBYTECODE=1 "$@"; }
+	iso_install() { mkdir -p "$FHOME" "$SANDBOX/unrelated" &&
+		fleet_env "$CHECKOUT/bin/fleet" install > "$SANDBOX/fleet-install.log" 2>&1; }
+	install_created() { iso_install && [ -L "$FHOME/.local/bin/fleet" ] &&
+		has_all "$SANDBOX/fleet-install.log" 'installed:'; }
+	install_idempotent() {
+		local before
+		iso_install && before="$(readlink "$FHOME/.local/bin/fleet")" &&
+		fleet_env "$CHECKOUT/bin/fleet" install > "$SANDBOX/fleet-reinstall.log" 2>&1 &&
+		has_all "$SANDBOX/fleet-reinstall.log" 'already installed' &&
+		[ "$(readlink "$FHOME/.local/bin/fleet")" = "$before" ]
+	}
+	symlink_listing_match() {
+		(cd "$SANDBOX/unrelated" &&
+			fleet_env "$FHOME/.local/bin/fleet" inventory list --format json) \
+			> "$SANDBOX/symlink-list.json" 2> "$SANDBOX/symlink-list.err" &&
+		python3 -c 'import json, sys
+direct = json.load(open(sys.argv[1])); via_link = json.load(open(sys.argv[2]))
+assert direct["machines"] == via_link["machines"] and direct["count"] == via_link["count"]
+print("  Symlink listing machines: " + str(via_link["count"]))' \
+			"$SANDBOX/list.json" "$SANDBOX/symlink-list.json"
+	}
+	ssh_untouched() {
+		[ ! -e "$FHOME/.fleet/ssh-agent.conf" ] && [ ! -e "$FHOME/.fleet/ssh-config" ] &&
+		[ ! -e "$FHOME/.ssh/config" ]
+	}
+	check 'real-cli: isolated install creates the ~/.local/bin/fleet symlink' install_created
+	check 'real-cli: install is idempotent, existing link unchanged' install_idempotent
+	check 'real-cli: installed symlink from unrelated cwd lists the selected source' symlink_listing_match
+	check 'real-cli: no agent profile or human SSH files created' ssh_untouched
+else
+	skip 'real-cli: install compatibility needs FLEET_TEST_CHECKOUT'
 fi
 if [ -n "${FLEET_TEST_CHECKOUT:-}" ] && [ -x "$FLEET_TEST_CHECKOUT/bin/fleet" ]; then
 	check 'registration: real-CLI fixture scenarios (profile refresh + verified known_hosts)' bash "$REPO/tests/fleet/registration.sh"
