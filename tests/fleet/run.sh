@@ -58,6 +58,14 @@ check 'static: no IPv4 literals' no_match '[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[
 check 'static: no personal absolute paths' no_match '/Users/' "${DOCS[@]}"
 check 'static: no private key material' no_match '-----BEGIN ([A-Z0-9]+ )*PRIVATE KEY-----|PuTTY-User-Key-File:' "${DOCS[@]}"
 check 'static: no real homelab hostnames' no_match 'vikunja|torrserver|docker-junk' "${DOCS[@]}"
+check 'static: safe app-CLI gate and fallback (instruction text only)' has_all "$MAINT" \
+	'prove nothing' 'proven safe' '--help' 'record the gap'
+check 'static: safe observation preference (instruction text only)' has_all "$MAINT" \
+	'KNOWN-safe HTTP GET' 'not intrinsically safe'
+check 'static: on-target allowlist filtering (instruction text only)' has_all "$ACCESS" \
+	'allowlisted' 'BEFORE output' 'key names/paths only'
+check 'static: SKILL safe-observation pointer (instruction text only)' has_all "$SKMD" \
+	'never proves' 'known-safe HTTP GET' 'Filter on target'
 
 # Keep module resolution at REPO, but discovery at an empty workspace and HOME.
 ISO="$SANDBOX/iso"
