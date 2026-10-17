@@ -23,9 +23,10 @@ Fleet is the inventory and access layer of the homelab: `inventory/fleet.json` i
 ## Flow
 
 1. Discover the CLI (`references/access.md`): `command -v fleet`, else the Fleet checkout named by the user or task context. An absent CLI is reported as an exact missing component; diagnostics do not improvise a replacement.
-2. Resolve the target from the current registry: exact-name match, or metadata search (`name`, `roles`, `notes`) over the full registry JSON, then bounded read-only evidence on candidates. The registry is authoritative but possibly stale.
-3. Classify the request — diagnostics, scoped change, broad/destructive (`references/maintenance.md`) — and stay inside that class; a wider class needs explicit new authorization.
-4. Verify: for changes, capture prestate, validate config before activation, apply the minimal targeted action, check actual application health from observed runtime, roll back on failure. For connection failures, triage by failure class — auth vs network vs local gate vs host key (`references/access.md`) — instead of retrying wider.
+2. Service catalog (optional, same resolved root — an explicitly pinned managed worktree wins per `references/access.md`): if `<root>/docs/services/README.md` exists, consult the index plus the relevant service page and `COVERAGE.md` when present before service-specific investigation. Resolve the page's host against the CURRENT registry (exact-name rule above); dated OBSERVED/DOCUMENTED/INFERRED/UNKNOWN labels are evidence, not current runtime — verify on the target. A missing catalog is normal (old checkout): fall back to current inventory + bounded discovery, never `fleet update`/`install` to fetch it, never bypass access/host-key/identity gates, never treat it as operator authorization.
+3. Resolve the target from the current registry: exact-name match, or metadata search (`name`, `roles`, `notes`) over the full registry JSON, then bounded read-only evidence on candidates. The registry is authoritative but possibly stale.
+4. Classify the request — diagnostics, scoped change, broad/destructive (`references/maintenance.md`) — and stay inside that class; a wider class needs explicit new authorization.
+5. Verify: for changes, capture prestate, validate config before activation, apply the minimal targeted action, check actual application health from observed runtime, roll back on failure. For connection failures, triage by failure class — auth vs network vs local gate vs host key (`references/access.md`) — instead of retrying wider.
 
 ## Completion
 

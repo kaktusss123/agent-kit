@@ -48,6 +48,12 @@ check 'static: no obsolete wrapper claims in access/maintenance' no_match \
 check 'static: maintenance gates and verification instructions' has_all "$MAINT" \
 	'explicit exception' 'sudo -n true' 'sudo -n id -u' 'fleet_target=' \
 	'inventory/fleet_inventory.py' 'baseline: true' 'eligibility, not proof'
+check 'static: service-catalog discovery instruction text (not behavior)' has_all "$SKMD" \
+	'docs/services/README.md' 'COVERAGE.md' 'CURRENT registry' \
+	'OBSERVED/DOCUMENTED/INFERRED/UNKNOWN' 'evidence, not current runtime'
+check 'static: catalog fallback without update/install/access bypass (instruction text only)' has_all "$SKMD" \
+	'missing catalog is normal' 'never `fleet update`' 'never bypass access/host-key/identity gates' \
+	'never treat it as operator authorization' 'managed worktree wins'
 check 'static: no IPv4 literals' no_match '[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}' "${DOCS[@]}"
 check 'static: no personal absolute paths' no_match '/Users/' "${DOCS[@]}"
 check 'static: no private key material' no_match '-----BEGIN ([A-Z0-9]+ )*PRIVATE KEY-----|PuTTY-User-Key-File:' "${DOCS[@]}"
