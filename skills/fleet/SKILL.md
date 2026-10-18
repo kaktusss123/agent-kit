@@ -11,6 +11,7 @@ Fleet is the inventory and access layer of the homelab: `inventory/fleet.json` i
 
 - Before running anything against fleet: read `references/access.md` — CLI discovery, registry resolution, agent profile, host-key policy.
 - Before any mutation, baseline run, or on-target diagnosis: read `references/maintenance.md` — authorization classes, verification discipline, OS/runtime differences, baseline procedure.
+- Before OPNsense API access or any proxy-gw-v2 route/firewall/sing-box work: read `references/opnsense.md` — API key handling, the alias-only API surface, and the LAN reply-symmetry guardrails.
 
 ## Non-negotiables
 
