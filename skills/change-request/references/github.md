@@ -4,9 +4,9 @@ Use this reference only after GitHub is the selected publication target.
 
 ## Target resolution
 
-Require the GitHub host and repository to be explicit before publication. Support github.com and GitHub Enterprise hosts equally. Do not infer GitHub from a hard-coded hostname list beyond what the user or repository context establishes.
+Require the GitHub host and repository to be resolved before publication. Support github.com and GitHub Enterprise hosts equally. Do not infer GitHub from a hard-coded hostname list beyond what the user or repository context establishes.
 
-If the target is ambiguous, inspect read-only remotes only to present candidates. Let the user choose.
+When several repositories or hosts are candidates, inspect read-only remotes only to present candidates and let the user choose. When the user already requested publication for this repository and a single remote with its default branch resolves the target unambiguously, proceed without re-asking. Never select silently among several candidates, and never push or fork to resolve ambiguity.
 
 ## Minimal preflight
 

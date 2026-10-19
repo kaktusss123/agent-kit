@@ -1,5 +1,5 @@
 /**
- * Standalone registration regression (SPEC R2/R3.2): loading the
+ * Standalone registration regression: loading the
  * task-workspace extension entry (with no subagents module involved) still
  * registers the five task tools, the intentional bash override, and the
  * tool_call mutation guard using the capture-seam style of

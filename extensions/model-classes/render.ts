@@ -8,8 +8,8 @@
  * applied pair IS the new `default` by definition, and equal rows are
  * allowed without any warning.
  *
- * Routing entries pointing at missing classes are visibly flagged, never
- * hidden (SPEC R2).
+ * Routing entries pointing at missing classes stay visibly flagged in
+ * the status table, never hidden.
  *
  * Pure module: no pi imports.
  */
@@ -38,8 +38,8 @@ function pad(value: string, width: number): string {
  * "inherit": plain falls back to the session pair; repoOwner falls back to
  * the implicit default class ("heavy") when it is saved, and only then to
  * the session pair. Routed classes show the resolved pair, and routes
- * pointing at classes that are not saved are visibly flagged, never hidden
- * (SPEC R2).
+ * pointing at classes that are not saved stay visibly flagged in status,
+ * never hidden.
  */
 export function renderRoutingTable(stored: StoredClasses, routing: RoutingTable): string {
 	// `!== undefined` (not truthiness): a PRESENT-but-empty target (""

@@ -7,16 +7,16 @@
  * The dispatcher work runs in a NODE subprocess (rig-child.mjs): bun does
  * not reproduce undici's socket timer semantics, so the rig would silently
  * pass under bun's runtime even with the old broken options. The child
- * hosts a delayed backend and a local forward proxy, builds the dispatcher
- * exactly like applyProxyPreference (same option block, serialized here
- * from the real piTransportOptions()), performs one fetch, and reports.
+ * hosts a delayed backend and a local loopback proxy (absolute-form
+ * forwarding plus CONNECT tunneling, matching EnvHttpProxyAgent with
+ * proxyTunnel), builds the dispatcher exactly like applyProxyPreference
+ * (same option block, serialized here from the real piTransportOptions()),
+ * performs one fetch, and reports. ON cases assert the request genuinely
+ * traversed the proxy (CONNECT count) and reached the backend.
  *
  * Cases: proxy ON and OFF × short configured timeout (must fire before the
  * delayed answer — the old missing-options behavior rode 300s defaults and
  * succeeded) × long-enough timeout (delayed answer passes).
- *
- * The 330 s live verification of the same behavior at the real magnitude
- * lives in the research probes (b2-rig); this suite keeps a fast bound.
  *
  * Skipped when node or pi's undici copy is unavailable (README node_modules
  * recipe).
@@ -74,6 +74,8 @@ interface RigResult {
 	status?: number;
 	elapsedMs: number;
 	code?: string;
+	connectCount: number;
+	backendHits: number;
 }
 
 function runCase(testCase: string): Promise<RigResult> {
@@ -136,6 +138,9 @@ describe("proxy transport rig (short timeout bounds, proxy ON and OFF)", () => {
 			expect(result.ok).toBe(false);
 			expect(result.code).toContain("HEADERS_TIMEOUT");
 			expect(result.elapsedMs).toBeLessThan(2500);
+			// The request genuinely traversed the proxy tunnel to the backend.
+			expect(result.connectCount).toBeGreaterThanOrEqual(1);
+			expect(result.backendHits).toBeGreaterThanOrEqual(1);
 		},
 		20000,
 	);
@@ -146,6 +151,8 @@ describe("proxy transport rig (short timeout bounds, proxy ON and OFF)", () => {
 			const result = await runCase("on-pass");
 			expect(result.ok).toBe(true);
 			expect(result.status).toBe(200);
+			expect(result.connectCount).toBeGreaterThanOrEqual(1);
+			expect(result.backendHits).toBeGreaterThanOrEqual(1);
 		},
 		20000,
 	);

@@ -75,8 +75,7 @@ notifies with the applied class + pair.
 ## Spawn-mode routing
 
 The `subagent` tool's spawn op takes `modelClass?: string` — valid for BOTH
-plain (`cwd`) and workspace (`workspace=`) spawns. One resolution matrix
-(SPEC R3); the spawn mode only selects the routing default:
+plain (`cwd`) and workspace (`workspace=`) spawns. One resolution matrix; the spawn mode only selects the routing default:
 
 | modelClass param     | Resolution                                                        |
 | -------------------- | ----------------------------------------------------------------- |

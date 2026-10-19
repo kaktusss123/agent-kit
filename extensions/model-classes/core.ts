@@ -142,7 +142,7 @@ export function unknownClassError(ref: string, stored: StoredClasses): string {
 /** The implicit repoOwner default class used when the mode has no route. */
 export const REPO_OWNER_DEFAULT_CLASS = "heavy";
 
-/** Error wrapper for a routing default that cannot be resolved (SPEC D4). */
+/** Error wrapper for a routing default that cannot be resolved: the spawn is refused before dispatch. */
 export function routingFailureError(mode: SpawnMode, className: string, cause: string): string {
 	return (
 		`Spawn routing for mode "${mode}" is set to class "${className}", but it cannot be resolved:\n${cause}\n` +
@@ -247,7 +247,7 @@ export function resolveSpawnTarget(
 
 // ------------------------------------------------------------------ cycling
 
-/** Outcome of the stateless next-class selection (SPEC R5). */
+/** Outcome of the stateless next-class selection (forward only, nothing persisted). */
 export type NextClassOutcome =
 	| { ok: true; name: string; pair: ModelPair }
 	| { ok: false; error: string };

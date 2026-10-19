@@ -1,5 +1,5 @@
 /**
- * Unit tests for the /model-class CLI parser (SPEC R2): every supported
+ * Unit tests for the /model-class CLI parser: every supported
  * form parses — including named classes, next/unset, and the route family —
  * and every unsupported form (reserved words, bad grammar, junk) is
  * rejected without state change.

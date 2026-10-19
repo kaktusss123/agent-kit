@@ -46,7 +46,7 @@ The report itself is compact JSON, no raw test output:
   "summary": "one paragraph",
   "changed_scope": ["paths or areas"],
   "verification": [
-    { "check": "uv run pytest tests/dp_user_plane_api/trino -q", "cwd": "<worktree>", "result": "pass | fail | blocked" }
+    { "check": "<project verification command>", "cwd": "<worktree>", "result": "pass | fail | blocked" }
   ],
   "gaps": ["what was not run or could not run, and why"],
   "contract_conflicts": ["disagreements with SPEC.md, if any"]

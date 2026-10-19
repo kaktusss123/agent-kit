@@ -65,7 +65,12 @@ export default function sessionTitleExtension(pi: ExtensionAPI): void {
 	pi.on("before_agent_start", (event, ctx) => {
 		if (attempted) return;
 		if (ctx.mode !== "tui") return;
-		const prompt = event.prompt.trim();
+		// Idle custom turns carry a message, not a prompt: skip title
+		// generation but stay unattempted, so the first real user prompt
+		// still names the session later.
+		const raw = event as unknown as { prompt?: unknown };
+		if (typeof raw.prompt !== "string") return;
+		const prompt = raw.prompt.trim();
 		if (!prompt) return;
 		attempted = true;
 		if (pi.getSessionName()) return; // Respect a name set before the first prompt.

@@ -108,7 +108,7 @@ export default function (pi: ExtensionAPI) {
 	}
 
 	/**
-	 * Stateless forward cycle (SPEC R5), shared by `/model-class next` and
+	 * Stateless forward cycle, shared by `/model-class next` and
 	 * the Ctrl+Alt+P shortcut: pick the next saved class from the live
 	 * session pair, resolve + validate it, and apply it through the shared
 	 * no-mixed-state apply path. Any failure leaves the session unchanged.
@@ -299,7 +299,7 @@ export default function (pi: ExtensionAPI) {
 		},
 	});
 
-	// Stateless class cycling (SPEC R5): forward only, no persisted
+	// Stateless class cycling: forward only, no persisted
 	// "active class" — the live model is the only source of truth.
 	pi.registerShortcut("ctrl+alt+p", {
 		description: "Cycle the session model to the next saved model class",
