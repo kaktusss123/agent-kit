@@ -135,6 +135,69 @@ describe("task CLI acceptance (A9 W1)", () => {
   });
 });
 
+describe("task current (read-only projection)", () => {
+  const current = (cwd: string, taskRoot: string, params: unknown) =>
+    cli(["current", JSON.stringify(params)], { cwd, taskRoot });
+  const ensureTask = (source: string, taskRoot: string, branch: string) =>
+    cli(["ensure", JSON.stringify({ branch, source_path: source, base_ref: "main" })], { cwd: source, taskRoot })
+      .json as { task: string; worktree: string };
+
+  test("empty or absent selections and a neutral cwd → none", () => {
+    const base = fresh("cur-none");
+    const { source, taskRoot } = makeRepo(base);
+    for (const params of [{ cwd: source }, { cwd: source, selections: [] }]) {
+      const r = current(source, taskRoot, params);
+      expect(r.code).toBe(0);
+      expect(r.json).toEqual({ state: "none", identity: null, workspace: null, source: null, repos: [] });
+    }
+  });
+
+  test("a selection of a real workspace → ok with repo facts and empty owners", () => {
+    const { source, taskRoot } = makeRepo(fresh("cur-ok"));
+    const e = ensureTask(source, taskRoot, "feat/cur_ok");
+    const r = current(source, taskRoot, { cwd: source, selections: [{ task: e.task, worktree: e.worktree }] });
+    expect(r.code).toBe(0);
+    expect(r.json).toMatchObject({ state: "ok", identity: "feat_cur_ok", source: "session" });
+    const repos = r.json!.repos as { owners: unknown[] }[];
+    expect(repos).toHaveLength(1);
+    expect(repos[0]!.owners).toEqual([]);
+  });
+
+  test("a vanished workspace → missing, identity retained", () => {
+    const { source, taskRoot } = makeRepo(fresh("cur-missing"));
+    const r = current(source, taskRoot, { cwd: source, selections: [{ task: "feat_gone", worktree: join(taskRoot, "feat_gone", "x") }] });
+    expect(r.code).toBe(0);
+    expect(r.json).toMatchObject({ state: "missing", identity: "feat_gone", source: "session", repos: [] });
+  });
+
+  test("managed cwd wins over selections; otherwise the last selection wins", () => {
+    const { source, taskRoot } = makeRepo(fresh("cur-win"));
+    const a = ensureTask(source, taskRoot, "feat/cur_a");
+    const b = ensureTask(source, taskRoot, "feat/cur_b");
+    const sels = [
+      { task: a.task, worktree: a.worktree },
+      { task: b.task, worktree: b.worktree },
+    ];
+    expect(current(source, taskRoot, { cwd: a.worktree, selections: [sels[1]] }).json).toMatchObject({ identity: "feat_cur_a", source: "cwd" });
+    expect(current(source, taskRoot, { cwd: source, selections: sels }).json).toMatchObject({ identity: "feat_cur_b", source: "session" });
+    expect(current(source, taskRoot, { cwd: source, selections: [...sels].reverse() }).json).toMatchObject({ identity: "feat_cur_a" });
+  });
+
+  test("malformed params → exit 2", () => {
+    const { source, taskRoot } = makeRepo(fresh("cur-usage"));
+    const bad: unknown[] = [
+      {},
+      { cwd: "relative/path" },
+      { cwd: 5 },
+      { cwd: source, selections: "x" },
+      { cwd: source, selections: [{ task: "t" }] },
+      { cwd: source, selections: [null] },
+    ];
+    for (const p of bad) expect(current(source, taskRoot, p).code).toBe(2);
+    expect(cli(["current", "{not json"], { cwd: source, taskRoot }).code).toBe(2);
+  });
+});
+
 // ─── parity with the pi binding ───────────────────────────────────────────
 
 type ToolDef = {

@@ -12,6 +12,7 @@ Claude Code binding of the same deterministic core the Pi extension uses (`exten
 | `ensure_task_repo(branch, source_path, base_ref?, remote?, task?, slot?)` | `agent-kit task ensure '{"branch": "…", "source_path": "…"}'` |
 | `remove_task_lane(task, path)` | `agent-kit task remove-lane '{"task": "…", "path": "…"}'` |
 | `teardown_task_repo(task)` | `agent-kit task teardown '{"task": "…"}'` |
+| session current task (read-only) | `agent-kit task current '{"cwd": "<abs>", "selections": [{"task": "…", "worktree": "…"}]}'` — the `task_current` projection (managed `cwd` wins, else last selection; `selections` = successful `ensure` results in order; no owners) |
 | `checkpoint_commit(…)` | `agent-kit task commit '{…}'` — see `skills/git-commit/references/claude-code/checkpoint.md` |
 
 Output is one JSON object on stdout. Exit code 0 means the operation produced a meaningful status — including refusals such as `base_selection_required`, `remote_selection_required`, `branch_in_use`, which are answers, not failures. Exit code 1 is a tool error (`status: "error"`, `message`); exit code 2 is a usage error (bad JSON, missing required parameter) and nothing ran. The session cwd is the Bash cwd; pass absolute paths.

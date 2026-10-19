@@ -12,6 +12,11 @@
  *   agent-kit task remove-lane   '{"task": …, "path": …}'
  *   agent-kit task teardown      '{"task": …}'
  *   agent-kit task commit        '{"repo": …, "paths": […], "message": …, …}'
+ *   agent-kit task current       '{"cwd": "<abs>", "selections": [{"task": …, "worktree": …}, …]}'
+ *                                read-only, harness-neutral: the `task_current` projection (same as the
+ *                                inspection channel's) for the given cwd and the session's successful
+ *                                ensure results (in order, last wins); no owner matching. `cwd` is a
+ *                                parameter here, not the process cwd.
  *   agent-kit task hook session-start | pre-tool-use   (Claude Code hooks)
  *
  * The params argument may be `-` (read JSON from stdin). The session cwd is
@@ -25,7 +30,7 @@
  * not a sandbox).
  */
 import { appendFileSync, readFileSync } from "node:fs";
-import { dirname, join } from "node:path";
+import { dirname, isAbsolute, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { BOOTSTRAP_CONFIG } from "./bootstrap-config";
 import {
@@ -35,6 +40,7 @@ import {
   taskStatus,
   teardownTaskRepo,
 } from "./flows";
+import { buildCurrentTaskProjection, SESSION_SELECTION_ENTRY_TYPE } from "./current";
 import { guardManagedWriteTarget } from "./guard";
 import { isShimScript, resolveGitOnPath } from "./shim-path";
 import { resolveTaskRoot } from "./task-root";
@@ -46,6 +52,16 @@ type Params = Record<string, unknown>;
 type Flow = (params: Params, cwd: string, taskRoot: string) => Promise<Record<string, unknown>>;
 
 const FLOWS: Record<string, Flow> = {
+  current: (p, _cwd, taskRoot) =>
+    buildCurrentTaskProjection({
+      cwd: p.cwd as string,
+      taskRoot,
+      branchEntries: ((p.selections as { task: string; worktree: string }[] | undefined) ?? []).map((data) => ({
+        type: "custom",
+        customType: SESSION_SELECTION_ENTRY_TYPE,
+        data: { task: data.task, worktree: data.worktree },
+      })),
+    }) as unknown as Promise<Record<string, unknown>>,
   status: (p, cwd, taskRoot) => taskStatus(p as { path?: string }, cwd, { taskRoot }),
   ensure: (p, cwd, taskRoot) =>
     ensureTaskRepo(p as unknown as Parameters<typeof ensureTaskRepo>[0], cwd, {
@@ -64,6 +80,7 @@ const FLOWS: Record<string, Flow> = {
  *  malformed call is a usage error instead of a half-run flow. */
 const REQUIRED: Record<string, string[]> = {
   status: [],
+  current: ["cwd"],
   ensure: ["branch", "source_path"],
   "remove-lane": ["task", "path"],
   teardown: ["task"],
@@ -98,7 +115,7 @@ function usage(message: string): number {
   out({
     status: "usage_error",
     message,
-    usage: "agent-kit task <status|ensure|remove-lane|teardown|commit> ['<json params>' | -]",
+    usage: "agent-kit task <status|current|ensure|remove-lane|teardown|commit> ['<json params>' | -]",
   });
   return 2;
 }
@@ -190,6 +207,20 @@ export async function main(argv: string[]): Promise<number> {
   const missing = REQUIRED[op]!.filter((k) => typeof params[k] !== "string" || params[k] === "");
   if (op === "commit" && !Array.isArray(params.paths)) missing.push("paths");
   if (missing.length > 0) return usage(`missing required parameter(s): ${missing.join(", ")}`);
+
+  if (op === "current") {
+    if (!isAbsolute(params.cwd as string)) return usage("cwd must be an absolute path");
+    const sel = params.selections;
+    if (sel !== undefined) {
+      const ok =
+        Array.isArray(sel) &&
+        sel.every((s) => {
+          const r = s as Record<string, unknown> | null;
+          return !!r && typeof r === "object" && typeof r.task === "string" && r.task !== "" && typeof r.worktree === "string" && r.worktree !== "";
+        });
+      if (!ok) return usage("selections must be an array of {task, worktree} strings");
+    }
+  }
 
   process.env.PATH = stripShimFromPath(process.env.PATH ?? "");
   try {
