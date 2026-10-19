@@ -20,9 +20,6 @@
 #     claude-code/commands/* -> commands/*      (/spec, /dev entrypoints)
 #     claude-code/agents/*   -> agents/*        (Explore, repo-owner subagents)
 #
-# A skill limits its hosts with `metadata.hosts` in its SKILL.md frontmatter
-# (comma-separated host names); without it the skill goes to every host.
-#
 # The repository layout IS the desired state: no manifests, no lists.
 # Entities are symlinked, never copied.
 #
@@ -148,26 +145,12 @@ line_count() { # stdin -> number of non-empty lines
 # 1:1 by entry name, plus single canonical files. Categories absent from the
 # repository simply contribute nothing.
 
-skill_hosts() { # <skill-dir> — metadata.hosts from the SKILL.md frontmatter, or empty
-	[ -f "$1/SKILL.md" ] || return 0
-	awk '
-		NR == 1 { if ($0 != "---") exit; next }
-		$0 == "---" { exit }
-		/^metadata:[ \t]*$/ { meta = 1; next }
-		meta && /^[^ \t]/ { meta = 0 }
-		meta && /^[ \t]+hosts:/ { sub(/^[ \t]+hosts:[ \t]*/, ""); gsub(/[]["'"'"' \t]/, ""); print; exit }
-	' "$1/SKILL.md"
-}
-
-emit_skills() { # skills/* that target $HOST
-	local e hosts
+emit_skills() { # every skills/* entry goes to every selected host
+	local e
 	[ -d "$REPO/skills" ] || return 0
 	for e in "$REPO/skills"/*; do
 		[ -e "$e" ] || continue
-		hosts="$(skill_hosts "$e")"
-		case ",$hosts," in
-		,,|*",$HOST,"*) printf 'skills/%s%s%s\n' "$(basename "$e")" "$TAB" "$e" ;;
-		esac
+		printf 'skills/%s%s%s\n' "$(basename "$e")" "$TAB" "$e"
 	done
 }
 

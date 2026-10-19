@@ -716,35 +716,26 @@ run_update
 pass
 
 # ==============================================================================
-# T24: the claude-code host gets skills (minus metadata.hosts exclusions) and
-# rules, with its own ownership state
+# T24: the claude-code host gets skills and rules, with its own ownership state
 
 new_test "T24 claude-code host"
 use_path_empty
 make_kit "$SANDBOX/kit"
 	CLAUDE_ROOT="$HOME/.claude"
 	CLAUDE_STATE="$HOME/.local/state/agent-kit/links-claude-code.tsv"
-	mkdir -p "$SANDBOX/kit/rules" "$SANDBOX/kit/skills/pionly"
+	mkdir -p "$SANDBOX/kit/rules"
 	printf '# agent rules\n' > "$SANDBOX/kit/rules/AGENTS.md"
 	printf '# claude mapping\n' > "$SANDBOX/kit/rules/claude-code.md"
-	printf -- '---\nname: pionly\ndescription: x\nmetadata:\n  hosts: pi\n---\nbody\n' > "$SANDBOX/kit/skills/pionly/SKILL.md"
 run_install
 	assert_eq "$RC" 0 "exit code"
 	assert_link "$CLAUDE_ROOT/skills/alpha" "$SANDBOX/kit/skills/alpha" "skill linked into claude"
 	assert_link "$CLAUDE_ROOT/rules/agent-kit.md" "$SANDBOX/kit/rules/AGENTS.md" "AGENTS.md linked as a claude rule"
 	assert_link "$CLAUDE_ROOT/rules/agent-kit-claude-code.md" "$SANDBOX/kit/rules/claude-code.md" "claude mapping rule linked"
-	assert_no_file "$CLAUDE_ROOT/skills/pionly" "pi-only skill not linked into claude"
-	assert_link "$PI_ROOT/skills/pionly" "$SANDBOX/kit/skills/pionly" "pi-only skill linked into pi"
 	assert_no_file "$CLAUDE_ROOT/extensions" "no extensions for claude"
 	assert_no_file "$CLAUDE_ROOT/prompts" "no pi prompts for claude"
 	assert_no_file "$PI_ROOT/rules" "claude rules stay out of pi"
 	assert_eq "$(grep -c . "$CLAUDE_STATE")" 4 "claude state records its own entities"
 	awk -F '\t' '$1 ~ /^rules\//' "$STATE" | grep -q . && fail "pi state must not record claude entities"
-	# a skill later restricted to pi is pruned from claude only
-	printf -- '---\nname: beta\ndescription: x\nmetadata:\n  hosts: pi\n---\n' > "$SANDBOX/kit/skills/beta/SKILL.md"
-run_install
-	assert_no_file "$CLAUDE_ROOT/skills/beta" "newly restricted skill pruned from claude"
-	assert_link "$PI_ROOT/skills/beta" "$SANDBOX/kit/skills/beta" "restricted skill kept in pi"
 run_uninstall
 	assert_eq "$RC" 0 "uninstall"
 	assert_no_file "$CLAUDE_ROOT/skills/alpha" "claude skill link removed"
