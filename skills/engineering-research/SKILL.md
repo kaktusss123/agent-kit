@@ -16,6 +16,8 @@ For software behavior, prefer:
 4. upstream current source when version-specific material is unavailable;
 5. secondary sources only for leads or community experience.
 
+For rungs 3-5, use the `web_search` tool when available instead of answering current-behavior questions from memory: one query per call, prefer primary sources, cite the source URLs you relied on.
+
 Distinguish public supported API from internal implementation details.
 
 ## Research discipline
