@@ -73,9 +73,6 @@ agent-kit uninstall             # удалить ссылки всех host'ов
 завершается с кодом 1. Повторный `install` из другого checkout'а или worktree
 перенаправляет ссылки agent-kit на него. Подробности — [ADR-0007](docs/adr/adr-0007.md).
 
-Skill можно ограничить host'ами полем `metadata.hosts` (через запятую) во
-frontmatter `SKILL.md`; без поля он ставится везде.
-
 ## Задачи и worktree
 
 Центральная идея: агент не правит основной checkout. Любая изменяющая задача

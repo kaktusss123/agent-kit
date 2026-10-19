@@ -55,5 +55,8 @@ the guards (images, steer, followUp).
 ## Install
 
 ```sh
-./install.sh continue-shortcut
+bin/agent-kit install
 ```
+
+`agent-kit install` links every extension in `extensions/` (this one included)
+into `~/.pi/agent/extensions` for the pi host.

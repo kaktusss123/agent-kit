@@ -33,6 +33,16 @@ export async function createGuardFixture(prefix: string): Promise<GuardFixture> 
   const cacheDir = join(homedir(), ".cache");
   await mkdir(cacheDir, { recursive: true });
   const root = realpathSync(await mkdtemp(join(cacheDir, prefix)));
+  try {
+    return await buildGuardFixture(root);
+  } catch (error) {
+    // Setup failed before the caller got a destroy(): don't leak the root.
+    await rm(root, { recursive: true, force: true });
+    throw error;
+  }
+}
+
+async function buildGuardFixture(root: string): Promise<GuardFixture> {
   const taskRoot = join(root, "tasks");
   const primary = join(root, "primary");
   await mkdir(taskRoot, { recursive: true });
