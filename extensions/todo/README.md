@@ -57,5 +57,8 @@ real `pi-tui` line utilities.
 From the repo checkout you want live:
 
 ```sh
-./install.sh todo
+bin/agent-kit install
 ```
+
+`agent-kit install` links every extension in `extensions/` into
+`~/.pi/agent/extensions` for the pi host.
