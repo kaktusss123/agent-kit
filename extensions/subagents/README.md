@@ -134,11 +134,14 @@ Wire contract v1 (frozen with the consumer):
 ```
 
 - **Running set**: logical states `starting`, `running`, `waiting_input`
-  (non-terminal), one row per agent, each row exactly `id`/`label`/`state`
-  (label falls back to id when empty). Rows sorted by `startedAt` then `id`
-  (deterministic frames). A terminal transition (completed/failed/cancelled)
-  or a process exit removes the row and triggers a frame — no row outlives
-  its agent.
+  (non-terminal) AND a live process (`AgentSnapshot.alive`), one row per
+  agent, each row exactly `id`/`label`/`state` (label falls back to id when
+  empty). Rows sorted by `startedAt` then `id` (deterministic frames). A
+  terminal transition (completed/failed/cancelled) or a process exit removes
+  the row and triggers a frame — no row outlives its agent. The liveness
+  check matters on its own: a clean self-exit can beat the settle fetch and
+  leave a non-terminal state behind, so state alone would keep a dead agent
+  in the set forever.
 - **`count`** is the TRUE number of running agents, even when rows are
   truncated.
 - **Byte budget**: serialized `statusText` ≤ 64 KiB. When exceeded, the

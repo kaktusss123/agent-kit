@@ -176,6 +176,41 @@ describe("running-agents push against the live controller registry", () => {
 			cleanup();
 		}
 	});
+
+	test("a clean exit that beats the settle fetch still removes the agent", async () => {
+		const { harness, runtime, cleanup } = makeRuntime();
+		const { wire, last } = makePush(runtime);
+		try {
+			const pending = runtime.spawn({ task: "x", label: "lab" });
+			await tick(5);
+			const proc = harness.spawned[0]!;
+			autoAcceptPrompt(proc);
+			const snap = await pending;
+			await waitFor(() => last().agents[0]?.state === "running");
+
+			// Reviewer repro: `agent_settled` arms the settle fetch, then the
+			// child self-exits with code 0 BEFORE answering
+			// `get_last_assistant_text`, so `completeSettle` never runs and the
+			// record's logical state stays `running`.
+			const framesBefore = wire.length;
+			proc.writeToStdout({ type: "agent_settled" });
+			proc.close(0, null);
+
+			// The pushed set must drop the dead agent and a frame must announce it.
+			await waitFor(() => last().count === 0);
+			expect(wire.length).toBeGreaterThan(framesBefore);
+			expect(last()).toEqual({ v: 1, agents: [], count: 0, truncated: false });
+
+			// The staleness is real, not assumed: the registry still reports the
+			// old non-terminal state, only `alive` disproves it.
+			const record = runtime.inspect(snap.id)[0]!;
+			expect(record.state).toBe("running");
+			expect(record.alive).toBe(false);
+		} finally {
+			await runtime.shutdown();
+			cleanup();
+		}
+	});
 });
 
 // ------------------------------------------------------- extension-level gate

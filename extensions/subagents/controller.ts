@@ -779,7 +779,11 @@ export class LocalSubagentRuntime {
 		if (record.retireRequested) {
 			// Terminal retire: the process is killed after a settled terminal
 			// outcome. The record keeps its terminal state and result — retire
-			// never turns a completed/failed record into cancelled.
+			// never turns a completed/failed record into cancelled. The
+			// notification is normally a no-op for the running set (already
+			// terminal; signature dedup), but a retire of a still-running
+			// record is only visible through the process death.
+			this.notifyRecordsChanged();
 			return;
 		}
 		if (record.runActive) {
@@ -794,7 +798,15 @@ export class LocalSubagentRuntime {
 		if ((info.code ?? 0) !== 0 || info.signal) {
 			record.lastError = `child exited with code ${info.code} / signal ${info.signal} after completing`;
 			this.finishWithFailure(record, record.lastError);
+			return;
 		}
+		// Clean self-exit after the last run settled: the record may still be
+		// non-terminal when the exit wins the race with the settle fetch (e.g.
+		// `agent_settled` then a clean exit before `get_last_assistant_text`
+		// answers). The state never terminalizes in that case, so the process
+		// death is the only thing that removes it from the running set —
+		// publish it. Signature dedup makes the call free when nothing changed.
+		this.notifyRecordsChanged();
 	}
 
 	// Collect settle-time fetches, then decide the run outcome.

@@ -23,10 +23,11 @@ import {
 
 const byteLength = (text: string) => new TextEncoder().encode(text).length;
 
-const record = (id: string, state: string, startedAt: number, label?: string): RunningAgentRecord => ({
+const record = (id: string, state: string, startedAt: number, label?: string, alive = true): RunningAgentRecord => ({
 	id,
 	state,
 	startedAt,
+	alive,
 	...(label !== undefined ? { label } : {}),
 });
 
@@ -104,6 +105,19 @@ describe("runningAgentRows", () => {
 		expect(isRunningAgentState("failed")).toBe(false);
 		expect(isRunningAgentState("cancelled")).toBe(false);
 		expect(isRunningAgentState("bogus")).toBe(false);
+	});
+
+	test("excludes non-terminal records whose process has exited", () => {
+		// A clean self-exit can beat the settle fetch, leaving `state` running
+		// while the process is gone — such a record must never be pushed as a
+		// live agent (no row outlives its agent).
+		const rows = runningAgentRows([
+			record("dead-starting", "starting", 1, undefined, false),
+			record("dead-running", "running", 2, undefined, false),
+			record("dead-waiting", "waiting_input", 3, undefined, false),
+			record("live", "running", 4),
+		]);
+		expect(rows).toEqual([{ id: "live", label: "live", state: "running" }]);
 	});
 });
 
@@ -276,6 +290,19 @@ describe("attachRunningAgentsPush", () => {
 		harness.setRecords([]);
 		harness.notify();
 		expect(frames[2]).toEqual(emptyFrame);
+	});
+
+	test("process death shrinks the set while the state is still non-terminal", () => {
+		const harness = makeSource([record("a", "running", 1, "one")]);
+		const { ui, frames } = makeUi();
+		attachRunningAgentsPush(harness.source, { mode: "rpc", ui });
+		expect(frames[0]!.count).toBe(1);
+
+		// Same logical state, dead process: the row must leave the set.
+		harness.setRecords([record("a", "running", 1, "one", false)]);
+		harness.notify();
+		expect(frames).toHaveLength(2);
+		expect(frames[1]).toEqual(emptyFrame);
 	});
 
 	test("shutdown emits an unconditional empty frame and unsubscribes", () => {

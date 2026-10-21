@@ -22,8 +22,11 @@
  *
  * Invariants:
  * - rows are the non-terminal registry records (`starting`, `running`,
- *   `waiting_input`) — the same records `inspect()` reads, never disk markers
- *   or guesses; a terminal record leaves the set at its transition;
+ *   `waiting_input`) with a live process — the same records `inspect()` reads,
+ *   never disk markers or guesses; a terminal record leaves the set at its
+ *   transition, and a record whose process exited leaves it even when the
+ *   state has not terminalized yet (a clean self-exit can beat the settle
+ *   fetch and leave a stale non-terminal state behind);
  * - rows are sorted by `startedAt` then `id`, so an unchanged set always
  *   serializes identically;
  * - `count` is the TRUE running count even when rows are truncated;
@@ -63,6 +66,12 @@ export interface RunningAgentRecord {
 	label?: string;
 	state: string;
 	startedAt: number;
+	/**
+	 * Process liveness, exactly `AgentSnapshot.alive` (`!conn.exit`). Required so
+	 * every source states it: a record whose process is gone is never running,
+	 * regardless of what its logical state still says.
+	 */
+	alive: boolean;
 }
 
 /** One wire row; exactly `id`, `label`, `state` — no extra keys. */
@@ -81,13 +90,14 @@ export interface RunningAgentsFrame {
 }
 
 /**
- * Project live records into the sorted running set: non-terminal states only,
- * label falls back to id when empty, order by `startedAt` then `id`.
+ * Project live records into the sorted running set: non-terminal states with a
+ * live process only, label falls back to id when empty, order by `startedAt`
+ * then `id`.
  */
 export function runningAgentRows(records: readonly RunningAgentRecord[]): RunningAgentRow[] {
 	const rows: Array<RunningAgentRow & { startedAt: number }> = [];
 	for (const record of records) {
-		if (!isRunningAgentState(record.state)) continue;
+		if (!record.alive || !isRunningAgentState(record.state)) continue;
 		rows.push({
 			id: record.id,
 			label: typeof record.label === "string" && record.label.length > 0 ? record.label : record.id,
