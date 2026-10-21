@@ -107,6 +107,61 @@ Live wire verification: `node live/status-verify.mjs` (real `pi --mode rpc`
 with this worktree loaded explicitly; discovery, model-free reads, live
 plain/workspace child state, `op=status` cross-check, no-controller timeout).
 
+## Running-agents push (`agentkit:running-agents`)
+
+Honest running-set telemetry for an external RPC controller: the extension
+PUSHES the set of non-terminal subagents over the only existing push channel
+(fire-and-forget extension UI `setStatus`) so the host can stop treating a Pi
+session whose main turn ended as idle while background children still work
+(zavod's node folds these frames into `RuntimeSummary.runningAgents` and
+guards its idle timer with them). The set is derived from the same live
+registry `inspect()` reads — never from disk markers or guesses.
+
+Wire contract v1 (frozen with the consumer):
+
+```json
+{"type":"extension_ui_request","id":"<pi uuid>","method":"setStatus",
+ "statusKey":"agentkit:running-agents","statusText":"<JSON string>"}
+```
+
+`statusText` is a JSON-encoded string:
+
+```json
+{"v":1,
+ "agents":[{"id":"sa-3-x1","label":"review","state":"running"}],
+ "count":1,
+ "truncated":false}
+```
+
+- **Running set**: logical states `starting`, `running`, `waiting_input`
+  (non-terminal) AND a live process (`AgentSnapshot.alive`), one row per
+  agent, each row exactly `id`/`label`/`state` (label falls back to id when
+  empty). Rows sorted by `startedAt` then `id` (deterministic frames). A
+  terminal transition (completed/failed/cancelled) or a process exit removes
+  the row and triggers a frame — no row outlives its agent. The liveness
+  check matters on its own: a clean self-exit can beat the settle fetch and
+  leave a non-terminal state behind, so state alone would keep a dead agent
+  in the set forever.
+- **`count`** is the TRUE number of running agents, even when rows are
+  truncated.
+- **Byte budget**: serialized `statusText` ≤ 64 KiB. When exceeded, the
+  earliest rows that fit are kept and `truncated:true`; `count` stays true.
+- **Emission**: only when the set signature changes (over sorted
+  `[id,state,label]`; identical signature → no frame), plus one frame at
+  runtime creation with the current set (usually empty) so the host sees the
+  channel live, plus an unconditional empty-set frame at runtime shutdown
+  (best-effort, before children are killed).
+- **RPC-only gate**: `ctx.mode === "rpc"` captured from the session_start
+  ctx. TUI/print never emit — no footer noise. A missing ctx/ui, a throwing
+  registry read, or a failing `setStatus` leaves the emitter inert; telemetry
+  never throws into spawn/lifecycle handlers.
+
+Pure formatting/dedup/budget logic lives in `running-agents-push.ts`
+(unit-tested without pi); the controller exposes a runtime-wide
+records-changed hook (`onRecordsChanged`) with notifications at spawn, state
+transitions (including `waiting_input` and its resolution), terminal
+settlement, cancel/retire, process exit, and shutdown.
+
 ## Child environment
 
 `pi --mode rpc --no-extensions -e bridge.ts` — no parent extension stack.

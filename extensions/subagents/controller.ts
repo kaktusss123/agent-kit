@@ -220,6 +220,12 @@ export class LocalSubagentRuntime {
 	private readonly dispatchTimeoutMs: number;
 	private readonly readinessTimeoutMs: number;
 	private readonly workspaceListeners = new Set<(ev: SubagentModelEvent) => void>();
+	/**
+	 * Runtime-wide record mutation listeners (running-agents push and future
+	 * telemetry). Notifications are advisory and cheap: subscribers recompute
+	 * from `inspect()`, and a subscriber error is swallowed.
+	 */
+	private readonly recordsListeners = new Set<() => void>();
 	/** Main session file written into persisted results (cost attribution). */
 	private readonly parentSession?: string;
 	private readonly onCostChange?: (total: number) => void;
@@ -364,6 +370,7 @@ export class LocalSubagentRuntime {
 		};
 		this.records.set(id, record);
 		opts.onCreated?.(this.snapshot(record));
+		this.notifyRecordsChanged();
 
 		// Spawn-time partial marker (F003): persist a minimal "running" record
 		// AT process creation. If the parent dies before the child settles,
@@ -487,7 +494,10 @@ export class LocalSubagentRuntime {
 			// run registry stops reporting a question that is no longer pending.
 			if (ev.toolName === ASK_TOOL && record.pendingQuestion) {
 				record.pendingQuestion = undefined;
-				if (record.state === "waiting_input") record.state = "running";
+				if (record.state === "waiting_input") {
+					record.state = "running";
+					this.notifyRecordsChanged();
+				}
 				if (record.eventRoute === "workspace") {
 					this.pushEvent(record, { kind: "input_resolved", agentId: record.id, label: record.label });
 				}
@@ -511,6 +521,7 @@ export class LocalSubagentRuntime {
 			if (!record.cancelRequested && record.state !== "starting") {
 				record.state = "running";
 			}
+			this.notifyRecordsChanged();
 			return;
 		}
 
@@ -548,6 +559,7 @@ export class LocalSubagentRuntime {
 					}
 					record.onAccepted = undefined;
 					for (const w of record.spawnWaiters.splice(0)) w(ev.success === true);
+					this.notifyRecordsChanged();
 					if (ev.success !== true) {
 						record.lastError = `initial prompt rejected: ${String(ev.error ?? "unknown")}`;
 						this.finishWithFailure(record, record.lastError);
@@ -687,6 +699,7 @@ export class LocalSubagentRuntime {
 			question: record.pendingQuestion.question,
 			request,
 		});
+		this.notifyRecordsChanged();
 	}
 
 	/**
@@ -737,6 +750,9 @@ export class LocalSubagentRuntime {
 			// event.
 			record.processKilledAt = Date.now();
 			this.persistResult(record, record.state);
+			// Process exit of an already-terminal record: no set change, the
+			// signature dedup suppresses the frame.
+			this.notifyRecordsChanged();
 			return;
 		}
 		record.exitCode = info.code;
@@ -763,7 +779,11 @@ export class LocalSubagentRuntime {
 		if (record.retireRequested) {
 			// Terminal retire: the process is killed after a settled terminal
 			// outcome. The record keeps its terminal state and result — retire
-			// never turns a completed/failed record into cancelled.
+			// never turns a completed/failed record into cancelled. The
+			// notification is normally a no-op for the running set (already
+			// terminal; signature dedup), but a retire of a still-running
+			// record is only visible through the process death.
+			this.notifyRecordsChanged();
 			return;
 		}
 		if (record.runActive) {
@@ -778,7 +798,15 @@ export class LocalSubagentRuntime {
 		if ((info.code ?? 0) !== 0 || info.signal) {
 			record.lastError = `child exited with code ${info.code} / signal ${info.signal} after completing`;
 			this.finishWithFailure(record, record.lastError);
+			return;
 		}
+		// Clean self-exit after the last run settled: the record may still be
+		// non-terminal when the exit wins the race with the settle fetch (e.g.
+		// `agent_settled` then a clean exit before `get_last_assistant_text`
+		// answers). The state never terminalizes in that case, so the process
+		// death is the only thing that removes it from the running set —
+		// publish it. Signature dedup makes the call free when nothing changed.
+		this.notifyRecordsChanged();
 	}
 
 	// Collect settle-time fetches, then decide the run outcome.
@@ -799,6 +827,7 @@ export class LocalSubagentRuntime {
 			label: record.label,
 			summary: summarizeText(record.finalText),
 		});
+		this.notifyRecordsChanged();
 		// F003 idle-exit: the settled child's process would otherwise live
 		// forever. Retirement uses retire semantics — record and event stay.
 		this.armIdleExit(record);
@@ -811,6 +840,7 @@ export class LocalSubagentRuntime {
 		record.endedAt = Date.now();
 		this.persistResult(record, "failed");
 		this.pushEvent(record, { kind: "failed", agentId: record.id, label: record.label, reason });
+		this.notifyRecordsChanged();
 		// A failed-but-alive child (e.g. error stopReason at settle) is reaped
 		// by the same idle-exit path as a completed one.
 		this.armIdleExit(record);
@@ -821,6 +851,7 @@ export class LocalSubagentRuntime {
 		record.state = state;
 		record.endedAt = record.endedAt ?? Date.now();
 		this.persistResult(record, state);
+		this.notifyRecordsChanged();
 	}
 
 	private persistResult(record: AgentRecord, status: AgentResult["status"]): void {
@@ -1193,6 +1224,7 @@ export class LocalSubagentRuntime {
 		if (record.eventRoute === "workspace") {
 			this.pushEvent(record, { kind: "input_resolved", agentId: record.id, label: record.label });
 		}
+		this.notifyRecordsChanged();
 		this.conn(record).send({ type: "extension_ui_response", id: q.requestId, value: answer });
 	}
 
@@ -1218,6 +1250,7 @@ export class LocalSubagentRuntime {
 			this.conn(record).kill("SIGKILL");
 			await record.conn.waitForExit();
 		}
+		this.notifyRecordsChanged();
 	}
 
 	/**
@@ -1243,6 +1276,10 @@ export class LocalSubagentRuntime {
 			this.conn(record).kill("SIGKILL");
 			await record.conn.waitForExit();
 		}
+		// A retire of an already-terminal record changes no running set; the
+		// signature dedup suppresses the frame. Recorded as a mutation point
+		// because retire is the only process exit that preserves terminal state.
+		this.notifyRecordsChanged();
 	}
 
 	inspect(agentId?: string): AgentSnapshot[] {
@@ -1330,6 +1367,29 @@ export class LocalSubagentRuntime {
 	}
 
 	/**
+	 * Subscribe to runtime-wide record mutations: spawn, logical state
+	 * transitions (including waiting_input and its resolution), terminal
+	 * settlement, process exit, cancel/retire, and shutdown. Subscribers
+	 * recompute from `inspect()`; they must be cheap and must never throw
+	 * (errors are swallowed so telemetry cannot break the runtime). Returns
+	 * an unsubscribe function.
+	 */
+	onRecordsChanged(cb: () => void): () => void {
+		this.recordsListeners.add(cb);
+		return () => this.recordsListeners.delete(cb);
+	}
+
+	private notifyRecordsChanged(): void {
+		for (const cb of this.recordsListeners) {
+			try {
+				cb();
+			} catch {
+				// listener errors must not break the runtime
+			}
+		}
+	}
+
+	/**
 	 * Subscribe to lifecycle events of workspace-routed children (event
 	 * ownership: every child has exactly one event owner — workspace children
 	 * belong to the workspace run registry, generic children to the policy
@@ -1366,12 +1426,14 @@ export class LocalSubagentRuntime {
 		for (const r of live) {
 			if (!r.conn.exit) this.conn(r).kill("SIGKILL");
 		}
+		this.notifyRecordsChanged();
 	}
 
 	/** Kill all live children and latch the runtime shut (main shutdown). */
 	async shutdown(): Promise<void> {
 		this.shutDown = true;
 		await this.cancelAll();
+		this.notifyRecordsChanged();
 	}
 
 	// ---------------------------------------------------------------- internal
