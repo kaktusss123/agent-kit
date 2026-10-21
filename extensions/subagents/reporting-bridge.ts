@@ -109,6 +109,7 @@ export default function (pi: ExtensionAPI) {
 		executionMode: "sequential",
 		description:
 			"Report a meaningful achieved result, current work, an explicitly known blocker (optional), and next step. " +
+			"Omit blocker when there is no blocker. " +
 			"This replaces your previous progress, does not ask approval or release ownership, and does not replace " +
 			"the final report_result. Report significant results, blockers or approach changes, not every tool call. " +
 			"Do not include transcripts, hidden reasoning or command output. Each text is limited to 1000 characters.",
