@@ -89,6 +89,11 @@ import { taskStatus } from "../task-workspace/flows";
 import { resolveTaskRoot } from "../task-workspace/task-root";
 import type { AgentSnapshot } from "./types";
 import { setSubagentInspectionSource } from "./inspection-seam";
+import {
+	attachRunningAgentsPush,
+	type RunningAgentsPush,
+	type RunningAgentsPushContext,
+} from "./running-agents-push";
 
 // =============================================================================
 // Configuration
@@ -288,6 +293,14 @@ function resolveChildProviderEntries(model: string): string[] {
 export default function (pi: ExtensionAPI) {
 	let runtime: LocalSubagentRuntime | null = null;
 	let runs: WorkspaceRuns | null = null;
+	/** Running-agents push, attached when the runtime is first created. */
+	let runningAgentsPush: RunningAgentsPush | null = null;
+	/**
+	 * Latest session_start ctx for the push gate: mode + ui. Captured per
+	 * session (a session rebind may point at a different host); undefined
+	 * before the first session_start, which keeps the emitter inert.
+	 */
+	let pushContext: RunningAgentsPushContext | undefined;
 	/** Main session file for result attribution; set on session_start and lazily on tool entry. */
 	let parentSessionFile: string | undefined;
 
@@ -306,6 +319,10 @@ export default function (pi: ExtensionAPI) {
 				onCostChange: (total) => pi.events.emit("subagents:cost", { total }),
 			});
 			attachDelivery(pi, runtime);
+			// Running-agents push: derived from the same registry inspect() reads,
+			// emitted only in RPC mode. The creation frame goes out immediately
+			// (usually the empty set) so the host sees the channel live.
+			runningAgentsPush = attachRunningAgentsPush(runtime, pushContext);
 		}
 		return runtime;
 	}
@@ -334,6 +351,11 @@ export default function (pi: ExtensionAPI) {
 		parentSessionFile =
 			(ctx.sessionManager as { getSessionFile?: () => string | undefined } | undefined)?.getSessionFile?.() ??
 			parentSessionFile;
+		// Capture the push gate/transport from THIS session (mode + ui) and let
+		// a live emitter adopt it: a rebind may point at a different host, and
+		// the RPC-only rule must follow the current ctx, not the creating one.
+		pushContext = { mode: ctx.mode, ui: ctx.ui };
+		runningAgentsPush?.updateContext(pushContext);
 		if (runtime || !parentSessionFile) return;
 		const total = sumSessionCost(defaultResultsDir(), parentSessionFile);
 		if (total > 0) pi.events.emit("subagents:cost", { total });
@@ -369,8 +391,13 @@ export default function (pi: ExtensionAPI) {
 			const r = runtime;
 			runtime = null;
 			runs = null;
+			// Best-effort empty frame BEFORE the children are killed: the host
+			// must not keep a stale running count once this runtime is gone.
+			runningAgentsPush?.shutdown();
+			runningAgentsPush = null;
 			await r.shutdown();
 		}
+		pushContext = undefined;
 		setSubagentInspectionSource(undefined);
 	});
 
