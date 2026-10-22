@@ -1,19 +1,21 @@
 #!/usr/bin/env python3
-"""Publish review findings as GitLab MR discussions via glab.
+"""Publish review findings as GitLab MR discussions (glab) or GitHub PR
+review comments (gh).
 
-Does the deterministic half of publication: fresh diff_refs, head-moved
-refusal, dedup against existing discussions, nested-JSON POSTs via --input,
-anchoring verification, and fallback to a summary note. Prints a structured
-JSON result to stdout.
+Does the deterministic half of publication: fresh head check, head-moved
+refusal, dedup against existing comments, POSTs with request bodies from
+temp files, anchoring verification, and fallback to a summary-level comment.
+Prints a structured JSON result to stdout.
 
 Usage:
     publish_comments.py PAYLOAD.json
 
 Payload:
     {
-      "url": "https://<host>/<group>/<project>/-/merge_requests/<iid>",
+      "url": "https://gitlab.test/<group>/<project>/-/merge_requests/<iid>"
+           | "https://github.com/<owner>/<repo>/pull/<number>",
       "expected_head_sha": "<sha the review was made against>",
-      "summary_note": {"body": "markdown"},          // optional, MR-level
+      "summary_note": {"body": "markdown"},          // optional, change-level
       "findings": [
         {
           "id": "F1",
@@ -26,17 +28,23 @@ Payload:
       ]
     }
 
-A finding with no file/line fields posts as a summary note. Context lines need
-both old_line and new_line taken from the diff's hunk mapping.
+A finding with no file/line fields posts as a summary note (GitLab MR note /
+GitHub review body). Context lines need both old_line and new_line taken from
+the diff's hunk mapping.
+
+GitLab: one discussion per finding; an API error naming an invalid line_code
+falls back to an MR-level note.
+
+GitHub: one COMMENT review per finding (comments[] carries path/side/line);
+summary-level posts go to the issue comments. A 422 validation failure on
+the review POST (line not part of the current diff) falls back to an issue
+comment. Submitted reviews cannot be deleted, so the unanchored-note delete
+path is GitLab-only; a GitHub comment either anchors or 422s.
 
 Exit codes: 0 published (skips and fallbacks are in the result), 1 raw CLI
 failure, 2 usage error, 3 head moved (result.status=head_moved, nothing
 posted), 4 payload hygiene rejection (bodies contain /tmp, artifact://,
 local://, or proofs/ references).
-
-An API error whose output reports an invalid line_code is treated as "line
-not representable in the current diff": the finding is re-posted as a summary
-note and recorded in result.fallbacks.
 """
 
 import argparse
@@ -49,6 +57,7 @@ import tempfile
 from pathlib import Path
 
 URL_RE = re.compile(r"^https?://([^/]+)/(.+?)/-/merge_requests/(\d+)/?$")
+GH_URL_RE = re.compile(r"^https?://([^/]+)/([^/]+/[^/]+)/pull/(\d+)/?$")
 FORBIDDEN = ["/tmp", "artifact://", "local://", "proofs/"]
 LINE_CODE_400 = re.compile(r"line_code|must be a valid line code", re.I)
 
@@ -93,16 +102,182 @@ def glab(*args):
     return proc.stdout
 
 
+def gh_raw(*args, host=None):
+    import os
+    env = dict(os.environ)
+    if host is not None:
+        env["GH_HOST"] = host
+    return subprocess.run(["gh", *args], capture_output=True, text=True, env=env)
+
+
+def gh(*args, host=None):
+    proc = gh_raw(*args, host=host)
+    if proc.returncode != 0:
+        fail_raw(["gh", *args], proc)
+    return proc.stdout
+
+
 def parse_url(url):
     m = URL_RE.match(url.strip())
-    if not m:
-        print(f"publish_comments: not a GitLab MR URL: {url}", file=sys.stderr)
-        sys.exit(2)
-    return m.group(1), m.group(2), m.group(3)
+    if m:
+        return {"backend": "gitlab", "host": m.group(1), "project": m.group(2), "iid": m.group(3)}
+    m = GH_URL_RE.match(url.strip())
+    if m:
+        return {"backend": "github", "host": m.group(1), "project": m.group(2), "iid": m.group(3)}
+    print(f"publish_comments: not a GitLab MR or GitHub PR URL: {url}", file=sys.stderr)
+    sys.exit(2)
 
 
 def enc(project):
     return project.replace("/", "%2F")
+
+
+class GhHttpError(Exception):
+    """gh api returned a non-2xx HTTP status; carries (status, raw text)."""
+
+    def __init__(self, status, text):
+        super().__init__(f"HTTP {status}: {text}")
+        self.status = status
+        self.text = text
+
+
+def gh_api(method, path, obj, host):
+    """gh api with a JSON request body. Returns parsed JSON ({} when empty).
+    Raises GhHttpError(status, text) on an HTTP error so callers can classify
+    (422 validation vs transport failure) instead of guessing from stderr."""
+    with tempfile.NamedTemporaryFile("w", suffix=".json", delete=False) as f:
+        json.dump(obj, f, ensure_ascii=False)
+        pfile = f.name
+    proc = gh_raw("api", "--method", method, "--input", pfile, path, host=host)
+    Path(pfile).unlink(missing_ok=True)
+    if proc.returncode != 0:
+        text = ((proc.stdout or "") + (proc.stderr or "")).strip()
+        m = re.search(r"HTTP (\d{3})", text)
+        if not m:
+            m = re.search(r'"status":"(\d{3})"', text)
+        status = int(m.group(1)) if m else 0
+        raise GhHttpError(status, text)
+    return json.loads(proc.stdout) if proc.stdout.strip() else {}
+
+
+
+def gh_api_all_pages(path, host):
+    """Collect every page of a GitHub list endpoint (per_page=100). Returns
+    [] on an empty/None response. Stops at the first short page."""
+    out = []
+    page = 1
+    while True:
+        sep = "&" if "?" in path else "?"
+        data = json.loads(gh("api", f"{path}{sep}per_page=100&page={page}", host=host))
+        items = data if isinstance(data, list) else []
+        out.extend(items)
+        if len(items) < 100:
+            return out
+        page += 1
+
+def gh_comment_side_line(finding):
+    """GitHub anchoring: RIGHT/new_line for added/context, LEFT/old_line for
+    removed lines. Returns {} for a summary-level finding."""
+    if finding.get("new_line") is not None:
+        return {"side": "RIGHT", "line": finding["new_line"]}
+    if finding.get("old_line") is not None:
+        return {"side": "LEFT", "line": finding["old_line"]}
+    return {}
+
+
+def gh_publish(host, project, iid, payload, findings):
+    # Fresh head; never post comments against an old diff.
+    meta = json.loads(gh("pr", "view", iid, "--repo", project, "--json", "headRefOid", host=host))
+    if meta.get("headRefOid") != payload["expected_head_sha"]:
+        emit({
+            "status": "head_moved",
+            "expected": payload["expected_head_sha"],
+            "actual": meta.get("headRefOid"),
+        }, code=3)
+
+    covered_pairs, covered_first_lines = set(), set()
+    for c in gh_api_all_pages(f"repos/{project}/pulls/{iid}/comments", host):
+        covered_pairs.add((c.get("path"), c.get("line")))
+        body = (c.get("body") or "").strip()
+        if body:
+            covered_first_lines.add(body.splitlines()[0][:120])
+    for c in gh_api_all_pages(f"repos/{project}/issues/{iid}/comments", host):
+        body = (c.get("body") or "").strip()
+        if body:
+            covered_first_lines.add(body.splitlines()[0][:120])
+
+    def post_issue_comment(body):
+        resp = gh_api("POST", f"repos/{project}/issues/{iid}/comments", {"body": body}, host)
+        return resp.get("id")
+
+    result = {"status": "published", "published": [], "skipped": [], "fallbacks": []}
+    for f in findings:
+        body = f.get("body") or ""
+        body_first = body.strip().splitlines()[0][:120] if body.strip() else ""
+        anchor = gh_comment_side_line(f) if f.get("file") else {}
+        pair = (f.get("file"), anchor.get("line"))
+        if anchor and pair in covered_pairs:
+            result["skipped"].append({"id": f.get("id"), "reason": "existing comment on file+line"})
+            continue
+        if body_first and body_first in covered_first_lines:
+            result["skipped"].append({"id": f.get("id"), "reason": "existing comment with same opening line"})
+            continue
+
+        if not anchor:
+            # Summary-level finding: issue comment (the PR timeline).
+            cid = post_issue_comment(body)
+            result["published"].append({"id": f.get("id"), "comment_id": cid, "mode": "summary", "anchored": False})
+            continue
+
+        review = {
+            "event": "COMMENT",
+            # Pin the review to the verified head: without commit_id GitHub
+            # anchors to the PR's LATEST commit, and a push landing between
+            # the head check and this POST would anchor the comment to a
+            # different diff than the one reviewed.
+            "commit_id": payload["expected_head_sha"],
+            "comments": [{"path": f["file"], "body": body, **anchor}],
+        }
+        try:
+            resp = gh_api("POST", f"repos/{project}/pulls/{iid}/reviews", review, host)
+        except GhHttpError as e:
+            if e.status == 422:
+                # Line not representable in the current diff -> issue comment.
+                cid = post_issue_comment(body)
+                result["fallbacks"].append({
+                    "id": f.get("id"), "to": "summary",
+                    "reason": f"line not representable: {e.text[:200]}", "comment_id": cid,
+                })
+                result["published"].append({"id": f.get("id"), "comment_id": cid, "mode": "fallback-summary", "anchored": False})
+                continue
+            print(
+                f"publish_comments: command failed\n"
+                f"  command: gh api --method POST --input <payload.json> repos/{project}/pulls/{iid}/reviews\n"
+                f"  http: {e.status}\n"
+                f"  output:\n{e.text}",
+                file=sys.stderr,
+            )
+            emit({"status": "failed"}, code=1)
+
+        review_id = resp.get("id")
+        # Anchoring verification: the created review's comments must carry
+        # path+line. (A submitted review cannot be deleted — no GitLab-style
+        # unanchored rollback; a bad line 422s before creation instead.)
+        anchored, line_out = False, None
+        if review_id is not None:
+            for c in gh_api_all_pages(f"repos/{project}/pulls/{iid}/reviews/{review_id}/comments", host):
+                if c.get("path") == f.get("file"):
+                    anchored = c.get("line") is not None
+                    line_out = c.get("line")
+        result["published"].append({
+            "id": f.get("id"), "review_id": review_id,
+            "mode": "inline", "anchored": anchored, "line": line_out,
+        })
+
+    if payload.get("summary_note"):
+        cid = post_issue_comment(payload["summary_note"]["body"])
+        result["summary_comment_id"] = cid
+    emit(result)
 
 
 def hygiene(payload):
@@ -186,7 +361,20 @@ def main():
     if bad:
         emit({"status": "rejected", "reason": "forbidden local references in bodies", "items": bad}, code=4)
 
-    host, project, iid = parse_url(payload["url"])
+    loc = parse_url(payload["url"])
+    host, project, iid, backend = loc["host"], loc["project"], loc["iid"], loc["backend"]
+
+    if backend == "github":
+        if shutil.which("gh") is None:
+            print("publish_comments: gh not found in PATH", file=sys.stderr)
+            emit({"status": "failed"}, code=1)
+        proc = subprocess.run(["gh", "auth", "status", "--hostname", host],
+                              capture_output=True, text=True)
+        if proc.returncode != 0:
+            fail_raw(["gh", "auth", "status", "--hostname", host], proc)
+        gh_publish(host, project, iid, payload, findings)
+        return  # gh_publish emits the result and exits
+
     if shutil.which("glab") is None:
         print("publish_comments: glab not found in PATH", file=sys.stderr)
         emit({"status": "failed"}, code=1)

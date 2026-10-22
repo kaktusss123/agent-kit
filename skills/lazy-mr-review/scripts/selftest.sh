@@ -333,9 +333,9 @@ else
   check "nothing was created inside the caller clone" test ! -e "$T/user/tmproot"
 fi
 
-echo "== snapshot: non-MR URL rejected"
-if python3 "$SNAP" "https://github.com/a/b/pull/7" --no-clone 2>/dev/null; then
-  bad "github URL accepted"
+echo "== snapshot: unsupported URL rejected"
+if python3 "$SNAP" "https://example.com/a/b/change/7" --no-clone 2>/dev/null; then
+  bad "unsupported URL accepted"
 else
   check "usage exit 2" test $? = 2
 fi
@@ -408,6 +408,187 @@ rc=0; out="$(python3 "$PUB" "$T/payload-hyg.json" 2>"$T/errp5")" || rc=$?
 check "exit 4" test "$rc" = 4
 check "status rejected" test "$(jq -r .status <<<"$out")" = rejected
 check "nothing was posted" bash -c '! grep -q "method POST" "$0"' "$GLAB_STUB_LOG"
+
+# ----------------------------------------------------------------
+# ---------------------------------------------------------------- GitHub backend
+# The git shim grows a github.test rewrite; the glab stub stays in PATH (the
+# tool must never call it for GitHub URLs — checked via GH_STUB_LOG isolation).
+cat > "$T/bin/git" <<SHIM
+#!/usr/bin/env bash
+# Rewrite gitlab.test / github.test URLs (explicit or behind a remote name) to the local mirror.
+args=("\$@")
+if [ "\${1:-}" = "fetch" ] && [ -n "\${2:-}" ]; then
+  url="\$2"
+  case "\$url" in
+    https://gitlab.test/*|https://github.test/*) : ;;
+    *) url="\$("$GIT_REAL" remote get-url "\$2" 2>/dev/null || true)" ;;
+  esac
+  case "\$url" in
+    https://gitlab.test/*|https://github.test/*)
+      args=("\$1" "\$GIT_MIRROR" "\${@:3}") ;;
+  esac
+fi
+if [ "\${1:-}" = "clone" ]; then
+  for i in "\${!args[@]}"; do
+    a="\${args[\$i]}"
+    case "\$a" in
+      https://gitlab.test/*|https://github.test/*)
+        p="\${a#https://gitlab.test/}"; p="\${p#https://github.test/}"; p="\${p%.git}"
+        args[\$i]="\$GIT_MIRROR" ;;
+    esac
+  done
+fi
+exec "\$GIT_REAL" "\${args[@]}"
+SHIM
+
+cat > "$T/bin/gh" <<'STUB'
+#!/usr/bin/env bash
+set -u
+[ -n "${GH_STUB_LOG:-}" ] && printf 'gh %s\n' "$*" >> "$GH_STUB_LOG"
+sub="${1:-}"; shift || true
+case "$sub" in
+  auth) exit 0 ;;
+  pr)
+    mode="${1:-}"; shift || true
+    case "$mode" in
+      diff) echo "diff --git a/a.py b/a.py"; exit 0 ;;
+      view)
+        n="${1:-}"
+        var="GH_STUB_PR_${n}"
+        if [ -n "${!var+x}" ]; then echo "${!var}"; else echo '{}'; fi
+        exit 0 ;;
+    esac
+    echo "stub: unknown pr mode $mode" >&2; exit 9 ;;
+esac
+if [ "$sub" != "api" ]; then echo "stub: unknown subcommand $sub" >&2; exit 9; fi
+path=""; method="GET"; input=""; prev=""
+for a in "$@"; do
+  case "$prev" in
+    input)   input="$a";  prev=""; continue ;;
+    method)  method="$a"; prev=""; continue ;;
+  esac
+  case "$a" in
+    --method) prev="method" ;;
+    --input)  prev="input" ;;
+    -*) prev="" ;;
+    *) [ -z "$path" ] && path="$a" ;;
+  esac
+done
+if [ "$sub" = "api" ] && [ "$method" = "POST" ] && [ -n "$input" ] && [ -n "${GH_STUB_LOG:-}" ]; then
+  cat "$input" >> "$GH_STUB_LOG"
+fi
+case "$path" in
+  *"/reviews/"*"/comments"*)
+    # The default must not contain braces inline: ${VAR:-...} ends at the
+    # FIRST unescaped '}', which would eat the JSON object's closing brace.
+    rc_default='[{"path":"a.py","line":23}]'
+    echo "${GH_STUB_REVIEW_COMMENTS:-$rc_default}"; exit 0 ;;
+  *"/reviews")
+    if [ "$method" = "POST" ]; then
+      case "${GH_STUB_SCENARIO:-ok}" in
+        fallback422)
+          if [ -n "$input" ] && grep -q '"line"' "$input" 2>/dev/null; then
+            echo '{"message":"Pull request review comments must be part of the diff","status":"422"}'
+            echo 'gh: review comments must be part of the diff (HTTP 422)' >&2
+            exit 1
+          fi
+          echo '{"id":9001}'; exit 0 ;;
+        *)
+          echo '{"id":8001}'; exit 0 ;;
+      esac
+    fi ;;
+  *"pulls/"*"/comments"*)
+    echo "${GH_STUB_PR_COMMENTS:-[]}"; exit 0 ;;
+  *"issues/"*"/comments"*)
+    if [ "$method" = "POST" ]; then echo '{"id":7001}'; exit 0; fi
+    echo "${GH_STUB_ISSUE_COMMENTS:-[]}"; exit 0 ;;
+esac
+echo "stub: unhandled api path $path" >&2
+exit 9
+STUB
+chmod +x "$T/bin/gh"
+
+GH_URL="https://github.test/owner/proj/pull/7"
+git -C "$T/mirror/proj.git" update-ref refs/pull/7/head "$SHA"
+export GH_STUB_PR_7="$(jq -cn --arg sha "$SHA" '{
+  number: 7, title: "Add f", state: "OPEN", body: "the body",
+  author: {login: "someone"},
+  headRefName: "feat/x", baseRefName: "main", headRefOid: $sha,
+  url: "https://github.test/owner/proj/pull/7",
+  statusCheckRollup: [{name: "verify", status: "completed", conclusion: "success"}]}')"
+
+echo "== gh snapshot: provided clone, happy path"
+git clone -q "$T/mirror/proj.git" "$T/ghuser"
+git -C "$T/ghuser" remote set-url origin https://github.test/owner/proj.git
+export GH_STUB_PR_COMMENTS='[{"path":"a.py","line":10,"body":"existing note"}]'
+export GH_STUB_ISSUE_COMMENTS='[]'
+export GH_STUB_LOG="$T/log-gh-snap.txt"; : > "$GH_STUB_LOG"
+if outg=$(python3 "$SNAP" "$GH_URL" --clone "$T/ghuser" --temp-root "$T/ghroot" 2>"$T/gherr1"); then
+  check "backend github" test "$(jq -r '.reviews[0].backend' <<<"$outg")" = github
+  check "head_sha is headRefOid" test "$(jq -r '.reviews[0].head_sha' <<<"$outg")" = "$SHA"
+  check "checkout HEAD verified" test "$(jq -r '.reviews[0].checkout.sha' <<<"$outg")" = "$SHA"
+  check "github checkout uses the pr suffix" bash -c '[[ "$0" == *-pr7 ]]' "$(jq -r '.reviews[0].checkout.path' <<<"$outg")"
+  check "branches mapped" test "$(jq -r '.reviews[0].source_branch' <<<"$outg")" = "feat/x"
+  check "author mapped from login" test "$(jq -r '.reviews[0].author' <<<"$outg")" = "someone"
+  check "pipeline carries the rollup" grep -q "verify: completed/success" <<<"$(jq -r '.reviews[0].pipeline[]' <<<"$outg")"
+  check "diff saved" test -s "$(jq -r '.reviews[0].diff_path' <<<"$outg")"
+  check "existing PR comment indexed" test "$(jq -r '.reviews[0].discussions[0].file' <<<"$outg")" = "a.py"
+  check "glab never called for a GitHub URL" bash -c '! grep -q glab "$0"' "$GLAB_STUB_LOG"
+  check "gh pr view hit the repo" grep -q 'pr view 7 --repo owner/proj' "$GH_STUB_LOG"
+else
+  bad "gh snapshot failed: $(cat "$T/gherr1")"
+fi
+
+mk_gh_payload() {
+  jq -n --arg sha "$1" '{
+    url: "https://github.test/owner/proj/pull/7",
+    expected_head_sha: $sha,
+    summary_note: {body: "## Verdict\nblockers: 1"},
+    findings: [
+      {id: "F1", body: "BLOCKER: off-by-one", file: "a.py", new_line: 23},
+      {id: "F2", body: "MINOR: naming", file: "a.py", new_line: 10},
+      {id: "F3", body: "NOTE: summary-level"},
+      {id: "F4", body: "MAJOR: removed line", file: "b.py", old_line: 5}
+    ]}'
+}
+
+echo "== gh publish: ok scenario (reviews, dedup, summary last)"
+export GH_STUB_SCENARIO=ok
+export GH_STUB_LOG="$T/log-gh-pub-ok.txt"; : > "$GH_STUB_LOG"
+mk_gh_payload "$SHA" > "$T/gh-payload-ok.json"
+if outg="$(python3 "$PUB" "$T/gh-payload-ok.json" 2>"$T/gherrp1")"; then
+  check "status published" test "$(jq -r .status <<<"$outg")" = published
+  check "F1 inline anchored" test "$(jq -r '.published[] | select(.id=="F1") | .anchored' <<<"$outg")" = true
+  check "F2 skipped by file+line" test "$(jq -r '.skipped[] | select(.id=="F2") | .reason' <<<"$outg")" = "existing comment on file+line"
+  check "F3 posted as issue comment" test "$(jq -r '.published[] | select(.id=="F3") | .mode' <<<"$outg")" = summary
+  check "F4 inline via review" test "$(jq -r '.published[] | select(.id=="F4") | .mode' <<<"$outg")" = inline
+  check "two review POSTs (F1, F4)" test "$(grep -c 'api --method POST --input .* repos/owner/proj/pulls/7/reviews' "$GH_STUB_LOG")" = 2
+  check "reviews pin the verified commit_id" test "$(grep -c '"commit_id": "' "$GH_STUB_LOG")" = 2
+  check "comment listings paginate" grep -q 'repos/owner/proj/pulls/7/comments?per_page=100&page=1' "$GH_STUB_LOG"
+  check "F1 anchored at its new_line" test "$(jq -r '.published[] | select(.id=="F1") | .line' <<<"$outg")" = 23
+  check "two issue-comment POSTs (F3, summary)" test "$(grep -c 'api --method POST --input .* repos/owner/proj/issues/7/comments' "$GH_STUB_LOG")" = 2
+  check "F4 uses the LEFT side" grep -Eq '"side": *"LEFT"' "$GH_STUB_LOG"
+else
+  bad "gh publish ok failed: $(cat "$T/gherrp1")"
+fi
+
+echo "== gh publish: head moved"
+export GH_STUB_LOG="$T/log-gh-pub-moved.txt"; : > "$GH_STUB_LOG"
+mk_gh_payload "deadbeefdeadbeefdeadbeefdeadbeefdeadbeef" > "$T/gh-payload-moved.json"
+rc=0; outg="$(python3 "$PUB" "$T/gh-payload-moved.json" 2>"$T/gherrp2")" || rc=$?
+check "exit 3" test "$rc" = 3
+check "status head_moved" test "$(jq -r .status <<<"$outg")" = head_moved
+check "nothing was posted" bash -c '! grep -q -- "--method POST" "$0"' "$GH_STUB_LOG"
+
+echo "== gh publish: 422 line-not-in-diff falls back to an issue comment"
+export GH_STUB_SCENARIO=fallback422
+export GH_STUB_LOG="$T/log-gh-pub-422.txt"; : > "$GH_STUB_LOG"
+mk_gh_payload "$SHA" > "$T/gh-payload-422.json"
+rc=0; outg="$(python3 "$PUB" "$T/gh-payload-422.json" 2>"$T/gherrp3")" || rc=$?
+check "exit 0 with fallbacks" test "$rc" = 0
+check "F1 recorded as fallback-summary" test "$(jq -r '.published[] | select(.id=="F1") | .mode' <<<"$outg")" = fallback-summary
+check "fallback reason names the diff" grep -qi 'part of the diff' <(jq -r '.fallbacks[0].reason' <<<"$outg")
+check "F3 still posted as summary (no line to reject)" test "$(jq -r '.published[] | select(.id=="F3") | .mode' <<<"$outg")" = summary
 
 echo
 echo "passed: $PASS, failed: $FAIL"

@@ -1,11 +1,11 @@
 ---
 name: lazy-mr-review
-description: "Review GitLab MRs from URLs and report findings in chat; publish comments to the MR only after the user explicitly chooses what to publish. Use when the user shares MR links and asks to review them, asks follow-up questions about a completed review, or asks to publish findings as MR comments. Creating or updating MRs themselves is change-request's job."
+description: "Review GitLab MRs or GitHub PRs from URLs and report findings in chat; publish comments only after the user explicitly chooses what to publish. Use when the user shares MR/PR links and asks to review them, asks follow-up questions about a completed review, or asks to publish findings as comments. Creating or updating MRs/PRs themselves is change-request's job."
 ---
 
 # Lazy MR review
 
-Review GitLab MRs end-to-end: snapshot, verify findings by execution, report in chat — publish only on the user's explicit choice. Deterministic mechanics (preflight, metadata, diff, checkout at the review SHA, publication payloads, anchoring verification) live in `scripts/review_snapshot.py` and `scripts/publish_comments.py`; run `scripts/selftest.sh` there if the tools misbehave. This file is the judgment layer. Every `scripts/...` path in this skill is relative to the skill directory (the directory holding this SKILL.md), never to the current working directory: run the scripts by their absolute path under it.
+Review GitLab MRs and GitHub PRs end-to-end: snapshot, verify findings by execution, report in chat — publish only on the user's explicit choice. The URL picks the backend: `…/-/merge_requests/<iid>` → glab, `…/pull/<number>` → gh. Deterministic mechanics (preflight, metadata, diff, checkout at the review SHA, publication payloads, anchoring verification) live in `scripts/review_snapshot.py` and `scripts/publish_comments.py`; run `scripts/selftest.sh` there if the tools misbehave. This file is the judgment layer. Every `scripts/...` path in this skill is relative to the skill directory (the directory holding this SKILL.md), never to the current working directory: run the scripts by their absolute path under it.
 
 ## Hard rules
 
@@ -19,11 +19,11 @@ Review GitLab MRs end-to-end: snapshot, verify findings by execution, report in 
 
 ### 1. Intake
 
-Group related MRs (same ticket key, same author, coupled contract — shared library bump, producer/consumer DTO): they are reviewed together, including cross-MR contract checks. Extract the ticket key; fetch Jira summary/description when tools allow. An empty MR description is common: state that the contract was inferred from code and name the sources. A non-GitLab URL: say this skill covers GitLab only and stop. Creating or updating MRs routes to `skill://change-request`.
+Group related MRs (same ticket key, same author, coupled contract — shared library bump, producer/consumer DTO): they are reviewed together, including cross-MR contract checks. Extract the ticket key; fetch Jira summary/description when tools allow. An empty description is common: state that the contract was inferred from code and name the sources. Any other URL shape: stop and say the skill covers GitLab MRs and GitHub PRs only. Creating or updating MRs/PRs routes to `skill://change-request`.
 
 ### 2. Snapshot
 
-Ask the user (one question covering all repos) for local clone paths or "no local copies". Then run:
+Ask the user (one question covering all repos) for local clone paths or "no local copies". Then run (URLs of one backend/host per invocation):
 
 ```sh
 python3 scripts/review_snapshot.py <url>... (--clone <path> | --no-clone) [--temp-root <dir>]
