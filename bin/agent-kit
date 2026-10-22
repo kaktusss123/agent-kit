@@ -1165,7 +1165,7 @@ snapshot_lock_move() { # <src> <dst> — move a lock directory without leaving a
 	# move was clean, 1 when <dst> was taken; a nest that cannot be undone dies
 	# loudly, naming the nested path, because a restore of that layout would be
 	# corruption.
-	local src="$1" dst="$2" base nested left
+	local src="$1" dst="$2" base nested left claim note=""
 	base="${src##*/}"
 	mv -- "$src" "$dst" 2>/dev/null || return 1
 	nested="$dst/$base"
@@ -1183,8 +1183,14 @@ snapshot_lock_move() { # <src> <dst> — move a lock directory without leaving a
 	if [ -z "$left" ]; then
 		return 1
 	fi
+	# Every death path releases the takeover claim; if even that removal fails,
+	# the bounded message names it instead of leaving an unnamed artifact.
+	claim="$SNAPSHOT_LOCK_CLAIM"
 	snapshot_lock_claim_release
-	die "snapshot: could not move the lock $src to $dst: the aside name was taken while the move was in flight and the lock ended up nested at $left; move $left back to $src manually, remove $dst, then retry"
+	if [ -n "$claim" ] && { [ -e "$claim" ] || [ -L "$claim" ]; }; then
+		note="; the takeover claim at $claim could not be removed"
+	fi
+	die "snapshot: could not move the lock $src to $dst: the aside name was taken while the move was in flight and the lock ended up nested at $left$note; move $left back to $src manually, remove $dst, then retry"
 }
 
 snapshot_lock_owner_line() { # <dir> — the owner line a mkdir lock carries, empty if absent
@@ -1344,13 +1350,19 @@ snapshot_unlock() { # release the mkdir lock by moving it aside and validating i
 		fi
 		return 0
 	fi
-	# The permission walk and the bounded owner line are prepared before the
-	# owner re-read below, so the only work between that check and the removal
-	# (or the restore) is one fork/exec.
+	# The permission walk and every diagnostic string are prepared before the
+	# owner re-read below: snapshot_bounded pipes through an external tr, and
+	# that fork between the re-read and the rm would let this process remove a
+	# replacement owner it never compared. After the final re-read only the
+	# comparison and one fork/exec (rm, or the restore's rename) run.
 	snapshot_make_writable "$aside"
 	owner="$(snapshot_lock_owner_line "$aside")"
 	bounded_owner="$(snapshot_bounded "$owner" 60)"
+	owner="$(snapshot_lock_owner_line "$aside")"
 	if [ "$owner" != "$token" ]; then
+		# Not the destructive path, so the diagnostic may be refreshed from the
+		# line the comparison really saw: that fork cannot precede a removal.
+		bounded_owner="$(snapshot_bounded "$owner" 60)"
 		warn "snapshot: $dir is no longer owned by this process ($bounded_owner); putting the displaced lock back in place"
 		snapshot_lock_restore "$aside" "$dir" "$owner"
 		return 0

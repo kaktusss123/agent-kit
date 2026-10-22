@@ -889,6 +889,105 @@ EOSH
 	chmod +x "$dir/mv"
 }
 
+make_resistant_claim_mv_shim() { # <dir> <lock-dir> — make the nest undo impossible
+	# A takeover rewrites the lock and takes the freed name, so the restore of
+	# the displaced lock can only NEST it into the third acquirer's directory.
+	# This shim then recreates the aside as an occupied directory after the
+	# nested move, which is what makes the non-nesting undo (rename(2)) fail: the
+	# unrecoverable layout is detected and the release path must die naming it.
+	# Combined with a claim-removal refusal this reaches the death path that used
+	# to leave an unnamed .lock.d.taking behind.
+	local dir="$1" lock="$2" real
+	real="$(command -v mv)" || return 1
+	mkdir -p "$dir"
+	{
+		printf '#!/bin/sh\n'
+		printf 'real=%q\n' "$real"
+		printf 'lock=%q\n' "$lock"
+		cat <<'EOSH'
+src=''; last=''
+for arg in "$@"; do
+	src="$last"
+	last="$arg"
+done
+case "$src" in
+"$lock")
+	case "$last" in
+	"$lock".stale-*)
+		printf '222\t%s\n' "$(date +%s)" > "$src/owner"
+		"$real" "$@" || exit $?
+		mkdir "$src" || exit $?
+		printf '333\t%s\n' "$(date +%s)" > "$src/owner"
+		exit 0
+		;;
+	esac
+	;;
+esac
+case "$src" in
+"$lock".stale-*)
+	if [ "$last" = "$lock" ]; then
+		"$real" "$@" || exit $?
+		mkdir "$src" || exit $?
+		printf 'aside-occupant\n' > "$src/owner"
+		exit 0
+	fi
+	;;
+esac
+exec "$real" "$@"
+EOSH
+	} > "$dir/mv"
+	chmod +x "$dir/mv"
+}
+
+make_refuse_rm_shim() { # <dir> <path> — rm that cannot remove exactly <path>
+	local dir="$1" match="$2" real
+	real="$(command -v rm)" || return 1
+	mkdir -p "$dir"
+	{
+		printf '#!/bin/sh\n'
+		printf 'real=%q\n' "$real"
+		printf 'match=%q\n' "$match"
+		cat <<'EOSH'
+for arg in "$@"; do
+	if [ "$arg" = "$match" ]; then
+		printf '%s: simulated removal failure\n' "$0" >&2
+		exit 1
+	fi
+done
+exec "$real" "$@"
+EOSH
+	} > "$dir/rm"
+	chmod +x "$dir/rm"
+}
+
+make_release_tr_shim() { # <dir> <gate> <lock-dir> — pause on the release's diagnostic tr
+	# snapshot_bounded pipes its one-line cap through an external tr. While a
+	# release aside exists the only such call is the preparation of the release
+	# diagnostics, so this pause sits exactly where the release used to fork
+	# between its final owner read and the rm. The aside path is written to
+	# <gate>.aside and <gate>.go ends the pause.
+	local dir="$1" gate="$2" lock="$3" real
+	real="$(command -v tr)" || return 1
+	mkdir -p "$dir"
+	{
+		printf '#!/bin/sh\n'
+		printf 'real=%q\n' "$real"
+		printf 'gate=%q\n' "$gate"
+		printf 'lock=%q\n' "$lock"
+		cat <<'EOSH'
+for candidate in "$lock".release-*; do
+	[ -f "$candidate/owner" ] || continue
+	printf '%s\n' "$candidate" > "$gate.aside"
+	: > "$gate.ready"
+	while [ ! -f "$gate.go" ]; do sleep 0.05 2>/dev/null || sleep 1; done
+	break
+done
+exec "$real" "$@"
+EOSH
+	} > "$dir/tr"
+	chmod +x "$dir/tr"
+}
+
 wait_for_file() { # <path> — bounded wait for a file a background process writes
 	local i=0
 	while [ ! -e "$1" ]; do
@@ -2542,6 +2641,91 @@ if OUT="$(PATH="$SANDBOX/shim-trap:$PATH" AGENT_KIT_SNAPSHOT_LOCK=mkdir \
 	assert_no_file "$RELEASES/.lock.d/.lock.d.stale-" "the displaced lock was not left nested"
 	assert_dir "$RELEASES/.lock.d" "the third acquirer's lock is in place"
 	assert_contains "$(cat "$RELEASES/.lock.d/owner" 2>/dev/null)" "333" "the third acquirer owns the lock name"
+pass
+
+# ==============================================================================
+# T35: when the non-nesting undo of a nested move fails AND the takeover claim
+# cannot be removed either, the death path left .lock.d.taking on disk without
+# ever naming it: rc=2 and an artifact the operator had to find by hand. The
+# bounded error names the leftover claim, like the resistant-claim diagnostic of
+# the restore path.
+
+new_test "T35 a lock-move death names the claim it could not remove"
+make_kit "$KIT"
+mkdir -p "$RELEASES/.lock.d"
+printf '111\t1\n' > "$RELEASES/.lock.d/owner"
+make_resistant_claim_mv_shim "$SANDBOX/shim-resistant" "$RELEASES/.lock.d" || \
+	fail "test setup: could not install the resistant-claim mv shim"
+make_refuse_rm_shim "$SANDBOX/shim-claim" "$RELEASES/.lock.d.taking" || \
+	fail "test setup: could not install the claim-removal refusal shim"
+if OUT="$(PATH="$SANDBOX/shim-resistant:$SANDBOX/shim-claim:$PATH" \
+	AGENT_KIT_SNAPSHOT_LOCK=mkdir AGENT_KIT_SNAPSHOT_LOCK_STALE=2 \
+	AGENT_KIT_ROOT="$KIT" "$INSTALLER" snapshot "$RELEASES" 2>&1)"; then RC=0; else RC=$?; fi
+[ "$VERBOSE" = 1 ] && printf '%s\n' "$OUT"
+	if [ "$RC" = 0 ]; then
+		fail "an unresolvable nested lock move exited 0: $OUT"
+	fi
+	assert_contains "$OUT" "could not move the lock" "the unresolvable nest is reported"
+	assert_contains "$OUT" "$RELEASES/.lock.d.taking could not be removed" \
+		"the diagnostic names the claim it could not remove"
+	assert_dir "$RELEASES/.lock.d.taking" "the fixture kept the claim on disk"
+	assert_contains "$(cat "$RELEASES/.lock.d/owner" 2>/dev/null)" "333" \
+		"the third acquirer still owns the lock name"
+	if [ "$(count_lines "$OUT")" -gt 1 ]; then
+		fail "the failed move must stay bounded to one line: $OUT"
+	fi
+pass
+
+# ==============================================================================
+# T36: the release validated the owner line of the lock that landed aside and
+# then forked snapshot_bounded (a pipeline through an external tr) before the
+# rm. An owner replaced inside that window was removed without a re-check and
+# the release exited 0, destroying a live lock. Every diagnostic is prepared
+# before the final owner read now, so the post-check sequence is one compare and
+# one fork/exec: a replacement owner is put back and reported instead.
+
+new_test "T36 a replacement owner inside the release window is not removed"
+make_kit "$KIT"
+SHA_SEED="$(head_sha)"
+run_mkdir_snapshot
+	assert_eq "$RC" 0 "seed snapshot"
+printf '\n// next\n' >> "$KIT/extensions/alpha/index.ts"
+git_commit_all "$KIT" next
+SHA_NEXT="$(head_sha)"
+make_release_tr_shim "$SANDBOX/shim-tr" "$SANDBOX/diag" "$RELEASES/.lock.d" || \
+	fail "test setup: could not install the diagnostic tr shim"
+( PATH="$SANDBOX/shim-tr:$PATH" AGENT_KIT_SNAPSHOT_LOCK=mkdir \
+	AGENT_KIT_ROOT="$KIT" "$INSTALLER" snapshot "$RELEASES" > "$SANDBOX/a.log" 2>&1
+  printf '%s' "$?" > "$SANDBOX/a.rc" ) &
+A=$!
+wait_for_file "$SANDBOX/diag.ready" || fail "test setup: the release never prepared its diagnostics"
+ASIDE="$(cat "$SANDBOX/diag.aside" 2>/dev/null || true)"
+	if [ -z "$ASIDE" ] || [ ! -f "$ASIDE/owner" ]; then
+		fail "test setup: no release aside with an owner line"
+	fi
+# A replacement owner takes the lock that already landed aside, exactly inside
+# the window between the release's final owner read and its destructive step.
+REPLACEMENT="replacement-owner	$(date +%s)"
+printf '%s\n' "$REPLACEMENT" > "$ASIDE/owner"
+: > "$SANDBOX/diag.go"
+wait "$A" || true
+[ "$VERBOSE" = 1 ] && printf '%s\n' "$(cat "$SANDBOX/a.log" 2>/dev/null)"
+	assert_eq "$(cat "$SANDBOX/a.rc" 2>/dev/null)" 0 "the release is not a failure"
+	assert_contains "$(cat "$SANDBOX/a.log" 2>/dev/null)" "no longer owned by this process" \
+		"the replacement owner is reported, not removed silently"
+	assert_contains "$(cat "$SANDBOX/a.log" 2>/dev/null)" "replacement-owner" \
+		"the diagnostic names the owner line it saw"
+	assert_contains "$(cat "$SANDBOX/a.log" 2>/dev/null)" "putting the displaced lock back in place" \
+		"the displaced lock is put back"
+	assert_dir "$RELEASES/.lock.d" "the replacement owner's lock is not removed"
+	assert_eq "$(head -1 "$RELEASES/.lock.d/owner" 2>/dev/null)" "$REPLACEMENT" \
+		"the replacement owner still holds its lock"
+	assert_no_file "$ASIDE" "the aside was restored, not left behind"
+	assert_eq "$(ls -d "$RELEASES"/.lock.d.release-* 2>/dev/null | wc -l | tr -d ' ')" 0 \
+		"no release aside left behind"
+	assert_eq "$(ls -d "$RELEASES"/.lock.d.stale-* 2>/dev/null | wc -l | tr -d ' ')" 0 \
+		"no stale aside left behind"
+	assert_link "$RELEASES/current" "$SHA_NEXT" "the snapshot was still published"
 pass
 
 printf '\n%d passed, %d failed\n' "$PASS" "$FAIL"
