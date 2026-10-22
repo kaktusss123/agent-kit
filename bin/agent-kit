@@ -807,17 +807,24 @@ cmd_update() {
 # not part of the base system) it is an atomic mkdir of <releases>/.lock.d that
 # records its owner and is released on exit. A mkdir lock can outlive a
 # SIGKILLed holder, so a lock directory older than
-# AGENT_KIT_SNAPSHOT_LOCK_STALE seconds (600 by default) is taken over. Both
-# kinds wait boundedly (60 s by default, AGENT_KIT_SNAPSHOT_LOCK_TIMEOUT
-# overrides it); a lock that cannot be taken in time is a bounded error, never
-# a silent continue.
+# AGENT_KIT_SNAPSHOT_LOCK_STALE seconds (600 by default) is taken over; a
+# takeover only ever removes the directory whose owner line it measured as
+# stale, and a holder whose lock was displaced anyway dies loudly before
+# touching the releases dir again, because a mkdir lock is not a kernel
+# descriptor lock and must not be trusted blindly. Both kinds wait boundedly
+# (60 s by default, AGENT_KIT_SNAPSHOT_LOCK_TIMEOUT overrides it); a lock that
+# cannot be taken in time is a bounded error, never a silent continue.
+# AGENT_KIT_SNAPSHOT_LOCK (auto by default) forces the mechanism for tests.
 #
 # The runtime is feature-detected, never assumed: BSD userland has no cp -a
 # --link, no cp --link, no mv -T and no stat -c, so hardlink copies fall back
 # to pax -rwl (or a real copy), the current flip uses a rename(2) issued
 # through perl (BSD mv -h unlinks the old link first and plain -f would follow
-# it into the snapshot directory), the publish rename uses plain mv guarded by
-# a target-absence check, and mtimes are read with stat -f %m.
+# it into the snapshot directory), the publish rename asks rename(2) for a
+# non-replacing move as well (GNU mv -T, else perl; rename of a directory onto
+# an existing non-empty directory fails with ENOTEMPTY, which is the conflict
+# semantics the GNU path always had, whereas plain mv nests the source inside
+# the target), and mtimes are read with stat -f %m.
 #
 # Prune failures are not fatal (an undeletable old snapshot must not break the
 # "current points at a complete snapshot of HEAD" contract): they produce
@@ -835,14 +842,23 @@ SNAPSHOT_KEEP=5
 SNAPSHOT_EXT_MARKER="extensions/subagents/index.ts"
 SNAPSHOT_LOCK_TIMEOUT="${AGENT_KIT_SNAPSHOT_LOCK_TIMEOUT:-60}"
 SNAPSHOT_LOCK_STALE="${AGENT_KIT_SNAPSHOT_LOCK_STALE:-600}"
+# auto (feature-detect), flock or mkdir. The forced values exist so tests can
+# exercise both mechanisms on one host; auto is the only production default.
+SNAPSHOT_LOCK_MODE="${AGENT_KIT_SNAPSHOT_LOCK:-auto}"
 SNAPSHOT_RELEASES=""
 SNAPSHOT_TMP=""
 # mkdir-lock directory this process holds; empty when flock is in use.
 SNAPSHOT_LOCK_DIR=""
+# The owner line this process wrote into SNAPSHOT_LOCK_DIR: "<pid>\t<stamp>".
+SNAPSHOT_LOCK_TOKEN=""
+# Takeover claim this process holds while it replaces a stale lock; empty when
+# no takeover is in flight.
+SNAPSHOT_LOCK_CLAIM=""
 # Probed once per invocation by the helpers below ("" = not probed yet).
 SNAPSHOT_STAT_STYLE=""
 
 snapshot_cleanup() {
+	snapshot_lock_claim_release
 	if [ -n "$SNAPSHOT_TMP" ]; then
 		case "$SNAPSHOT_TMP" in
 		"$SNAPSHOT_RELEASES"/.tmp-*)
@@ -978,6 +994,37 @@ snapshot_rename_link() { # <temp-link> <current> — replace the link in one ren
 	mv -fh "$1" "$2" 2>/dev/null
 }
 
+snapshot_rename_dir() { # <src> <dst> — move a built directory under its final name
+	# The publish rename must never nest the source inside the target: plain mv
+	# does exactly that when <dst> appears between the caller's check and the
+	# move, which would mutate a published (immutable) snapshot and then let the
+	# completeness check validate the pre-existing content. rename(2) refuses to
+	# replace a non-empty directory (ENOTEMPTY), which is the conflict semantics
+	# the GNU path always had, so the same tiers as the current flip are used:
+	# GNU mv -T, then perl rename(2), then a guarded plain mv that detects
+	# nesting, undoes it and reports a conflict.
+	local src="$1" dst="$2" base nested
+	base="${src##*/}"
+	mv -T -- "$src" "$dst" 2>/dev/null && return 0
+	if [ -e "$dst" ] || [ -L "$dst" ]; then
+		return 1
+	fi
+	if snapshot_have_perl; then
+		perl -e 'exit(rename($ARGV[0], $ARGV[1]) ? 0 : 1)' "$src" "$dst" 2>/dev/null && return 0
+	fi
+	if [ -e "$dst" ] || [ -L "$dst" ]; then
+		return 1
+	fi
+	mv -- "$src" "$dst" 2>/dev/null || return 1
+	nested="$dst/$base"
+	if [ -d "$nested" ]; then
+		# Last resort only: the target directory appeared under our feet.
+		mv -- "$nested" "$src" 2>/dev/null || true
+		return 1
+	fi
+	return 0
+}
+
 snapshot_lock_age() { # <dir> — seconds since the mkdir lock was taken, empty if unknown
 	# The recorded owner line is authoritative; the directory mtime is the
 	# fallback for a holder that died between mkdir and the owner write.
@@ -1004,14 +1051,18 @@ snapshot_lock_mkdir() { # <dir> — atomic mkdir lock, bounded wait, stale takeo
 	# weaker than a kernel descriptor lock: a SIGKILLed holder leaves the
 	# directory behind, so a directory older than SNAPSHOT_LOCK_STALE is moved
 	# aside and the mkdir race restarts. Ownership is always a successful
-	# mkdir, so a takeover can only hand the lock to one process.
-	local dir="$1" deadline now age aside
+	# mkdir, so a takeover can only hand the lock to one process as long as a
+	# takeover removes nothing but the lock it measured as stale
+	# (snapshot_lock_takeover).
+	local dir="$1" deadline now age
 	deadline=$(($(date +%s) + SNAPSHOT_LOCK_TIMEOUT))
 	while :; do
 		if mkdir -- "$dir" 2>/dev/null; then
 			SNAPSHOT_LOCK_DIR="$dir"
-			if ! printf '%s\t%s\n' "$$" "$(date +%s)" > "$dir/owner" 2>/dev/null; then
+			SNAPSHOT_LOCK_TOKEN="$$"$'\t'"$(date +%s)"
+			if ! printf '%s\n' "$SNAPSHOT_LOCK_TOKEN" > "$dir/owner" 2>/dev/null; then
 				SNAPSHOT_LOCK_DIR=""
+				SNAPSHOT_LOCK_TOKEN=""
 				snapshot_remove_tree "$dir" || true
 				die "snapshot: cannot write the lock owner file in $dir"
 			fi
@@ -1022,9 +1073,7 @@ snapshot_lock_mkdir() { # <dir> — atomic mkdir lock, bounded wait, stale takeo
 		fi
 		age="$(snapshot_lock_age "$dir")"
 		if [ "${age:-0}" -ge "$SNAPSHOT_LOCK_STALE" ]; then
-			aside="$dir.stale-$$"
-			if mv -- "$dir" "$aside" 2>/dev/null; then
-				snapshot_remove_tree "$aside" || true
+			if snapshot_lock_takeover "$dir"; then
 				continue
 			fi
 		fi
@@ -1036,12 +1085,125 @@ snapshot_lock_mkdir() { # <dir> — atomic mkdir lock, bounded wait, stale takeo
 	done
 }
 
-snapshot_unlock() { # release a mkdir lock held by this process, if any
+snapshot_lock_owner_line() { # <dir> — the owner line a mkdir lock carries, empty if absent
+	local line=""
+	[ -f "$1/owner" ] || return 0
+	# read is used instead of head/tail so no BSD tool has to parse "--".
+	IFS= read -r line < "$1/owner" 2>/dev/null || true
+	printf '%s' "$line"
+}
+
+snapshot_lock_takeover() { # <dir> — take over the lock <dir> only if it is still the stale one
+	# Two waiters can measure the same stale lock before either moves it: the
+	# second would then move the freshly created lock of the first and both
+	# would believe they hold the lock. Two guards close that hole:
+	#   1. a takeover claim (an atomic mkdir of <dir>.taking) serializes takers,
+	#      so a second waiter re-measures instead of moving a fresh lock;
+	#   2. the owner line, which must still be exactly the line measured as
+	#      stale in the directory that ends up aside. If it is not, a lock this
+	#      process did not measure was displaced and is put back as it was.
+	# Returns 0 only when a provably stale lock was removed.
+	local dir="$1" claim="$1.taking" aside="$1.stale-$$" measured age owner claim_age
+	if ! mkdir -- "$claim" 2>/dev/null; then
+		# A claim is held for a few syscalls, so a leftover one means its taker
+		# was killed; the same age rule as for the lock clears it.
+		claim_age="$(snapshot_lock_age "$claim")"
+		if [ "${claim_age:-0}" -ge "$SNAPSHOT_LOCK_STALE" ]; then
+			snapshot_remove_tree "$claim" || true
+		fi
+		return 1
+	fi
+	SNAPSHOT_LOCK_CLAIM="$claim"
+	measured="$(snapshot_lock_owner_line "$dir")"
+	age="$(snapshot_lock_age "$dir")"
+	if [ "${age:-0}" -lt "$SNAPSHOT_LOCK_STALE" ]; then
+		snapshot_lock_claim_release
+		return 1
+	fi
+	# mv nests into an existing directory, so the aside name must be free first.
+	if ! snapshot_remove_tree "$aside"; then
+		snapshot_lock_claim_release
+		return 1
+	fi
+	if ! mv -- "$dir" "$aside" 2>/dev/null; then
+		snapshot_lock_claim_release
+		return 1
+	fi
+	owner="$(snapshot_lock_owner_line "$aside")"
+	if [ "$owner" != "$measured" ]; then
+		snapshot_lock_restore "$aside" "$dir" "$owner"
+		snapshot_lock_claim_release
+		return 1
+	fi
+	snapshot_remove_tree "$aside" || true
+	snapshot_lock_claim_release
+	return 0
+}
+
+snapshot_lock_claim_release() { # drop the takeover claim this process holds
+	[ -n "$SNAPSHOT_LOCK_CLAIM" ] || return 0
+	snapshot_remove_tree "$SNAPSHOT_LOCK_CLAIM" || true
+	SNAPSHOT_LOCK_CLAIM=""
+	return 0
+}
+
+snapshot_lock_restore() { # <aside> <dir> <owner> — put back a lock displaced by mistake
+	# Never reached on a well-behaved releases dir: it means a second waiter
+	# took over a lock that was created after it measured the stale one. The
+	# displaced holder lost its lock for one rename at most, so it is restored
+	# where possible; when the name was taken again the situation is reported
+	# loudly instead of silently leaving two owners behind.
+	if snapshot_rename_dir "$1" "$2"; then
+		return 0
+	fi
+	die "snapshot: could not restore the lock $2 after a stale takeover displaced a lock that was not stale (owner ${3:-unknown}); the displaced lock is at $1; remove both and retry"
+}
+
+snapshot_lock_held() { # true when SNAPSHOT_LOCK_DIR still carries this process's owner line
+	[ -n "$SNAPSHOT_LOCK_DIR" ] && [ -n "$SNAPSHOT_LOCK_TOKEN" ] || return 1
+	[ "$(snapshot_lock_owner_line "$SNAPSHOT_LOCK_DIR")" = "$SNAPSHOT_LOCK_TOKEN" ]
+}
+
+snapshot_lock_verify() { # <section> — fail loudly unless this process still owns the mkdir lock
+	# A mkdir lock can be taken over, so a holder re-reads its own owner line
+	# before every critical section instead of writing to a releases dir it may
+	# no longer own. A lock displaced and restored by a failed takeover is gone
+	# for one rename (microseconds), so a short retry separates that from a real
+	# loss; a real loss is a loud, bounded failure, never a silent continue.
 	[ -n "$SNAPSHOT_LOCK_DIR" ] || return 0
-	rm -f "$SNAPSHOT_LOCK_DIR/owner" 2>/dev/null || true
-	rmdir "$SNAPSHOT_LOCK_DIR" 2>/dev/null || \
-		snapshot_remove_tree "$SNAPSHOT_LOCK_DIR" || true
+	local i=0
+	while ! snapshot_lock_held; do
+		i=$((i + 1))
+		if [ "$i" -gt 20 ]; then
+			die "snapshot: lost the lock $SNAPSHOT_LOCK_DIR to another process before $1; stopping instead of writing to a releases dir this process does not lock"
+		fi
+		sleep 0.05 2>/dev/null || sleep 1
+	done
+	return 0
+}
+
+snapshot_unlock() { # release the mkdir lock, but only while this process owns it
+	[ -n "$SNAPSHOT_LOCK_DIR" ] || return 0
+	local dir="$SNAPSHOT_LOCK_DIR" i=0
+	# Another process may have taken the lock over after it looked stale:
+	# removing that lock would break exclusivity for its new owner, so the
+	# owner line is re-checked (with the same short grace as the verify call)
+	# and the directory is left in place when it is no longer ours.
+	while ! snapshot_lock_held; do
+		i=$((i + 1))
+		if [ "$i" -gt 20 ]; then
+			warn "snapshot: $dir is no longer owned by this process ($(snapshot_bounded "$(snapshot_lock_owner_line "$dir")" 60)); leaving it in place"
+			SNAPSHOT_LOCK_DIR=""
+			SNAPSHOT_LOCK_TOKEN=""
+			return 0
+		fi
+		sleep 0.05 2>/dev/null || sleep 1
+	done
+	rm -f "$dir/owner" 2>/dev/null || true
+	rmdir "$dir" 2>/dev/null || \
+		snapshot_remove_tree "$dir" || true
 	SNAPSHOT_LOCK_DIR=""
+	SNAPSHOT_LOCK_TOKEN=""
 	return 0
 }
 
@@ -1057,7 +1219,24 @@ snapshot_lock() { # <releases> — exclusive lock for the whole command (fd 9)
 		die "snapshot: AGENT_KIT_SNAPSHOT_LOCK_STALE must be a whole number of seconds"
 		;;
 	esac
-	if ! snapshot_have_flock; then
+	case "$SNAPSHOT_LOCK_MODE" in
+	auto)
+		if snapshot_have_flock; then
+			SNAPSHOT_LOCK_MODE=flock
+		else
+			SNAPSHOT_LOCK_MODE=mkdir
+		fi
+		;;
+	flock)
+		snapshot_have_flock || \
+			die "snapshot: AGENT_KIT_SNAPSHOT_LOCK=flock needs a runnable flock(1) on PATH (GNU/Linux ships one; BSD userlands do not)"
+		;;
+	mkdir) : ;;
+	*)
+		die "snapshot: AGENT_KIT_SNAPSHOT_LOCK must be auto, flock or mkdir"
+		;;
+	esac
+	if [ "$SNAPSHOT_LOCK_MODE" = mkdir ]; then
 		# BSD userlands ship no flock(1); the mkdir lock above is the fallback.
 		snapshot_lock_mkdir "$lock.d"
 		return 0
@@ -1174,6 +1353,7 @@ snapshot_current_target() { # <releases> — resolved target of current, empty w
 
 snapshot_flip() { # <releases> <sha> — atomic relative-symlink replacement
 	local releases="$1" sha="$2" cur="$1/current" link="$1/.current.tmp-$$"
+	snapshot_lock_verify "the current flip"
 	if [ -e "$cur" ] && [ ! -L "$cur" ]; then
 		die "snapshot: $cur exists and is not a symlink; refusing to replace it"
 	fi
@@ -1200,6 +1380,7 @@ snapshot_prune() { # <releases> <keep-sha> — current's target plus the newest 
 	# current actually resolves to is ever a candidate.
 	local releases="$1" keep="$2" dir path base kept=0 current_target failed=""
 	local -a stale=()
+	snapshot_lock_verify "the retention prune"
 	# Probe the stat dialect once here, in the parent shell: each element of the
 	# process substitution below runs in its own subshell and would probe again.
 	snapshot_stat_style
@@ -1287,14 +1468,17 @@ snapshot_materialize() { # <repo> <releases> <sha> <dirty>
 		printf '}\n'
 	} > "$tmp/manifest.json" || die "snapshot: could not write $tmp/manifest.json"
 
-	# BSD mv has no -T, and plain mv nests into an existing directory, so the
-	# target must be proven absent first: the final name is only ever taken by
-	# this rename, and a directory that appeared meanwhile is reported instead
-	# of silently swallowed.
+	# BSD mv has no -T and plain mv nests into an existing directory, so the
+	# publish rename asks for the non-replacing rename(2) semantics first and
+	# only falls back to a nesting-detecting plain mv. A directory that appeared
+	# meanwhile is a conflict, never a silent nest into a published snapshot.
 	if [ -e "$final" ] || [ -L "$final" ]; then
 		die "snapshot: $final appeared while building $tmp; move it out of the way and retry"
 	fi
-	mv -- "$tmp" "$final" || die "snapshot: could not move $tmp into place at $final"
+	snapshot_lock_verify "the publish rename"
+	if ! snapshot_rename_dir "$tmp" "$final"; then
+		die "snapshot: $final appeared while building $tmp; move it out of the way and retry"
+	fi
 	SNAPSHOT_TMP=""
 	snapshot_complete "$final" "$sha" || \
 		die "snapshot: $final is not a complete snapshot of $sha after materialization; remove it manually"
@@ -1372,8 +1556,11 @@ Usage:
                         <releases-dir>/.lock.d; bounded wait of 60 s,
                         AGENT_KIT_SNAPSHOT_LOCK_TIMEOUT overrides it, and a
                         mkdir lock older than AGENT_KIT_SNAPSHOT_LOCK_STALE
-                        seconds is taken over). An old snapshot that cannot
-                        be removed is a warning, not a failure.
+                        seconds is taken over;
+                        AGENT_KIT_SNAPSHOT_LOCK=auto|flock|mkdir forces
+                        the mechanism, auto being the default). An old
+                        snapshot that cannot be removed is a warning, not a
+                        failure.
   agent-kit uninstall [<host>...]
                         remove owned links of the named hosts and drop them
                         from the selection; without hosts: every host, and

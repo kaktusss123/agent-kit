@@ -14,6 +14,12 @@
 # Exit code: 0 when all tests pass, 1 otherwise.
 set -euo pipefail
 
+# The fixtures are self-contained: they must not inherit the host's git
+# configuration (a global core.hooksPath or commit template would make the
+# sandbox commits fail or behave differently on this machine).
+export GIT_CONFIG_GLOBAL=/dev/null
+export GIT_CONFIG_NOSYSTEM=1
+
 VERBOSE=0
 [ "${1:-}" = "-v" ] && VERBOSE=1
 
@@ -146,6 +152,10 @@ insert_line_before() { # <file> <line-number> <text> — portable "<n>i" sed edi
 
 have_flock() { command -v flock >/dev/null 2>&1; }
 
+have_perl() { command -v perl >/dev/null 2>&1; }
+
+mv_has_T() { mv --help 2>&1 | grep -Fq -- 'no-target-directory'; }
+
 # --- sandbox -----------------------------------------------------------------
 
 new_test() { # <name>
@@ -210,6 +220,14 @@ run_snapshot_at() { # <root> <releases-dir> — sets OUT and RC
 
 run_snapshot() { # sets OUT and RC for the sandbox checkout
 	run_snapshot_at "$KIT" "$RELEASES"
+}
+
+run_mkdir_snapshot() { # sets OUT and RC through the forced mkdir lock
+	AGENT_KIT_SNAPSHOT_LOCK=mkdir run_snapshot
+}
+
+run_flock_snapshot() { # sets OUT and RC through the forced flock lock
+	AGENT_KIT_SNAPSHOT_LOCK=flock run_snapshot
 }
 
 tmp_dirs() { # leftover .tmp-* entries in the releases dir (globs, no find(1))
@@ -358,13 +376,31 @@ make_stub_tool() { # <dir> <tool> <log> — a tool that records its call, exits 
 	chmod +x "$dir/$tool"
 }
 
-make_no_flock_shim() { # <dir> — make flock(1) unrunnable from a PATH entry
-	# bash 3.2 reports a non-executable PATH entry from command -v, so the CLI
-	# checks -x as well; this shim is therefore invisible to its detection and
-	# the mkdir lock is taken even on a host that ships flock(1).
-	mkdir -p "$1"
-	: > "$1/flock"
-	chmod 0644 "$1/flock"
+make_mv_no_T_shim() { # <dir> <log> — BSD mv: no -T in any flag cluster, calls logged
+	# GNU mv has -T; BSD mv rejects it as an illegal option, and plain mv nests
+	# a directory into an existing one. The shim reproduces exactly that on any
+	# host and records every call, so a test can assert which rename tier ran.
+	local dir="$1" log="$2" real
+	real="$(command -v mv)" || return 1
+	mkdir -p "$dir"
+	{
+		printf '#!/bin/sh\n'
+		printf 'real=%q\n' "$real"
+		printf 'log=%q\n' "$log"
+		cat <<'EOSH'
+printf '%s\n' "$*" >> "$log"
+for arg in "$@"; do
+	case "$arg" in
+	-*T*)
+		printf '%s: illegal option -- T\n' "$0" >&2
+		exit 64
+		;;
+	esac
+done
+exec "$real" "$@"
+EOSH
+	} > "$dir/mv"
+	chmod +x "$dir/mv"
 }
 
 mkdir_lock_write() { # <lock-dir> <age-seconds> — the mkdir lock of a holder
@@ -377,6 +413,232 @@ mkdir_lock_write() { # <lock-dir> <age-seconds> — the mkdir lock of a holder
 release_lock_dir() { # <lock-dir> — the holder side of a mkdir lock
 	rm -f "$1/owner" 2>/dev/null || true
 	rmdir "$1" 2>/dev/null || true
+}
+
+# --- the CLI's mkdir-lock primitives, extracted verbatim ----------------------
+#
+# The stale-takeover race cannot be observed reliably from outside the CLI: the
+# window is one rename. make_lock_harness extracts the real lock functions from
+# the CLI into a standalone script so a test can drive an exact interleaving
+# between two processes, which is how the takeover race was reproduced in
+# review. The harness is only a driver: every lock primitive it calls is the
+# code the CLI runs.
+
+make_lock_harness() { # <out> — harness script with the CLI's mkdir-lock code
+	local out="$1" fn
+	{
+		printf '#!/usr/bin/env bash\n'
+		printf 'SNAPSHOT_STAT_STYLE=""\n'
+		printf 'SNAPSHOT_LOCK_DIR=""\n'
+		printf 'SNAPSHOT_LOCK_TOKEN=""\n'
+		printf 'SNAPSHOT_LOCK_CLAIM=""\n'
+		printf 'SNAPSHOT_LOCK_TIMEOUT="${AGENT_KIT_SNAPSHOT_LOCK_TIMEOUT:-30}"\n'
+		printf 'SNAPSHOT_LOCK_STALE="${AGENT_KIT_SNAPSHOT_LOCK_STALE:-600}"\n'
+		printf 'warn() { printf "warning: %%s\\n" "$*" >&2; }\n'
+		printf 'die() { printf "error: %%s\\n" "$*" >&2; exit 2; }\n'
+		for fn in snapshot_bounded snapshot_remove_tree snapshot_stat_style \
+			snapshot_mtime snapshot_have_perl snapshot_rename_dir \
+			snapshot_lock_owner_line snapshot_lock_age snapshot_lock_takeover \
+			snapshot_lock_restore snapshot_lock_claim_release snapshot_lock_mkdir \
+			snapshot_lock_held snapshot_lock_verify snapshot_unlock; do
+			extract_function "$INSTALLER" "$fn" || return 1
+		done
+		cat <<'EOSH'
+
+mode="$1"; shift
+case "$mode" in
+lock) # <lock-dir> <oracle-dir> <hold-seconds> <log>
+	snapshot_lock_mkdir "$1" || exit 3
+	snapshot_lock_verify "the test hold"
+	if mkdir "$2" 2>/dev/null; then
+		printf 'hold %s\n' "$$" >> "$4"
+	else
+		printf 'overlap %s\n' "$$" >> "$4"
+	fi
+	sleep "$3"
+	rmdir "$2" 2>/dev/null || true
+	snapshot_unlock
+	printf 'release %s\n' "$$" >> "$4"
+	;;
+verify) # <lock-dir> <log> — the lock disappears while it is held
+	snapshot_lock_mkdir "$1" || exit 3
+	printf 'ready\n' > "$2.ready"
+	while [ ! -f "$2.go" ]; do sleep 0.05 2>/dev/null || sleep 1; done
+	snapshot_lock_verify "the critical section"
+	printf 'verify passed\n' >> "$2"
+	snapshot_unlock
+	;;
+unlock) # <lock-dir> <log> — another process owns the lock when unlock runs
+	snapshot_lock_mkdir "$1" || exit 3
+	printf 'ready\n' > "$2.ready"
+	while [ ! -f "$2.go" ]; do sleep 0.05 2>/dev/null || sleep 1; done
+	snapshot_unlock
+	printf 'unlock done\n' >> "$2"
+	;;
+takeover) # <lock-dir> <log> — one takeover attempt, result recorded
+	if snapshot_lock_takeover "$1"; then
+		printf 'takeover rc=0\n' >> "$2"
+	else
+		printf 'takeover rc=1\n' >> "$2"
+	fi
+	;;
+*) printf 'unknown harness mode %s\n' "$mode" >&2; exit 64 ;;
+esac
+EOSH
+	} > "$out"
+	chmod +x "$out"
+}
+
+make_slow_takeover_mv_shim() { # <dir> — mv that waits before a stale-takeover move
+	# Only the move of a stale lock aside is delayed, so a test can put a second
+	# waiter's measured-as-stale move after the first waiter created its own
+	# lock: that is the interleaving of the reviewer's reproduction. The source
+	# is the second-to-last argument (mv is called as `mv -- <src> <dst>`).
+	local dir="$1" real
+	real="$(command -v mv)" || return 1
+	mkdir -p "$dir"
+	{
+		printf '#!/bin/sh\n'
+		printf 'real=%q\n' "$real"
+		cat <<'EOSH'
+src=''; last=''
+for arg in "$@"; do
+	src="$last"
+	last="$arg"
+done
+case "$src" in
+*.lock.d)
+	case "$last" in
+	*.stale-*) sleep "${MV_DELAY_S:-0}" ;;
+	esac
+	;;
+esac
+exec "$real" "$@"
+EOSH
+	} > "$dir/mv"
+	chmod +x "$dir/mv"
+}
+
+make_publish_shim() { # <dir> <from> <final> <old-sha> <new-sha> <log> <mode> <refuse-T>
+	# Plants a complete snapshot of the new sha exactly at the publish rename,
+	# which is what "a complete $final appeared while building $tmp" looks like
+	# from inside the CLI. Mode `first` fires on the first move of the temp
+	# directory, `plain` only on a move without a -T flag (the last-resort tier).
+	# refuse-T=1 makes mv reject any -T flag cluster, exactly like BSD mv.
+	local dir="$1" real
+	real="$(command -v mv)" || return 1
+	mkdir -p "$dir"
+	{
+		printf '#!/bin/sh\n'
+		printf 'real=%q\n' "$real"
+		printf 'from=%q\n' "$2"
+		printf 'final=%q\n' "$3"
+		printf 'oldsha=%q\n' "$4"
+		printf 'newsha=%q\n' "$5"
+		printf 'log=%q\n' "$6"
+		printf 'plant_mode=%q\n' "$7"
+		printf 'refuse_t=%q\n' "$8"
+		cat <<'EOSH'
+printf '%s\n' "$*" >> "$log"
+src=''; last=''
+for arg in "$@"; do
+	src="$last"
+	last="$arg"
+done
+has_t=0
+for arg in "$@"; do
+	case "$arg" in
+	-*T*) has_t=1 ;;
+	esac
+done
+if [ "$refuse_t" = 1 ] && [ "$has_t" = 1 ]; then
+	printf '%s: illegal option -- T\n' "$0" >&2
+	exit 64
+fi
+if [ ! -f "$log.planted" ]; then
+	case "$src" in
+	*/.tmp-*)
+		if [ "$plant_mode" = first ] || [ "$has_t" = 0 ]; then
+			: > "$log.planted"
+			mkdir -p "$final" || exit 1
+			cp -R "$from/." "$final/" || exit 1
+			sed "s/$oldsha/$newsha/" "$from/manifest.json" > "$final/manifest.json" || exit 1
+		fi
+		;;
+	esac
+fi
+exec "$real" "$@"
+EOSH
+	} > "$dir/mv"
+	chmod +x "$dir/mv"
+}
+
+make_swap_lock_mv_shim() { # <dir> <lock-dir> <new-owner-line>
+	# Replaces the lock exactly while a takeover moves it aside, which is the
+	# interleaving the second guard of the takeover has to survive: the moved
+	# directory is then not the lock that was measured as stale.
+	local dir="$1" real
+	real="$(command -v mv)" || return 1
+	mkdir -p "$dir"
+	{
+		printf '#!/bin/sh\n'
+		printf 'real=%q\n' "$real"
+		printf 'lock=%q\n' "$2"
+		printf 'new_owner=%q\n' "$3"
+		cat <<'EOSH'
+src=''; last=''
+for arg in "$@"; do
+	src="$last"
+	last="$arg"
+done
+case "$src" in
+*.lock.d)
+	case "$last" in
+	*.stale-*)
+		rm -rf "$lock"
+		mkdir "$lock"
+		printf '%s\n' "$new_owner" > "$lock/owner"
+		;;
+	esac
+	;;
+esac
+exec "$real" "$@"
+EOSH
+	} > "$dir/mv"
+	chmod +x "$dir/mv"
+}
+
+wait_for_file() { # <path> — bounded wait for a file a background process writes
+	local i=0
+	while [ ! -e "$1" ]; do
+		i=$((i + 1))
+		if [ "$i" -ge 200 ]; then
+			return 1
+		fi
+		sleep 0.05 2>/dev/null || sleep 1
+	done
+	return 0
+}
+
+nested_entry() { # <dir> — a leftover .tmp-* entry inside a snapshot directory
+	local p
+	for p in "$1"/.tmp-*; do
+		if [ -e "$p" ] || [ -L "$p" ]; then
+			printf '%s' "$p"
+			return 0
+		fi
+	done
+	return 0
+}
+
+entry_count() { # <dir> — top-level entries, dot files included
+	local p n=0
+	for p in "$1"/* "$1"/.[!.]*; do
+		if [ -e "$p" ] || [ -L "$p" ]; then
+			n=$((n + 1))
+		fi
+	done
+	printf '%s' "$n"
 }
 
 # ==============================================================================
@@ -999,6 +1261,11 @@ pass
 # must replace the link with a single rename — GNU mv -T where it exists, a
 # perl rename(2) otherwise — and never nest the new link into the snapshot
 # directory. BSD chmod reads `--` as a file name, so it must not be passed.
+#
+# The last-resort tier is forced with the exact BSD mv behaviour (any -T flag
+# cluster is an illegal option) plus a failing perl, and the log has to show
+# that `mv -fh` really ran: otherwise the assertion would pass on a host whose
+# mv still has -T without ever reaching the fallback.
 
 new_test "T19 the current flip and the chmod calls stay userland-portable"
 make_kit "$KIT"
@@ -1012,9 +1279,9 @@ RUN_PATH="$SANDBOX/shim-bsd-flags"
 run_snapshot
 	assert_eq "$RC" 0 "first snapshot under the shims"
 	assert_link "$RELEASES/current" "$SHA1" "current flipped"
-	if mv --help 2>&1 | grep -Fq -- 'no-target-directory'; then
+	if mv_has_T; then
 		assert_grep "$SANDBOX/mv.log" "-Tf -- " "GNU mv replaced the link with -T"
-	elif command -v perl >/dev/null 2>&1; then
+	elif have_perl; then
 		if grep -q -- '-fh ' "$SANDBOX/mv.log"; then
 			fail "the atomic rename tier must run before the mv -h fallback"
 		fi
@@ -1041,19 +1308,22 @@ rm -f "$RELEASES/$SHA1/node_modules/typebox/broken"
 run_snapshot
 	assert_eq "$RC" 0 "retry succeeds under the shims"
 	assert_link "$RELEASES/current" "$SHA2" "current advanced"
-# Last resort: with no perl rename tier the flip still has to work, and the new
-# link must still replace current instead of being moved into the snapshot.
+# Last resort: with no -T and no perl rename tier the flip still has to work,
+# and the new link must still replace current instead of being moved into the
+# snapshot.
 printf '\n// third\n' >> "$KIT/extensions/alpha/index.ts"
 git_commit_all "$KIT" "third"
 SHA3="$(head_sha)"
-make_fail_shim "$SANDBOX/shim-bsd-flags" perl
-: > "$SANDBOX/mv.log"
-RUN_PATH="$SANDBOX/shim-bsd-flags"
+make_mv_no_T_shim "$SANDBOX/shim-last-resort" "$SANDBOX/mv-last.log"
+make_fail_shim "$SANDBOX/shim-last-resort" perl
+RUN_PATH="$SANDBOX/shim-last-resort"
 run_snapshot
 	assert_eq "$RC" 0 "snapshot without a perl rename tier"
 	assert_link "$RELEASES/current" "$SHA3" "current flipped by the mv fallback"
 	assert_eq "$(nested_temp_link "$RELEASES/$SHA3")" "" "the new link was not nested into the snapshot"
 	assert_dir "$RELEASES/$SHA3/extensions" "the snapshot directory is still a snapshot"
+	assert_grep "$SANDBOX/mv-last.log" "-Tf -- " "the GNU rename tier was tried first"
+	assert_grep "$SANDBOX/mv-last.log" "-fh " "the mv -h last resort really ran"
 RUN_PATH=""
 pass
 
@@ -1134,21 +1404,27 @@ pass
 # T22: the mkdir lock used where flock(1) is absent (macOS): bounded wait, a
 # bounded error, takeover of a lock left by a SIGKILLed holder, and release on
 # exit (both after a successful and after a failed run).
+#
+# AGENT_KIT_SNAPSHOT_LOCK=mkdir forces the mechanism, so this test covers the
+# BSD lock path on every host instead of depending on a PATH where flock(1) is
+# unrunnable — a non-executable `flock` earlier in PATH does not hide an
+# executable one further down, so a PATH shim cannot force this branch. T15 and
+# T23 cover the flock path.
 
 new_test "T22 mkdir lock: bounded wait, stale takeover, release on exit"
 make_kit "$KIT"
 SHA="$(head_sha)"
-make_no_flock_shim "$SANDBOX/shim-noflock"
 LOCKDIR="$RELEASES/.lock.d"
-RUN_PATH="$SANDBOX/shim-noflock"
-run_snapshot
+run_mkdir_snapshot
 	assert_eq "$RC" 0 "first snapshot with the mkdir lock"
 	assert_no_file "$LOCKDIR" "lock directory removed on exit"
+	assert_no_file "$RELEASES/.lock" "the flock lock file is not created"
 # A fresh lock makes the otherwise instant fast path wait for it.
 mkdir_lock_write "$LOCKDIR" 0 || fail "test setup: could not take the mkdir lock"
 ( sleep 3; release_lock_dir "$LOCKDIR" ) &
 HOLDER=$!
-( if AGENT_KIT_SNAPSHOT_LOCK_TIMEOUT=30 AGENT_KIT_ROOT="$KIT" "$INSTALLER" snapshot "$RELEASES" >"$SANDBOX/out" 2>&1; then printf 0 > "$SANDBOX/rc"; else printf '%s' "$?" > "$SANDBOX/rc"; fi ) &
+( AGENT_KIT_SNAPSHOT_LOCK_TIMEOUT=30 run_mkdir_snapshot
+  printf '%s' "$RC" > "$SANDBOX/rc"; printf '%s\n' "$OUT" > "$SANDBOX/out" ) &
 WAITER=$!
 sleep 1
 	if ! kill -0 "$WAITER" 2>/dev/null; then
@@ -1164,7 +1440,7 @@ BEFORE="$(readlink "$RELEASES/current")"
 mkdir_lock_write "$LOCKDIR" 0 || fail "test setup: could not take the mkdir lock"
 ( sleep 4; release_lock_dir "$LOCKDIR" ) &
 HOLDER=$!
-AGENT_KIT_SNAPSHOT_LOCK_TIMEOUT=1 run_snapshot
+AGENT_KIT_SNAPSHOT_LOCK_TIMEOUT=1 run_mkdir_snapshot
 wait "$HOLDER" || true
 	if [ "$RC" -eq 0 ]; then
 		fail "a timed-out mkdir lock must not exit 0"
@@ -1177,7 +1453,7 @@ wait "$HOLDER" || true
 	assert_no_file "$LOCKDIR" "the failing run left no lock directory"
 # A holder killed with SIGKILL leaves the directory behind: age-based takeover.
 mkdir_lock_write "$LOCKDIR" 3600 || fail "test setup: could not write a stale mkdir lock"
-run_snapshot
+run_mkdir_snapshot
 	assert_eq "$RC" 0 "stale lock taken over"
 	assert_contains "$OUT" "already present" "the fast path ran after the takeover"
 	assert_no_file "$LOCKDIR" "the taken-over lock was released"
@@ -1186,41 +1462,208 @@ printf '\n// next\n' >> "$KIT/extensions/alpha/index.ts"
 git_commit_all "$KIT" "next"
 SHA2="$(head_sha)"
 ln -s "$SANDBOX/nowhere" "$RELEASES/$SHA/node_modules/typebox/broken"
-run_snapshot
+run_mkdir_snapshot
 	assert_eq "$RC" 2 "materialization failure with the mkdir lock"
 	assert_no_file "$LOCKDIR" "lock released after a failed run"
-RUN_PATH=""
 rm -f "$RELEASES/$SHA/node_modules/typebox/broken"
-run_snapshot
+run_mkdir_snapshot
 	assert_eq "$RC" 0 "retry succeeds"
 	assert_link "$RELEASES/current" "$SHA2" "current advanced"
 pass
 
 # ==============================================================================
-# T23: where a runnable flock(1) exists the CLI must still take that lock — the
-# GNU/Linux reference path, unchanged. This host has none, so the branch is
-# exercised with a stub flock that records the call and succeeds: it proves the
-# CLI opens the lock file, passes the bounded wait and the descriptor, and
-# creates no mkdir lock directory. Real flock semantics are covered by T15 on a
-# host that ships flock(1).
+# T23: the flock path — the GNU/Linux reference branch — must stay taken where a
+# runnable flock(1) exists and must still be the mechanism the CLI reaches for
+# when it is forced. A stub flock records the call, so the branch is covered on
+# every host; the kernel semantics of the real tool are covered by T15 where the
+# host ships flock(1).
 
 new_test "T23 the flock path is taken when flock(1) exists"
-if have_flock; then
-	printf 'SKIP %s: flock(1) exists here, T15 exercises the real lock\n' "$CURRENT"
-else
-	make_kit "$KIT"
-	SHA="$(head_sha)"
-	make_stub_tool "$SANDBOX/shim-flock" flock "$SANDBOX/flock.log"
-	RUN_PATH="$SANDBOX/shim-flock"
-	run_snapshot
+make_kit "$KIT"
+SHA="$(head_sha)"
+make_stub_tool "$SANDBOX/shim-flock" flock "$SANDBOX/flock.log"
+RUN_PATH="$SANDBOX/shim-flock"
+run_flock_snapshot
 	assert_eq "$RC" 0 "first snapshot through the flock branch"
-	RUN_PATH=""
+RUN_PATH=""
 	assert_link "$RELEASES/current" "$SHA" "current flipped under the flock branch"
 	assert_file "$RELEASES/.lock" "the flock lock file is kept"
 	assert_no_file "$RELEASES/.lock.d" "no mkdir lock directory when flock is used"
 	assert_grep "$SANDBOX/flock.log" "-w 60 9" "the bounded wait and the descriptor reach flock"
-	pass
-fi
+# An unknown forced mechanism is a bounded error, not a silent fallback.
+AGENT_KIT_SNAPSHOT_LOCK=bogus run_snapshot
+	assert_eq "$RC" 2 "an unknown lock mechanism is refused"
+	assert_contains "$OUT" "AGENT_KIT_SNAPSHOT_LOCK" "the lock mechanism message names the variable"
+pass
+
+# ==============================================================================
+# T24: the stale-takeover race. Two waiters must never both believe they hold
+# the same mkdir lock; a takeover must never silently remove a lock it did not
+# measure as stale; a holder that loses its lock must fail loudly instead of
+# writing further; and unlock must remove only its own lock.
+#
+# The race window is one rename, so the lock primitives are driven directly
+# through a harness that extracts them verbatim from the CLI (the same way the
+# race was reproduced in review).
+
+new_test "T24 stale takeover hands the mkdir lock to one holder at a time"
+make_kit "$KIT"
+SHA="$(head_sha)"
+run_mkdir_snapshot
+	assert_eq "$RC" 0 "first snapshot"
+LOCKDIR="$RELEASES/.lock.d"
+CLAIM="$LOCKDIR.taking"
+HARNESS="$SANDBOX/lock-harness"
+make_lock_harness "$HARNESS" || fail "test setup: could not extract the lock primitives"
+assert_file "$HARNESS" "the lock harness was written"
+make_slow_takeover_mv_shim "$SANDBOX/shim-slow-mv" || fail "test setup: could not install the slow mv shim"
+ORACLE="$SANDBOX/hold-oracle"
+RACE="$SANDBOX/race.log"
+: > "$RACE"
+# (a) both waiters measure the same stale lock; the first takeover creates a
+# fresh lock, the second waiter's move (based on the same stale measurement)
+# lands on it.
+mkdir_lock_write "$LOCKDIR" 3600 || fail "test setup: could not write a stale lock"
+( PATH="$SANDBOX/shim-slow-mv:$PATH" MV_DELAY_S=1 "$HARNESS" lock "$LOCKDIR" "$ORACLE" 4 "$RACE" >"$SANDBOX/a.out" 2>&1
+  printf '%s' "$?" > "$SANDBOX/a.rc" ) &
+A=$!
+( PATH="$SANDBOX/shim-slow-mv:$PATH" MV_DELAY_S=3 "$HARNESS" lock "$LOCKDIR" "$ORACLE" 1 "$RACE" >"$SANDBOX/b.out" 2>&1
+  printf '%s' "$?" > "$SANDBOX/b.rc" ) &
+B=$!
+wait "$A" || true
+wait "$B" || true
+	assert_eq "$(cat "$SANDBOX/a.rc" 2>/dev/null)" 0 "first waiter exit code ($(cat "$SANDBOX/a.out" 2>/dev/null))"
+	assert_eq "$(cat "$SANDBOX/b.rc" 2>/dev/null)" 0 "second waiter exit code ($(cat "$SANDBOX/b.out" 2>/dev/null))"
+	if grep -q '^overlap' "$RACE"; then
+		fail "two processes held the mkdir lock at the same time: $(tr '\n' ' ' < "$RACE")"
+	fi
+	assert_eq "$(grep -c '^hold' "$RACE" 2>/dev/null || true)" 2 "both waiters acquired the lock, one after the other"
+	assert_no_file "$LOCKDIR" "the lock directory is released"
+	assert_no_file "$CLAIM" "no takeover claim left behind"
+	assert_eq "$(ls -d "$RELEASES"/.lock.d.stale-* 2>/dev/null | wc -l | tr -d ' ')" 0 "no displaced lock left behind"
+# (b) the second guard: a takeover that moves a lock it did not measure as stale
+# must put it back instead of deleting it. The shim swaps the lock while the
+# takeover move is in flight.
+make_swap_lock_mv_shim "$SANDBOX/shim-swap-lock" "$LOCKDIR" "4242"$'\t'"$(date +%s)" || \
+	fail "test setup: could not install the lock-swapping mv shim"
+SWAP_LOG="$SANDBOX/swap.log"
+: > "$SWAP_LOG"
+mkdir_lock_write "$LOCKDIR" 3600 || fail "test setup: could not write a stale lock"
+PATH="$SANDBOX/shim-swap-lock:$PATH" "$HARNESS" takeover "$LOCKDIR" "$SWAP_LOG" || true
+	assert_grep "$SWAP_LOG" "takeover rc=1" "a takeover that displaced a fresh lock is refused"
+	assert_dir "$LOCKDIR" "the displaced lock is restored under its name"
+	assert_contains "$(cat "$LOCKDIR/owner" 2>/dev/null)" "4242" "the restored lock kept its owner line"
+	assert_no_file "$CLAIM" "the refused takeover released its claim"
+	assert_eq "$(ls -d "$RELEASES"/.lock.d.stale-* 2>/dev/null | wc -l | tr -d ' ')" 0 "the displaced lock was not left aside"
+rm -rf "$LOCKDIR"
+# (c) a holder whose lock is taken over fails loudly before its next critical
+# section instead of writing into a releases dir it no longer locks.
+VERIFY_LOG="$SANDBOX/verify.log"
+: > "$VERIFY_LOG"
+( "$HARNESS" verify "$LOCKDIR" "$VERIFY_LOG" >"$SANDBOX/v.out" 2>"$SANDBOX/v.err"
+  printf '%s' "$?" > "$SANDBOX/v.rc" ) &
+V=$!
+wait_for_file "$VERIFY_LOG.ready" || fail "test setup: the verifying holder did not start"
+mv "$LOCKDIR" "$SANDBOX/displaced-lock" || fail "test setup: could not displace the lock"
+mkdir "$LOCKDIR" || fail "test setup: could not create the foreign lock"
+printf '4242\t%s\n' "$(date +%s)" > "$LOCKDIR/owner"
+: > "$VERIFY_LOG.go"
+wait "$V" || true
+	if [ "$(cat "$SANDBOX/v.rc" 2>/dev/null)" = 0 ]; then
+		fail "a holder that lost its lock continued silently: $(cat "$SANDBOX/v.out" 2>/dev/null)"
+	fi
+	assert_contains "$(cat "$SANDBOX/v.err" 2>/dev/null)" "lost the lock" "the lost lock is reported"
+	assert_eq "$(grep -c 'verify passed' "$VERIFY_LOG" 2>/dev/null || true)" 0 "the critical section did not run after the loss"
+	assert_dir "$LOCKDIR" "the foreign lock is left in place"
+	assert_contains "$(cat "$LOCKDIR/owner" 2>/dev/null)" "4242" "the foreign owner line is untouched"
+# (d) unlock removes only the lock this process still owns.
+rm -rf "$LOCKDIR" "$SANDBOX/displaced-lock"
+UNLOCK_LOG="$SANDBOX/unlock.log"
+( "$HARNESS" unlock "$LOCKDIR" "$UNLOCK_LOG" >"$SANDBOX/u.out" 2>"$SANDBOX/u.err"
+  printf '%s' "$?" > "$SANDBOX/u.rc" ) &
+U=$!
+wait_for_file "$UNLOCK_LOG.ready" || fail "test setup: the unlocking holder did not start"
+mv "$LOCKDIR" "$SANDBOX/own-lock" || fail "test setup: could not move the own lock"
+mkdir "$LOCKDIR" || fail "test setup: could not create the foreign lock"
+printf '4242\t%s\n' "$(date +%s)" > "$LOCKDIR/owner"
+: > "$UNLOCK_LOG.go"
+wait "$U" || true
+	assert_eq "$(cat "$SANDBOX/u.rc" 2>/dev/null)" 0 "unlock without ownership is not a failure"
+	assert_contains "$(cat "$SANDBOX/u.err" 2>/dev/null)" "leaving it in place" "unlock reports the foreign lock"
+	assert_dir "$LOCKDIR" "a foreign lock survives unlock"
+	assert_contains "$(cat "$LOCKDIR/owner" 2>/dev/null)" "4242" "the foreign owner line survives unlock"
+rm -rf "$LOCKDIR" "$SANDBOX/own-lock"
+# (e) end to end: a stale lock plus three real concurrent runs. Exactly one
+# takeover may win; every run has to finish with current on a complete snapshot.
+mkdir_lock_write "$LOCKDIR" 3600 || fail "test setup: could not write a stale lock"
+i=0
+while [ "$i" -le 2 ]; do
+	( AGENT_KIT_SNAPSHOT_LOCK_TIMEOUT=60 run_mkdir_snapshot
+	  printf '%s' "$RC" > "$SANDBOX/storm.$i.rc" ) &
+	i=$((i + 1))
+done
+wait || true
+i=0
+while [ "$i" -le 2 ]; do
+	assert_eq "$(cat "$SANDBOX/storm.$i.rc" 2>/dev/null)" 0 "storm run $i exit code"
+	i=$((i + 1))
+done
+	assert_link "$RELEASES/current" "$SHA" "current still points at the snapshot of HEAD"
+	assert_file "$RELEASES/current/manifest.json" "current resolves to a complete snapshot"
+	assert_no_file "$LOCKDIR" "the storm left no lock directory"
+	assert_no_file "$CLAIM" "the storm left no takeover claim"
+	assert_eq "$(tmp_dirs)" 0 "no temp dir left behind"
+pass
+
+# ==============================================================================
+# T25: a snapshot directory that appears between the target-absence check and
+# the publish rename is a conflict. Plain mv would nest the built temp tree
+# inside the published snapshot, mutate it, and then validate the pre-existing
+# content and exit 0 — which is exactly the reviewer's reproduction.
+
+new_test "T25 a snapshot appearing before the publish rename is a conflict"
+make_kit "$KIT"
+SHA1="$(head_sha)"
+run_snapshot
+	assert_eq "$RC" 0 "first snapshot"
+printf '\n// next\n' >> "$KIT/extensions/alpha/index.ts"
+git_commit_all "$KIT" "next"
+SHA2="$(head_sha)"
+# (a) a complete snapshot of the new sha is planted at the publish rename, so
+# the rename target exists while the built tree is being moved.
+make_publish_shim "$SANDBOX/shim-plant" "$RELEASES/$SHA1" "$RELEASES/$SHA2" \
+	"$SHA1" "$SHA2" "$SANDBOX/plant.log" first 0 || fail "test setup: could not install the plant shim"
+RUN_PATH="$SANDBOX/shim-plant"
+run_snapshot
+	assert_eq "$RC" 2 "publish conflict exits non-zero"
+	assert_contains "$OUT" "appeared while building" "publish conflict message"
+	assert_link "$RELEASES/current" "$SHA1" "current untouched by the publish conflict"
+	assert_grep "$SANDBOX/plant.log" ".tmp-" "the plant fired on the publish rename"
+	assert_eq "$(nested_entry "$RELEASES/$SHA2")" "" "the temp tree was not nested into the published snapshot"
+	assert_eq "$(entry_count "$RELEASES/$SHA2")" 3 "the published snapshot is unchanged"
+	assert_eq "$(tmp_dirs)" 0 "the temp tree was cleaned up"
+# (b) the last-resort tier: no -T, no perl. The plant lands right at the plain
+# mv, which nests the tree, so the guard has to detect it, undo it and fail.
+rm -rf "$RELEASES/$SHA2"
+make_publish_shim "$SANDBOX/shim-nest" "$RELEASES/$SHA1" "$RELEASES/$SHA2" \
+	"$SHA1" "$SHA2" "$SANDBOX/nest.log" plain 1 || fail "test setup: could not install the nesting shim"
+make_fail_shim "$SANDBOX/shim-nest" perl
+RUN_PATH="$SANDBOX/shim-nest"
+run_snapshot
+	assert_eq "$RC" 2 "a nested publish exits non-zero"
+	assert_contains "$OUT" "appeared while building" "nested publish message"
+	assert_link "$RELEASES/current" "$SHA1" "current untouched by the nested publish"
+	assert_grep "$SANDBOX/nest.log" "-T -- " "the GNU rename tier was tried first"
+	assert_grep "$SANDBOX/nest.log" "-- $RELEASES/.tmp-" "the guarded plain mv ran as the last resort"
+	assert_eq "$(nested_entry "$RELEASES/$SHA2")" "" "the nested temp tree was undone"
+	assert_eq "$(entry_count "$RELEASES/$SHA2")" 3 "the published snapshot is unchanged"
+	assert_eq "$(tmp_dirs)" 0 "the temp tree was cleaned up after the undo"
+RUN_PATH=""
+rm -rf "$RELEASES/$SHA2"
+run_snapshot
+	assert_eq "$RC" 0 "the retry succeeds once the conflicting directory is gone"
+	assert_link "$RELEASES/current" "$SHA2" "current advanced after the conflict"
+pass
 
 printf '\n%d passed, %d failed\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]
