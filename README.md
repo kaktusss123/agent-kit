@@ -52,6 +52,7 @@ agent-kit install claude-code   # только Claude Code
 agent-kit install pi            # добавить Pi к выбранным host'ам
 agent-kit install               # обновить ссылки выбранных host'ов
 agent-kit update                # git pull --ff-only в checkout'е, затем install
+agent-kit snapshot <dir>        # неизменяемый снимок HEAD для headless-хостов
 agent-kit status                # выбор host'ов, состояние ссылок, владелец лаунчера
 agent-kit uninstall pi          # удалить ссылки одного host'а и убрать его из выбора
 agent-kit uninstall             # удалить ссылки всех host'ов и забыть выбор
@@ -72,6 +73,38 @@ agent-kit uninstall             # удалить ссылки всех host'ов
 не перезаписывает: если репозиторию нужно их место, это conflict и `install`
 завершается с кодом 1. Повторный `install` из другого checkout'а или worktree
 перенаправляет ссылки agent-kit на него. Подробности — [ADR-0007](docs/adr/adr-0007.md).
+
+## Snapshot для headless-хостов
+
+Headless-сессии (zavod) запускают pi с `--no-extensions` и явными путями
+`-e`, поэтому не читают живой checkout: им нужен неизменяемый набор
+расширений. `agent-kit snapshot <releases-dir>` создаёт такой набор и
+переключает на него стабильный указатель:
+
+```sh
+agent-kit snapshot ~/.local/share/zavod/agent-kit-releases
+```
+
+Снимок лежит в `<releases-dir>/<full HEAD sha>/` и содержит копию
+`extensions/`, `node_modules/` с пакетами Pi и `manifest.json` (`schema`,
+`sha`, `dirty`, `createdAt`, `source`). Содержимое снимается с рабочего
+дерева checkout'а; `dirty: true` в манифесте означает, что в нём были
+незакоммиченные изменения, — это не ошибка. Сборка идёт во временный
+каталог `.tmp-<sha>-<pid>` и переименовывается в финальное имя, поэтому
+каталог под финальным именем всегда полон. `current` — единственный
+изменяемый путь; он переключается атомарной заменой симлинка и не может
+указывать на недособранный снимок. При ошибке команда завершается
+ненулевым кодом, временный каталог удаляется, `current` не меняется.
+
+`<releases-dir>/current` — стабильная точка входа для `pi_command`,
+например `<releases-dir>/current/extensions/<name>`. Повторный запуск для
+уже снятого HEAD ничего не копирует: команда проверяет снимок, поправляет
+`current`, применяет retention и выходит. `node_modules` копируется
+хардлинками из предыдущего `current` (при первой синхронизации — из
+`node_modules` checkout'а); если хардлинки невозможны, например между
+файловыми системами, используется обычная копия. Снимки не переписываются
+на месте, поэтому общие inode безопасны. Хранятся `current` и 5 самых
+новых снимков; более старые каталоги удаляются.
 
 ## Задачи и worktree
 
@@ -276,6 +309,7 @@ Skills ссылаются друг на друга как `skill://<name>`.
 tests/installer/run.sh [-v]     # инсталлер в песочнице $HOME
 tests/layout/run.sh             # запрещённые каталоги и инварианты раскладки
 tests/skills/run.sh             # frontmatter, references, ссылки skill://
+tests/snapshot/run.sh           # snapshot CLI: атомарность, retention, hardlink reuse
 tests/fleet/run.sh              # скилл fleet: структурные инварианты, изолированная
                                  # установка (реальный SDK-лоадер Pi), реальный CLI fleet
                                  # через FLEET_TEST_CHECKOUT=<checkout fleet> (без него — пропуск)

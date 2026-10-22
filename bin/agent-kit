@@ -57,6 +57,10 @@
 #   agent-kit install [<host>...]    reconcile the selected hosts; named
 #                                    hosts are added to the selection
 #   agent-kit update                 git pull --ff-only, then a bare install
+#   agent-kit snapshot <releases-dir>
+#                                    write an immutable content-addressed
+#                                    snapshot of HEAD and point <releases-dir>/
+#                                    current at it
 #   agent-kit uninstall [<host>...]  remove the named hosts' links and drop
 #                                    them from the selection; without hosts
 #                                    remove every host and the selection
@@ -772,6 +776,198 @@ cmd_update() {
 	AGENT_KIT_ROOT="$REPO" exec "$REPO/bin/agent-kit" install
 }
 
+# --- snapshot ---------------------------------------------------------------------
+#
+# Content-addressed release snapshots for hosts that must not read the live
+# checkout (headless sessions run pi with --no-extensions and explicit -e
+# paths into <releases>/current/extensions).
+#
+# Layout: <releases>/<full HEAD sha>/{extensions,node_modules,manifest.json};
+# <releases>/current is a relative symlink to a complete snapshot and the
+# only mutable path. A snapshot is built in <releases>/.tmp-<sha>-<pid> and
+# renamed to its final name, so a directory under a final name is complete by
+# construction; current is flipped by renaming a symlink over it only after
+# the target reached its final name.
+#
+# Snapshot content is the checkout's working tree at HEAD (uncommitted changes
+# are recorded as dirty in the manifest, not fatal). extensions/ is a real
+# copy. node_modules/ is a hardlink copy of the previous current snapshot (or
+# of the checkout's own node_modules on the first sync), with a real copy as
+# fallback when hardlinking fails (e.g. across filesystems). Snapshot files are
+# never rewritten in place, which makes shared inodes safe. Retention keeps
+# current's target plus the newest 5 snapshots and prunes older directories;
+# task worktrees may still link into pruned node_modules, that grace is
+# accepted.
+
+SNAPSHOT_KEEP=5
+SNAPSHOT_RELEASES=""
+SNAPSHOT_TMP=""
+
+snapshot_cleanup() {
+	[ -n "$SNAPSHOT_TMP" ] || return 0
+	case "$SNAPSHOT_TMP" in
+	"$SNAPSHOT_RELEASES"/.tmp-*) rm -rf -- "$SNAPSHOT_TMP" 2>/dev/null || true ;;
+	esac
+	SNAPSHOT_TMP=""
+}
+
+snapshot_json_escape() { # stdin -> escaped JSON string body
+	sed -e 's/\\/\\\\/g' -e 's/"/\\"/g'
+}
+
+snapshot_has_packages() { # <node_modules> — runtime packages the extensions import
+	local nm="$1"
+	[ -d "$nm/@earendil-works/pi-coding-agent" ] &&
+		[ -d "$nm/@earendil-works/pi-ai" ] &&
+		[ -d "$nm/@earendil-works/pi-tui" ] &&
+		[ -d "$nm/typebox" ]
+}
+
+snapshot_current_target() { # <releases> — resolved target of current, empty when absent
+	local cur="$1/current"
+	[ -L "$cur" ] || return 0
+	readlink -f -- "$cur" 2>/dev/null || true
+}
+
+snapshot_flip() { # <releases> <sha> — atomic relative-symlink replacement
+	local releases="$1" sha="$2" cur="$1/current" link="$1/.current.tmp-$$"
+	if [ -e "$cur" ] && [ ! -L "$cur" ]; then
+		die "snapshot: $cur exists and is not a symlink; refusing to replace it"
+	fi
+	rm -f -- "$link" 2>/dev/null || true
+	ln -s -- "$sha" "$link" || die "snapshot: could not create symlink $link"
+	mv -Tf -- "$link" "$cur" || {
+		rm -f -- "$link" 2>/dev/null || true
+		die "snapshot: could not atomically replace $cur"
+	}
+}
+
+snapshot_prune() { # <releases> <keep-sha> — current's target plus the newest 5
+	local releases="$1" keep="$2" dir path base kept=0
+	local -a stale=()
+	while IFS=$'\t' read -r _ path; do
+		kept=$((kept + 1))
+		if [ "$kept" -le "$SNAPSHOT_KEEP" ]; then
+			continue
+		fi
+		stale+=("$path")
+	done < <(
+		for dir in "$releases"/*/; do
+			[ -d "$dir" ] || continue
+			path="${dir%/}"
+			base="${path##*/}"
+			if [ "$base" = "$keep" ]; then
+				continue
+			fi
+			[ "${#base}" -eq 40 ] || continue
+			case "$base" in *[!0-9a-f]*) continue ;; esac
+			printf '%s\t%s\n' "$(stat -c %Y -- "$path" 2>/dev/null || printf 0)" "$path"
+		done | sort -rn -k1,1
+	)
+	for path in ${stale[@]+"${stale[@]}"}; do
+		rm -rf -- "$path" || return 1
+	done
+	return 0
+}
+
+snapshot_materialize() { # <repo> <releases> <sha> <dirty>
+	local repo="$1" releases="$2" sha="$3" dirty="$4"
+	local final="$releases/$sha" tmp="$releases/.tmp-$sha-$$"
+	local nm_src="" prev created_at
+
+	[ -d "$repo/extensions" ] || die "snapshot: $repo/extensions is missing; nothing to snapshot"
+	SNAPSHOT_RELEASES="$releases"
+	SNAPSHOT_TMP="$tmp"
+	rm -rf -- "$tmp" 2>/dev/null || true
+	mkdir -- "$tmp" || die "snapshot: could not create $tmp"
+
+	mkdir -- "$tmp/extensions" || die "snapshot: could not create $tmp/extensions"
+	cp -a -- "$repo/extensions/." "$tmp/extensions/" 2>/dev/null || \
+		die "snapshot: could not copy extensions from $repo/extensions"
+
+	# Prefer the runtime packages already materialized by the previous snapshot;
+	# on the first sync the checkout's own node_modules is the source. Symlinks
+	# are dereferenced so the new snapshot never depends on an older one.
+	if [ -L "$releases/current" ]; then
+		prev="$(readlink -- "$releases/current")"
+		case "$prev" in
+		/*) : ;;
+		*) prev="$releases/$prev" ;;
+		esac
+		if [ -d "$prev/node_modules" ] && snapshot_has_packages "$prev/node_modules"; then
+			nm_src="$prev/node_modules"
+		fi
+	fi
+	if [ -z "$nm_src" ] && [ -d "$repo/node_modules" ] && snapshot_has_packages "$repo/node_modules"; then
+		nm_src="$repo/node_modules"
+	fi
+	[ -n "$nm_src" ] || die "snapshot: no node_modules source provides @earendil-works/pi-coding-agent, pi-ai, pi-tui and typebox (looked at $releases/current and $repo/node_modules)"
+	if ! cp -aL --link -- "$nm_src" "$tmp/node_modules" 2>/dev/null; then
+		rm -rf -- "$tmp/node_modules" 2>/dev/null || true
+		cp -aL -- "$nm_src" "$tmp/node_modules" 2>/dev/null || \
+			die "snapshot: could not copy node_modules from $nm_src"
+	fi
+
+	created_at="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+	{
+		printf '{\n'
+		printf '  "schema": 1,\n'
+		printf '  "sha": "%s",\n' "$sha"
+		printf '  "dirty": %s,\n' "$dirty"
+		printf '  "createdAt": "%s",\n' "$created_at"
+		printf '  "source": "%s"\n' "$(printf '%s' "$repo" | snapshot_json_escape)"
+		printf '}\n'
+	} > "$tmp/manifest.json" || die "snapshot: could not write $tmp/manifest.json"
+
+	mv -T -- "$tmp" "$final" || die "snapshot: could not move $tmp into place at $final"
+	SNAPSHOT_TMP=""
+}
+
+cmd_snapshot() { # <releases-dir>
+	[ $# -eq 1 ] && [ -n "$1" ] || die "snapshot takes exactly one argument: <releases-dir> (see: agent-kit help)"
+	local arg="$1" releases sha branch status dirty=false final
+
+	git -C "$REPO" rev-parse --git-dir >/dev/null 2>&1 || \
+		die "snapshot: $REPO is not a git checkout; there is no HEAD to snapshot"
+	branch="$(git -C "$REPO" rev-parse --abbrev-ref HEAD 2>/dev/null || true)"
+	if [ -z "$branch" ] || [ "$branch" = "HEAD" ]; then
+		die "snapshot: $REPO is in detached HEAD state; switch to a branch first"
+	fi
+	sha="$(git -C "$REPO" rev-parse --verify HEAD 2>/dev/null || true)"
+	case "$sha" in
+	""|*[!0-9a-f]*) die "snapshot: could not resolve a full HEAD sha in $REPO" ;;
+	esac
+	[ "${#sha}" -eq 40 ] || die "snapshot: HEAD sha is not a full 40-character sha: $sha"
+	status="$(git -C "$REPO" status --porcelain --untracked-files=normal 2>/dev/null)" || \
+		die "snapshot: could not read the working tree state of $REPO"
+	[ -n "$status" ] && dirty=true
+
+	[ -d "$arg" ] || mkdir -p -- "$arg" 2>/dev/null || die "snapshot: cannot create releases dir $arg"
+	releases="$(cd -- "$arg" && pwd -P)" || die "snapshot: cannot resolve releases dir $arg"
+	final="$releases/$sha"
+
+	trap snapshot_cleanup EXIT
+
+	if [ -e "$final" ] || [ -L "$final" ]; then
+		if [ -d "$final" ] && [ -f "$final/manifest.json" ] && \
+			grep -Eq "\"sha\"[[:space:]]*:[[:space:]]*\"$sha\"" "$final/manifest.json" && \
+			[ -d "$final/extensions" ] && [ -d "$final/node_modules" ]; then
+			if [ "$(snapshot_current_target "$releases")" != "$final" ]; then
+				snapshot_flip "$releases" "$sha"
+			fi
+			snapshot_prune "$releases" "$sha" || warn "snapshot: retention prune failed; old snapshots left in place"
+			msg "Snapshot $sha is already present ($final); current points at it"
+			return 0
+		fi
+		die "snapshot: $final exists but is not a complete snapshot of $sha; remove it manually"
+	fi
+
+	snapshot_materialize "$REPO" "$releases" "$sha" "$dirty"
+	snapshot_flip "$releases" "$sha"
+	snapshot_prune "$releases" "$sha" || warn "snapshot: retention prune failed; old snapshots left in place"
+	msg "Snapshot $sha -> $final (current)"
+}
+
 usage() {
 	cat <<'EOF'
 agent-kit — install the personal agent framework into Pi and Claude Code
@@ -786,6 +982,11 @@ Usage:
                                        agent-kit plugin, commands/, agents/)
   agent-kit update      git pull --ff-only in this checkout, then reconcile
                         the selected hosts
+  agent-kit snapshot <releases-dir>
+                        write an immutable, content-addressed snapshot of
+                        HEAD (extensions + node_modules) to
+                        <releases-dir>/<sha>/ and point <releases-dir>/current
+                        at it; keeps current plus the 5 newest snapshots
   agent-kit uninstall [<host>...]
                         remove owned links of the named hosts and drop them
                         from the selection; without hosts: every host, and
@@ -812,9 +1013,10 @@ case "${1:-}" in
 install)   shift; validate_hosts "$@"; cmd_install "$@" ;;
 uninstall) shift; validate_hosts "$@"; cmd_uninstall "$@" ;;
 update)    shift; [ $# -eq 0 ] || die "update takes no arguments (see: agent-kit help)"; cmd_update ;;
+snapshot)  shift; cmd_snapshot "$@" ;;
 status)    shift; [ $# -eq 0 ] || die "status takes no arguments (see: agent-kit help)"; status_all ;;
 task)      shift; cmd_task "$@" ;;
 -h|--help|help) usage ;;
 "")        usage ;;
-*)         die "unknown command '$1' (try: install, uninstall, update, status, task, help)" ;;
+*)         die "unknown command '$1' (try: install, uninstall, update, snapshot, status, task, help)" ;;
 esac
