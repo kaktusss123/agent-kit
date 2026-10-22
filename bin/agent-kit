@@ -847,6 +847,10 @@ SNAPSHOT_LOCK_STALE="${AGENT_KIT_SNAPSHOT_LOCK_STALE:-600}"
 SNAPSHOT_LOCK_MODE="${AGENT_KIT_SNAPSHOT_LOCK:-auto}"
 SNAPSHOT_RELEASES=""
 SNAPSHOT_TMP=""
+# Nested tree a failed last-resort publish rename could not move back: it is
+# our own build left inside a published snapshot, and the caller destroys it in
+# place. Empty when no rename nested a tree.
+SNAPSHOT_NESTED=""
 # mkdir-lock directory this process holds; empty when flock is in use.
 SNAPSHOT_LOCK_DIR=""
 # The owner line this process wrote into SNAPSHOT_LOCK_DIR: "<pid>\t<stamp>".
@@ -860,8 +864,13 @@ SNAPSHOT_STAT_STYLE=""
 snapshot_cleanup() {
 	snapshot_lock_claim_release
 	if [ -n "$SNAPSHOT_TMP" ]; then
+		# The temporary tree normally sits directly in the releases dir. A
+		# last-resort publish rename that nested it inside the target leaves it
+		# one level deeper (SNAPSHOT_TMP is repointed at that path), and cleanup
+		# must still reach it instead of leaving a .tmp-* inside a published
+		# snapshot.
 		case "$SNAPSHOT_TMP" in
-		"$SNAPSHOT_RELEASES"/.tmp-*)
+		"$SNAPSHOT_RELEASES"/.tmp-*|"$SNAPSHOT_RELEASES"/*/.tmp-*)
 			snapshot_remove_tree "$SNAPSHOT_TMP" || \
 				warn "snapshot: could not remove the temporary directory $(snapshot_bounded "$SNAPSHOT_TMP" 160); remove it manually"
 			;;
@@ -881,17 +890,24 @@ snapshot_bounded() { # <text> [<max>] — one line, length-capped for diagnostic
 	printf '%s' "$text" | tr -d '[:cntrl:]'
 }
 
-snapshot_remove_tree() { # <path> — remove a tree, restoring write permission first
+snapshot_make_writable() { # <path> — best-effort recursive u+rwX before a removal
 	# cp -a preserves modes such as 0555, and rm cannot descend into a
-	# directory it cannot write to. Make the tree removable first (best
-	# effort, the owner may not be us), then remove the whole thing.
+	# directory it cannot write to. Split out of snapshot_remove_tree so a
+	# caller that must re-check something right before the destructive call can
+	# run this (slow, recursive) walk first and keep the check-to-rm window to a
+	# fork and an exec.
+	local path="$1"
+	[ -d "$path" ] && [ ! -L "$path" ] || return 0
+	# No "--" here: BSD chmod reads it as a file name, and $path is a resolved
+	# absolute path, so it cannot be mistaken for an option.
+	chmod -R u+rwX "$path" 2>/dev/null || true
+	return 0
+}
+
+snapshot_remove_tree() { # <path> — remove a tree, restoring write permission first
 	local path="$1"
 	[ -e "$path" ] || [ -L "$path" ] || return 0
-	if [ -d "$path" ] && [ ! -L "$path" ]; then
-		# No "--" here: BSD chmod reads it as a file name, and $path is a
-		# resolved absolute path, so it cannot be mistaken for an option.
-		chmod -R u+rwX "$path" 2>/dev/null || true
-	fi
+	snapshot_make_writable "$path"
 	rm -rf -- "$path" 2>/dev/null || true
 	if [ -e "$path" ] || [ -L "$path" ]; then
 		return 1
@@ -1005,6 +1021,7 @@ snapshot_rename_dir() { # <src> <dst> — move a built directory under its final
 	# nesting, undoes it and reports a conflict.
 	local src="$1" dst="$2" base nested
 	base="${src##*/}"
+	SNAPSHOT_NESTED=""
 	mv -T -- "$src" "$dst" 2>/dev/null && return 0
 	if [ -e "$dst" ] || [ -L "$dst" ]; then
 		return 1
@@ -1018,8 +1035,15 @@ snapshot_rename_dir() { # <src> <dst> — move a built directory under its final
 	mv -- "$src" "$dst" 2>/dev/null || return 1
 	nested="$dst/$base"
 	if [ -d "$nested" ]; then
-		# Last resort only: the target directory appeared under our feet.
-		mv -- "$nested" "$src" 2>/dev/null || true
+		# Last resort only: the target directory appeared under our feet and the
+		# plain mv put the source INSIDE it. Plain mv is used for lock asides
+		# too, so the nested path is reported through SNAPSHOT_NESTED instead of
+		# being destroyed here: only the publish caller knows that the tree is
+		# its own build and may be removed in place.
+		if mv -- "$nested" "$src" 2>/dev/null; then
+			return 1
+		fi
+		SNAPSHOT_NESTED="$nested"
 		return 1
 	fi
 	return 0
@@ -1182,28 +1206,32 @@ snapshot_lock_verify() { # <section> — fail loudly unless this process still o
 	return 0
 }
 
-snapshot_unlock() { # release the mkdir lock, but only while this process owns it
+snapshot_unlock() { # release the mkdir lock by moving it aside and validating it
+	# Releasing is a validated MOVE, not a delete: between any ownership check
+	# and an rm an age-based takeover can replace the lock, and the rm would
+	# then destroy the NEW holder's lock while it is still working. One rename
+	# is atomic, so exactly one process can move a given lock instance away;
+	# the owner line of what landed aside says whose lock it was, and a lock
+	# that is not ours is put back with the takeover's restore machinery.
 	[ -n "$SNAPSHOT_LOCK_DIR" ] || return 0
-	local dir="$SNAPSHOT_LOCK_DIR" i=0
-	# Another process may have taken the lock over after it looked stale:
-	# removing that lock would break exclusivity for its new owner, so the
-	# owner line is re-checked (with the same short grace as the verify call)
-	# and the directory is left in place when it is no longer ours.
-	while ! snapshot_lock_held; do
-		i=$((i + 1))
-		if [ "$i" -gt 20 ]; then
-			warn "snapshot: $dir is no longer owned by this process ($(snapshot_bounded "$(snapshot_lock_owner_line "$dir")" 60)); leaving it in place"
-			SNAPSHOT_LOCK_DIR=""
-			SNAPSHOT_LOCK_TOKEN=""
-			return 0
-		fi
-		sleep 0.05 2>/dev/null || sleep 1
-	done
-	rm -f "$dir/owner" 2>/dev/null || true
-	rmdir "$dir" 2>/dev/null || \
-		snapshot_remove_tree "$dir" || true
+	local dir="$SNAPSHOT_LOCK_DIR" token="$SNAPSHOT_LOCK_TOKEN"
+	local aside="$SNAPSHOT_LOCK_DIR.release-$$" owner
 	SNAPSHOT_LOCK_DIR=""
 	SNAPSHOT_LOCK_TOKEN=""
+	# mv nests into an existing directory, so the aside name must be free first.
+	snapshot_remove_tree "$aside" || true
+	if ! mv -- "$dir" "$aside" 2>/dev/null; then
+		warn "snapshot: the mkdir lock $dir was already gone or replaced when this process released it; nothing was removed"
+		return 0
+	fi
+	owner="$(snapshot_lock_owner_line "$aside")"
+	if [ "$owner" != "$token" ]; then
+		warn "snapshot: $dir is no longer owned by this process ($(snapshot_bounded "$owner" 60)); leaving it in place"
+		snapshot_lock_restore "$aside" "$dir" "$owner"
+		return 0
+	fi
+	snapshot_remove_tree "$aside" || \
+		warn "snapshot: could not remove the released lock $aside; remove it manually"
 	return 0
 }
 
@@ -1379,6 +1407,7 @@ snapshot_prune() { # <releases> <keep-sha> — current's target plus the newest 
 	# the first such directory. Neither the passed sha nor the directory
 	# current actually resolves to is ever a candidate.
 	local releases="$1" keep="$2" dir path base kept=0 current_target failed=""
+	local protected=""
 	local -a stale=()
 	snapshot_lock_verify "the retention prune"
 	# Probe the stat dialect once here, in the parent shell: each element of the
@@ -1404,12 +1433,36 @@ snapshot_prune() { # <releases> <keep-sha> — current's target plus the newest 
 			printf '%s\t%s\n' "$(snapshot_mtime "$path")" "$path"
 		done | sort -rn -k1,1
 	)
+	# Ownership and the current target are re-checked per directory, not once
+	# for the whole loop: a holder that is paused after the section-level check
+	# can lose the lock to an age-based takeover, and the resumed holder would
+	# then keep deleting the list it selected while another process is already
+	# the owner and may have repointed current at one of those directories. The
+	# order is deliberate: the recursive write-permission walk runs first, so
+	# the window between the last check and the rm syscall itself is a fork and
+	# an exec. That residual window cannot be closed without a kernel primitive
+	# that re-checks and unlinks in one step; it is documented in the README.
 	for path in ${stale[@]+"${stale[@]}"}; do
+		snapshot_make_writable "$path"
+		snapshot_lock_verify "the retention prune of ${path##*/}"
+		current_target="$(snapshot_current_target "$releases")"
+		if [ "$path" = "$current_target" ] || [ "$path" = "$releases/$keep" ]; then
+			[ -n "$protected" ] || protected="$path"
+			continue
+		fi
 		if snapshot_remove_tree "$path"; then
 			continue
 		fi
 		[ -n "$failed" ] || failed="$path"
 	done
+	# The last check comes after the loop as well: a holder that lost the lock
+	# anywhere in it must never report a clean prune, which is what the old
+	# single section-level check did before it went on to delete the rest of the
+	# list. Warnings below are only for a prune that still owns the directory.
+	snapshot_lock_verify "the end of the retention prune"
+	if [ -n "$protected" ]; then
+		warn "snapshot: kept $(snapshot_bounded "$protected" 120) because it is current or the snapshot another process is publishing now"
+	fi
 	if [ -n "$failed" ]; then
 		warn "snapshot: could not remove the old snapshot $(snapshot_bounded "$failed" 120); it stays on disk"
 	fi
@@ -1477,6 +1530,20 @@ snapshot_materialize() { # <repo> <releases> <sha> <dirty>
 	fi
 	snapshot_lock_verify "the publish rename"
 	if ! snapshot_rename_dir "$tmp" "$final"; then
+		# The last-resort rename nests the build inside $final when the target
+		# appears under it. That nested tree is OUR OWN build, never a part of
+		# the published snapshot, so it is destroyed in place when the undo move
+		# failed; leaving it would mutate an immutable artifact.
+		if [ -n "$SNAPSHOT_NESTED" ]; then
+			if snapshot_remove_tree "$SNAPSHOT_NESTED"; then
+				die "snapshot: $final appeared while building $tmp; move it out of the way and retry (the nested build $SNAPSHOT_NESTED was destroyed in place)"
+			fi
+			# Removal failed too: report the tree that really exists and point
+			# the EXIT cleanup at it, which now also reaches a .tmp-* one level
+			# inside a published snapshot.
+			SNAPSHOT_TMP="$SNAPSHOT_NESTED"
+			die "snapshot: $final appeared while building $tmp and the nested build could not be undone or removed; $SNAPSHOT_NESTED still exists inside the published snapshot $final and must be removed manually"
+		fi
 		die "snapshot: $final appeared while building $tmp; move it out of the way and retry"
 	fi
 	SNAPSHOT_TMP=""
