@@ -110,3 +110,29 @@ Verified on `<sha>`. Minimal author-runnable trigger and observed result.
 - If evidence is included, use only what was actually executed or observed and express it in terms the MR author can reproduce from repository inputs or commands. Never fabricate test results, links, ticket ids, or commands.
 - The MR-level summary is an index, not a duplicate review: state the verdict and list each published finding in one line. Do not repeat inline explanations.
 - Before each POST, scan the public payload. Reject and rewrite any body containing `/tmp`, `artifact://`, `local://`, absolute checkout paths, or `proofs/...`.
+
+## GitHub PR specifics (gh backend)
+
+`publish_comments.py` dispatches on the payload URL shape. For GitHub:
+
+- Head identity: `headRefOid` from `gh pr view` (there is no `diff_refs`
+  triplet). The `head_moved` refusal compares it to `expected_head_sha`.
+- Anchoring: one **COMMENT review per finding** —
+  `POST repos/<owner>/<repo>/pulls/<n>/reviews` with
+  `comments: [{path, body, side, line}]`; `side` is `RIGHT` + `new_line` for
+  added/context lines, `LEFT` + `old_line` for removed lines. Anchoring is
+  verified by reading back `reviews/<id>/comments`.
+- Summary-level findings and the summary note go to **issue comments**
+  (`POST repos/<owner>/<repo>/issues/<n>/comments`).
+- A `422` (line not part of the current diff, path not in the diff) falls
+  back to an issue comment and is recorded in `result.fallbacks` — the
+  GitLab analog of the `line_code` fallback.
+- A submitted review cannot be deleted, so the GitLab
+  "delete unanchored note, re-post as summary" rollback has no GitHub
+  equivalent; on GitHub an invalid anchor fails before creation (422).
+- Dedup indexes existing pull request review comments by (path, line) and
+  body opening lines across review comments and issue comments.
+
+The payload shape (`url`, `expected_head_sha`, `findings[].file/new_line/
+old_line`, `summary_note`) is identical for both backends; comment-content
+rules above apply unchanged.

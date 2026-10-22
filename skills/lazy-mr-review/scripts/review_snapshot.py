@@ -1,15 +1,17 @@
 #!/usr/bin/env python3
-"""Build a review snapshot for one or more GitLab MRs.
+"""Build a review snapshot for one or more GitLab MRs or GitHub PRs.
 
-Does the deterministic half of lazy-mr-review: glab preflight, MR metadata,
-diff, pipeline status, existing discussions, and a verified checkout of the
-review SHA. Writes <temp-root>/snapshot.json and prints it to stdout.
+Does the deterministic half of lazy-mr-review: CLI preflight (glab for
+GitLab, gh for GitHub), change metadata, diff, check status, existing
+comments, and a verified checkout of the review SHA. Writes
+<temp-root>/snapshot.json and prints it to stdout.
 
 Usage:
     review_snapshot.py URL... (--clone PATH | --no-clone) [--temp-root DIR]
 
-- URL: https://<host>/<group>/<project>/-/merge_requests/<iid> (repeatable for
-  related MRs; all must share one project when --clone is used).
+- URL (repeatable for related changes; all must share one host):
+  - GitLab: https://<host>/<group>/<project>/-/merge_requests/<iid>
+  - GitHub: https://<host>/<owner>/<repo>/pull/<number>
 - --clone PATH: seed the isolated review store from the user's local clone
   (validated against the MR project; the clone itself is never fetched into
   and never gains worktree registrations — it stays read-only).
@@ -37,6 +39,7 @@ import tempfile
 from pathlib import Path
 
 URL_RE = re.compile(r"^https?://([^/]+)/(.+?)/-/merge_requests/(\d+)/?$")
+GH_URL_RE = re.compile(r"^https?://([^/]+)/([^/]+/[^/]+)/pull/(\d+)/?$")
 
 
 def die(msg, code=1):
@@ -70,22 +73,47 @@ def glab(*args):
     return run(["glab", *args])
 
 
+def gh(*args, host=None):
+    env = dict(os.environ)
+    if host is not None:
+        env["GH_HOST"] = host
+    try:
+        proc = subprocess.run(["gh", *args], capture_output=True, text=True, env=env)
+    except FileNotFoundError:
+        die(f"command not found: gh")
+    if proc.returncode != 0:
+        fail_raw(["gh", *args], proc)
+    return proc.stdout
+
+
 def git(*args, cwd=None):
     return run(["git", *args], cwd=cwd)
 
 
 def parse_url(url):
     m = URL_RE.match(url.strip())
-    if not m:
-        die(f"not a GitLab MR URL: {url}", code=2)
-    return {"url": url.strip(), "host": m.group(1), "project": m.group(2), "iid": m.group(3)}
+    if m:
+        return {"url": url.strip(), "backend": "gitlab", "host": m.group(1), "project": m.group(2), "iid": m.group(3)}
+    m = GH_URL_RE.match(url.strip())
+    if m:
+        return {"url": url.strip(), "backend": "github", "host": m.group(1), "project": m.group(2), "iid": m.group(3)}
+    die(f"not a GitLab MR or GitHub PR URL: {url}", code=2)
 
 
 def enc(project):
     return project.replace("/", "%2F")
 
 
-def preflight(host):
+def preflight(host, backend):
+    if backend == "github":
+        if shutil.which("gh") is None:
+            die("gh not found in PATH")
+        proc = subprocess.run(
+            ["gh", "auth", "status", "--hostname", host], capture_output=True, text=True
+        )
+        if proc.returncode != 0:
+            fail_raw(["gh", "auth", "status", "--hostname", host], proc)
+        return
     if shutil.which("glab") is None:
         die("glab not found in PATH")
     proc = subprocess.run(
@@ -197,7 +225,7 @@ def ensure_store(host, project, seed_clone, temp_root):
     return store
 
 
-def prepare_checkout(host, project, iid, head_sha, clone, temp_root):
+def prepare_checkout(host, project, iid, head_sha, clone, temp_root, backend="gitlab"):
     identity = mr_identity(host, project)
     if clone:
         if not Path(clone).is_dir():
@@ -217,15 +245,18 @@ def prepare_checkout(host, project, iid, head_sha, clone, temp_root):
     else:
         store = ensure_store(host, project, None, temp_root)
         fetch_url = server_url(host, project)
-    # The MR head ref is not a regular advertised branch: fetch it explicitly
-    # on both fresh and reused stores, then verify it resolves to head_sha.
-    git("fetch", fetch_url, f"refs/merge-requests/{iid}/head", cwd=store)
+    # The change head ref is not a regular advertised branch: fetch it
+    # explicitly on both fresh and reused stores, then verify it resolves to
+    # head_sha (refs/pull/N/head on GitHub, refs/merge-requests/N/head on
+    # GitLab).
+    head_ref = f"refs/pull/{iid}/head" if backend == "github" else f"refs/merge-requests/{iid}/head"
+    git("fetch", fetch_url, head_ref, cwd=store)
     fetched = git("rev-parse", "FETCH_HEAD", cwd=store).strip()
     if fetched != head_sha:
         die(f"FETCH_HEAD {fetched} != head_sha {head_sha}")
     # Distinct checkout identity per MR (host/project/iid): several MRs on one
     # project must never share — and overwrite — each other's checkout.
-    wt = Path(temp_root) / "checkouts" / f"{identity}-mr{iid}"
+    wt = Path(temp_root) / "checkouts" / f"{identity}-{backend}{iid}"
     if clone:
         _reject_clone_alias("checkout", wt, clone_real)
     if os.path.islink(wt):
@@ -260,7 +291,37 @@ def prepare_checkout(host, project, iid, head_sha, clone, temp_root):
     return {"path": checkout, "sha": got, "source": "worktree"}
 
 
-def discussions_index(host, project, iid):
+def discussions_index(host, project, iid, backend):
+    if backend == "github":
+        raw = gh("api", f"repos/{project}/pulls/{iid}/comments?per_page=100", host=host)
+        try:
+            data = json.loads(raw)
+        except json.JSONDecodeError:
+            die(f"PR comments response is not JSON:\n{raw}")
+        out = []
+        for c in data if isinstance(data, list) else []:
+            body = (c.get("body") or "").strip()
+            out.append({
+                "discussion_id": str(c.get("pull_request_review_id") or ""),
+                "file": c.get("path"),
+                "line": c.get("line") or c.get("original_line"),
+                "body_start": body.splitlines()[0][:120] if body else "",
+            })
+        # Issue-level comments participate in the body-first-line dedup too.
+        raw = gh("api", f"repos/{project}/issues/{iid}/comments?per_page=100", host=host)
+        try:
+            data = json.loads(raw)
+        except json.JSONDecodeError:
+            die(f"issue comments response is not JSON:\n{raw}")
+        for c in data if isinstance(data, list) else []:
+            body = (c.get("body") or "").strip()
+            out.append({
+                "discussion_id": str(c.get("id") or ""),
+                "file": None,
+                "line": None,
+                "body_start": body.splitlines()[0][:120] if body else "",
+            })
+        return out
     raw = glab("api", f"projects/{enc(project)}/merge_requests/{iid}/discussions?per_page=100",
                "--hostname", host)
     try:
@@ -283,34 +344,53 @@ def discussions_index(host, project, iid):
 
 def snapshot_one(mr, clone, temp_root):
     host, project, iid = mr["host"], mr["project"], mr["iid"]
-    meta = json.loads(glab("api", f"projects/{enc(project)}/merge_requests/{iid}",
-                           "--hostname", host))
-    diff_refs = meta.get("diff_refs") or {}
-    head_sha = diff_refs.get("head_sha")
-    if not head_sha:
-        die(f"MR {project}!{iid} has no diff_refs.head_sha")
+    backend = mr["backend"]
+    if backend == "github":
+        # One gh call covers metadata, head SHA and the check rollup; there is
+        # no diff_refs triplet on GitHub — headRefOid is the review head.
+        meta = json.loads(gh("pr", "view", iid, "--repo", project, "--json",
+                             "number,title,state,body,author,headRefName,baseRefName,headRefOid,url,statusCheckRollup", host=host))
+        head_sha = meta.get("headRefOid")
+        if not head_sha:
+            die(f"PR {project}#{iid} has no headRefOid")
+        diff_refs = {"head_sha": head_sha}
+    else:
+        meta = json.loads(glab("api", f"projects/{enc(project)}/merge_requests/{iid}",
+                               "--hostname", host))
+        diff_refs = meta.get("diff_refs") or {}
+        head_sha = diff_refs.get("head_sha")
+        if not head_sha:
+            die(f"MR {project}!{iid} has no diff_refs.head_sha")
 
     diffs_dir = Path(temp_root) / "diffs"
     diffs_dir.mkdir(parents=True, exist_ok=True)
-    diff_path = diffs_dir / f"{mr_identity(host, project)}-mr{iid}.diff"
-    diff_path.write_text(glab("mr", "diff", iid, "-R", f"{host}/{project}"), encoding="utf-8")
+    diff_path = diffs_dir / f"{mr_identity(host, project)}-{backend}{iid}.diff"
+    if backend == "github":
+        diff_text = gh("pr", "diff", iid, "--repo", project, host=host)
+        pipeline = [
+            f"{c.get('name')}: {c.get('status')}{('/' + str(c.get('conclusion'))) if c.get('conclusion') else ''}"
+            for c in (meta.get("statusCheckRollup") or [])
+            if isinstance(c, dict)
+        ]
+    else:
+        diff_text = glab("mr", "diff", iid, "-R", f"{host}/{project}")
+        ci = glab("ci", "list", "-R", f"{host}/{project}", "--ref", meta.get("source_branch") or "")
+        pipeline = [line for line in ci.splitlines() if line.strip()]
+    diff_path.write_text(diff_text, encoding="utf-8")
 
-    ci = glab("ci", "list", "-R", f"{host}/{project}", "--ref", meta.get("source_branch") or "")
-    pipeline = [line for line in ci.splitlines() if line.strip()]
-
-    checkout = prepare_checkout(host, project, iid, head_sha, clone, temp_root)
+    checkout = prepare_checkout(host, project, iid, head_sha, clone, temp_root, backend)
 
     return {
-        "url": mr["url"], "host": host, "project": project, "iid": int(iid),
+        "url": mr["url"], "backend": backend, "host": host, "project": project, "iid": int(iid),
         "title": meta.get("title"), "state": meta.get("state"),
-        "author": (meta.get("author") or {}).get("username"),
-        "source_branch": meta.get("source_branch"),
-        "target_branch": meta.get("target_branch"),
-        "description": meta.get("description"),
+        "author": (meta.get("author") or {}).get("login") if backend == "github" else (meta.get("author") or {}).get("username"),
+        "source_branch": meta.get("headRefName") if backend == "github" else meta.get("source_branch"),
+        "target_branch": meta.get("baseRefName") if backend == "github" else meta.get("target_branch"),
+        "description": meta.get("body") if backend == "github" else meta.get("description"),
         "diff_refs": diff_refs, "head_sha": head_sha,
         "diff_path": str(diff_path),
         "pipeline": pipeline,
-        "discussions": discussions_index(host, project, iid),
+        "discussions": discussions_index(host, project, iid, backend),
         "checkout": checkout,
     }
 
@@ -334,7 +414,7 @@ def main():
         die("--clone applies to one project; run per project or use --no-clone", code=2)
 
     host = mrs[0]["host"]
-    preflight(host)
+    preflight(host, mrs[0]["backend"])
 
     if args.temp_root:
         temp_root = str(Path(args.temp_root).resolve())
