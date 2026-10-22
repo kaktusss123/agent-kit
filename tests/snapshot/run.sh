@@ -471,7 +471,8 @@ make_lock_harness() { # <out> — harness script with the CLI's mkdir-lock code
 		printf 'die() { printf "error: %%s\\n" "$*" >&2; exit 2; }\n'
 		for fn in snapshot_bounded snapshot_remove_tree snapshot_remove_tree_now \
 			snapshot_make_writable snapshot_stat_style snapshot_mtime \
-			snapshot_have_perl snapshot_rename_dir snapshot_lock_free_aside \
+			snapshot_have_perl snapshot_rename_dir snapshot_lock_move \
+			snapshot_lock_free_aside \
 			snapshot_lock_owner_line snapshot_lock_age snapshot_lock_takeover \
 			snapshot_lock_restore snapshot_lock_claim_release \
 			snapshot_lock_mkdir snapshot_lock_held snapshot_lock_verify \
@@ -806,6 +807,78 @@ case "$src" in
 		rm -rf "$lock"
 		mkdir "$lock"
 		printf '%s\n' "$new_owner" > "$lock/owner"
+		;;
+	esac
+	;;
+esac
+exec "$real" "$@"
+EOSH
+	} > "$dir/mv"
+	chmod +x "$dir/mv"
+}
+
+make_plant_aside_mv_shim() { # <dir> <lock-dir> <evidence> — plant the aside name at the move
+	# The release proves the aside name free with one cheap test and then moves
+	# the lock with a plain mv. The shim occupies the aside in the fork/exec
+	# window between that test and the move, which is exactly the race the move
+	# has to survive without nesting the lock into the occupied directory.
+	local dir="$1" lock="$2" evidence="$3" real
+	real="$(command -v mv)" || return 1
+	mkdir -p "$dir"
+	{
+		printf '#!/bin/sh\n'
+		printf 'real=%q\n' "$real"
+		printf 'lock=%q\n' "$lock"
+		printf 'evidence=%q\n' "$evidence"
+		cat <<'EOSH'
+src=''; last=''
+for arg in "$@"; do
+	src="$last"
+	last="$arg"
+done
+case "$src" in
+"$lock")
+	case "$last" in
+	"$lock".release-*)
+		mkdir "$last" || exit 1
+		: > "$evidence"
+		;;
+	esac
+	;;
+esac
+exec "$real" "$@"
+EOSH
+	} > "$dir/mv"
+	chmod +x "$dir/mv"
+}
+
+make_takeover_trap_mv_shim() { # <dir> <lock-dir> — replace the lock and free the name at the move
+	# Reproduces the reviewer's interleaving deterministically: the lock is
+	# rewritten while the takeover moves it aside, and a third acquirer takes the
+	# freed name before the move returns. The restore then cannot put the
+	# displaced lock back and must die without leaving an unnamed claim.
+	local dir="$1" lock="$2" real
+	real="$(command -v mv)" || return 1
+	mkdir -p "$dir"
+	{
+		printf '#!/bin/sh\n'
+		printf 'real=%q\n' "$real"
+		printf 'lock=%q\n' "$lock"
+		cat <<'EOSH'
+src=''; last=''
+for arg in "$@"; do
+	src="$last"
+	last="$arg"
+done
+case "$src" in
+"$lock")
+	case "$last" in
+	"$lock".stale-*)
+		printf '222\t%s\n' "$(date +%s)" > "$src/owner"
+		"$real" "$@" || exit $?
+		mkdir "$src" || exit $?
+		printf '333\t%s\n' "$(date +%s)" > "$src/owner"
+		exit 0
 		;;
 	esac
 	;;
@@ -2408,6 +2481,68 @@ chmod -R u+w "$RELEASES"/.lock.d.release-* 2>/dev/null || true
 rm -rf "$RELEASES"/.lock.d.release-*
 pass
 
+
+# ==============================================================================
+# T33: the release aside name is checked free and then the lock is moved with a
+# plain mv. If the name appears in that window, plain mv NESTS the lock into it
+# (.lock.d.release-<pid>/.lock.d) and the later "restore" moved the whole nested
+# aside back, leaving .lock.d/.lock.d with no top-level owner and exit 0. The
+# move detects the nest and undoes it instead of restoring a nested structure.
+
+new_test "T33 an aside taken inside the release move window never nests the lock"
+make_kit "$KIT"
+SHA="$(head_sha)"
+run_mkdir_snapshot
+	assert_eq "$RC" 0 "seed snapshot"
+printf '\n// next\n' >> "$KIT/extensions/alpha/index.ts"
+git_commit_all "$KIT" next
+SHA2="$(head_sha)"
+make_plant_aside_mv_shim "$SANDBOX/shim-plant-aside" "$RELEASES/.lock.d" "$SANDBOX/planted" || \
+	fail "test setup: could not install the aside-planting mv shim"
+RUN_PATH="$SANDBOX/shim-plant-aside"
+run_mkdir_snapshot
+RUN_PATH=""
+	assert_eq "$RC" 0 "the release race is not a failure"
+	assert_file "$SANDBOX/planted" "the shim planted the aside inside the move window"
+	assert_no_file "$RELEASES/.lock.d/.lock.d" "the lock was not nested into the aside"
+	assert_dir "$RELEASES/.lock.d" "the lock stayed in place after the failed release"
+	assert_file "$RELEASES/.lock.d/owner" "the lock still carries an owner line"
+	assert_contains "$OUT" "could not release the mkdir lock" "the release reports the taken aside"
+	assert_contains "$OUT" ".lock.d.release-" "the warning names the aside that was taken"
+	assert_link "$RELEASES/current" "$SHA2" "current advanced"
+	if [ "$(count_lines "$OUT")" -gt 3 ]; then
+		fail "the release warning must stay bounded: $OUT"
+	fi
+chmod -R u+w "$RELEASES"/.lock.d* 2>/dev/null || true
+rm -rf "$RELEASES"/.lock.d "$RELEASES"/.lock.d.release-*
+pass
+
+# ==============================================================================
+# T34: a takeover whose restore loses the freed lock name to a third acquirer
+# dies inside lock acquisition, before the EXIT trap used to be installed, so
+# the .lock.d.taking claim stayed on disk and the error never mentioned it. The
+# claim is released on every death path.
+
+new_test "T34 a failed takeover restore releases its claim"
+make_kit "$KIT"
+mkdir -p "$RELEASES/.lock.d"
+printf '111\t1\n' > "$RELEASES/.lock.d/owner"
+make_takeover_trap_mv_shim "$SANDBOX/shim-trap" "$RELEASES/.lock.d" || \
+	fail "test setup: could not install the takeover trap shim"
+if OUT="$(PATH="$SANDBOX/shim-trap:$PATH" AGENT_KIT_SNAPSHOT_LOCK=mkdir \
+	AGENT_KIT_SNAPSHOT_LOCK_STALE=2 AGENT_KIT_ROOT="$KIT" \
+	"$INSTALLER" snapshot "$RELEASES" 2>&1)"; then RC=0; else RC=$?; fi
+[ "$VERBOSE" = 1 ] && printf '%s\n' "$OUT"
+	if [ "$RC" = 0 ]; then
+		fail "a takeover whose restore lost the lock name exited 0: $OUT"
+	fi
+	assert_contains "$OUT" "could not put the displaced lock back" "the failed restore is reported"
+	assert_contains "$OUT" ".lock.d.stale-" "the diagnostic names the displaced lock's aside"
+	assert_no_file "$RELEASES/.lock.d.taking" "the takeover claim is not left behind"
+	assert_no_file "$RELEASES/.lock.d/.lock.d.stale-" "the displaced lock was not left nested"
+	assert_dir "$RELEASES/.lock.d" "the third acquirer's lock is in place"
+	assert_contains "$(cat "$RELEASES/.lock.d/owner" 2>/dev/null)" "333" "the third acquirer owns the lock name"
+pass
 
 printf '\n%d passed, %d failed\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]
