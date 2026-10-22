@@ -98,6 +98,54 @@ extract_function() { # <file> <name> — top-level function body, header include
 	' "$1"
 }
 
+# --- portable userland helpers -----------------------------------------------
+#
+# The suite runs on GNU/Linux and on the BSD userland of macOS, so every
+# platform-specific probe lives here: stat -c (GNU) versus stat -f (BSD), cp -a
+# versus cp -Rp, readlink -f versus plain readlink, sed -i with and without a
+# backup suffix.
+
+file_inode() { # <path>
+	stat -c %i -- "$1" 2>/dev/null || stat -f %i "$1"
+}
+
+file_nlink() { # <path>
+	stat -c %h -- "$1" 2>/dev/null || stat -f %l "$1"
+}
+
+file_mtime() { # <path>
+	stat -c %Y -- "$1" 2>/dev/null || stat -f %m "$1"
+}
+
+cp_archive() { # <src> <dst> — recursive copy preserving modes and links
+	cp -a -- "$1" "$2" 2>/dev/null || cp -Rp "$1" "$2"
+}
+
+resolve_link() { # <link> — absolute physical target of a symlink
+	local target
+	target="$(readlink "$1")" || return 1
+	case "$target" in
+	/*) : ;;
+	*) target="$(dirname "$1")/$target" ;;
+	esac
+	(cd "$target" 2>/dev/null && pwd -P)
+}
+
+sed_inplace() { # <sed-script> <file> — GNU and BSD sed -i without a suffix
+	local tmp="$2.sedtmp.$$"
+	sed "$1" "$2" > "$tmp" || { rm -f "$tmp"; return 1; }
+	mv -f "$tmp" "$2"
+}
+
+insert_line_before() { # <file> <line-number> <text> — portable "<n>i" sed edit
+	local tmp="$1.sedtmp.$$"
+	awk -v n="$2" -v text="$3" 'NR == n { print text } { print }' "$1" > "$tmp" || \
+		{ rm -f "$tmp"; return 1; }
+	mv -f "$tmp" "$1"
+}
+
+have_flock() { command -v flock >/dev/null 2>&1; }
+
 # --- sandbox -----------------------------------------------------------------
 
 new_test() { # <name>
@@ -105,7 +153,13 @@ new_test() { # <name>
 	FAIL_AT_START=$FAIL
 	[ -n "$SANDBOX" ] && [ -d "$SANDBOX" ] && chmod -R u+w "$SANDBOX" 2>/dev/null || true
 	[ -n "$SANDBOX" ] && rm -rf -- "$SANDBOX"
-	SANDBOX="$(mktemp -d "${TMPDIR:-/tmp}/agent-kit-snapshot.XXXXXX")"
+	# A short base keeps sandbox paths inside the bounded warning budget the
+	# CLI promises (120 characters), so a warning can still name the path.
+	if [ -d /tmp ] && [ -w /tmp ]; then
+		SANDBOX="$(mktemp -d /tmp/agent-kit-snapshot.XXXXXX)"
+	else
+		SANDBOX="$(mktemp -d "${TMPDIR:-/tmp}/agent-kit-snapshot.XXXXXX")"
+	fi
 	SANDBOX="$(cd "$SANDBOX" && pwd -P)"
 	KIT="$SANDBOX/kit"
 	RELEASES="$SANDBOX/releases"
@@ -158,8 +212,25 @@ run_snapshot() { # sets OUT and RC for the sandbox checkout
 	run_snapshot_at "$KIT" "$RELEASES"
 }
 
-tmp_dirs() {
-	find "$RELEASES" -mindepth 1 -maxdepth 1 -name '.tmp-*' 2>/dev/null | wc -l | tr -d ' '
+tmp_dirs() { # leftover .tmp-* entries in the releases dir (globs, no find(1))
+	local p n=0
+	for p in "$RELEASES"/.tmp-*; do
+		if [ -e "$p" ] || [ -L "$p" ]; then
+			n=$((n + 1))
+		fi
+	done
+	printf '%s' "$n"
+}
+
+nested_temp_link() { # <dir> — a leftover .current.tmp-* link inside a snapshot
+	local p
+	for p in "$1"/.current.tmp-*; do
+		if [ -e "$p" ] || [ -L "$p" ]; then
+			printf '%s' "$p"
+			return 0
+		fi
+	done
+	return 0
 }
 
 snapshot_dirs() { # 40-hex snapshot directories, current excluded
@@ -175,12 +246,13 @@ snapshot_dirs() { # 40-hex snapshot directories, current excluded
 	printf '%s' "$n"
 }
 
-fake_snapshot() { # <n> <touch-date> — a retention candidate with a 40-hex name
+fake_snapshot() { # <n> <touch-t-stamp> — a retention candidate with a 40-hex name
 	local name
 	name="$(printf '%040d' "$1")"
 	mkdir -p "$RELEASES/$name"
 	printf '{}\n' > "$RELEASES/$name/manifest.json"
-	touch -d "$2" "$RELEASES/$name"
+	# touch -t has the same YYYYMMDDhhmm.SS syntax on GNU and BSD; -d does not.
+	touch -t "$2" "$RELEASES/$name"
 }
 
 # --- fault injection shims ---------------------------------------------------
@@ -233,6 +305,80 @@ count_lines() { # <text> — non-empty lines
 	printf '%s\n' "$1" | grep -c . || true
 }
 
+# --- stricter-userland shims -------------------------------------------------
+#
+# The BSD tools differ from GNU in a handful of flags. These shims refuse one
+# such flag while delegating everything else to the real tool, so a single
+# assertion proves the runtime never depends on it — on macOS and on Linux
+# alike. Every call is logged, which is also how a test shows that a specific
+# branch (pax, BSD stat) really ran instead of passing by luck.
+
+make_flag_shim() { # <dir> <tool> <refused-arg> <log>
+	local dir="$1" tool="$2" refused="$3" log="$4" real
+	real="$(command -v "$tool")" || return 1
+	mkdir -p "$dir"
+	{
+		printf '#!/bin/sh\n'
+		printf 'real=%q\n' "$real"
+		printf 'refused=%q\n' "$refused"
+		printf 'log=%q\n' "$log"
+		cat <<'EOSH'
+printf '%s\n' "$*" >> "$log"
+for arg in "$@"; do
+	if [ "$arg" = "$refused" ]; then
+		printf '%s: illegal option: %s\n' "$0" "$arg" >&2
+		exit 64
+	fi
+done
+exec "$real" "$@"
+EOSH
+	} > "$dir/$tool"
+	chmod +x "$dir/$tool"
+}
+
+make_fail_shim() { # <dir> <tool> — a tool that always fails
+	local dir="$1" tool="$2"
+	mkdir -p "$dir"
+	{
+		printf '#!/bin/sh\n'
+		printf 'printf "%%s: simulated failure\\n" "$0" >&2\n'
+		printf 'exit 1\n'
+	} > "$dir/$tool"
+	chmod +x "$dir/$tool"
+}
+
+make_stub_tool() { # <dir> <tool> <log> — a tool that records its call, exits 0
+	local dir="$1" tool="$2" log="$3"
+	mkdir -p "$dir"
+	{
+		printf '#!/bin/sh\n'
+		printf 'printf "%%s\\n" "$*" >> %s\n' "$log"
+		printf 'exit 0\n'
+	} > "$dir/$tool"
+	chmod +x "$dir/$tool"
+}
+
+make_no_flock_shim() { # <dir> — make flock(1) unrunnable from a PATH entry
+	# bash 3.2 reports a non-executable PATH entry from command -v, so the CLI
+	# checks -x as well; this shim is therefore invisible to its detection and
+	# the mkdir lock is taken even on a host that ships flock(1).
+	mkdir -p "$1"
+	: > "$1/flock"
+	chmod 0644 "$1/flock"
+}
+
+mkdir_lock_write() { # <lock-dir> <age-seconds> — the mkdir lock of a holder
+	# Mirrors what the CLI records: a pid and the acquisition stamp. An aged
+	# stamp is what a SIGKILLed holder leaves behind.
+	mkdir "$1" || return 1
+	printf '99999\t%s\n' "$(( $(date +%s) - $2 ))" > "$1/owner"
+}
+
+release_lock_dir() { # <lock-dir> — the holder side of a mkdir lock
+	rm -f "$1/owner" 2>/dev/null || true
+	rmdir "$1" 2>/dev/null || true
+}
+
 # ==============================================================================
 # T1: a fresh snapshot materializes extensions, node_modules and the manifest,
 # then flips current at the full HEAD sha
@@ -267,9 +413,9 @@ make_kit "$KIT"
 SHA="$(head_sha)"
 run_snapshot
 	assert_eq "$RC" 0 "first snapshot"
-EXT_INODE="$(stat -c %i "$RELEASES/$SHA/extensions/alpha/index.ts")"
-MANIFEST_INODE="$(stat -c %i "$RELEASES/$SHA/manifest.json")"
-DIR_MTIME="$(stat -c %Y "$RELEASES/$SHA")"
+EXT_INODE="$(file_inode "$RELEASES/$SHA/extensions/alpha/index.ts")"
+MANIFEST_INODE="$(file_inode "$RELEASES/$SHA/manifest.json")"
+DIR_MTIME="$(file_mtime "$RELEASES/$SHA")"
 # Point current away from the existing snapshot: the fast path must flip it
 # back instead of copying again.
 ln -sfn "$(printf '%040d' 0)" "$RELEASES/current"
@@ -277,9 +423,9 @@ run_snapshot
 	assert_eq "$RC" 0 "second snapshot"
 	assert_contains "$OUT" "already present" "fast path reporting"
 	assert_link "$RELEASES/current" "$SHA" "current repaired"
-	assert_eq "$(stat -c %i "$RELEASES/$SHA/extensions/alpha/index.ts")" "$EXT_INODE" "extensions not copied"
-	assert_eq "$(stat -c %i "$RELEASES/$SHA/manifest.json")" "$MANIFEST_INODE" "manifest not rewritten"
-	assert_eq "$(stat -c %Y "$RELEASES/$SHA")" "$DIR_MTIME" "snapshot dir untouched"
+	assert_eq "$(file_inode "$RELEASES/$SHA/extensions/alpha/index.ts")" "$EXT_INODE" "extensions not copied"
+	assert_eq "$(file_inode "$RELEASES/$SHA/manifest.json")" "$MANIFEST_INODE" "manifest not rewritten"
+	assert_eq "$(file_mtime "$RELEASES/$SHA")" "$DIR_MTIME" "snapshot dir untouched"
 	assert_eq "$(tmp_dirs)" 0 "no temp dir left behind"
 pass
 
@@ -314,11 +460,11 @@ make_kit "$KIT"
 SHA1="$(head_sha)"
 run_snapshot
 	assert_eq "$RC" 0 "first snapshot"
-INODE1="$(stat -c %i "$RELEASES/$SHA1/$PKG_REL")"
-	assert_eq "$(stat -c %i "$KIT/$PKG_REL")" "$INODE1" "first snapshot hardlinks from the checkout"
+INODE1="$(file_inode "$RELEASES/$SHA1/$PKG_REL")"
+	assert_eq "$(file_inode "$KIT/$PKG_REL")" "$INODE1" "first snapshot hardlinks from the checkout"
 printf 'export const pkg = "pi-coding-agent-v2"\n' > "$KIT/$PKG_REL.new"
 mv -f "$KIT/$PKG_REL.new" "$KIT/$PKG_REL"
-	if [ "$(stat -c %i "$KIT/$PKG_REL")" = "$INODE1" ]; then
+	if [ "$(file_inode "$KIT/$PKG_REL")" = "$INODE1" ]; then
 		fail "test setup: the checkout file must have a new inode"
 	fi
 printf '\n// next\n' >> "$KIT/extensions/alpha/index.ts"
@@ -326,11 +472,11 @@ git_commit_all "$KIT" "next"
 SHA2="$(head_sha)"
 run_snapshot
 	assert_eq "$RC" 0 "second snapshot"
-	assert_eq "$(stat -c %i "$RELEASES/$SHA2/$PKG_REL")" "$INODE1" "node_modules hardlinked from previous current, not from the checkout"
+	assert_eq "$(file_inode "$RELEASES/$SHA2/$PKG_REL")" "$INODE1" "node_modules hardlinked from previous current, not from the checkout"
 	assert_grep "$RELEASES/$SHA2/$PKG_REL" 'pi-coding-agent"' "previous current content, not the checkout's new content"
-	assert_eq "$(stat -c %h "$RELEASES/$SHA2/$PKG_REL")" 2 "previous snapshot and the new one share the inode"
-	if [ "$(stat -c %i "$RELEASES/$SHA1/extensions/alpha/index.ts")" = \
-		"$(stat -c %i "$RELEASES/$SHA2/extensions/alpha/index.ts")" ]; then
+	assert_eq "$(file_nlink "$RELEASES/$SHA2/$PKG_REL")" 2 "previous snapshot and the new one share the inode"
+	if [ "$(file_inode "$RELEASES/$SHA1/extensions/alpha/index.ts")" = \
+		"$(file_inode "$RELEASES/$SHA2/extensions/alpha/index.ts")" ]; then
 		fail "extensions must be a real copy, not a hardlink"
 	fi
 	assert_grep "$RELEASES/$SHA2/extensions/alpha/index.ts" '// next' "new extensions content"
@@ -348,7 +494,7 @@ run_snapshot
 	assert_eq "$RC" 0 "first snapshot"
 i=1
 while [ "$i" -le 6 ]; do
-	fake_snapshot "$i" "2020-01-0$i 00:00:00"
+	fake_snapshot "$i" "2020010${i}0000.00"
 	i=$((i + 1))
 done
 run_snapshot
@@ -466,7 +612,14 @@ PID=$!
 BROKEN=0
 while kill -0 "$PID" 2>/dev/null; do
 	if [ ! -f "$RELEASES/current/manifest.json" ] || [ ! -f "$RELEASES/current/$EXT_MARKER" ]; then
-		BROKEN=1
+		# A long-running process on APFS (macOS 14.8) can report a transient
+		# ENOENT for a path that a bare rename(2) just replaced, so a single
+		# in-process observation is not trusted. A real dangle persists for far
+		# longer than one rename, so a fresh process settles it.
+		if ! /bin/sh -c 'test -f "$1/manifest.json" && test -f "$1/$2"' sh \
+			"$RELEASES/current" "$EXT_MARKER" 2>/dev/null; then
+			BROKEN=1
+		fi
 	fi
 done
 wait "$PID" || true
@@ -506,7 +659,7 @@ run_snapshot
 	assert_link "$RELEASES/current" "$SHA1" "current untouched by the text manifest"
 # (b) a structurally valid manifest over an empty payload
 cp "$RELEASES/$SHA1/manifest.json" "$RELEASES/$SHA2/manifest.json"
-sed -i "s/$SHA1/$SHA2/" "$RELEASES/$SHA2/manifest.json"
+sed_inplace "s/$SHA1/$SHA2/" "$RELEASES/$SHA2/manifest.json"
 run_snapshot
 	assert_eq "$RC" 2 "empty payload refused"
 	assert_contains "$OUT" "not a complete snapshot" "empty payload message"
@@ -522,14 +675,14 @@ printf '\n// fourth\n' >> "$KIT/extensions/alpha/index.ts"
 git_commit_all "$KIT" "fourth"
 SHA4="$(head_sha)"
 mkdir "$RELEASES/$SHA4"
-cp -a "$RELEASES/$SHA3/." "$RELEASES/$SHA4/"
-sed -i "s/$SHA3/$SHA4/" "$RELEASES/$SHA4/manifest.json"
+cp_archive "$RELEASES/$SHA3/." "$RELEASES/$SHA4/"
+sed_inplace "s/$SHA3/$SHA4/" "$RELEASES/$SHA4/manifest.json"
 rm -rf "$RELEASES/$SHA4/node_modules/typebox"
 run_snapshot
 	assert_eq "$RC" 2 "missing runtime package refused"
 	assert_contains "$OUT" "not a complete snapshot" "missing package message"
 	assert_link "$RELEASES/current" "$SHA3" "current untouched by the missing package"
-cp -a "$RELEASES/$SHA3/node_modules/typebox" "$RELEASES/$SHA4/node_modules/typebox"
+cp_archive "$RELEASES/$SHA3/node_modules/typebox" "$RELEASES/$SHA4/node_modules/typebox"
 rm -rf "$RELEASES/$SHA4/extensions/subagents"
 run_snapshot
 	assert_eq "$RC" 2 "missing extensions marker refused"
@@ -538,7 +691,7 @@ run_snapshot
 # (e) a manifest with an unexpected field is not one of ours
 mkdir -p "$RELEASES/$SHA4/extensions/subagents"
 printf 'export const subagents = 1\n' > "$RELEASES/$SHA4/$EXT_MARKER"
-sed -i '4i\  "extra": 1,' "$RELEASES/$SHA4/manifest.json"
+insert_line_before "$RELEASES/$SHA4/manifest.json" 4 '  "extra": 1,'
 run_snapshot
 	assert_eq "$RC" 2 "extra manifest field refused"
 	assert_contains "$OUT" "not a complete snapshot" "extra field message"
@@ -623,7 +776,7 @@ run_snapshot
 	assert_eq "$RC" 0 "first snapshot"
 i=1
 while [ "$i" -le 6 ]; do
-	fake_snapshot "$i" "2020-01-0$i 00:00:00"
+	fake_snapshot "$i" "2020010${i}0000.00"
 	i=$((i + 1))
 done
 make_shims
@@ -647,8 +800,12 @@ pass
 
 # ==============================================================================
 # T15: every operation on a releases dir is serialized by an exclusive lock
+#
+# Which lock the CLI takes is feature-detected: flock(1) where it exists
+# (GNU/Linux), an atomic mkdir of <releases>/.lock.d elsewhere (macOS). This
+# test exercises the flock path; T22 covers the mkdir path on every host.
 
-wait_for_lock_taken() { # <lockfile> — true once another process holds it
+wait_for_flock_taken() { # <lockfile> — true once another process holds it
 	local i=0
 	while [ "$i" -lt 100 ]; do
 		if ! flock -n "$1" true 2>/dev/null; then
@@ -665,40 +822,44 @@ make_kit "$KIT"
 SHA="$(head_sha)"
 run_snapshot
 	assert_eq "$RC" 0 "first snapshot"
-# A held lock makes the otherwise instant fast path wait for it.
-flock -x "$RELEASES/.lock" -c 'sleep 3' &
-HOLDER=$!
-if ! wait_for_lock_taken "$RELEASES/.lock"; then
-	fail "test setup: could not observe the held lock"
-fi
-( if AGENT_KIT_SNAPSHOT_LOCK_TIMEOUT=30 AGENT_KIT_ROOT="$KIT" "$INSTALLER" snapshot "$RELEASES" >"$SANDBOX/out" 2>&1; then printf 0 > "$SANDBOX/rc"; else printf '%s' "$?" > "$SANDBOX/rc"; fi ) &
-WAITER=$!
-sleep 1
-	if ! kill -0 "$WAITER" 2>/dev/null; then
-		fail "the fast path did not wait for the releases lock"
+if have_flock; then
+	# A held lock makes the otherwise instant fast path wait for it.
+	flock -x "$RELEASES/.lock" -c 'sleep 3' &
+	HOLDER=$!
+	if ! wait_for_flock_taken "$RELEASES/.lock"; then
+		fail "test setup: could not observe the held lock"
 	fi
-wait "$HOLDER" || true
-wait "$WAITER" || true
+	( if AGENT_KIT_SNAPSHOT_LOCK_TIMEOUT=30 AGENT_KIT_ROOT="$KIT" "$INSTALLER" snapshot "$RELEASES" >"$SANDBOX/out" 2>&1; then printf 0 > "$SANDBOX/rc"; else printf '%s' "$?" > "$SANDBOX/rc"; fi ) &
+	WAITER=$!
+	sleep 1
+		if ! kill -0 "$WAITER" 2>/dev/null; then
+			fail "the fast path did not wait for the releases lock"
+		fi
+	wait "$HOLDER" || true
+	wait "$WAITER" || true
 	assert_eq "$(cat "$SANDBOX/rc")" 0 "waiter exit code"
 	assert_contains "$(cat "$SANDBOX/out")" "already present" "waiter completed the fast path"
 	assert_link "$RELEASES/current" "$SHA" "current intact after the wait"
-# A lock that cannot be taken in the bounded wait is a clear, bounded error.
-BEFORE="$(readlink "$RELEASES/current")"
-flock -x "$RELEASES/.lock" -c 'sleep 4' &
-HOLDER=$!
-if ! wait_for_lock_taken "$RELEASES/.lock"; then
-	fail "test setup: could not observe the held lock"
-fi
-AGENT_KIT_SNAPSHOT_LOCK_TIMEOUT=1 run_snapshot
-wait "$HOLDER" || true
-	if [ "$RC" -eq 0 ]; then
-		fail "a timed-out lock must not exit 0"
+	# A lock that cannot be taken in the bounded wait is a clear, bounded error.
+	BEFORE="$(readlink "$RELEASES/current")"
+	flock -x "$RELEASES/.lock" -c 'sleep 4' &
+	HOLDER=$!
+	if ! wait_for_flock_taken "$RELEASES/.lock"; then
+		fail "test setup: could not observe the held lock"
 	fi
+	AGENT_KIT_SNAPSHOT_LOCK_TIMEOUT=1 run_snapshot
+	wait "$HOLDER" || true
+		if [ "$RC" -eq 0 ]; then
+			fail "a timed-out lock must not exit 0"
+		fi
 	assert_contains "$OUT" "another snapshot is running" "lock timeout message"
 	if [ "$(count_lines "$OUT")" -gt 2 ]; then
 		fail "lock timeout output must stay bounded, got $(count_lines "$OUT") lines"
 	fi
 	assert_eq "$(readlink "$RELEASES/current")" "$BEFORE" "current untouched on lock timeout"
+else
+	printf 'SKIP %s: flock(1) is absent on this host; the mkdir lock is covered by T22\n' "$CURRENT"
+fi
 pass
 
 # ==============================================================================
@@ -711,13 +872,13 @@ make_kit "$KIT"
 SHA1="$(head_sha)"
 run_snapshot
 	assert_eq "$RC" 0 "first snapshot"
-cp -a "$KIT" "$SANDBOX/kit2"
+cp_archive "$KIT" "$SANDBOX/kit2"
 printf '\n// second checkout\n' >> "$SANDBOX/kit2/extensions/alpha/index.ts"
 git_commit_all "$SANDBOX/kit2" "second"
 SHA2="$(git -C "$SANDBOX/kit2" rev-parse HEAD)"
 i=1
 while [ "$i" -le 6 ]; do
-	fake_snapshot "$i" "2020-01-0$i 00:00:00"
+	fake_snapshot "$i" "2020010${i}0000.00"
 	i=$((i + 1))
 done
 : > "$SANDBOX/watch"
@@ -741,7 +902,7 @@ wait "$WATCHER" || true
 	assert_eq "$(cat "$SANDBOX/rc-old")" 0 "fast-path process exit code"
 	assert_eq "$(cat "$SANDBOX/rc-new")" 0 "materializing process exit code"
 	assert_eq "$(wc -l < "$SANDBOX/watch" | tr -d ' ')" 0 "current never dangled"
-TARGET="$(readlink -f "$RELEASES/current" || true)"
+TARGET="$(resolve_link "$RELEASES/current" || true)"
 	[ -n "$TARGET" ] || fail "current does not resolve after both runs"
 	case "${TARGET##*/}" in
 	"$SHA1"|"$SHA2") : ;;
@@ -801,6 +962,20 @@ PRUNE_CODE="$(printf '%s\n' "$PRUNE_BODY" | grep -v '^[[:space:]]*#' || true)"
 case "$PRUNE_CODE" in
 *case*) fail "snapshot_prune must not contain a case statement: bash 3.2 cannot parse one inside process substitution" ;;
 esac
+# The same rule applies to every helper the prune substitution calls: a
+# top-level function is parsed on its own, an inline compound command is not.
+for helper in snapshot_is_sha_name snapshot_mtime snapshot_stat_style snapshot_bounded; do
+	BODY="$(extract_function "$INSTALLER" "$helper")"
+	[ -n "$BODY" ] || fail "missing top-level helper $helper"
+	case "$BODY" in
+	*"<<<"*) fail "$helper must not use a bash 3.2-incompatible here-string" ;;
+	esac
+done
+for inline in '$(case' '<(case' '`case'; do
+	if printf '%s\n' "$PRUNE_BODY" | grep -Fq "$inline"; then
+		fail "snapshot_prune must not inline a case inside $inline"
+	fi
+done
 BASH32=""
 if [ -n "${AGENT_KIT_BASH32:-}" ]; then
 	BASH32="$(command -v "$AGENT_KIT_BASH32" 2>/dev/null || true)"
@@ -818,6 +993,234 @@ else
 	[ -n "${AGENT_KIT_BASH32:-}" ] || printf 'SKIP %s: no bash 3.2 binary found (set AGENT_KIT_BASH32 to one)\n' "$CURRENT"
 fi
 pass
+
+# ==============================================================================
+# T19: the current flip and the chmod calls stay userland-portable. The flip
+# must replace the link with a single rename — GNU mv -T where it exists, a
+# perl rename(2) otherwise — and never nest the new link into the snapshot
+# directory. BSD chmod reads `--` as a file name, so it must not be passed.
+
+new_test "T19 the current flip and the chmod calls stay userland-portable"
+make_kit "$KIT"
+chmod 0555 "$KIT/extensions/alpha"
+SHA1="$(head_sha)"
+# The logger delegates every call except a flag mv never receives here, so the
+# log shows the exact rename form the flip selected on this host.
+make_flag_shim "$SANDBOX/shim-bsd-flags" mv -ZZZ "$SANDBOX/mv.log"
+make_flag_shim "$SANDBOX/shim-bsd-flags" chmod -- "$SANDBOX/chmod.log"
+RUN_PATH="$SANDBOX/shim-bsd-flags"
+run_snapshot
+	assert_eq "$RC" 0 "first snapshot under the shims"
+	assert_link "$RELEASES/current" "$SHA1" "current flipped"
+	if mv --help 2>&1 | grep -Fq -- 'no-target-directory'; then
+		assert_grep "$SANDBOX/mv.log" "-Tf -- " "GNU mv replaced the link with -T"
+	elif command -v perl >/dev/null 2>&1; then
+		if grep -q -- '-fh ' "$SANDBOX/mv.log"; then
+			fail "the atomic rename tier must run before the mv -h fallback"
+		fi
+		assert_eq "$(nested_temp_link "$RELEASES/$SHA1")" "" "no link was nested into the snapshot"
+	else
+		assert_grep "$SANDBOX/mv.log" "-fh " "BSD mv replaced the link with -h, not -f"
+	fi
+	assert_eq "$(file_nlink "$RELEASES/$SHA1/extensions/alpha/index.ts")" 1 "0555 extensions copied"
+printf '\n// next\n' >> "$KIT/extensions/alpha/index.ts"
+git_commit_all "$KIT" "next"
+SHA2="$(head_sha)"
+# A dangling symlink fails the hardlink copy and its real-copy fallback, so the
+# 0555 temp tree has to be made removable before the cleanup can delete it.
+ln -s "$SANDBOX/nowhere" "$RELEASES/$SHA1/node_modules/typebox/broken"
+run_snapshot
+	assert_eq "$RC" 2 "materialization failure under the shims"
+	assert_eq "$(tmp_dirs)" 0 "0555 temp tree removed"
+	assert_grep "$SANDBOX/chmod.log" "u+rwX" "temp cleanup chmods the copied 0555 tree"
+	if grep -q -- '^--' "$SANDBOX/chmod.log"; then
+		fail "chmod must not be called with -- on a BSD userland"
+	fi
+RUN_PATH=""
+rm -f "$RELEASES/$SHA1/node_modules/typebox/broken"
+run_snapshot
+	assert_eq "$RC" 0 "retry succeeds under the shims"
+	assert_link "$RELEASES/current" "$SHA2" "current advanced"
+# Last resort: with no perl rename tier the flip still has to work, and the new
+# link must still replace current instead of being moved into the snapshot.
+printf '\n// third\n' >> "$KIT/extensions/alpha/index.ts"
+git_commit_all "$KIT" "third"
+SHA3="$(head_sha)"
+make_fail_shim "$SANDBOX/shim-bsd-flags" perl
+: > "$SANDBOX/mv.log"
+RUN_PATH="$SANDBOX/shim-bsd-flags"
+run_snapshot
+	assert_eq "$RC" 0 "snapshot without a perl rename tier"
+	assert_link "$RELEASES/current" "$SHA3" "current flipped by the mv fallback"
+	assert_eq "$(nested_temp_link "$RELEASES/$SHA3")" "" "the new link was not nested into the snapshot"
+	assert_dir "$RELEASES/$SHA3/extensions" "the snapshot directory is still a snapshot"
+RUN_PATH=""
+pass
+
+# ==============================================================================
+# T20: retention order comes from mtimes. GNU stat -c %Y is the reference; the
+# BSD fallback stat -f %m is forced by refusing -c, and the wrong order would
+# prune the newest snapshot instead of the oldest.
+
+new_test "T20 retention sorts by mtime with BSD stat"
+if ! stat -f %m / >/dev/null 2>&1; then
+	printf 'SKIP %s: this host has GNU stat; T5 covers the stat -c %%Y path\n' "$CURRENT"
+else
+	make_kit "$KIT"
+	SHA="$(head_sha)"
+	run_snapshot
+	assert_eq "$RC" 0 "first snapshot"
+	i=1
+	while [ "$i" -le 6 ]; do
+		fake_snapshot "$i" "2020010${i}0000.00"
+		i=$((i + 1))
+	done
+	make_flag_shim "$SANDBOX/shim-bsd-stat" stat -c "$SANDBOX/stat.log"
+	RUN_PATH="$SANDBOX/shim-bsd-stat"
+	run_snapshot
+	assert_eq "$RC" 0 "fast path with BSD stat"
+	RUN_PATH=""
+	assert_link "$RELEASES/current" "$SHA" "current kept"
+	assert_no_file "$RELEASES/$(printf '%040d' 1)" "oldest candidate pruned"
+	assert_dir "$RELEASES/$(printf '%040d' 2)" "newest candidates kept"
+	assert_eq "$(snapshot_dirs)" 6 "current plus five newest kept"
+	BSD_STAT_CALLS="$(grep -c -- '-f %m' "$SANDBOX/stat.log" || true)"
+	if [ "${BSD_STAT_CALLS:-0}" -lt 6 ]; then
+		fail "expected the BSD stat fallback for every candidate, saw ${BSD_STAT_CALLS:-0} calls"
+	fi
+	PROBE_CALLS="$(grep -c -- '-c %Y' "$SANDBOX/stat.log" || true)"
+	assert_eq "${PROBE_CALLS:-0}" 1 "GNU stat was probed once and then abandoned"
+	pass
+fi
+
+# ==============================================================================
+# T21: the node_modules hardlink copy. GNU cp -aL --link is the reference; on
+# BSD the tree is hardlinked with pax -rwLl, and a real copy remains the last
+# resort so immutability never depends on the space saving.
+
+new_test "T21 hardlink copy: cp --link, then pax, then a real copy"
+make_kit "$KIT"
+SHA="$(head_sha)"
+make_flag_shim "$SANDBOX/shim-nolink" cp --link "$SANDBOX/cp.log"
+if command -v pax >/dev/null 2>&1; then
+	make_flag_shim "$SANDBOX/shim-nolink" pax -ZZZ "$SANDBOX/pax.log"
+	RUN_PATH="$SANDBOX/shim-nolink"
+	run_snapshot
+	assert_eq "$RC" 0 "first snapshot without cp --link"
+	RUN_PATH=""
+	assert_grep "$SANDBOX/pax.log" "-rwLl . " "pax materialized the hardlink tree"
+	assert_eq "$(file_inode "$RELEASES/$SHA/$PKG_REL")" "$(file_inode "$KIT/$PKG_REL")" \
+		"pax hardlinked the runtime package to the checkout"
+	assert_eq "$(file_nlink "$RELEASES/$SHA/$PKG_REL")" 2 "the pax copy shares the inode"
+else
+	printf 'SKIP %s: pax(1) is absent, cp --link is the only hardlink path here\n' "$CURRENT"
+fi
+# With pax failing too, the snapshot must still be built from a real copy.
+make_flag_shim "$SANDBOX/shim-nopax" cp --link "$SANDBOX/cp2.log"
+make_fail_shim "$SANDBOX/shim-nopax" pax
+RUN_PATH="$SANDBOX/shim-nopax"
+run_snapshot_at "$KIT" "$SANDBOX/releases-copy"
+RUN_PATH=""
+	assert_eq "$RC" 0 "first snapshot with a failing pax"
+	assert_file "$SANDBOX/releases-copy/$SHA/$PKG_REL" "node_modules copied by the real-copy fallback"
+	assert_eq "$(file_nlink "$SANDBOX/releases-copy/$SHA/$PKG_REL")" 1 "the fallback is a real copy"
+	if [ "$(file_inode "$SANDBOX/releases-copy/$SHA/$PKG_REL")" = "$(file_inode "$KIT/$PKG_REL")" ]; then
+		fail "the real-copy fallback must not share the checkout inode"
+	fi
+	assert_link "$SANDBOX/releases-copy/current" "$SHA" "current flipped for the copied snapshot"
+pass
+
+# ==============================================================================
+# T22: the mkdir lock used where flock(1) is absent (macOS): bounded wait, a
+# bounded error, takeover of a lock left by a SIGKILLed holder, and release on
+# exit (both after a successful and after a failed run).
+
+new_test "T22 mkdir lock: bounded wait, stale takeover, release on exit"
+make_kit "$KIT"
+SHA="$(head_sha)"
+make_no_flock_shim "$SANDBOX/shim-noflock"
+LOCKDIR="$RELEASES/.lock.d"
+RUN_PATH="$SANDBOX/shim-noflock"
+run_snapshot
+	assert_eq "$RC" 0 "first snapshot with the mkdir lock"
+	assert_no_file "$LOCKDIR" "lock directory removed on exit"
+# A fresh lock makes the otherwise instant fast path wait for it.
+mkdir_lock_write "$LOCKDIR" 0 || fail "test setup: could not take the mkdir lock"
+( sleep 3; release_lock_dir "$LOCKDIR" ) &
+HOLDER=$!
+( if AGENT_KIT_SNAPSHOT_LOCK_TIMEOUT=30 AGENT_KIT_ROOT="$KIT" "$INSTALLER" snapshot "$RELEASES" >"$SANDBOX/out" 2>&1; then printf 0 > "$SANDBOX/rc"; else printf '%s' "$?" > "$SANDBOX/rc"; fi ) &
+WAITER=$!
+sleep 1
+	if ! kill -0 "$WAITER" 2>/dev/null; then
+		fail "the fast path did not wait for the mkdir lock"
+	fi
+wait "$HOLDER" || true
+wait "$WAITER" || true
+	assert_eq "$(cat "$SANDBOX/rc")" 0 "waiter exit code"
+	assert_contains "$(cat "$SANDBOX/out")" "already present" "waiter completed the fast path"
+	assert_link "$RELEASES/current" "$SHA" "current intact after the wait"
+# A lock that cannot be taken in the bounded wait is a clear, bounded error.
+BEFORE="$(readlink "$RELEASES/current")"
+mkdir_lock_write "$LOCKDIR" 0 || fail "test setup: could not take the mkdir lock"
+( sleep 4; release_lock_dir "$LOCKDIR" ) &
+HOLDER=$!
+AGENT_KIT_SNAPSHOT_LOCK_TIMEOUT=1 run_snapshot
+wait "$HOLDER" || true
+	if [ "$RC" -eq 0 ]; then
+		fail "a timed-out mkdir lock must not exit 0"
+	fi
+	assert_contains "$OUT" "another snapshot is running" "mkdir lock timeout message"
+	if [ "$(count_lines "$OUT")" -gt 2 ]; then
+		fail "lock timeout output must stay bounded, got $(count_lines "$OUT") lines"
+	fi
+	assert_eq "$(readlink "$RELEASES/current")" "$BEFORE" "current untouched on lock timeout"
+	assert_no_file "$LOCKDIR" "the failing run left no lock directory"
+# A holder killed with SIGKILL leaves the directory behind: age-based takeover.
+mkdir_lock_write "$LOCKDIR" 3600 || fail "test setup: could not write a stale mkdir lock"
+run_snapshot
+	assert_eq "$RC" 0 "stale lock taken over"
+	assert_contains "$OUT" "already present" "the fast path ran after the takeover"
+	assert_no_file "$LOCKDIR" "the taken-over lock was released"
+# A failed run releases the lock too.
+printf '\n// next\n' >> "$KIT/extensions/alpha/index.ts"
+git_commit_all "$KIT" "next"
+SHA2="$(head_sha)"
+ln -s "$SANDBOX/nowhere" "$RELEASES/$SHA/node_modules/typebox/broken"
+run_snapshot
+	assert_eq "$RC" 2 "materialization failure with the mkdir lock"
+	assert_no_file "$LOCKDIR" "lock released after a failed run"
+RUN_PATH=""
+rm -f "$RELEASES/$SHA/node_modules/typebox/broken"
+run_snapshot
+	assert_eq "$RC" 0 "retry succeeds"
+	assert_link "$RELEASES/current" "$SHA2" "current advanced"
+pass
+
+# ==============================================================================
+# T23: where a runnable flock(1) exists the CLI must still take that lock — the
+# GNU/Linux reference path, unchanged. This host has none, so the branch is
+# exercised with a stub flock that records the call and succeeds: it proves the
+# CLI opens the lock file, passes the bounded wait and the descriptor, and
+# creates no mkdir lock directory. Real flock semantics are covered by T15 on a
+# host that ships flock(1).
+
+new_test "T23 the flock path is taken when flock(1) exists"
+if have_flock; then
+	printf 'SKIP %s: flock(1) exists here, T15 exercises the real lock\n' "$CURRENT"
+else
+	make_kit "$KIT"
+	SHA="$(head_sha)"
+	make_stub_tool "$SANDBOX/shim-flock" flock "$SANDBOX/flock.log"
+	RUN_PATH="$SANDBOX/shim-flock"
+	run_snapshot
+	assert_eq "$RC" 0 "first snapshot through the flock branch"
+	RUN_PATH=""
+	assert_link "$RELEASES/current" "$SHA" "current flipped under the flock branch"
+	assert_file "$RELEASES/.lock" "the flock lock file is kept"
+	assert_no_file "$RELEASES/.lock.d" "no mkdir lock directory when flock is used"
+	assert_grep "$SANDBOX/flock.log" "-w 60 9" "the bounded wait and the descriptor reach flock"
+	pass
+fi
 
 printf '\n%d passed, %d failed\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]

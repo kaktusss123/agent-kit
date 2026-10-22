@@ -800,11 +800,24 @@ cmd_update() {
 # accepted.
 #
 # Concurrency: every operation on a releases directory (materialize, flip and
-# prune included) runs under an exclusive flock on <releases>/.lock, so
-# concurrent invocations cannot interleave a flip with a prune that was
-# decided against an older current. The wait is bounded (60 s by default,
-# AGENT_KIT_SNAPSHOT_LOCK_TIMEOUT overrides it); a lock that cannot be taken
-# in time is a bounded error, never a silent continue.
+# prune included) runs under one exclusive lock, so concurrent invocations
+# cannot interleave a flip with a prune that was decided against an older
+# current. Where flock(1) exists (GNU/Linux) the lock is an exclusive flock on
+# <releases>/.lock; elsewhere (macOS and other BSD userlands, where flock(1) is
+# not part of the base system) it is an atomic mkdir of <releases>/.lock.d that
+# records its owner and is released on exit. A mkdir lock can outlive a
+# SIGKILLed holder, so a lock directory older than
+# AGENT_KIT_SNAPSHOT_LOCK_STALE seconds (600 by default) is taken over. Both
+# kinds wait boundedly (60 s by default, AGENT_KIT_SNAPSHOT_LOCK_TIMEOUT
+# overrides it); a lock that cannot be taken in time is a bounded error, never
+# a silent continue.
+#
+# The runtime is feature-detected, never assumed: BSD userland has no cp -a
+# --link, no cp --link, no mv -T and no stat -c, so hardlink copies fall back
+# to pax -rwl (or a real copy), the current flip uses a rename(2) issued
+# through perl (BSD mv -h unlinks the old link first and plain -f would follow
+# it into the snapshot directory), the publish rename uses plain mv guarded by
+# a target-absence check, and mtimes are read with stat -f %m.
 #
 # Prune failures are not fatal (an undeletable old snapshot must not break the
 # "current points at a complete snapshot of HEAD" contract): they produce
@@ -821,18 +834,26 @@ SNAPSHOT_KEEP=5
 # every host install and a copy without it is not an agent-kit extension set.
 SNAPSHOT_EXT_MARKER="extensions/subagents/index.ts"
 SNAPSHOT_LOCK_TIMEOUT="${AGENT_KIT_SNAPSHOT_LOCK_TIMEOUT:-60}"
+SNAPSHOT_LOCK_STALE="${AGENT_KIT_SNAPSHOT_LOCK_STALE:-600}"
 SNAPSHOT_RELEASES=""
 SNAPSHOT_TMP=""
+# mkdir-lock directory this process holds; empty when flock is in use.
+SNAPSHOT_LOCK_DIR=""
+# Probed once per invocation by the helpers below ("" = not probed yet).
+SNAPSHOT_STAT_STYLE=""
 
 snapshot_cleanup() {
-	[ -n "$SNAPSHOT_TMP" ] || return 0
-	case "$SNAPSHOT_TMP" in
-	"$SNAPSHOT_RELEASES"/.tmp-*)
-		snapshot_remove_tree "$SNAPSHOT_TMP" || \
-			warn "snapshot: could not remove the temporary directory $(snapshot_bounded "$SNAPSHOT_TMP" 160); remove it manually"
-		;;
-	esac
-	SNAPSHOT_TMP=""
+	if [ -n "$SNAPSHOT_TMP" ]; then
+		case "$SNAPSHOT_TMP" in
+		"$SNAPSHOT_RELEASES"/.tmp-*)
+			snapshot_remove_tree "$SNAPSHOT_TMP" || \
+				warn "snapshot: could not remove the temporary directory $(snapshot_bounded "$SNAPSHOT_TMP" 160); remove it manually"
+			;;
+		esac
+		SNAPSHOT_TMP=""
+	fi
+	snapshot_unlock
+	return 0
 }
 
 snapshot_bounded() { # <text> [<max>] — one line, length-capped for diagnostics
@@ -851,12 +872,176 @@ snapshot_remove_tree() { # <path> — remove a tree, restoring write permission 
 	local path="$1"
 	[ -e "$path" ] || [ -L "$path" ] || return 0
 	if [ -d "$path" ] && [ ! -L "$path" ]; then
-		chmod -R u+rwX -- "$path" 2>/dev/null || true
+		# No "--" here: BSD chmod reads it as a file name, and $path is a
+		# resolved absolute path, so it cannot be mistaken for an option.
+		chmod -R u+rwX "$path" 2>/dev/null || true
 	fi
 	rm -rf -- "$path" 2>/dev/null || true
 	if [ -e "$path" ] || [ -L "$path" ]; then
 		return 1
 	fi
+	return 0
+}
+
+snapshot_have_flock() { # true when a runnable flock(1) is on PATH
+	# command -v alone is not enough: a non-executable file of that name in
+	# PATH is reported by some shells and then fails at exec time.
+	local path
+	path="$(command -v flock 2>/dev/null)" || return 1
+	[ -n "$path" ] && [ -x "$path" ]
+}
+
+snapshot_stat_style() { # cached: gnu | bsd — which stat(1) dialect this host has
+	[ -n "$SNAPSHOT_STAT_STYLE" ] && return 0
+	if stat -c %Y / >/dev/null 2>&1; then
+		SNAPSHOT_STAT_STYLE=gnu
+	elif stat -f %m / >/dev/null 2>&1; then
+		SNAPSHOT_STAT_STYLE=bsd
+	else
+		SNAPSHOT_STAT_STYLE=none
+	fi
+	return 0
+}
+
+snapshot_mtime() { # <path> — mtime in epoch seconds, 0 when unknown
+	snapshot_stat_style
+	case "$SNAPSHOT_STAT_STYLE" in
+	gnu) stat -c %Y -- "$1" 2>/dev/null || printf 0 ;;
+	bsd) stat -f %m "$1" 2>/dev/null || printf 0 ;;
+	*) printf 0 ;;
+	esac
+}
+
+snapshot_cp_archive() { # <src> <dst> — recursive copy, modes kept, links kept
+	# cp -a is GNU and also accepted by recent macOS; BSD cp -Rp is the
+	# portable equivalent (no dereference, modes and timestamps preserved).
+	if cp -a -- "$1" "$2" 2>/dev/null; then
+		return 0
+	fi
+	cp -Rp "$1" "$2" 2>/dev/null
+}
+
+snapshot_cp_deref() { # <src> <dst> — real copy with symlinks dereferenced
+	if cp -aL -- "$1" "$2" 2>/dev/null; then
+		return 0
+	fi
+	snapshot_remove_tree "$2" || true
+	cp -RL "$1" "$2" 2>/dev/null
+}
+
+snapshot_stray_symlink() { # <path> — first symlink left in a materialized tree
+	# A snapshot's node_modules must hold no symlinks: the copy dereferences
+	# them. pax -L leaves a dangling link in place instead of failing, so the
+	# result is checked instead of trusting the exit code alone.
+	find "$1" -type l -print 2>/dev/null | sed -n 1p
+}
+
+snapshot_hardlink_tree() { # <src> <dst> — hardlink copy of a tree, links dereferenced
+	# GNU coreutils does it in one call. BSD cp has no --link at all, so the
+	# pax fallback hardlinks against the source while -L dereferences the
+	# links inside it; a real copy remains the caller's last resort.
+	if cp -aL --link -- "$1" "$2" 2>/dev/null; then
+		return 0
+	fi
+	if command -v pax >/dev/null 2>&1; then
+		snapshot_remove_tree "$2" || true
+		if mkdir -- "$2" 2>/dev/null; then
+			if (cd -- "$1" && pax -rwLl . "$2" >/dev/null 2>&1); then
+				if [ -z "$(snapshot_stray_symlink "$2")" ]; then
+					return 0
+				fi
+			fi
+			snapshot_remove_tree "$2" || true
+		fi
+	fi
+	return 1
+}
+
+snapshot_have_perl() { # true when a runnable perl is on PATH (rename tier)
+	local path
+	path="$(command -v perl 2>/dev/null)" || return 1
+	[ -n "$path" ] && [ -x "$path" ]
+}
+
+snapshot_rename_link() { # <temp-link> <current> — replace the link in one rename
+	# Replacing a symlink atomically needs rename(2) on the link path itself
+	# (rename over a symlink never follows it). GNU mv has -T for that. BSD mv
+	# reads -T as an illegal option, plain -f follows a link that points at a
+	# directory (it would move the new link INTO the snapshot), and -h unlinks
+	# the old link before renaming, which leaves a window where current does not
+	# exist. perl is in the macOS base system, so its rename(2) is the portable
+	# atomic tier; mv -h remains the last resort.
+	mv -Tf -- "$1" "$2" 2>/dev/null && return 0
+	if snapshot_have_perl; then
+		perl -e 'exit(rename($ARGV[0], $ARGV[1]) ? 0 : 1)' "$1" "$2" 2>/dev/null && return 0
+	fi
+	mv -fh "$1" "$2" 2>/dev/null
+}
+
+snapshot_lock_age() { # <dir> — seconds since the mkdir lock was taken, empty if unknown
+	# The recorded owner line is authoritative; the directory mtime is the
+	# fallback for a holder that died between mkdir and the owner write.
+	local dir="$1" ts="" now=""
+	if [ -f "$dir/owner" ]; then
+		read -r _ ts < "$dir/owner" 2>/dev/null || ts=""
+	fi
+	case "$ts" in
+	""|*[!0-9]*) ts="$(snapshot_mtime "$dir")" ;;
+	esac
+	case "$ts" in
+	""|*[!0-9]*) return 0 ;;
+	esac
+	now="$(date +%s)"
+	if [ "$now" -le "$ts" ]; then
+		printf 0
+		return 0
+	fi
+	printf '%s' "$((now - ts))"
+}
+
+snapshot_lock_mkdir() { # <dir> — atomic mkdir lock, bounded wait, stale takeover
+	# mkdir is the one atomic primitive every userland has. Semantics are
+	# weaker than a kernel descriptor lock: a SIGKILLed holder leaves the
+	# directory behind, so a directory older than SNAPSHOT_LOCK_STALE is moved
+	# aside and the mkdir race restarts. Ownership is always a successful
+	# mkdir, so a takeover can only hand the lock to one process.
+	local dir="$1" deadline now age aside
+	deadline=$(($(date +%s) + SNAPSHOT_LOCK_TIMEOUT))
+	while :; do
+		if mkdir -- "$dir" 2>/dev/null; then
+			SNAPSHOT_LOCK_DIR="$dir"
+			if ! printf '%s\t%s\n' "$$" "$(date +%s)" > "$dir/owner" 2>/dev/null; then
+				SNAPSHOT_LOCK_DIR=""
+				snapshot_remove_tree "$dir" || true
+				die "snapshot: cannot write the lock owner file in $dir"
+			fi
+			return 0
+		fi
+		if [ ! -d "$dir" ]; then
+			die "snapshot: cannot create the lock directory $dir"
+		fi
+		age="$(snapshot_lock_age "$dir")"
+		if [ "${age:-0}" -ge "$SNAPSHOT_LOCK_STALE" ]; then
+			aside="$dir.stale-$$"
+			if mv -- "$dir" "$aside" 2>/dev/null; then
+				snapshot_remove_tree "$aside" || true
+				continue
+			fi
+		fi
+		now="$(date +%s)"
+		if [ "$now" -ge "$deadline" ]; then
+			die "snapshot: could not lock $dir in ${SNAPSHOT_LOCK_TIMEOUT}s (another snapshot is running, or a stale lock could not be taken over); retry later"
+		fi
+		sleep 1
+	done
+}
+
+snapshot_unlock() { # release a mkdir lock held by this process, if any
+	[ -n "$SNAPSHOT_LOCK_DIR" ] || return 0
+	rm -f "$SNAPSHOT_LOCK_DIR/owner" 2>/dev/null || true
+	rmdir "$SNAPSHOT_LOCK_DIR" 2>/dev/null || \
+		snapshot_remove_tree "$SNAPSHOT_LOCK_DIR" || true
+	SNAPSHOT_LOCK_DIR=""
 	return 0
 }
 
@@ -867,8 +1052,16 @@ snapshot_lock() { # <releases> — exclusive lock for the whole command (fd 9)
 		die "snapshot: AGENT_KIT_SNAPSHOT_LOCK_TIMEOUT must be a whole number of seconds"
 		;;
 	esac
-	command -v flock >/dev/null 2>&1 || \
-		die "snapshot: flock(1) is required to serialize snapshot operations on $1"
+	case "$SNAPSHOT_LOCK_STALE" in
+	""|*[!0-9]*)
+		die "snapshot: AGENT_KIT_SNAPSHOT_LOCK_STALE must be a whole number of seconds"
+		;;
+	esac
+	if ! snapshot_have_flock; then
+		# BSD userlands ship no flock(1); the mkdir lock above is the fallback.
+		snapshot_lock_mkdir "$lock.d"
+		return 0
+	fi
 	: >>"$lock" 2>/dev/null || die "snapshot: cannot create the lock file $lock"
 	# The descriptor stays open until the process exits: the kernel drops the
 	# lock then, including after SIGKILL.
@@ -966,9 +1159,17 @@ snapshot_complete() { # <dir> <sha> — a complete snapshot of <sha>, not just a
 }
 
 snapshot_current_target() { # <releases> — resolved target of current, empty when absent
-	local cur="$1/current"
+	# current is always created here as a relative symlink to a sha, so plain
+	# readlink joined with the link's directory resolves it on every platform
+	# (BSD readlink has no -f, and $1 is already a physical path).
+	local cur="$1/current" target
 	[ -L "$cur" ] || return 0
-	readlink -f -- "$cur" 2>/dev/null || true
+	target="$(readlink "$cur" 2>/dev/null || true)"
+	[ -n "$target" ] || return 0
+	case "$target" in
+	/*) printf '%s\n' "$target" ;;
+	*) printf '%s\n' "$1/$target" ;;
+	esac
 }
 
 snapshot_flip() { # <releases> <sha> — atomic relative-symlink replacement
@@ -978,10 +1179,10 @@ snapshot_flip() { # <releases> <sha> — atomic relative-symlink replacement
 	fi
 	rm -f -- "$link" 2>/dev/null || true
 	ln -s -- "$sha" "$link" || die "snapshot: could not create symlink $link"
-	mv -Tf -- "$link" "$cur" || {
+	if ! snapshot_rename_link "$link" "$cur"; then
 		rm -f -- "$link" 2>/dev/null || true
 		die "snapshot: could not atomically replace $cur"
-	}
+	fi
 }
 
 snapshot_is_sha_name() { # <name> — true when the name is a full 40-char hex sha
@@ -999,6 +1200,9 @@ snapshot_prune() { # <releases> <keep-sha> — current's target plus the newest 
 	# current actually resolves to is ever a candidate.
 	local releases="$1" keep="$2" dir path base kept=0 current_target failed=""
 	local -a stale=()
+	# Probe the stat dialect once here, in the parent shell: each element of the
+	# process substitution below runs in its own subshell and would probe again.
+	snapshot_stat_style
 	current_target="$(snapshot_current_target "$releases")"
 	while IFS=$'\t' read -r _ path; do
 		kept=$((kept + 1))
@@ -1016,7 +1220,7 @@ snapshot_prune() { # <releases> <keep-sha> — current's target plus the newest 
 			fi
 			[ "${#base}" -eq 40 ] || continue
 			snapshot_is_sha_name "$base" || continue
-			printf '%s\t%s\n' "$(stat -c %Y -- "$path" 2>/dev/null || printf 0)" "$path"
+			printf '%s\t%s\n' "$(snapshot_mtime "$path")" "$path"
 		done | sort -rn -k1,1
 	)
 	for path in ${stale[@]+"${stale[@]}"}; do
@@ -1044,14 +1248,14 @@ snapshot_materialize() { # <repo> <releases> <sha> <dirty>
 	mkdir -- "$tmp" || die "snapshot: could not create $tmp"
 
 	mkdir -- "$tmp/extensions" || die "snapshot: could not create $tmp/extensions"
-	cp -a -- "$repo/extensions/." "$tmp/extensions/" 2>/dev/null || \
+	snapshot_cp_archive "$repo/extensions/." "$tmp/extensions/" || \
 		die "snapshot: could not copy extensions from $repo/extensions"
 
 	# Prefer the runtime packages already materialized by the previous snapshot;
 	# on the first sync the checkout's own node_modules is the source. Symlinks
 	# are dereferenced so the new snapshot never depends on an older one.
 	if [ -L "$releases/current" ]; then
-		prev="$(readlink -- "$releases/current")"
+		prev="$(readlink "$releases/current")"
 		case "$prev" in
 		/*) : ;;
 		*) prev="$releases/$prev" ;;
@@ -1064,9 +1268,9 @@ snapshot_materialize() { # <repo> <releases> <sha> <dirty>
 		nm_src="$repo/node_modules"
 	fi
 	[ -n "$nm_src" ] || die "snapshot: no node_modules source provides @earendil-works/pi-coding-agent, pi-ai, pi-tui and typebox (looked at $releases/current and $repo/node_modules)"
-	if ! cp -aL --link -- "$nm_src" "$tmp/node_modules" 2>/dev/null; then
+	if ! snapshot_hardlink_tree "$nm_src" "$tmp/node_modules"; then
 		snapshot_remove_tree "$tmp/node_modules" || true
-		cp -aL -- "$nm_src" "$tmp/node_modules" 2>/dev/null || \
+		snapshot_cp_deref "$nm_src" "$tmp/node_modules" || \
 			die "snapshot: could not copy node_modules from $nm_src"
 	fi
 
@@ -1083,7 +1287,14 @@ snapshot_materialize() { # <repo> <releases> <sha> <dirty>
 		printf '}\n'
 	} > "$tmp/manifest.json" || die "snapshot: could not write $tmp/manifest.json"
 
-	mv -T -- "$tmp" "$final" || die "snapshot: could not move $tmp into place at $final"
+	# BSD mv has no -T, and plain mv nests into an existing directory, so the
+	# target must be proven absent first: the final name is only ever taken by
+	# this rename, and a directory that appeared meanwhile is reported instead
+	# of silently swallowed.
+	if [ -e "$final" ] || [ -L "$final" ]; then
+		die "snapshot: $final appeared while building $tmp; move it out of the way and retry"
+	fi
+	mv -- "$tmp" "$final" || die "snapshot: could not move $tmp into place at $final"
 	SNAPSHOT_TMP=""
 	snapshot_complete "$final" "$sha" || \
 		die "snapshot: $final is not a complete snapshot of $sha after materialization; remove it manually"
@@ -1156,10 +1367,13 @@ Usage:
                         <releases-dir>/<sha>/ and point <releases-dir>/current
                         at it; keeps current plus the 5 newest snapshots.
                         Operations on one releases dir are serialized with
-                        an exclusive flock (<releases-dir>/.lock, bounded
-                        wait of 60 s, AGENT_KIT_SNAPSHOT_LOCK_TIMEOUT
-                        overrides it). An old snapshot that cannot be
-                        removed is a warning, not a failure.
+                        an exclusive lock (flock on <releases-dir>/.lock
+                        where flock(1) exists, otherwise an atomic mkdir of
+                        <releases-dir>/.lock.d; bounded wait of 60 s,
+                        AGENT_KIT_SNAPSHOT_LOCK_TIMEOUT overrides it, and a
+                        mkdir lock older than AGENT_KIT_SNAPSHOT_LOCK_STALE
+                        seconds is taken over). An old snapshot that cannot
+                        be removed is a warning, not a failure.
   agent-kit uninstall [<host>...]
                         remove owned links of the named hosts and drop them
                         from the selection; without hosts: every host, and
