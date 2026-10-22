@@ -525,17 +525,27 @@ EOSH
 	chmod +x "$out"
 }
 
-make_slow_takeover_mv_shim() { # <dir> — mv that waits before a stale-takeover move
-	# Only the move of a stale lock aside is delayed, so a test can put a second
-	# waiter's measured-as-stale move after the first waiter created its own
-	# lock: that is the interleaving of the reviewer's reproduction. The source
-	# is the second-to-last argument (mv is called as `mv -- <src> <dst>`).
-	local dir="$1" real
+make_release_owner_inject_mv_shim() { # <dir> <lock-dir> <foreign-owner-line>
+	# Injects the race the release has to survive between its pre-move owner read
+	# and the move itself: a takeover lands and the lock that the move carries
+	# aside is no longer the caller's. The shim rewrites the owner line INSIDE the
+	# mv call, so the branch is reached by construction; there is no second
+	# process and no timing window. The release must put the displaced lock back
+	# instead of removing it.
+	#
+	# The injected owner line is passed in a FILE, never through printf %q: the
+	# line holds a real tab, and the %q format differs between bash 3.2 (macOS
+	# /bin/sh, no $'...' quoting) and bash >= 4.4 (Linux), where a shim generated
+	# with %q receives a literal $'...' string instead of the value.
+	local dir="$1" lock="$2" real
 	real="$(command -v mv)" || return 1
 	mkdir -p "$dir"
+	printf '%s\n' "$3" > "$dir/owner-line"
 	{
 		printf '#!/bin/sh\n'
 		printf 'real=%q\n' "$real"
+		printf 'lock=%q\n' "$lock"
+		printf 'ownerfile=%q\n' "$dir/owner-line"
 		cat <<'EOSH'
 src=''; last=''
 for arg in "$@"; do
@@ -543,9 +553,59 @@ for arg in "$@"; do
 	last="$arg"
 done
 case "$src" in
-*.lock.d)
+"$lock")
 	case "$last" in
-	*.stale-*) sleep "${MV_DELAY_S:-0}" ;;
+	"$lock".release-*)
+		cat "$ownerfile" > "$src/owner" || exit 1
+		;;
+	esac
+	;;
+esac
+exec "$real" "$@"
+EOSH
+	} > "$dir/mv"
+	chmod +x "$dir/mv"
+}
+
+make_release_death_mv_shim() { # <dir> <lock-dir> <displaced-owner> <third-owner> <evidence>
+	# The documented endpoint of the userspace lock, reached by construction: the
+	# release moves its lock aside, the aside then carries a displaced live lock
+	# of another process, and a third acquirer already owns the freed lock name,
+	# so the restore cannot put the displaced lock back. The shim performs both
+	# substitutions inside the release's own mv call (one rename by the real mv,
+	# then the owner rewrite and the third acquirer's mkdir), which is exactly the
+	# state the multi-process interleaving used to produce with gates and sleeps.
+	# Owner lines travel in files; see make_release_owner_inject_mv_shim.
+	local dir="$1" lock="$2" evidence="$5" real
+	real="$(command -v mv)" || return 1
+	mkdir -p "$dir"
+	printf '%s\n' "$3" > "$dir/displaced-line"
+	printf '%s\n' "$4" > "$dir/third-line"
+	{
+		printf '#!/bin/sh\n'
+		printf 'real=%q\n' "$real"
+		printf 'lock=%q\n' "$lock"
+		printf 'displacedfile=%q\n' "$dir/displaced-line"
+		printf 'thirdfile=%q\n' "$dir/third-line"
+		printf 'evidence=%q\n' "$evidence"
+		cat <<'EOSH'
+src=''; last=''
+for arg in "$@"; do
+	src="$last"
+	last="$arg"
+done
+case "$src" in
+"$lock")
+	case "$last" in
+	"$lock".release-*)
+		# The release move itself, then the state it has to validate.
+		"$real" "$@" || exit $?
+		cat "$displacedfile" > "$last/owner" || exit 1
+		mkdir "$src" || exit 1
+		cat "$thirdfile" > "$src/owner" || exit 1
+		: > "$evidence"
+		exit 0
+		;;
 	esac
 	;;
 esac
@@ -580,35 +640,49 @@ EOSH
 	chmod +x "$dir/$tool"
 }
 
-make_pause_mv_shim() { # <dir> <gate> <src-prefix> — pause before that source is moved
-	# mv is called as `mv -- <src> <dst>`, so the source is the second-to-last
-	# argument. Matches the source by prefix: the release move and the takeover
-	# move of a lock directory share the source name `.lock.d`.
-	local dir="$1" gate="$2" prefix="$3" real
-	real="$(command -v mv)" || return 1
+make_chmod_takeover_shim() { # <dir> <mark> <path> <pass> <lock-dir> <foreign-owner> <current-link> <target>
+	# Injects a takeover at the last pausable point of a prune: the pre-check walk
+	# of one candidate. On the <pass>th `chmod -R` over <path> the shim rewrites
+	# the lock's owner line to a foreign one and repoints <current-link> at
+	# <target>, then lets the walk run. The resumed holder therefore meets a lock
+	# it no longer owns after the walk, without a second process, a SIGSTOP or a
+	# sleep that waits for the lock to age. <mark>.count, <mark>.hit are the
+	# evidence that the injection fired exactly where it was aimed.
+	local dir="$1" mark="$2" path="$3" pass="$4" lock="$5" link="$7" target="$8" real
+	real="$(command -v chmod)" || return 1
 	mkdir -p "$dir"
+	printf '%s\n' "$6" > "$dir/owner-line"
 	{
 		printf '#!/bin/sh\n'
 		printf 'real=%q\n' "$real"
-		printf 'gate=%q\n' "$gate"
-		printf 'prefix=%q\n' "$prefix"
+		printf 'mark=%q\n' "$mark"
+		printf 'match=%q\n' "$path"
+		printf 'want=%q\n' "$pass"
+		printf 'lock=%q\n' "$lock"
+		printf 'ownerfile=%q\n' "$dir/owner-line"
+		printf 'link=%q\n' "$link"
+		printf 'target=%q\n' "$target"
 		cat <<'EOSH'
-src=''
-last=''
+hit=0
 for arg in "$@"; do
-	src="$last"
-	last="$arg"
+	[ "$arg" = "$match" ] && hit=1
 done
-case "$src" in
-"$prefix"*)
-	: > "$gate.ready"
-	while [ ! -f "$gate.go" ]; do sleep 0.05 2>/dev/null || sleep 1; done
-	;;
-esac
+if [ "$hit" = 1 ]; then
+	n=0
+	[ ! -f "$mark.count" ] || read n < "$mark.count"
+	n=$((n + 1))
+	printf '%s\n' "$n" > "$mark.count"
+	if [ "$n" = "$want" ]; then
+		cat "$ownerfile" > "$lock/owner" || exit 1
+		rm -f "$link" || exit 1
+		ln -s "$target" "$link" || exit 1
+		: > "$mark.hit"
+	fi
+fi
 exec "$real" "$@"
 EOSH
-	} > "$dir/mv"
-	chmod +x "$dir/mv"
+	} > "$dir/chmod"
+	chmod +x "$dir/chmod"
 }
 
 make_chmod_pause_shim() { # <dir> <gate> <path> <pass> — pause on the <pass>th chmod over <path>
@@ -646,47 +720,6 @@ exec "$real" "$@"
 EOSH
 	} > "$dir/chmod"
 	chmod +x "$dir/chmod"
-}
-
-make_release_window_mv_shim() { # <dir> <gate> <lock-dir> — two pauses around the release move
-	# The release of a mkdir lock is `mv -- <lock-dir> <lock-dir>.release-<pid>`.
-	# The shim pauses before that move (so a takeover can land between the owner
-	# read and the move) and again after it ran but before mv returns (so a third
-	# acquirer can take the freed lock name before the release validates what
-	# landed aside). Both pauses are gates the test opens explicitly.
-	local dir="$1" gate="$2" lock="$3" real
-	real="$(command -v mv)" || return 1
-	mkdir -p "$dir"
-	{
-		printf '#!/bin/sh\n'
-		printf 'real=%q\n' "$real"
-		printf 'gate=%q\n' "$gate"
-		printf 'lock=%q\n' "$lock"
-		cat <<'EOSH'
-src=''
-last=''
-for arg in "$@"; do
-	src="$last"
-	last="$arg"
-done
-case "$src" in
-"$lock")
-	case "$last" in
-	"$lock".release-*)
-		: > "$gate.before"
-		while [ ! -f "$gate.before.go" ]; do sleep 0.05 2>/dev/null || sleep 1; done
-		"$real" "$@" || exit $?
-		: > "$gate.moved"
-		while [ ! -f "$gate.moved.go" ]; do sleep 0.05 2>/dev/null || sleep 1; done
-		exit 0
-		;;
-	esac
-	;;
-esac
-exec "$real" "$@"
-EOSH
-	} > "$dir/mv"
-	chmod +x "$dir/mv"
 }
 
 make_fail_prefix_rm_shim() { # <dir> <prefix> — rm that fails for paths under <prefix>
@@ -960,26 +993,27 @@ EOSH
 	chmod +x "$dir/rm"
 }
 
-make_release_tr_shim() { # <dir> <gate> <lock-dir> — pause on the release's diagnostic tr
-	# snapshot_bounded pipes its one-line cap through an external tr. While a
-	# release aside exists the only such call is the preparation of the release
-	# diagnostics, so this pause sits exactly where the release used to fork
-	# between its final owner read and the rm. The aside path is written to
-	# <gate>.aside and <gate>.go ends the pause.
-	local dir="$1" gate="$2" lock="$3" real
+make_release_diag_tr_shim() { # <dir> <lock-dir> <replacement-owner> <evidence>
+	# The release prepares every diagnostic string before its final owner read, so
+	# the only fork left between that read and the rm is this `tr`. The shim
+	# replaces the owner line of the lock that already landed aside INSIDE that
+	# call, so the release's last re-read sees an owner that is not its own — the
+	# exact failure the re-read exists for — without a paused process or a gate.
+	local dir="$1" lock="$2" evidence="$4" real
 	real="$(command -v tr)" || return 1
 	mkdir -p "$dir"
+	printf '%s\n' "$3" > "$dir/owner-line"
 	{
 		printf '#!/bin/sh\n'
 		printf 'real=%q\n' "$real"
-		printf 'gate=%q\n' "$gate"
 		printf 'lock=%q\n' "$lock"
+		printf 'ownerfile=%q\n' "$dir/owner-line"
+		printf 'evidence=%q\n' "$evidence"
 		cat <<'EOSH'
 for candidate in "$lock".release-*; do
 	[ -f "$candidate/owner" ] || continue
-	printf '%s\n' "$candidate" > "$gate.aside"
-	: > "$gate.ready"
-	while [ ! -f "$gate.go" ]; do sleep 0.05 2>/dev/null || sleep 1; done
+	cat "$ownerfile" > "$candidate/owner" || exit 1
+	: > "$evidence"
 	break
 done
 exec "$real" "$@"
@@ -1927,18 +1961,19 @@ CLAIM="$LOCKDIR.taking"
 HARNESS="$SANDBOX/lock-harness"
 make_lock_harness "$HARNESS" || fail "test setup: could not extract the lock primitives"
 assert_file "$HARNESS" "the lock harness was written"
-make_slow_takeover_mv_shim "$SANDBOX/shim-slow-mv" || fail "test setup: could not install the slow mv shim"
 ORACLE="$SANDBOX/hold-oracle"
 RACE="$SANDBOX/race.log"
 : > "$RACE"
-# (a) both waiters measure the same stale lock; the first takeover creates a
-# fresh lock, the second waiter's move (based on the same stale measurement)
-# lands on it.
+# (a) both waiters see the same stale lock and race for it. This is a property
+# test, not a choreographed branch: whatever the interleaving, two processes may
+# never hold the lock at once and both must acquire it eventually. The oracle
+# directory is the mutual-exclusion witness; there is no sleep-based sequencing
+# and no delay shim deciding who moves first.
 mkdir_lock_write "$LOCKDIR" 3600 || fail "test setup: could not write a stale lock"
-( PATH="$SANDBOX/shim-slow-mv:$PATH" MV_DELAY_S=1 "$HARNESS" lock "$LOCKDIR" "$ORACLE" 4 "$RACE" >"$SANDBOX/a.out" 2>&1
+( "$HARNESS" lock "$LOCKDIR" "$ORACLE" 3 "$RACE" >"$SANDBOX/a.out" 2>&1
   printf '%s' "$?" > "$SANDBOX/a.rc" ) &
 A=$!
-( PATH="$SANDBOX/shim-slow-mv:$PATH" MV_DELAY_S=3 "$HARNESS" lock "$LOCKDIR" "$ORACLE" 1 "$RACE" >"$SANDBOX/b.out" 2>&1
+( "$HARNESS" lock "$LOCKDIR" "$ORACLE" 2 "$RACE" >"$SANDBOX/b.out" 2>&1
   printf '%s' "$?" > "$SANDBOX/b.rc" ) &
 B=$!
 wait "$A" || true
@@ -2079,17 +2114,23 @@ pass
 # ==============================================================================
 # T26: a holder displaced in the middle of a prune must not keep deleting the
 # list it selected. Ownership verified once for the whole loop is not enough: a
-# holder that is paused after that check loses its lock to an age-based
-# takeover, the new owner repoints current at one of the old candidates, and the
-# resumed holder deletes the new current. Lock ownership and the current target
-# are therefore re-checked per directory; the displaced holder dies loudly.
+# holder that loses its lock after that check would go on deleting the list it
+# selected, and the new owner may already have repointed current at one of those
+# candidates. The ownership and the current target are therefore re-checked per
+# directory; the displaced holder dies loudly.
+#
+# The displacement is injected, not raced: the chmod shim performs the takeover
+# state substitution (foreign owner line on the lock plus current repointed at
+# the seed snapshot) inside the pruner's own pre-check walk of its FIRST
+# deletion candidate, then lets the walk run. No second process, no gate and no
+# sleep waiting for the lock to age; the branch is reached by construction.
 
 new_test "T26 a displaced prune holder never deletes the new current"
 make_kit "$KIT"
 SHA_OLD="$(head_sha)"
 run_mkdir_snapshot
 	assert_eq "$RC" 0 "seed snapshot"
-# A second checkout with a newer HEAD: the snapshot whose prune gets paused.
+# A second checkout with a newer HEAD: the snapshot whose prune gets displaced.
 cp -Rp "$KIT" "$SANDBOX/kit-a"
 printf '\n// newer\n' >> "$SANDBOX/kit-a/extensions/alpha/index.ts"
 git_commit_all "$SANDBOX/kit-a" newer
@@ -2097,10 +2138,9 @@ SHA_NEW="$(git -C "$SANDBOX/kit-a" rev-parse HEAD)"
 touch -t 200001010000 "$RELEASES/$SHA_OLD"
 # Five keepers with 2020 mtimes and one extra candidate with a 2002 mtime: the
 # seed snapshot is the oldest entry, so the pruner's deletion list is
-# [fake1, extra, $SHA_OLD] and the pause lands on `extra`. $SHA_OLD is still
-# ahead when the pruner resumes, and by then the second process has made it the
-# current target: the resumed holder has to die on the ownership re-check
-# instead of deleting it.
+# [extra, $SHA_OLD]. The injection lands on the first candidate's walk and makes
+# the seed snapshot the new current target at the same moment, so a pruner that
+# kept deleting would destroy the new current.
 i=1
 while [ "$i" -le 5 ]; do
 	fake_snapshot "$i" "2020010${i}0000.00"
@@ -2108,103 +2148,83 @@ while [ "$i" -le 5 ]; do
 done
 fake_snapshot 9 "200201010000.00"
 EXTRA="$RELEASES/$(printf '%040d' 9)"
-make_pause_shim "$SANDBOX/shim-pause-rm" rm "$SANDBOX/gate" "$EXTRA" || \
-	fail "test setup: could not install the pause shim"
-( PATH="$SANDBOX/shim-pause-rm:$PATH" AGENT_KIT_SNAPSHOT_LOCK=mkdir \
+FOREIGN="4242"$'\t'"$(date +%s)"
+make_chmod_takeover_shim "$SANDBOX/shim-takeover" "$SANDBOX/mark" "$EXTRA" 1 \
+	"$RELEASES/.lock.d" "$FOREIGN" "$RELEASES/current" "$SHA_OLD" || \
+	fail "test setup: could not install the takeover injection shim"
+if OUT="$(PATH="$SANDBOX/shim-takeover:$PATH" AGENT_KIT_SNAPSHOT_LOCK=mkdir \
 	AGENT_KIT_SNAPSHOT_LOCK_STALE=2 AGENT_KIT_ROOT="$SANDBOX/kit-a" \
-	"$INSTALLER" snapshot "$RELEASES" > "$SANDBOX/a.log" 2>&1
-  printf '%s' "$?" > "$SANDBOX/a.rc" ) &
-A=$!
-wait_for_file "$SANDBOX/gate.ready" || fail "test setup: the pruner never reached its first deletion"
-# Let the pruner's lock age past the takeover threshold, then hand the releases
-# dir to the second checkout; it flips current onto the seed snapshot.
-sleep 3
-if OUT="$(AGENT_KIT_SNAPSHOT_LOCK=mkdir AGENT_KIT_SNAPSHOT_LOCK_STALE=2 \
-	AGENT_KIT_ROOT="$KIT" "$INSTALLER" snapshot "$RELEASES" 2>&1)"; then RC=0; else RC=$?; fi
+	"$INSTALLER" snapshot "$RELEASES" 2>&1)"; then RC=0; else RC=$?; fi
 [ "$VERBOSE" = 1 ] && printf '%s\n' "$OUT"
-	assert_eq "$RC" 0 "the second snapshot ran under a takeover ($OUT)"
-	assert_link "$RELEASES/current" "$SHA_OLD" "current moved to the second process's snapshot"
-: > "$SANDBOX/gate.go"
-wait "$A" || true
-	if [ "$(cat "$SANDBOX/a.rc" 2>/dev/null)" = 0 ]; then
-		fail "the displaced pruner exited 0: $(cat "$SANDBOX/a.log" 2>/dev/null)"
+	assert_file "$SANDBOX/mark.hit" "the takeover was injected at the pre-check walk"
+	assert_eq "$(cat "$SANDBOX/mark.count" 2>/dev/null)" 1 "the candidate was walked exactly once before the check"
+	if [ "$RC" = 0 ]; then
+		fail "the displaced pruner exited 0: $OUT"
 	fi
-	assert_contains "$(cat "$SANDBOX/a.log" 2>/dev/null)" "lost the lock" \
-		"the displaced pruner reports the lost lock"
+	assert_contains "$OUT" "lost the lock" "the displaced pruner reports the lost lock"
+	assert_dir "$EXTRA" "the first deletion candidate survived the displaced prune"
 	assert_dir "$RELEASES/$SHA_OLD" "the new current's target survived the displaced prune"
 	assert_link "$RELEASES/current" "$SHA_OLD" "current was not repointed by the resumed pruner"
 	assert_file "$RELEASES/current/manifest.json" "current still resolves to a complete snapshot"
-	if [ "$(count_lines "$(cat "$SANDBOX/a.log" 2>/dev/null)")" -gt 3 ]; then
-		fail "the displaced pruner output must stay bounded: $(cat "$SANDBOX/a.log" 2>/dev/null)"
+	if [ "$(count_lines "$OUT")" -gt 3 ]; then
+		fail "the displaced pruner output must stay bounded: $OUT"
 	fi
-	assert_no_file "$RELEASES/.lock.d" "no lock directory left behind"
+	# The displaced holder must not remove the lock it no longer owns.
+	assert_dir "$RELEASES/.lock.d" "the displacing owner's lock is left in place"
+	assert_eq "$(head -1 "$RELEASES/.lock.d/owner" 2>/dev/null)" "$FOREIGN" \
+		"the displacing owner line is untouched"
+	assert_contains "$OUT" "leaving it in place" "the displaced holder reports the foreign lock"
 	assert_eq "$(ls -d "$RELEASES"/.lock.d.stale-* "$RELEASES"/.lock.d.release-* \
 		2>/dev/null | wc -l | tr -d ' ')" 0 "no displaced lock left aside"
 	assert_eq "$(tmp_dirs)" 0 "no temp dir left behind"
+chmod -R u+w "$RELEASES"/.lock.d 2>/dev/null || true
+rm -rf "$RELEASES"/.lock.d
 pass
 
 # ==============================================================================
 # T27: releasing the mkdir lock is a validated move, not a delete. Checking
-# ownership and then removing the directory lets an age takeover slip in: the
-# exiting process then removes the NEW holder's lock and that holder dies. The
-# release moves the lock aside atomically, reads the owner line of what it
-# moved, and puts a foreign lock back.
+# ownership and then removing the directory lets a takeover slip in: the exiting
+# process then removes the NEW holder's lock and that holder dies. The release
+# moves the lock aside atomically, reads the owner line of what it moved, and
+# puts a foreign lock back instead of removing it.
+#
+# The takeover is injected inside the release's own mv call, i.e. exactly between
+# the pre-move owner read and the move, so the branch is reached by construction
+# rather than by freezing a process and racing a second one.
 
 new_test "T27 unlock never removes a lock taken over by another process"
 make_kit "$KIT"
 run_mkdir_snapshot
 	assert_eq "$RC" 0 "seed snapshot"
-cp -Rp "$KIT" "$SANDBOX/kit-a"
-printf '\n// a\n' >> "$SANDBOX/kit-a/extensions/alpha/index.ts"
-git_commit_all "$SANDBOX/kit-a" a
-cp -Rp "$KIT" "$SANDBOX/kit-c"
-printf '\n// c\n' >> "$SANDBOX/kit-c/extensions/alpha/index.ts"
-git_commit_all "$SANDBOX/kit-c" c
-SHA_C="$(git -C "$SANDBOX/kit-c" rev-parse HEAD)"
+printf '\n// next\n' >> "$KIT/extensions/alpha/index.ts"
+git_commit_all "$KIT" next
+SHA="$(head_sha)"
 LOCKDIR="$RELEASES/.lock.d"
-make_pause_mv_shim "$SANDBOX/shim-pause-mv" "$SANDBOX/unlock" "$LOCKDIR" || \
-	fail "test setup: could not install the release pause shim"
-make_pause_shim "$SANDBOX/shim-pause-cp" cp "$SANDBOX/copy" "$SANDBOX/kit-c/extensions/." || \
-	fail "test setup: could not install the copy pause shim"
-# A finishes its snapshot and pauses right before releasing its lock.
-( PATH="$SANDBOX/shim-pause-mv:$PATH" AGENT_KIT_SNAPSHOT_LOCK=mkdir \
-	AGENT_KIT_SNAPSHOT_LOCK_STALE=2 AGENT_KIT_ROOT="$SANDBOX/kit-a" \
-	"$INSTALLER" snapshot "$RELEASES" > "$SANDBOX/a.log" 2>&1
-  printf '%s' "$?" > "$SANDBOX/a.rc" ) &
-A=$!
-wait_for_file "$SANDBOX/unlock.ready" || fail "test setup: the first process never reached its release"
-A_OWNER="$(head -1 "$LOCKDIR/owner" 2>/dev/null || true)"
-	if [ -z "$A_OWNER" ]; then
-		fail "test setup: the paused holder has no owner line"
-	fi
-sleep 3
-# B takes the stale lock over and starts materializing, so its lock is live when
-# the paused process resumes and releases.
-( PATH="$SANDBOX/shim-pause-cp:$PATH" AGENT_KIT_SNAPSHOT_LOCK=mkdir \
-	AGENT_KIT_SNAPSHOT_LOCK_STALE=2 AGENT_KIT_ROOT="$SANDBOX/kit-c" \
-	"$INSTALLER" snapshot "$RELEASES" > "$SANDBOX/c.log" 2>&1
-  printf '%s' "$?" > "$SANDBOX/c.rc" ) &
-C=$!
-wait_for_file "$SANDBOX/copy.ready" || fail "test setup: the new holder never started materializing"
-C_OWNER="$(head -1 "$LOCKDIR/owner" 2>/dev/null || true)"
-	if [ -z "$C_OWNER" ] || [ "$C_OWNER" = "$A_OWNER" ]; then
-		fail "test setup: the lock was not taken over (owner line '$C_OWNER')"
-	fi
-: > "$SANDBOX/unlock.go"
-wait "$A" || true
-	assert_eq "$(cat "$SANDBOX/a.rc" 2>/dev/null)" 0 "the releasing process is not a failure"
-	assert_contains "$(cat "$SANDBOX/a.log" 2>/dev/null)" "no longer owned by this process" \
-		"the release reports the foreign lock"
+FOREIGN="7777"$'\t'"$(date +%s)"
+make_release_owner_inject_mv_shim "$SANDBOX/shim-owner" "$LOCKDIR" "$FOREIGN" || \
+	fail "test setup: could not install the release owner-injection shim"
+RUN_PATH="$SANDBOX/shim-owner"
+run_mkdir_snapshot
+RUN_PATH=""
+	assert_eq "$RC" 0 "the releasing process is not a failure"
+	assert_contains "$OUT" "no longer owned by this process" "the release reports the foreign lock"
+	assert_contains "$OUT" "7777" "the diagnostic names the owner line it saw"
+	assert_contains "$OUT" "putting the displaced lock back in place" "the displaced lock is put back"
 	assert_dir "$LOCKDIR" "the new holder's lock survived the foreign release"
-	assert_eq "$(head -1 "$LOCKDIR/owner" 2>/dev/null)" "$C_OWNER" "the new holder still owns the lock"
-: > "$SANDBOX/copy.go"
-wait "$C" || true
-	assert_eq "$(cat "$SANDBOX/c.rc" 2>/dev/null)" 0 "the new holder completed ($(cat "$SANDBOX/c.log" 2>/dev/null))"
-	assert_link "$RELEASES/current" "$SHA_C" "current points at the new holder's snapshot"
-	assert_file "$RELEASES/current/manifest.json" "current resolves to a complete snapshot"
-	assert_no_file "$LOCKDIR" "the new holder released its own lock"
+	assert_eq "$(head -1 "$LOCKDIR/owner" 2>/dev/null)" "$FOREIGN" \
+		"the new holder still owns the lock"
+	assert_no_file "$RELEASES/.lock.d.release-$$" "the release aside was restored"
 	assert_eq "$(ls -d "$RELEASES"/.lock.d.release-* 2>/dev/null | wc -l | tr -d ' ')" 0 \
 		"no release aside left behind"
+	assert_eq "$(ls -d "$RELEASES"/.lock.d.stale-* 2>/dev/null | wc -l | tr -d ' ')" 0 \
+		"no stale aside left behind"
+	assert_no_file "$LOCKDIR.taking" "no takeover claim left behind"
+	assert_link "$RELEASES/current" "$SHA" "the snapshot was still published"
+	if [ "$(count_lines "$OUT")" -gt 3 ]; then
+		fail "the foreign release output must stay bounded: $OUT"
+	fi
+chmod -R u+w "$LOCKDIR" 2>/dev/null || true
+rm -rf "$LOCKDIR"
 pass
 
 # ==============================================================================
@@ -2329,9 +2349,13 @@ pass
 
 # ==============================================================================
 # T30: the last pausable point before a prune removal is the pre-check walk.
-# Freezing a holder there and taking the releases dir over must leave the new
-# current's target alone: the resumed holder re-checks ownership after the walk
-# and dies loudly instead of deleting it.
+# A holder displaced at that point must leave the new current's target alone: the
+# ownership re-check after the walk catches it and the holder dies loudly
+# instead of deleting the directory another process just made current.
+#
+# The displacement and the current flip are injected inside the walk itself, so
+# the holder really has deleted one candidate already when it is displaced: the
+# test proves the re-check happens per directory, not once for the whole loop.
 
 new_test "T30 a takeover during the pre-check walk keeps the current target"
 make_kit "$KIT"
@@ -2349,39 +2373,39 @@ while [ "$i" -le 5 ]; do
 	i=$((i + 1))
 done
 fake_snapshot 9 "200201010000.00"
-# The pruner's deletion list is [extra, $SHA_OLD] and the pause lands on
-# $SHA_OLD, which the second process makes current while the pruner is frozen.
-make_chmod_pause_shim "$SANDBOX/shim-chmod" "$SANDBOX/gate" "$RELEASES/$SHA_OLD" 1 || \
-	fail "test setup: could not install the chmod pass shim"
-( PATH="$SANDBOX/shim-chmod:$PATH" AGENT_KIT_SNAPSHOT_LOCK=mkdir \
+EXTRA="$RELEASES/$(printf '%040d' 9)"
+FOREIGN="4242"$'\t'"$(date +%s)"
+# The deletion list is [extra, $SHA_OLD]: the injection lands on the walk of
+# $SHA_OLD, after extra was already removed, and makes $SHA_OLD the current
+# target. A holder that does not re-check ownership would delete it next.
+make_chmod_takeover_shim "$SANDBOX/shim-takeover" "$SANDBOX/mark" "$RELEASES/$SHA_OLD" 1 \
+	"$RELEASES/.lock.d" "$FOREIGN" "$RELEASES/current" "$SHA_OLD" || \
+	fail "test setup: could not install the takeover injection shim"
+if OUT="$(PATH="$SANDBOX/shim-takeover:$PATH" AGENT_KIT_SNAPSHOT_LOCK=mkdir \
 	AGENT_KIT_SNAPSHOT_LOCK_STALE=2 AGENT_KIT_ROOT="$SANDBOX/kit-a" \
-	"$INSTALLER" snapshot "$RELEASES" > "$SANDBOX/a.log" 2>&1
-  printf '%s' "$?" > "$SANDBOX/a.rc" ) &
-A=$!
-wait_for_file "$SANDBOX/gate.ready" || fail "test setup: the pruner never reached its pre-check walk"
-sleep 3
-if OUT="$(AGENT_KIT_SNAPSHOT_LOCK=mkdir AGENT_KIT_SNAPSHOT_LOCK_STALE=2 \
-	AGENT_KIT_ROOT="$KIT" "$INSTALLER" snapshot "$RELEASES" 2>&1)"; then RC=0; else RC=$?; fi
+	"$INSTALLER" snapshot "$RELEASES" 2>&1)"; then RC=0; else RC=$?; fi
 [ "$VERBOSE" = 1 ] && printf '%s\n' "$OUT"
-	assert_eq "$RC" 0 "the second snapshot ran under a takeover ($OUT)"
-	assert_link "$RELEASES/current" "$SHA_OLD" "current moved to the second process's snapshot"
-: > "$SANDBOX/gate.go"
-wait "$A" || true
-	if [ "$(cat "$SANDBOX/a.rc" 2>/dev/null)" = 0 ]; then
-		fail "the displaced pruner exited 0: $(cat "$SANDBOX/a.log" 2>/dev/null)"
+	assert_file "$SANDBOX/mark.hit" "the takeover was injected at the pre-check walk"
+	assert_no_file "$EXTRA" "the pruner made progress before it was displaced"
+	if [ "$RC" = 0 ]; then
+		fail "the displaced pruner exited 0: $OUT"
 	fi
-	assert_contains "$(cat "$SANDBOX/a.log" 2>/dev/null)" "lost the lock" \
-		"the displaced pruner reports the lost lock"
+	assert_contains "$OUT" "lost the lock" "the displaced pruner reports the lost lock"
 	assert_dir "$RELEASES/$SHA_OLD" "the new current's target survived the displaced prune"
 	assert_link "$RELEASES/current" "$SHA_OLD" "current was not repointed by the resumed pruner"
 	assert_file "$RELEASES/current/manifest.json" "current still resolves to a complete snapshot"
-	if [ "$(count_lines "$(cat "$SANDBOX/a.log" 2>/dev/null)")" -gt 3 ]; then
-		fail "the displaced pruner output must stay bounded: $(cat "$SANDBOX/a.log" 2>/dev/null)"
+	if [ "$(count_lines "$OUT")" -gt 3 ]; then
+		fail "the displaced pruner output must stay bounded: $OUT"
 	fi
-	assert_no_file "$RELEASES/.lock.d" "no lock directory left behind"
-	assert_eq "$(ls -d "$RELEASES"/.lock.d.release-* "$RELEASES"/.lock.d.stale-* \
-		2>/dev/null | wc -l | tr -d ' ')" 0 "no lock aside left behind"
+	assert_dir "$RELEASES/.lock.d" "the displacing owner's lock is left in place"
+	assert_eq "$(head -1 "$RELEASES/.lock.d/owner" 2>/dev/null)" "$FOREIGN" \
+		"the displacing owner line is untouched"
+	assert_contains "$OUT" "leaving it in place" "the displaced holder reports the foreign lock"
+	assert_eq "$(ls -d "$RELEASES"/.lock.d.stale-* "$RELEASES"/.lock.d.release-* \
+		2>/dev/null | wc -l | tr -d ' ')" 0 "no displaced lock left aside"
 	assert_eq "$(tmp_dirs)" 0 "no temp dir left behind"
+chmod -R u+w "$RELEASES"/.lock.d 2>/dev/null || true
+rm -rf "$RELEASES"/.lock.d
 pass
 
 # ==============================================================================
@@ -2486,98 +2510,64 @@ pass
 # aside that holds the displaced live lock and that lock's owner, instead of
 # silently leaving two processes that both believe they hold the lock.
 #
-# Three processes and two gates produce the exact interleaving: A is frozen
-# before its release move, B takes the stale lock over and is frozen inside
-# materialization, A's move then pushes B's lock aside, D takes the freed name,
-# and only then does A validate what landed aside and try to restore it.
+# The endpoint is a state, not a schedule. The name of the release aside is only
+# known once the release picks it, so the state is substituted inside the
+# release's own mv call: the real move runs, the aside then carries another
+# process's lock, and the freed lock name is already owned by a third party.
+# Every process here is the CLI itself; the old choreography needed two gates,
+# two frozen processes and a sleep that waited for the lock to age.
+#
+# This is also the regression for the undo branch of the nested-lock move: the
+# undo succeeds, the move reports "aside taken", and the death message must be
+# the bounded one. Under bash >= 4.4 the branch used to abort with
+# "left: unbound variable" before printing anything (T37 guards the shape).
 
 new_test "T32 a release whose restore loses the name dies loudly"
 make_kit "$KIT"
-SHA_SEED="$(head_sha)"
 run_mkdir_snapshot
 	assert_eq "$RC" 0 "seed snapshot"
-for x in a c d; do
-	cp -Rp "$KIT" "$SANDBOX/kit-$x"
-	printf '\n// %s\n' "$x" >> "$SANDBOX/kit-$x/extensions/alpha/index.ts"
-	git_commit_all "$SANDBOX/kit-$x" "$x"
-done
-SHA_D="$(git -C "$SANDBOX/kit-d" rev-parse HEAD)"
+printf '\n// next\n' >> "$KIT/extensions/alpha/index.ts"
+git_commit_all "$KIT" next
+SHA_NEXT="$(head_sha)"
 LOCKDIR="$RELEASES/.lock.d"
-make_release_window_mv_shim "$SANDBOX/shim-release" "$SANDBOX/rel" "$LOCKDIR" || \
-	fail "test setup: could not install the release window shim"
-make_pause_shim "$SANDBOX/shim-cp-c" cp "$SANDBOX/copy-c" "$SANDBOX/kit-c/extensions/." || \
-	fail "test setup: could not install the second holder's copy pause shim"
-make_pause_shim "$SANDBOX/shim-cp-d" cp "$SANDBOX/copy-d" "$SANDBOX/kit-d/extensions/." || \
-	fail "test setup: could not install the third acquirer's copy pause shim"
-( PATH="$SANDBOX/shim-release:$PATH" AGENT_KIT_SNAPSHOT_LOCK=mkdir \
-	AGENT_KIT_SNAPSHOT_LOCK_STALE=2 AGENT_KIT_ROOT="$SANDBOX/kit-a" \
-	"$INSTALLER" snapshot "$RELEASES" > "$SANDBOX/a.log" 2>&1
-  printf '%s' "$?" > "$SANDBOX/a.rc" ) &
-A=$!
-wait_for_file "$SANDBOX/rel.before" || fail "test setup: the first process never reached its release move"
-sleep 3
-( PATH="$SANDBOX/shim-cp-c:$PATH" AGENT_KIT_SNAPSHOT_LOCK=mkdir \
-	AGENT_KIT_SNAPSHOT_LOCK_STALE=2 AGENT_KIT_ROOT="$SANDBOX/kit-c" \
-	"$INSTALLER" snapshot "$RELEASES" > "$SANDBOX/c.log" 2>&1
-  printf '%s' "$?" > "$SANDBOX/c.rc" ) &
-B=$!
-wait_for_file "$SANDBOX/copy-c.ready" || fail "test setup: the second holder never started materializing"
-B_PID=""
-if ! read -r B_PID _ < "$LOCKDIR/owner" 2>/dev/null; then
-	fail "test setup: the second holder has no owner line"
-fi
-B_OWNER="$(head -1 "$LOCKDIR/owner" 2>/dev/null || true)"
-: > "$SANDBOX/rel.before.go"
-wait_for_file "$SANDBOX/rel.moved" || fail "test setup: the release move never ran"
-	assert_no_file "$LOCKDIR" "the release move freed the lock name"
-( PATH="$SANDBOX/shim-cp-d:$PATH" AGENT_KIT_SNAPSHOT_LOCK=mkdir \
-	AGENT_KIT_SNAPSHOT_LOCK_STALE=600 AGENT_KIT_ROOT="$SANDBOX/kit-d" \
-	"$INSTALLER" snapshot "$RELEASES" > "$SANDBOX/d.log" 2>&1
-  printf '%s' "$?" > "$SANDBOX/d.rc" ) &
-D=$!
-wait_for_file "$SANDBOX/copy-d.ready" || fail "test setup: the third acquirer never started materializing"
-D_OWNER="$(head -1 "$LOCKDIR/owner" 2>/dev/null || true)"
-: > "$SANDBOX/rel.moved.go"
-wait "$A" || true
-	if [ "$(cat "$SANDBOX/a.rc" 2>/dev/null)" = 0 ]; then
-		fail "a release whose restore lost the lock name exited 0: $(cat "$SANDBOX/a.log" 2>/dev/null)"
+DISPLACED="4242"$'\t'"$(date +%s)"
+THIRD="9999"$'\t'"$(date +%s)"
+make_release_death_mv_shim "$SANDBOX/shim-death" "$LOCKDIR" "$DISPLACED" "$THIRD" \
+	"$SANDBOX/injected" || fail "test setup: could not install the release death shim"
+RUN_PATH="$SANDBOX/shim-death"
+run_mkdir_snapshot
+RUN_PATH=""
+	assert_file "$SANDBOX/injected" "the release death state was injected inside the release move"
+	if [ "$RC" = 0 ]; then
+		fail "a release whose restore lost the lock name exited 0: $OUT"
 	fi
-	assert_contains "$(cat "$SANDBOX/a.log" 2>/dev/null)" "could not put the displaced lock back" \
-		"the failed restore is reported"
-	assert_contains "$(cat "$SANDBOX/a.log" 2>/dev/null)" "$LOCKDIR.release-" \
+	assert_eq "$RC" 2 "the endpoint dies with the CLI's error status"
+	assert_contains "$OUT" "putting the displaced lock back in place" "the release detected the displaced lock"
+	assert_contains "$OUT" "could not put the displaced lock back" "the failed restore is reported"
+	assert_contains "$OUT" "$LOCKDIR.release-" \
 		"the diagnostic names the aside that holds the displaced lock"
-	assert_contains "$(cat "$SANDBOX/a.log" 2>/dev/null)" "$B_PID" \
-		"the diagnostic names the displaced holder from its owner line"
-	if [ "$(count_lines "$(cat "$SANDBOX/a.log" 2>/dev/null)")" -gt 4 ]; then
-		fail "the failed restore output must stay bounded: $(cat "$SANDBOX/a.log" 2>/dev/null)"
+	assert_contains "$OUT" "4242" "the diagnostic names the displaced holder from its owner line"
+	if [ "$(count_lines "$OUT")" -gt 4 ]; then
+		fail "the failed restore output must stay bounded: $OUT"
 	fi
 	assert_dir "$LOCKDIR" "the third acquirer's lock is in place"
-	assert_eq "$(head -1 "$LOCKDIR/owner" 2>/dev/null)" "$D_OWNER" "the third acquirer still owns the lock name"
+	assert_eq "$(head -1 "$LOCKDIR/owner" 2>/dev/null)" "$THIRD" \
+		"the third acquirer still owns the lock name"
 	assert_no_file "$LOCKDIR/.lock.d" "the lock was not nested by the failed restore"
-: > "$SANDBOX/copy-c.go"
-wait "$B" || true
-	if [ "$(cat "$SANDBOX/c.rc" 2>/dev/null)" = 0 ]; then
-		fail "the displaced holder continued silently: $(cat "$SANDBOX/c.log" 2>/dev/null)"
-	fi
-	assert_contains "$(cat "$SANDBOX/c.log" 2>/dev/null)" "lost the lock" \
-		"the displaced holder reports the loss loudly"
-: > "$SANDBOX/copy-d.go"
-wait "$D" || true
-	assert_eq "$(cat "$SANDBOX/d.rc" 2>/dev/null)" 0 "the third acquirer completed ($(cat "$SANDBOX/d.log" 2>/dev/null))"
-	assert_link "$RELEASES/current" "$SHA_D" "current points at the third acquirer's snapshot"
-	assert_file "$RELEASES/current/manifest.json" "current resolves to a complete snapshot"
-	assert_no_file "$LOCKDIR" "the third acquirer released its own lock"
-ASIDES="$(ls -d "$RELEASES"/.lock.d.release-* 2>/dev/null | wc -l | tr -d ' ')"
-	assert_eq "$ASIDES" 1 "the displaced live lock is left exactly once, named for manual recovery"
-	if [ "$ASIDES" = 1 ]; then
-		assert_eq "$(head -1 "$RELEASES"/.lock.d.release-*/owner 2>/dev/null)" "$B_OWNER" \
-			"the left aside is the displaced holder's lock"
-	fi
 	assert_no_file "$LOCKDIR.taking" "no takeover claim left behind"
 	assert_eq "$(ls -d "$RELEASES"/.lock.d.stale-* 2>/dev/null | wc -l | tr -d ' ')" 0 \
 		"no stale aside left behind"
-chmod -R u+w "$RELEASES"/.lock.d.release-* 2>/dev/null || true
-rm -rf "$RELEASES"/.lock.d.release-*
+ASIDES="$(ls -d "$RELEASES"/.lock.d.release-* 2>/dev/null | wc -l | tr -d ' ')"
+	assert_eq "$ASIDES" 1 "the displaced live lock is left exactly once, named for manual recovery"
+	if [ "$ASIDES" = 1 ]; then
+		assert_eq "$(head -1 "$RELEASES"/.lock.d.release-*/owner 2>/dev/null)" "$DISPLACED" \
+			"the left aside is the displaced holder's lock"
+	fi
+	assert_link "$RELEASES/current" "$SHA_NEXT" "the snapshot was still published"
+	assert_file "$RELEASES/current/manifest.json" "current resolves to a complete snapshot"
+	assert_eq "$(tmp_dirs)" 0 "no temp dir left behind"
+chmod -R u+w "$RELEASES"/.lock.d* 2>/dev/null || true
+rm -rf "$RELEASES"/.lock.d "$RELEASES"/.lock.d.release-*
 pass
 
 
@@ -2587,8 +2577,14 @@ pass
 # (.lock.d.release-<pid>/.lock.d) and the later "restore" moved the whole nested
 # aside back, leaving .lock.d/.lock.d with no top-level owner and exit 0. The
 # move detects the nest and undoes it instead of restoring a nested structure.
+#
+# The name is occupied by the shim inside the mv call itself, i.e. after the
+# free-name test and before the real move: no second process, no sleep.
+# The undo itself uses the non-nesting rename tier (perl, else GNU mv -T), so a
+# host without either cannot reach this endpoint and the setup says so.
 
 new_test "T33 an aside taken inside the release move window never nests the lock"
+have_perl || mv_has_T || fail "test setup: the non-nesting undo tier needs perl or GNU mv -T"
 make_kit "$KIT"
 SHA="$(head_sha)"
 run_mkdir_snapshot
@@ -2621,8 +2617,13 @@ pass
 # dies inside lock acquisition, before the EXIT trap used to be installed, so
 # the .lock.d.taking claim stayed on disk and the error never mentioned it. The
 # claim is released on every death path.
+#
+# The state is injected by the shim that intercepts the takeover's own move: the
+# lock it moves aside carries another owner line, and the freed name is already
+# owned by a third party when the move returns. No frozen processes, no sleeps.
 
 new_test "T34 a failed takeover restore releases its claim"
+have_perl || mv_has_T || fail "test setup: the non-nesting undo tier needs perl or GNU mv -T"
 make_kit "$KIT"
 mkdir -p "$RELEASES/.lock.d"
 printf '111\t1\n' > "$RELEASES/.lock.d/owner"
@@ -2641,6 +2642,11 @@ if OUT="$(PATH="$SANDBOX/shim-trap:$PATH" AGENT_KIT_SNAPSHOT_LOCK=mkdir \
 	assert_no_file "$RELEASES/.lock.d/.lock.d.stale-" "the displaced lock was not left nested"
 	assert_dir "$RELEASES/.lock.d" "the third acquirer's lock is in place"
 	assert_contains "$(cat "$RELEASES/.lock.d/owner" 2>/dev/null)" "333" "the third acquirer owns the lock name"
+	if [ "$(count_lines "$OUT")" -gt 2 ]; then
+		fail "the failed takeover restore must stay bounded: $OUT"
+	fi
+chmod -R u+w "$RELEASES"/.lock.d 2>/dev/null || true
+rm -rf "$RELEASES"/.lock.d
 pass
 
 # ==============================================================================
@@ -2677,55 +2683,91 @@ if OUT="$(PATH="$SANDBOX/shim-resistant:$SANDBOX/shim-claim:$PATH" \
 pass
 
 # ==============================================================================
-# T36: the release validated the owner line of the lock that landed aside and
-# then forked snapshot_bounded (a pipeline through an external tr) before the
-# rm. An owner replaced inside that window was removed without a re-check and
-# the release exited 0, destroying a live lock. Every diagnostic is prepared
-# before the final owner read now, so the post-check sequence is one compare and
-# one fork/exec: a replacement owner is put back and reported instead.
+# T36: the release validates the owner line of the lock that landed aside and
+# then must not fork again before the rm: an owner replaced inside such a window
+# used to be removed without a re-check, destroying a live lock. Every
+# diagnostic is prepared before the final owner read now, so a replacement owner
+# is put back and reported instead.
+#
+# The replacement happens inside the one fork that is still there (the tr of the
+# diagnostic preparation), performed by the shim itself. The CLI runs in the
+# foreground: no background process, no gate, no pause.
 
 new_test "T36 a replacement owner inside the release window is not removed"
 make_kit "$KIT"
-SHA_SEED="$(head_sha)"
 run_mkdir_snapshot
 	assert_eq "$RC" 0 "seed snapshot"
 printf '\n// next\n' >> "$KIT/extensions/alpha/index.ts"
 git_commit_all "$KIT" next
 SHA_NEXT="$(head_sha)"
-make_release_tr_shim "$SANDBOX/shim-tr" "$SANDBOX/diag" "$RELEASES/.lock.d" || \
-	fail "test setup: could not install the diagnostic tr shim"
-( PATH="$SANDBOX/shim-tr:$PATH" AGENT_KIT_SNAPSHOT_LOCK=mkdir \
-	AGENT_KIT_ROOT="$KIT" "$INSTALLER" snapshot "$RELEASES" > "$SANDBOX/a.log" 2>&1
-  printf '%s' "$?" > "$SANDBOX/a.rc" ) &
-A=$!
-wait_for_file "$SANDBOX/diag.ready" || fail "test setup: the release never prepared its diagnostics"
-ASIDE="$(cat "$SANDBOX/diag.aside" 2>/dev/null || true)"
-	if [ -z "$ASIDE" ] || [ ! -f "$ASIDE/owner" ]; then
-		fail "test setup: no release aside with an owner line"
-	fi
-# A replacement owner takes the lock that already landed aside, exactly inside
-# the window between the release's final owner read and its destructive step.
-REPLACEMENT="replacement-owner	$(date +%s)"
-printf '%s\n' "$REPLACEMENT" > "$ASIDE/owner"
-: > "$SANDBOX/diag.go"
-wait "$A" || true
-[ "$VERBOSE" = 1 ] && printf '%s\n' "$(cat "$SANDBOX/a.log" 2>/dev/null)"
-	assert_eq "$(cat "$SANDBOX/a.rc" 2>/dev/null)" 0 "the release is not a failure"
-	assert_contains "$(cat "$SANDBOX/a.log" 2>/dev/null)" "no longer owned by this process" \
+REPLACEMENT="replacement-owner"$'\t'"$(date +%s)"
+make_release_diag_tr_shim "$SANDBOX/shim-tr" "$RELEASES/.lock.d" "$REPLACEMENT" \
+	"$SANDBOX/injected" || fail "test setup: could not install the diagnostic tr shim"
+RUN_PATH="$SANDBOX/shim-tr"
+run_mkdir_snapshot
+RUN_PATH=""
+	assert_file "$SANDBOX/injected" "the replacement owner was injected inside the diagnostic fork"
+	assert_eq "$RC" 0 "the release is not a failure"
+	assert_contains "$OUT" "no longer owned by this process" \
 		"the replacement owner is reported, not removed silently"
-	assert_contains "$(cat "$SANDBOX/a.log" 2>/dev/null)" "replacement-owner" \
-		"the diagnostic names the owner line it saw"
-	assert_contains "$(cat "$SANDBOX/a.log" 2>/dev/null)" "putting the displaced lock back in place" \
-		"the displaced lock is put back"
+	assert_contains "$OUT" "replacement-owner" "the diagnostic names the owner line it saw"
+	assert_contains "$OUT" "putting the displaced lock back in place" "the displaced lock is put back"
 	assert_dir "$RELEASES/.lock.d" "the replacement owner's lock is not removed"
 	assert_eq "$(head -1 "$RELEASES/.lock.d/owner" 2>/dev/null)" "$REPLACEMENT" \
 		"the replacement owner still holds its lock"
-	assert_no_file "$ASIDE" "the aside was restored, not left behind"
 	assert_eq "$(ls -d "$RELEASES"/.lock.d.release-* 2>/dev/null | wc -l | tr -d ' ')" 0 \
 		"no release aside left behind"
 	assert_eq "$(ls -d "$RELEASES"/.lock.d.stale-* 2>/dev/null | wc -l | tr -d ' ')" 0 \
 		"no stale aside left behind"
 	assert_link "$RELEASES/current" "$SHA_NEXT" "the snapshot was still published"
+	if [ "$(count_lines "$OUT")" -gt 3 ]; then
+		fail "the replacement-owner output must stay bounded: $OUT"
+	fi
+chmod -R u+w "$RELEASES"/.lock.d 2>/dev/null || true
+rm -rf "$RELEASES"/.lock.d
+pass
+
+# ==============================================================================
+# T37: the shape that made the endpoint above crash instead of reporting it.
+# bash 4.4 and later leave a name declared as a bare `local name` UNSET, so
+# `set -u` aborts on the first read of a name that only an error branch assigns;
+# bash 3.2 treats the same name as set to empty, so macOS hid the bug while
+# GNU/Linux (bash 5) turned every lock death message into
+# "left: unbound variable". A lock primitive may read an error-path local on
+# every path it dies on, so every local it declares is initialized at the
+# declaration. This is a static guard on purpose: the failure mode is a shell
+# version, and the suite must not depend on the host bash being new enough.
+
+new_test "T37 every local of a mkdir-lock primitive is initialized"
+make_kit "$KIT"
+cat > "$SANDBOX/bare-local.awk" <<'EOAWK'
+# Print every name declared by a `local` line without an initializer.
+{
+	line = $0
+	if (line !~ /^[ \t]*local[ \t]/) next
+	gsub(/"[^"]*"/, "=\"\"", line)
+	gsub(/'[^']*'/, "=''", line)
+	sub(/^[ \t]*local[ \t]+/, "", line)
+	n = split(line, w, /[ \t]+/)
+	for (i = 1; i <= n; i++) {
+		if (w[i] == "") continue
+		if (w[i] ~ /^-/) continue
+		if (index(w[i], "=") == 0) print w[i]
+	}
+}
+EOAWK
+BARE=""
+for LOCKFN in snapshot_lock_age snapshot_lock_mkdir snapshot_lock_free_aside \
+	snapshot_lock_move snapshot_lock_owner_line snapshot_lock_takeover \
+	snapshot_lock_claim_release snapshot_lock_restore snapshot_lock_held \
+	snapshot_lock_verify snapshot_unlock snapshot_remove_tree_now \
+	snapshot_make_writable; do
+	FN_BARE="$(extract_function "$INSTALLER" "$LOCKFN" | awk -f "$SANDBOX/bare-local.awk")"
+	if [ -n "$FN_BARE" ]; then
+		BARE="$BARE $LOCKFN:$(printf '%s' "$FN_BARE" | tr '\n' ',')"
+	fi
+done
+	assert_eq "$BARE" "" "bare locals under set -u (bash >= 4.4 leaves them unset)"
 pass
 
 printf '\n%d passed, %d failed\n' "$PASS" "$FAIL"
