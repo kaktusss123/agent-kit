@@ -984,6 +984,14 @@ snapshot_flip() { # <releases> <sha> — atomic relative-symlink replacement
 	}
 }
 
+snapshot_is_sha_name() { # <name> — true when the name is a full 40-char hex sha
+	# A top-level helper by design: bash 3.2 (macOS system shell) cannot parse
+	# a `case` statement nested inside process substitution < <( ... ), so the
+	# prune loop must call this helper instead of inlining the pattern match.
+	case "$1" in *[!0-9a-f]*) return 1 ;; esac
+	return 0
+}
+
 snapshot_prune() { # <releases> <keep-sha> — current's target plus the newest 5
 	# Prune is deliberately non-fatal: it returns 0 even when a directory
 	# cannot be removed and reports at most ONE bounded warning line naming
@@ -1007,7 +1015,7 @@ snapshot_prune() { # <releases> <keep-sha> — current's target plus the newest 
 				continue
 			fi
 			[ "${#base}" -eq 40 ] || continue
-			case "$base" in *[!0-9a-f]*) continue ;; esac
+			snapshot_is_sha_name "$base" || continue
 			printf '%s\t%s\n' "$(stat -c %Y -- "$path" 2>/dev/null || printf 0)" "$path"
 		done | sort -rn -k1,1
 	)

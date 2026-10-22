@@ -90,6 +90,14 @@ assert_contains() { # <text> <fixed string> <what>
 	esac
 }
 
+extract_function() { # <file> <name> — top-level function body, header included
+	awk -v fn="$2" '
+		$0 ~ "^" fn "\\(\\)" { inside = 1; print; next }
+		inside && /^[A-Za-z_][A-Za-z0-9_]*\(\)/ { exit }
+		inside { print }
+	' "$1"
+}
+
 # --- sandbox -----------------------------------------------------------------
 
 new_test() { # <name>
@@ -772,6 +780,43 @@ run_snapshot_at "$EVIL_KIT" "$RELEASES"
 	assert_eq "$RC" 0 "fast path accepts the escaped manifest"
 	assert_contains "$OUT" "already present" "fast path reporting"
 	assert_link "$RELEASES/current" "$SHA" "current points at the snapshot"
+pass
+
+# ==============================================================================
+# T18: the script must stay parseable by bash 3.2 (macOS system shell). Bash
+# 3.2 cannot parse a `case` statement nested inside a process substitution or
+# command substitution, and it parses the whole script before running anything,
+# so a single such construct breaks every agent-kit command on macOS.
+
+new_test "T18 bash 3.2 parse compatibility and no inline case in snapshot_prune"
+PRUNE_BODY="$(extract_function "$INSTALLER" snapshot_prune)"
+HELPER_BODY="$(extract_function "$INSTALLER" snapshot_is_sha_name)"
+	[ -n "$PRUNE_BODY" ] || fail "could not extract snapshot_prune from $INSTALLER"
+	[ -n "$HELPER_BODY" ] || fail "missing top-level helper snapshot_is_sha_name"
+assert_contains "$HELPER_BODY" 'case "$1" in *[!0-9a-f]*) return 1 ;; esac' \
+	"sha-name pattern match lives in the helper"
+assert_contains "$PRUNE_BODY" 'snapshot_is_sha_name "$base" || continue' \
+	"prune loop calls the helper"
+PRUNE_CODE="$(printf '%s\n' "$PRUNE_BODY" | grep -v '^[[:space:]]*#' || true)"
+case "$PRUNE_CODE" in
+*case*) fail "snapshot_prune must not contain a case statement: bash 3.2 cannot parse one inside process substitution" ;;
+esac
+BASH32=""
+if [ -n "${AGENT_KIT_BASH32:-}" ]; then
+	BASH32="$(command -v "$AGENT_KIT_BASH32" 2>/dev/null || true)"
+	[ -n "$BASH32" ] || fail "AGENT_KIT_BASH32=$AGENT_KIT_BASH32 is not an executable"
+else
+	BASH32="$(command -v /tmp/bash-3.2/bash 2>/dev/null || true)"
+fi
+if [ -n "$BASH32" ]; then
+	assert_contains "$("$BASH32" -c 'printf %s "$BASH_VERSION"' 2>/dev/null || true)" 3.2 \
+		"$BASH32 reports a bash 3.2 version"
+	if OUT="$("$BASH32" -n "$INSTALLER" 2>&1)"; then RC=0; else RC=$?; fi
+	assert_eq "$RC" 0 "bash 3.2 parses $INSTALLER"
+	[ "$RC" -eq 0 ] || printf '%s\n' "$OUT" >&2
+else
+	[ -n "${AGENT_KIT_BASH32:-}" ] || printf 'SKIP %s: no bash 3.2 binary found (set AGENT_KIT_BASH32 to one)\n' "$CURRENT"
+fi
 pass
 
 printf '\n%d passed, %d failed\n' "$PASS" "$FAIL"
