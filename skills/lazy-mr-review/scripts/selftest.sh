@@ -527,6 +527,7 @@ if outg=$(python3 "$SNAP" "$GH_URL" --clone "$T/ghuser" --temp-root "$T/ghroot" 
   check "backend github" test "$(jq -r '.reviews[0].backend' <<<"$outg")" = github
   check "head_sha is headRefOid" test "$(jq -r '.reviews[0].head_sha' <<<"$outg")" = "$SHA"
   check "checkout HEAD verified" test "$(jq -r '.reviews[0].checkout.sha' <<<"$outg")" = "$SHA"
+  check "github checkout uses the pr suffix" bash -c '[[ "$0" == *-pr7 ]]' "$(jq -r '.reviews[0].checkout.path' <<<"$outg")"
   check "branches mapped" test "$(jq -r '.reviews[0].source_branch' <<<"$outg")" = "feat/x"
   check "author mapped from login" test "$(jq -r '.reviews[0].author' <<<"$outg")" = "someone"
   check "pipeline carries the rollup" grep -q "verify: completed/success" <<<"$(jq -r '.reviews[0].pipeline[]' <<<"$outg")"
@@ -562,6 +563,9 @@ if outg="$(python3 "$PUB" "$T/gh-payload-ok.json" 2>"$T/gherrp1")"; then
   check "F3 posted as issue comment" test "$(jq -r '.published[] | select(.id=="F3") | .mode' <<<"$outg")" = summary
   check "F4 inline via review" test "$(jq -r '.published[] | select(.id=="F4") | .mode' <<<"$outg")" = inline
   check "two review POSTs (F1, F4)" test "$(grep -c 'api --method POST --input .* repos/owner/proj/pulls/7/reviews' "$GH_STUB_LOG")" = 2
+  check "reviews pin the verified commit_id" test "$(grep -c '"commit_id": "' "$GH_STUB_LOG")" = 2
+  check "comment listings paginate" grep -q 'repos/owner/proj/pulls/7/comments?per_page=100&page=1' "$GH_STUB_LOG"
+  check "F1 anchored at its new_line" test "$(jq -r '.published[] | select(.id=="F1") | .line' <<<"$outg")" = 23
   check "two issue-comment POSTs (F3, summary)" test "$(grep -c 'api --method POST --input .* repos/owner/proj/issues/7/comments' "$GH_STUB_LOG")" = 2
   check "F4 uses the LEFT side" grep -Eq '"side": *"LEFT"' "$GH_STUB_LOG"
 else

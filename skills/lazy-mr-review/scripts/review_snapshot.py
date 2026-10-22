@@ -256,7 +256,7 @@ def prepare_checkout(host, project, iid, head_sha, clone, temp_root, backend="gi
         die(f"FETCH_HEAD {fetched} != head_sha {head_sha}")
     # Distinct checkout identity per MR (host/project/iid): several MRs on one
     # project must never share — and overwrite — each other's checkout.
-    wt = Path(temp_root) / "checkouts" / f"{identity}-{backend}{iid}"
+    wt = Path(temp_root) / "checkouts" / f"{identity}-{'mr' if backend == 'gitlab' else 'pr'}{iid}"
     if clone:
         _reject_clone_alias("checkout", wt, clone_real)
     if os.path.islink(wt):
@@ -291,15 +291,26 @@ def prepare_checkout(host, project, iid, head_sha, clone, temp_root, backend="gi
     return {"path": checkout, "sha": got, "source": "worktree"}
 
 
+
+def gh_api_all_pages(path, host):
+    """Collect every page of a GitHub list endpoint (per_page=100). Returns
+    [] on an empty/None response. Stops at the first short page."""
+    out = []
+    page = 1
+    while True:
+        sep = "&" if "?" in path else "?"
+        data = json.loads(gh("api", f"{path}{sep}per_page=100&page={page}", host=host))
+        items = data if isinstance(data, list) else []
+        out.extend(items)
+        if len(items) < 100:
+            return out
+        page += 1
+
 def discussions_index(host, project, iid, backend):
     if backend == "github":
-        raw = gh("api", f"repos/{project}/pulls/{iid}/comments?per_page=100", host=host)
-        try:
-            data = json.loads(raw)
-        except json.JSONDecodeError:
-            die(f"PR comments response is not JSON:\n{raw}")
+        data = gh_api_all_pages(f"repos/{project}/pulls/{iid}/comments", host)
         out = []
-        for c in data if isinstance(data, list) else []:
+        for c in data:
             body = (c.get("body") or "").strip()
             out.append({
                 "discussion_id": str(c.get("pull_request_review_id") or ""),
@@ -308,12 +319,7 @@ def discussions_index(host, project, iid, backend):
                 "body_start": body.splitlines()[0][:120] if body else "",
             })
         # Issue-level comments participate in the body-first-line dedup too.
-        raw = gh("api", f"repos/{project}/issues/{iid}/comments?per_page=100", host=host)
-        try:
-            data = json.loads(raw)
-        except json.JSONDecodeError:
-            die(f"issue comments response is not JSON:\n{raw}")
-        for c in data if isinstance(data, list) else []:
+        for c in gh_api_all_pages(f"repos/{project}/issues/{iid}/comments", host):
             body = (c.get("body") or "").strip()
             out.append({
                 "discussion_id": str(c.get("id") or ""),
@@ -364,7 +370,7 @@ def snapshot_one(mr, clone, temp_root):
 
     diffs_dir = Path(temp_root) / "diffs"
     diffs_dir.mkdir(parents=True, exist_ok=True)
-    diff_path = diffs_dir / f"{mr_identity(host, project)}-{backend}{iid}.diff"
+    diff_path = diffs_dir / f"{mr_identity(host, project)}-{'mr' if backend == 'gitlab' else 'pr'}{iid}.diff"
     if backend == "github":
         diff_text = gh("pr", "diff", iid, "--repo", project, host=host)
         pipeline = [

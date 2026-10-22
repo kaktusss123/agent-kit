@@ -156,9 +156,24 @@ def gh_api(method, path, obj, host):
         if not m:
             m = re.search(r'"status":"(\d{3})"', text)
         status = int(m.group(1)) if m else 0
-        raise GhHttpError(status, text[:400])
+        raise GhHttpError(status, text)
     return json.loads(proc.stdout) if proc.stdout.strip() else {}
 
+
+
+def gh_api_all_pages(path, host):
+    """Collect every page of a GitHub list endpoint (per_page=100). Returns
+    [] on an empty/None response. Stops at the first short page."""
+    out = []
+    page = 1
+    while True:
+        sep = "&" if "?" in path else "?"
+        data = json.loads(gh("api", f"{path}{sep}per_page=100&page={page}", host=host))
+        items = data if isinstance(data, list) else []
+        out.extend(items)
+        if len(items) < 100:
+            return out
+        page += 1
 
 def gh_comment_side_line(finding):
     """GitHub anchoring: RIGHT/new_line for added/context, LEFT/old_line for
@@ -181,12 +196,12 @@ def gh_publish(host, project, iid, payload, findings):
         }, code=3)
 
     covered_pairs, covered_first_lines = set(), set()
-    for c in (json.loads(gh("api", f"repos/{project}/pulls/{iid}/comments?per_page=100", host=host)) or []):
+    for c in gh_api_all_pages(f"repos/{project}/pulls/{iid}/comments", host):
         covered_pairs.add((c.get("path"), c.get("line")))
         body = (c.get("body") or "").strip()
         if body:
             covered_first_lines.add(body.splitlines()[0][:120])
-    for c in (json.loads(gh("api", f"repos/{project}/issues/{iid}/comments?per_page=100", host=host)) or []):
+    for c in gh_api_all_pages(f"repos/{project}/issues/{iid}/comments", host):
         body = (c.get("body") or "").strip()
         if body:
             covered_first_lines.add(body.splitlines()[0][:120])
@@ -216,6 +231,11 @@ def gh_publish(host, project, iid, payload, findings):
 
         review = {
             "event": "COMMENT",
+            # Pin the review to the verified head: without commit_id GitHub
+            # anchors to the PR's LATEST commit, and a push landing between
+            # the head check and this POST would anchor the comment to a
+            # different diff than the one reviewed.
+            "commit_id": payload["expected_head_sha"],
             "comments": [{"path": f["file"], "body": body, **anchor}],
         }
         try:
@@ -231,7 +251,10 @@ def gh_publish(host, project, iid, payload, findings):
                 result["published"].append({"id": f.get("id"), "comment_id": cid, "mode": "fallback-summary", "anchored": False})
                 continue
             print(
-                f"publish_comments: command failed\n  command: gh api POST .../reviews\n  http: {e.status}\n  output:\n{e.text}",
+                f"publish_comments: command failed\n"
+                f"  command: gh api --method POST --input <payload.json> repos/{project}/pulls/{iid}/reviews\n"
+                f"  http: {e.status}\n"
+                f"  output:\n{e.text}",
                 file=sys.stderr,
             )
             emit({"status": "failed"}, code=1)
@@ -241,10 +264,11 @@ def gh_publish(host, project, iid, payload, findings):
         # path+line. (A submitted review cannot be deleted — no GitLab-style
         # unanchored rollback; a bad line 422s before creation instead.)
         anchored, line_out = False, None
-        for c in (json.loads(gh("api", f"repos/{project}/pulls/{iid}/reviews/{review_id}/comments", host=host)) or []):
-            if c.get("path") == f.get("file"):
-                anchored = c.get("line") is not None
-                line_out = c.get("line")
+        if review_id is not None:
+            for c in gh_api_all_pages(f"repos/{project}/pulls/{iid}/reviews/{review_id}/comments", host):
+                if c.get("path") == f.get("file"):
+                    anchored = c.get("line") is not None
+                    line_out = c.get("line")
         result["published"].append({
             "id": f.get("id"), "review_id": review_id,
             "mode": "inline", "anchored": anchored, "line": line_out,
