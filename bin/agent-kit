@@ -808,13 +808,18 @@ cmd_update() {
 # records its owner and is released on exit. A mkdir lock can outlive a
 # SIGKILLed holder, so a lock directory older than
 # AGENT_KIT_SNAPSHOT_LOCK_STALE seconds (600 by default) is taken over; a
-# takeover only ever removes the directory whose owner line it measured as
-# stale, and a holder whose lock was displaced anyway dies loudly before
-# touching the releases dir again, because a mkdir lock is not a kernel
-# descriptor lock and must not be trusted blindly. Both kinds wait boundedly
-# (60 s by default, AGENT_KIT_SNAPSHOT_LOCK_TIMEOUT overrides it); a lock that
-# cannot be taken in time is a bounded error, never a silent continue.
-# AGENT_KIT_SNAPSHOT_LOCK (auto by default) forces the mechanism for tests.
+# takeover only moves the directory whose owner line it measured as stale, and
+# only into an aside name proven free, so it never nests a lock into an
+# existing directory. A holder whose lock was displaced anyway dies loudly
+# before touching the releases dir again, because a mkdir lock is not a kernel
+# descriptor lock and must not be trusted blindly. Releasing the lock is the
+# same kind of validated move; the only unresolvable case is a third process
+# taking the freed name before a displaced lock is put back, and that dies
+# loudly naming the aside and the displaced owner, never silently. Both kinds
+# wait boundedly (60 s by default, AGENT_KIT_SNAPSHOT_LOCK_TIMEOUT overrides
+# it); a lock that cannot be taken in time is a bounded error, never a silent
+# continue. AGENT_KIT_SNAPSHOT_LOCK (auto by default) forces the mechanism for
+# tests.
 #
 # The runtime is feature-detected, never assumed: BSD userland has no cp -a
 # --link, no cp --link, no mv -T and no stat -c, so hardlink copies fall back
@@ -908,6 +913,17 @@ snapshot_remove_tree() { # <path> — remove a tree, restoring write permission 
 	local path="$1"
 	[ -e "$path" ] || [ -L "$path" ] || return 0
 	snapshot_make_writable "$path"
+	snapshot_remove_tree_now "$path"
+}
+
+snapshot_remove_tree_now() { # <path> — remove an already-writable tree in one rm
+	# For callers that run a (slow, recursive) permission walk before their last
+	# ownership check: after that check the only work before the unlink must be
+	# the fork and exec of rm itself, so this variant never walks. Failure is
+	# reported, not swallowed: rm cannot descend into a directory it cannot
+	# write to, and the caller turns that into a bounded warning.
+	local path="$1"
+	[ -e "$path" ] || [ -L "$path" ] || return 0
 	rm -rf -- "$path" 2>/dev/null || true
 	if [ -e "$path" ] || [ -L "$path" ]; then
 		return 1
@@ -1109,6 +1125,30 @@ snapshot_lock_mkdir() { # <dir> — atomic mkdir lock, bounded wait, stale takeo
 	done
 }
 
+snapshot_lock_free_aside() { # <base> — a free aside name for a lock move, empty when none is free
+	# Every lock move is a rename, and plain mv NESTS the source into an existing
+	# destination directory. The destination is therefore proven absent with one
+	# cheap test instead of being cleared by a recursive removal: that removal
+	# would put a walk into the window between the ownership check and the move,
+	# and when it failed the move nested the lock into the leftover directory
+	# (.lock.d/.lock.d). A leftover aside of this very process (a release or a
+	# takeover that failed after the move) is skipped by the numeric suffix.
+	local base="$1" n=0 candidate
+	while [ "$n" -lt 8 ]; do
+		if [ "$n" -eq 0 ]; then
+			candidate="$base"
+		else
+			candidate="$base-$n"
+		fi
+		if [ ! -e "$candidate" ] && [ ! -L "$candidate" ]; then
+			printf '%s' "$candidate"
+			return 0
+		fi
+		n=$((n + 1))
+	done
+	return 1
+}
+
 snapshot_lock_owner_line() { # <dir> — the owner line a mkdir lock carries, empty if absent
 	local line=""
 	[ -f "$1/owner" ] || return 0
@@ -1127,13 +1167,15 @@ snapshot_lock_takeover() { # <dir> — take over the lock <dir> only if it is st
 	#      stale in the directory that ends up aside. If it is not, a lock this
 	#      process did not measure was displaced and is put back as it was.
 	# Returns 0 only when a provably stale lock was removed.
-	local dir="$1" claim="$1.taking" aside="$1.stale-$$" measured age owner claim_age
+	local dir="$1" claim="$1.taking" aside measured age owner claim_age
 	if ! mkdir -- "$claim" 2>/dev/null; then
 		# A claim is held for a few syscalls, so a leftover one means its taker
-		# was killed; the same age rule as for the lock clears it.
+		# was killed; the same age rule as for the lock clears it. A claim
+		# directory is empty by construction, so it is removed in one rm: no
+		# recursive walk runs between the age measurement and the removal.
 		claim_age="$(snapshot_lock_age "$claim")"
 		if [ "${claim_age:-0}" -ge "$SNAPSHOT_LOCK_STALE" ]; then
-			snapshot_remove_tree "$claim" || true
+			snapshot_remove_tree_now "$claim" || true
 		fi
 		return 1
 	fi
@@ -1145,7 +1187,9 @@ snapshot_lock_takeover() { # <dir> — take over the lock <dir> only if it is st
 		return 1
 	fi
 	# mv nests into an existing directory, so the aside name must be free first.
-	if ! snapshot_remove_tree "$aside"; then
+	# Only a cheap existence test runs here: a recursive cleanup would widen the
+	# window between the measurement above and the move.
+	if ! aside="$(snapshot_lock_free_aside "$1.stale-$$")"; then
 		snapshot_lock_claim_release
 		return 1
 	fi
@@ -1166,21 +1210,27 @@ snapshot_lock_takeover() { # <dir> — take over the lock <dir> only if it is st
 
 snapshot_lock_claim_release() { # drop the takeover claim this process holds
 	[ -n "$SNAPSHOT_LOCK_CLAIM" ] || return 0
-	snapshot_remove_tree "$SNAPSHOT_LOCK_CLAIM" || true
+	snapshot_remove_tree_now "$SNAPSHOT_LOCK_CLAIM" || true
 	SNAPSHOT_LOCK_CLAIM=""
 	return 0
 }
 
 snapshot_lock_restore() { # <aside> <dir> <owner> — put back a lock displaced by mistake
-	# Never reached on a well-behaved releases dir: it means a second waiter
-	# took over a lock that was created after it measured the stale one. The
-	# displaced holder lost its lock for one rename at most, so it is restored
-	# where possible; when the name was taken again the situation is reported
-	# loudly instead of silently leaving two owners behind.
+	# Never reached on a well-behaved releases dir: it means a lock that was not
+	# this process's was moved aside (a second waiter took over a lock created
+	# after it measured the stale one, or an age-based takeover slipped in
+	# between the owner read and the release move). The displaced holder lost its
+	# lock for one rename at most, so it is restored immediately through the
+	# non-nesting rename tiers. When a third acquirer took the name in that
+	# window the restore cannot succeed, and the failure is loud and bounded: it
+	# names the aside that holds the displaced live lock and that lock's owner
+	# line, instead of silently leaving two processes believing they hold it.
+	local owner
 	if snapshot_rename_dir "$1" "$2"; then
 		return 0
 	fi
-	die "snapshot: could not restore the lock $2 after a stale takeover displaced a lock that was not stale (owner ${3:-unknown}); the displaced lock is at $1; remove both and retry"
+	owner="$(snapshot_bounded "${3:-unknown}" 60)"
+	die "snapshot: could not put the displaced lock back under $2: another process acquired that name meanwhile; the displaced live lock is at $1 (owner line: $owner); stop the process named there or remove whichever lock is stale, then retry"
 }
 
 snapshot_lock_held() { # true when SNAPSHOT_LOCK_DIR still carries this process's owner line
@@ -1210,23 +1260,42 @@ snapshot_unlock() { # release the mkdir lock by moving it aside and validating i
 	# Releasing is a validated MOVE, not a delete: between any ownership check
 	# and an rm an age-based takeover can replace the lock, and the rm would
 	# then destroy the NEW holder's lock while it is still working. One rename
-	# is atomic, so exactly one process can move a given lock instance away;
-	# the owner line of what landed aside says whose lock it was, and a lock
-	# that is not ours is put back with the takeover's restore machinery.
+	# is atomic, so exactly one process can move a given lock instance away, and
+	# the owner line of what landed aside says whose lock it was.
+	#
+	# The aside name is proven free with one cheap existence test; it is never
+	# cleared by a recursive removal. That removal used to widen the window
+	# between the owner read and the move, and when it failed the move nested the
+	# lock into the leftover directory, so the release then "restored" the wrong
+	# structure (.lock.d/.lock.d). A lock that already belongs to another process
+	# is not moved at all; a takeover that slips in after the read is put back at
+	# once, and a restore that loses the name to a third acquirer dies loudly.
 	[ -n "$SNAPSHOT_LOCK_DIR" ] || return 0
 	local dir="$SNAPSHOT_LOCK_DIR" token="$SNAPSHOT_LOCK_TOKEN"
-	local aside="$SNAPSHOT_LOCK_DIR.release-$$" owner
+	local aside owner
 	SNAPSHOT_LOCK_DIR=""
 	SNAPSHOT_LOCK_TOKEN=""
-	# mv nests into an existing directory, so the aside name must be free first.
-	snapshot_remove_tree "$aside" || true
+	if ! aside="$(snapshot_lock_free_aside "$dir.release-$$")"; then
+		warn "snapshot: cannot release the mkdir lock $dir: every aside name up to $dir.release-$$-7 is taken; leaving it in place, remove it manually"
+		return 0
+	fi
+	# One cheap read, then one rename, then the validation of what landed aside.
+	owner="$(snapshot_lock_owner_line "$dir")"
+	if [ -z "$owner" ]; then
+		warn "snapshot: the mkdir lock $dir was already gone when this process released it; nothing was removed"
+		return 0
+	fi
+	if [ "$owner" != "$token" ]; then
+		warn "snapshot: $dir is no longer owned by this process ($(snapshot_bounded "$owner" 60)); leaving it in place"
+		return 0
+	fi
 	if ! mv -- "$dir" "$aside" 2>/dev/null; then
 		warn "snapshot: the mkdir lock $dir was already gone or replaced when this process released it; nothing was removed"
 		return 0
 	fi
 	owner="$(snapshot_lock_owner_line "$aside")"
 	if [ "$owner" != "$token" ]; then
-		warn "snapshot: $dir is no longer owned by this process ($(snapshot_bounded "$owner" 60)); leaving it in place"
+		warn "snapshot: $dir is no longer owned by this process ($(snapshot_bounded "$owner" 60)); putting the displaced lock back in place"
 		snapshot_lock_restore "$aside" "$dir" "$owner"
 		return 0
 	fi
@@ -1438,10 +1507,11 @@ snapshot_prune() { # <releases> <keep-sha> — current's target plus the newest 
 	# can lose the lock to an age-based takeover, and the resumed holder would
 	# then keep deleting the list it selected while another process is already
 	# the owner and may have repointed current at one of those directories. The
-	# order is deliberate: the recursive write-permission walk runs first, so
-	# the window between the last check and the rm syscall itself is a fork and
-	# an exec. That residual window cannot be closed without a kernel primitive
-	# that re-checks and unlinks in one step; it is documented in the README.
+	# order is deliberate: the recursive write-permission walk runs first and the
+	# removal itself is one rm (no second walk inside it), so the window between
+	# the last check and the rm syscall is a fork and an exec. That residual
+	# window cannot be closed without a kernel primitive that re-checks and
+	# unlinks in one step; it is documented in the README.
 	for path in ${stale[@]+"${stale[@]}"}; do
 		snapshot_make_writable "$path"
 		snapshot_lock_verify "the retention prune of ${path##*/}"
@@ -1450,7 +1520,7 @@ snapshot_prune() { # <releases> <keep-sha> — current's target plus the newest 
 			[ -n "$protected" ] || protected="$path"
 			continue
 		fi
-		if snapshot_remove_tree "$path"; then
+		if snapshot_remove_tree_now "$path"; then
 			continue
 		fi
 		[ -n "$failed" ] || failed="$path"
