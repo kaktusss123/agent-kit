@@ -798,21 +798,154 @@ cmd_update() {
 # current's target plus the newest 5 snapshots and prunes older directories;
 # task worktrees may still link into pruned node_modules, that grace is
 # accepted.
+#
+# Concurrency: every operation on a releases directory (materialize, flip and
+# prune included) runs under an exclusive flock on <releases>/.lock, so
+# concurrent invocations cannot interleave a flip with a prune that was
+# decided against an older current. The wait is bounded (60 s by default,
+# AGENT_KIT_SNAPSHOT_LOCK_TIMEOUT overrides it); a lock that cannot be taken
+# in time is a bounded error, never a silent continue.
+#
+# Prune failures are not fatal (an undeletable old snapshot must not break the
+# "current points at a complete snapshot of HEAD" contract): they produce
+# exactly one bounded warning line and the command still exits 0.
+#
+# A directory under a final name is trusted only after a strict check:
+# extensions/subagents/index.ts present, node_modules providing the Pi runtime
+# packages, and a manifest that parses as exactly the five fields this writer
+# emits. Anything else is an incomplete artifact and is refused, never flipped
+# to.
 
 SNAPSHOT_KEEP=5
+# extensions/subagents/index.ts marks a complete extensions/ tree: it ships in
+# every host install and a copy without it is not an agent-kit extension set.
+SNAPSHOT_EXT_MARKER="extensions/subagents/index.ts"
+SNAPSHOT_LOCK_TIMEOUT="${AGENT_KIT_SNAPSHOT_LOCK_TIMEOUT:-60}"
 SNAPSHOT_RELEASES=""
 SNAPSHOT_TMP=""
 
 snapshot_cleanup() {
 	[ -n "$SNAPSHOT_TMP" ] || return 0
 	case "$SNAPSHOT_TMP" in
-	"$SNAPSHOT_RELEASES"/.tmp-*) rm -rf -- "$SNAPSHOT_TMP" 2>/dev/null || true ;;
+	"$SNAPSHOT_RELEASES"/.tmp-*)
+		snapshot_remove_tree "$SNAPSHOT_TMP" || \
+			warn "snapshot: could not remove the temporary directory $(snapshot_bounded "$SNAPSHOT_TMP" 160); remove it manually"
+		;;
 	esac
 	SNAPSHOT_TMP=""
 }
 
-snapshot_json_escape() { # stdin -> escaped JSON string body
-	sed -e 's/\\/\\\\/g' -e 's/"/\\"/g'
+snapshot_bounded() { # <text> [<max>] — one line, length-capped for diagnostics
+	local text="$1" max="${2:-120}"
+	if [ "${#text}" -gt "$max" ]; then
+		text="${text:0:$max}..."
+	fi
+	# A diagnostic must stay one line: strip every control character.
+	printf '%s' "$text" | tr -d '[:cntrl:]'
+}
+
+snapshot_remove_tree() { # <path> — remove a tree, restoring write permission first
+	# cp -a preserves modes such as 0555, and rm cannot descend into a
+	# directory it cannot write to. Make the tree removable first (best
+	# effort, the owner may not be us), then remove the whole thing.
+	local path="$1"
+	[ -e "$path" ] || [ -L "$path" ] || return 0
+	if [ -d "$path" ] && [ ! -L "$path" ]; then
+		chmod -R u+rwX -- "$path" 2>/dev/null || true
+	fi
+	rm -rf -- "$path" 2>/dev/null || true
+	if [ -e "$path" ] || [ -L "$path" ]; then
+		return 1
+	fi
+	return 0
+}
+
+snapshot_lock() { # <releases> — exclusive lock for the whole command (fd 9)
+	local lock="$1/.lock"
+	case "$SNAPSHOT_LOCK_TIMEOUT" in
+	""|*[!0-9]*)
+		die "snapshot: AGENT_KIT_SNAPSHOT_LOCK_TIMEOUT must be a whole number of seconds"
+		;;
+	esac
+	command -v flock >/dev/null 2>&1 || \
+		die "snapshot: flock(1) is required to serialize snapshot operations on $1"
+	: >>"$lock" 2>/dev/null || die "snapshot: cannot create the lock file $lock"
+	# The descriptor stays open until the process exits: the kernel drops the
+	# lock then, including after SIGKILL.
+	exec 9>>"$lock" || die "snapshot: cannot open the lock file $lock"
+	if ! flock -w "$SNAPSHOT_LOCK_TIMEOUT" 9; then
+		die "snapshot: could not lock $lock in ${SNAPSHOT_LOCK_TIMEOUT}s (another snapshot is running, or the filesystem does not support flock); retry later"
+	fi
+}
+
+snapshot_json_escape() { # <text> — JSON string body; checkout paths cannot hold NUL
+	# Escapes the characters that can appear in a path: backslash, double
+	# quote, newline, carriage return, tab, backspace and form feed. Other
+	# control characters are not expected in a checkout path; the manifest
+	# validator rejects them instead of quietly emitting invalid JSON.
+	local text="$1"
+	text="${text//\\/\\\\}"
+	text="${text//\"/\\\"}"
+	text="${text//$'\n'/\\n}"
+	text="${text//$'\r'/\\r}"
+	text="${text//$'\t'/\\t}"
+	text="${text//$'\b'/\\b}"
+	text="${text//$'\f'/\\f}"
+	printf '%s' "$text"
+}
+
+snapshot_json_string_valid() { # <json string body> — exactly the escapes we emit
+	# Other control characters are not expected in a checkout path, so the
+	# manifest validator rejects them instead of escaping them.
+	local body="$1" i=0 ch
+	case "$body" in
+	*[[:cntrl:]]*) return 1 ;;
+	esac
+	while [ "$i" -lt "${#body}" ]; do
+		ch="${body:i:1}"
+		case "$ch" in
+		'"') return 1 ;;
+		\\)
+			i=$((i + 1))
+			case "${body:i:1}" in
+			'"'|\\|/|b|f|n|r|t) : ;;
+			*) return 1 ;;
+			esac
+			;;
+		esac
+		i=$((i + 1))
+	done
+	return 0
+}
+
+snapshot_manifest_valid() { # <manifest> <sha> — strict parse of the 5 known fields
+	local manifest="$1" sha="$2" line n=0 body
+	local re_sha="^  \"sha\": \"$sha\",\$"
+	local re_dirty='^  "dirty": (true|false),$'
+	local re_created='^  "createdAt": "[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z",$'
+	[ -f "$manifest" ] && [ -r "$manifest" ] || return 1
+	while IFS= read -r line || [ -n "$line" ]; do
+		n=$((n + 1))
+		case "$n" in
+		1) [ "$line" = "{" ] || return 1 ;;
+		2) [ "$line" = '  "schema": 1,' ] || return 1 ;;
+		3) [[ "$line" =~ $re_sha ]] || return 1 ;;
+		4) [[ "$line" =~ $re_dirty ]] || return 1 ;;
+		5) [[ "$line" =~ $re_created ]] || return 1 ;;
+		6)
+			case "$line" in
+			'  "source": "'*'"') : ;;
+			*) return 1 ;;
+			esac
+			body="${line#'  "source": "'}"
+			body="${body%\"}"
+			snapshot_json_string_valid "$body" || return 1
+			;;
+		7) [ "$line" = "}" ] || return 1 ;;
+		*) return 1 ;;
+		esac
+	done < "$manifest"
+	[ "$n" -eq 7 ]
 }
 
 snapshot_has_packages() { # <node_modules> — runtime packages the extensions import
@@ -821,6 +954,15 @@ snapshot_has_packages() { # <node_modules> — runtime packages the extensions i
 		[ -d "$nm/@earendil-works/pi-ai" ] &&
 		[ -d "$nm/@earendil-works/pi-tui" ] &&
 		[ -d "$nm/typebox" ]
+}
+
+snapshot_complete() { # <dir> <sha> — a complete snapshot of <sha>, not just a same-named dir
+	local dir="$1" sha="$2"
+	[ -d "$dir" ] && \
+		[ -f "$dir/$SNAPSHOT_EXT_MARKER" ] && \
+		[ -d "$dir/node_modules" ] && \
+		snapshot_has_packages "$dir/node_modules" && \
+		snapshot_manifest_valid "$dir/manifest.json" "$sha"
 }
 
 snapshot_current_target() { # <releases> — resolved target of current, empty when absent
@@ -843,8 +985,13 @@ snapshot_flip() { # <releases> <sha> — atomic relative-symlink replacement
 }
 
 snapshot_prune() { # <releases> <keep-sha> — current's target plus the newest 5
-	local releases="$1" keep="$2" dir path base kept=0
+	# Prune is deliberately non-fatal: it returns 0 even when a directory
+	# cannot be removed and reports at most ONE bounded warning line naming
+	# the first such directory. Neither the passed sha nor the directory
+	# current actually resolves to is ever a candidate.
+	local releases="$1" keep="$2" dir path base kept=0 current_target failed=""
 	local -a stale=()
+	current_target="$(snapshot_current_target "$releases")"
 	while IFS=$'\t' read -r _ path; do
 		kept=$((kept + 1))
 		if [ "$kept" -le "$SNAPSHOT_KEEP" ]; then
@@ -856,7 +1003,7 @@ snapshot_prune() { # <releases> <keep-sha> — current's target plus the newest 
 			[ -d "$dir" ] || continue
 			path="${dir%/}"
 			base="${path##*/}"
-			if [ "$base" = "$keep" ]; then
+			if [ "$base" = "$keep" ] || [ "$path" = "$current_target" ]; then
 				continue
 			fi
 			[ "${#base}" -eq 40 ] || continue
@@ -865,8 +1012,14 @@ snapshot_prune() { # <releases> <keep-sha> — current's target plus the newest 
 		done | sort -rn -k1,1
 	)
 	for path in ${stale[@]+"${stale[@]}"}; do
-		rm -rf -- "$path" || return 1
+		if snapshot_remove_tree "$path"; then
+			continue
+		fi
+		[ -n "$failed" ] || failed="$path"
 	done
+	if [ -n "$failed" ]; then
+		warn "snapshot: could not remove the old snapshot $(snapshot_bounded "$failed" 120); it stays on disk"
+	fi
 	return 0
 }
 
@@ -875,10 +1028,11 @@ snapshot_materialize() { # <repo> <releases> <sha> <dirty>
 	local final="$releases/$sha" tmp="$releases/.tmp-$sha-$$"
 	local nm_src="" prev created_at
 
-	[ -d "$repo/extensions" ] || die "snapshot: $repo/extensions is missing; nothing to snapshot"
+	[ -f "$repo/$SNAPSHOT_EXT_MARKER" ] || \
+		die "snapshot: $repo/$SNAPSHOT_EXT_MARKER is missing; $repo/extensions is not an agent-kit extension set"
 	SNAPSHOT_RELEASES="$releases"
 	SNAPSHOT_TMP="$tmp"
-	rm -rf -- "$tmp" 2>/dev/null || true
+	snapshot_remove_tree "$tmp" || true
 	mkdir -- "$tmp" || die "snapshot: could not create $tmp"
 
 	mkdir -- "$tmp/extensions" || die "snapshot: could not create $tmp/extensions"
@@ -903,7 +1057,7 @@ snapshot_materialize() { # <repo> <releases> <sha> <dirty>
 	fi
 	[ -n "$nm_src" ] || die "snapshot: no node_modules source provides @earendil-works/pi-coding-agent, pi-ai, pi-tui and typebox (looked at $releases/current and $repo/node_modules)"
 	if ! cp -aL --link -- "$nm_src" "$tmp/node_modules" 2>/dev/null; then
-		rm -rf -- "$tmp/node_modules" 2>/dev/null || true
+		snapshot_remove_tree "$tmp/node_modules" || true
 		cp -aL -- "$nm_src" "$tmp/node_modules" 2>/dev/null || \
 			die "snapshot: could not copy node_modules from $nm_src"
 	fi
@@ -915,12 +1069,16 @@ snapshot_materialize() { # <repo> <releases> <sha> <dirty>
 		printf '  "sha": "%s",\n' "$sha"
 		printf '  "dirty": %s,\n' "$dirty"
 		printf '  "createdAt": "%s",\n' "$created_at"
-		printf '  "source": "%s"\n' "$(printf '%s' "$repo" | snapshot_json_escape)"
+		printf '  "source": "'
+		snapshot_json_escape "$repo"
+		printf '"\n'
 		printf '}\n'
 	} > "$tmp/manifest.json" || die "snapshot: could not write $tmp/manifest.json"
 
 	mv -T -- "$tmp" "$final" || die "snapshot: could not move $tmp into place at $final"
 	SNAPSHOT_TMP=""
+	snapshot_complete "$final" "$sha" || \
+		die "snapshot: $final is not a complete snapshot of $sha after materialization; remove it manually"
 }
 
 cmd_snapshot() { # <releases-dir>
@@ -946,16 +1104,15 @@ cmd_snapshot() { # <releases-dir>
 	releases="$(cd -- "$arg" && pwd -P)" || die "snapshot: cannot resolve releases dir $arg"
 	final="$releases/$sha"
 
+	snapshot_lock "$releases"
 	trap snapshot_cleanup EXIT
 
 	if [ -e "$final" ] || [ -L "$final" ]; then
-		if [ -d "$final" ] && [ -f "$final/manifest.json" ] && \
-			grep -Eq "\"sha\"[[:space:]]*:[[:space:]]*\"$sha\"" "$final/manifest.json" && \
-			[ -d "$final/extensions" ] && [ -d "$final/node_modules" ]; then
+		if snapshot_complete "$final" "$sha"; then
 			if [ "$(snapshot_current_target "$releases")" != "$final" ]; then
 				snapshot_flip "$releases" "$sha"
 			fi
-			snapshot_prune "$releases" "$sha" || warn "snapshot: retention prune failed; old snapshots left in place"
+			snapshot_prune "$releases" "$sha"
 			msg "Snapshot $sha is already present ($final); current points at it"
 			return 0
 		fi
@@ -964,7 +1121,10 @@ cmd_snapshot() { # <releases-dir>
 
 	snapshot_materialize "$REPO" "$releases" "$sha" "$dirty"
 	snapshot_flip "$releases" "$sha"
-	snapshot_prune "$releases" "$sha" || warn "snapshot: retention prune failed; old snapshots left in place"
+	# The flip comes first on purpose: retention must never leave current
+	# pointing at what it is about to delete, and a prune failure is only a
+	# warning.
+	snapshot_prune "$releases" "$sha"
 	msg "Snapshot $sha -> $final (current)"
 }
 
@@ -986,7 +1146,12 @@ Usage:
                         write an immutable, content-addressed snapshot of
                         HEAD (extensions + node_modules) to
                         <releases-dir>/<sha>/ and point <releases-dir>/current
-                        at it; keeps current plus the 5 newest snapshots
+                        at it; keeps current plus the 5 newest snapshots.
+                        Operations on one releases dir are serialized with
+                        an exclusive flock (<releases-dir>/.lock, bounded
+                        wait of 60 s, AGENT_KIT_SNAPSHOT_LOCK_TIMEOUT
+                        overrides it). An old snapshot that cannot be
+                        removed is a warning, not a failure.
   agent-kit uninstall [<host>...]
                         remove owned links of the named hosts and drop them
                         from the selection; without hosts: every host, and
