@@ -40,10 +40,10 @@ A failed `kn connect` is secret-bearing: the ConfigMap update passes the whole d
 
 One data-plane tunnel exists at a time: one local port (8001), one proxy deployment in `kuber-client-<user>`. `kn connect` never stops the previous port-forward; it always starts a new one on that fixed port, so a connect that replaces a tunnel is an explicit two-step operation.
 
-- Before any `kn connect` that replaces an existing tunnel — different cluster or different environment — run `kn disconnect` first, then connect. The rule is uniform; "same environment" is not an exception.
+- Before any `kn connect` that replaces an existing tunnel — different cluster or different environment — run `kn disconnect` first, but only if the tunnel is yours. A tunnel owned by another session is never replaced silently: surface it and get explicit permission first. The rule is otherwise uniform; "same environment" is not an exception.
 - Why silent replacement is dangerous: within one environment the ConfigMap rewrite and deployment restart leave the old port-forward alive, and it silently starts serving the new cluster (state may then record a new PID whose process failed to bind while the health check passed through the old one). Across environments the old forward keeps 8001, the new one cannot bind, and the health check can succeed against the old process — connect "succeeds" while serving the wrong environment.
-- Reuse only when `kn status` shows a running PID, Last Cluster ID matches the target, and `get ns` succeeds. Reconnecting an already healthy tunnel costs up to 2-3 minutes and briefly breaks any in-flight kubectl session.
-- When the target differs from the running tunnel, say so before acting: a kubectl command issued by another session mid-replacement will hit the wrong cluster or an empty API. Surface the replacement, then disconnect and connect.
+- Reuse only when `kn status` shows a running PID, Last Cluster ID matches the target, and `get ns` succeeds — and a reused foreign tunnel is borrowed: work through it, leave it running afterwards. Reconnecting an already healthy tunnel costs up to 2-3 minutes and briefly breaks any in-flight kubectl session.
+- When the target differs from the running tunnel, say so before acting: a kubectl command issued by another session mid-replacement will hit the wrong cluster or an empty API. Surface the replacement; if the running tunnel belongs to another session, get explicit permission before disconnecting, then connect.
 - Never start a second concurrent `kn connect` for a different cluster while you still need the first one.
 
 Reusing a tunnel is safe; assuming what it points at is not. Over a long session, re-check `kn status` before any destructive command.
@@ -80,7 +80,7 @@ kn disconnect      # SIGTERM the tunnel, scale the remote proxy deployment to 0
 kn status          # Tunnel PID must show "-" (or the process gone)
 ```
 
-Run it whenever cluster work ends, including after an aborted or failed attempt: an orphaned proxy deployment keeps running on the control plane until someone scales it down. `kn disconnect` leaves the kubeconfig files in place, so a later kubectl call against the tunnel kubeconfig fails or hangs — that is expected after a disconnect, not a new bug. `kn cleanup` is only for when the user also wants `/etc/hosts` entries and state cleared, and it needs sudo.
+Run it whenever cluster work done through your own tunnel ends, including after an aborted or failed attempt: an orphaned proxy deployment keeps running on the control plane until someone scales it down. A borrowed tunnel is left running; its owner cleans it up. `kn disconnect` leaves the kubeconfig files in place, so a later kubectl call against the tunnel kubeconfig fails or hangs — that is expected after a disconnect, not a new bug. `kn cleanup` is only for when the user also wants `/etc/hosts` entries and state cleared, and it needs sudo.
 
 A failed connect to a different environment is the sharp edge: state is written only after a fully successful connect, so `kn disconnect` afterwards scales the deployment named by the OLD environment and leaves the target environment's proxy running. After any failed connect, inspect the target read-only:
 
