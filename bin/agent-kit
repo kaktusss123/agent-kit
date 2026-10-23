@@ -1104,7 +1104,7 @@ snapshot_lock_mkdir() { # <dir> — atomic mkdir lock, bounded wait, stale takeo
 	# (snapshot_lock_takeover).
 	# Death paths read locals that only some branches assign, so all of them are
 	# initialized here (see the lock protocol note above).
-	local dir="$1" deadline="" now="" age=""
+	local dir="$1" deadline="" now="" age="" vanished=0
 	deadline=$(($(date +%s) + SNAPSHOT_LOCK_TIMEOUT))
 	while :; do
 		if mkdir -- "$dir" 2>/dev/null; then
@@ -1119,8 +1119,19 @@ snapshot_lock_mkdir() { # <dir> — atomic mkdir lock, bounded wait, stale takeo
 			return 0
 		fi
 		if [ ! -d "$dir" ]; then
-			die "snapshot: cannot create the lock directory $dir"
+			# The holder can release between our failed mkdir and this check: the
+			# lock is free and the next mkdir usually wins it, so an ordinary
+			# release race is retried instead of dying. The counter keeps a
+			# genuinely uncreatable path failing fast: three consecutive mkdir
+			# failures with the name still absent (a missing parent, a
+			# non-directory path) are not a release race.
+			vanished=$((vanished + 1))
+			if [ "$vanished" -ge 3 ]; then
+				die "snapshot: cannot create the lock directory $dir"
+			fi
+			continue
 		fi
+		vanished=0
 		age="$(snapshot_lock_age "$dir")"
 		if [ "${age:-0}" -ge "$SNAPSHOT_LOCK_STALE" ]; then
 			if snapshot_lock_takeover "$dir"; then
@@ -1256,7 +1267,12 @@ snapshot_lock_takeover() { # <dir> — take over the lock <dir> only if it is st
 		snapshot_lock_claim_release
 		return 1
 	fi
-	snapshot_remove_tree_now "$aside" || true
+	if ! snapshot_remove_tree_now "$aside"; then
+		# The snapshot itself is intact — the stale lock was provably taken
+		# over — but a leftover aside needs a human: name it instead of
+		# leaving an unnamed artifact behind.
+		warn "snapshot: the taken-over stale lock $aside could not be removed; remove it manually"
+	fi
 	snapshot_lock_claim_release
 	return 0
 }

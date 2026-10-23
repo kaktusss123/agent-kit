@@ -2770,5 +2770,118 @@ done
 	assert_eq "$BARE" "" "bare locals under set -u (bash >= 4.4 leaves them unset)"
 pass
 
+# ==============================================================================
+# T38: a release racing the waiter's failed mkdir is an ordinary event, not a
+# death. The holder releases the lock between the waiter's EEXIST and the
+# directory check — the waiter must retry the mkdir and win the free lock
+# instead of exiting. The shim delays ONLY a FAILING mkdir answer for the lock
+# directory; everything else, including the retry that acquires, passes
+# through untouched.
+
+new_test "T38 a release racing the waiter's failed mkdir retries and wins"
+make_kit "$KIT"
+SHA="$(head_sha)"
+LOCKDIR="$RELEASES/.lock.d"
+mkdir -p "$RELEASES"
+mkdir_lock_write "$LOCKDIR" 0 || fail "test setup: could not take the mkdir lock"
+real_mkdir="$(command -v mkdir)" || fail "test setup: no mkdir in PATH"
+mkdir -p "$SANDBOX/mkdir-shim"
+{
+	printf '#!/bin/sh\n'
+	printf 'real=%q\n' "$real_mkdir"
+	printf 'gate=%q\n' "$SANDBOX/race-gate"
+	printf 'match=%q\n' "$LOCKDIR"
+	cat <<'EOSH'
+saw=0
+for arg in "$@"; do
+	[ "$arg" = "$match" ] && saw=1
+done
+if [ "$saw" = 1 ]; then
+	"$real" "$@"
+	rc=$?
+	if [ "$rc" != 0 ]; then
+		: > "$gate.ready"
+		while [ ! -f "$gate.go" ]; do sleep 0.05 2>/dev/null || sleep 1; done
+	fi
+	exit "$rc"
+fi
+exec "$real" "$@"
+EOSH
+} > "$SANDBOX/mkdir-shim/mkdir"
+chmod +x "$SANDBOX/mkdir-shim/mkdir"
+( RUN_PATH="$SANDBOX/mkdir-shim" AGENT_KIT_SNAPSHOT_LOCK_TIMEOUT=30 run_mkdir_snapshot
+  printf '%s' "$RC" > "$SANDBOX/rc"; printf '%s\n' "$OUT" > "$SANDBOX/out" ) &
+WAITER=$!
+i=0
+while [ ! -f "$SANDBOX/race-gate.ready" ]; do
+	i=$((i + 1))
+	if [ "$i" -gt 400 ]; then
+		fail "test setup: the waiter never met the held lock"
+		break
+	fi
+	sleep 0.05 2>/dev/null || sleep 1
+done
+release_lock_dir "$LOCKDIR"
+: > "$SANDBOX/race-gate.go"
+wait "$WAITER" || true
+	assert_eq "$(cat "$SANDBOX/rc")" 0 "the waiter retried the vanished lock and completed"
+	assert_contains "$(cat "$SANDBOX/out")" "(current)" "the snapshot completed after the retry"
+	assert_link "$RELEASES/current" "$SHA" "current intact after the race"
+	assert_no_file "$LOCKDIR" "no lock directory left"
+pass
+
+# ==============================================================================
+# T39: a stale aside whose removal fails must not fail the snapshot (the
+# takeover was provably correct) and must not pass silently either — a
+# leftover needs a human, so the removal failure becomes a bounded warning
+# that names the path. The rm shim fails exactly the aside removal, the way
+# an immutable flag on the owner file would.
+
+new_test "T39 a stale aside that cannot be removed warns and still succeeds"
+make_kit "$KIT"
+SHA="$(head_sha)"
+mkdir -p "$RELEASES"
+mkdir_lock_write "$RELEASES/.lock.d" 3600 || fail "test setup: could not write a stale mkdir lock"
+real_rm="$(command -v rm)" || fail "test setup: no rm in PATH"
+mkdir -p "$SANDBOX/rm-shim"
+{
+	printf '#!/bin/sh\n'
+	printf 'real=%q\n' "$real_rm"
+	printf 'gate=%q\n' "$SANDBOX/aside-rm"
+	cat <<'EOSH'
+saw=0
+for arg in "$@"; do
+	case "$arg" in
+	*.lock.d.stale-*) saw=1 ;;
+	esac
+done
+if [ "$saw" = 1 ]; then
+	: > "$gate.hit"
+	exit 1
+fi
+exec "$real" "$@"
+EOSH
+} > "$SANDBOX/rm-shim/rm"
+chmod +x "$SANDBOX/rm-shim/rm"
+RUN_PATH="$SANDBOX/rm-shim" run_mkdir_snapshot
+	assert_eq "$RC" 0 "the takeover succeeded despite the unremovable aside"
+	assert_contains "$OUT" "(current)" "the snapshot completed after the takeover"
+	assert_contains "$OUT" "could not be removed" "the leftover aside is named in a warning"
+	warned="$(printf '%s\n' "$OUT" | grep -c '^warning:')"
+	if [ "${warned:-0}" -lt 1 ]; then
+		fail "the removal failure must produce a warning line"
+	fi
+	assert_link "$RELEASES/current" "$SHA" "current advanced to the snapshot"
+	left=0
+	for path in "$RELEASES"/.lock.d.stale-*; do
+		[ -d "$path" ] || continue
+		left=$((left + 1))
+	done
+	assert_eq "$left" 1 "the aside is honestly reported, not silently cleaned"
+	rm -rf -- "$RELEASES"/.lock.d.stale-* 2>/dev/null || true
+	assert_no_file "$RELEASES/.lock.d" "no live lock left behind"
+pass
+
+
 printf '\n%d passed, %d failed\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]
