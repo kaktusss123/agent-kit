@@ -30,7 +30,7 @@ kubectl --kubeconfig "$K" get ns                              # the actual healt
 1. Copy the current log tail aside first: `tail -c 4000 /tmp/kuber-nagibator-tunnel-<port>.log > /tmp/kn-tunnel-last.log`, or read bounded error lines from it.
 2. `kn status` — is the PID `stopped`, and is Last Cluster ID the cluster you need?
 3. Exactly one reasoned recovery attempt: same cluster → `kn reconnect` (it reuses the stored environment and namespace); different or unknown → `kn disconnect`, then full `kn connect <id>` with a 180s+ timeout.
-4. Still failing → read `/tmp/kn-tunnel-last.log`, then the proxy pod on the control plane: `kubectl --kubeconfig <control-plane-kubeconfig> -n kuber-client-$USER get pods,deploy`.
+4. Still failing → read `/tmp/kn-tunnel-last.log`, then the proxy pod on the control plane — derive the namespace first, since it is configurable and only defaults to `kuber-client-$USER`: `NS="$(kn config get environments.<env>.control_plane_namespace)"`, then `kubectl --kubeconfig <control-plane-kubeconfig> -n "$NS" get pods,deploy`.
 
 Never retry the tunnel blindly and never reconnect before capturing that tail; the same failure recurs and the evidence is gone.
 
@@ -85,8 +85,9 @@ Run it whenever cluster work ends, including after an aborted or failed attempt:
 A failed connect to a different environment is the sharp edge: state is written only after a fully successful connect, so `kn disconnect` afterwards scales the deployment named by the OLD environment and leaves the target environment's proxy running. After any failed connect, inspect the target read-only:
 
 ```bash
+NS="$(kn config get environments.<target-env>.control_plane_namespace)"
 kubectl --kubeconfig "$(kn config get environments.<target-env>.control_plane_kubeconfig)" \
-  -n "kuber-client-$USER" get deploy kuber-client
+  -n "$NS" get deploy kuber-client
 ```
 
 If it is running with no tunnel, tell the user and offer two cleanup options: retry `kn connect` for that environment and then `kn disconnect`, or an explicitly user-approved `scale deployment/kuber-client --replicas=0` with that same control-plane kubeconfig. An authorized failed-connect cleanup is the only permitted exception to "the proxy namespace is tunnel infrastructure"; it is still a separate decision, never part of the user's cluster task.
