@@ -1,0 +1,48 @@
+---
+name: kuber-nagibator
+description: "Reach Kubernetes DataPlatform data-plane clusters by name or ID through the installed `kn` (kuber-nagibator) CLI: list clusters, connect through the control-plane proxy tunnel, work inside a cluster with kubectl (get/describe/logs/exec/apply), inspect or repair the tunnel, disconnect. Use for any DataPlatform cluster access request, including ingress-only UIs and tunnel troubleshooting; not for generic Kubernetes or kubectl questions without a DataPlatform cluster target."
+---
+
+# kuber-nagibator: data-plane cluster access
+
+Data-plane clusters have no direct route from the workstation. `kn` bridges that gap: it trades an IAM service key for a token, pulls the cluster kubeconfig from the MK8S gRPC API, deploys a `kubectl proxy` pod on the control plane in namespace `kuber-client-<user>`, keeps a detached local port-forward on 8001 and writes `~/kubernetes/config-b-via-a.yaml` for kubectl. This skill is a workflow adapter over that installed CLI; no tool code lives here.
+
+Two access paths exist and they are not interchangeable: the tunnel kubeconfig reaches one data-plane cluster at a time, while the dev/stage control-plane kubeconfig reaches the control plane directly and never needs a tunnel.
+
+## Mandatory references
+
+- Before the first `kn` command of a session: read `references/kn-reference.md` — exact subcommands and flags, internal-vs-mk8s id resolution and its silent fallback, output shapes, state/config files, timeouts, missing-component diagnoses.
+- Before running kubectl through the tunnel, reusing an active tunnel, using the dev/stage control plane directly, or reaching an ingress-only UI: read `references/agent-workflow.md` — explicit kubeconfig per command, tunnel health proof, single-tunnel concurrency, sudo-free ingress access.
+
+## Non-negotiables
+
+- Explicit cluster only. Candidates come from `kn clusters [--env dev|stage]`; the user's input must match a Name, Internal ID or MK8S ID exactly. Ambiguous or unmatched input stops with the candidate list — never pick the closest match, never silently fall back to the last used cluster.
+- Default read-only: `get`, `describe`, `logs`, `top`, `explain`. Mutations — `apply`, `delete`, `patch`, `scale`, `rollout`, `exec`, `edit` — only inside the scope the user explicitly authorized, never as an investigative side effect.
+- Control plane is a proxy host, not the target. The dev/stage control-plane kubeconfig from `kn config get environments.<env>.control_plane_kubeconfig` addresses the control-plane cluster; objects the user asked about live in the data-plane cluster behind the tunnel.
+- Secrets stay out of output and files: never print or save data-plane kubeconfigs (`~/kubernetes/cluster-<id>.yaml`, `~/kubernetes/config-b-via-a.yaml`), `~/.config/kuber-nagibator/state.yaml`, service keys or `KN_SERVICE_KEY_*` values. `kn config show` masks `service_key_secret`; `kn config get` prints raw values — restrict it to non-secret keys such as `environments.<env>.control_plane_kubeconfig`.
+- Single tunnel slot. Exactly one data-plane tunnel exists at a time (fixed port 8001, one proxy deployment per user namespace): connecting to another cluster replaces it. Check `kn status` first, reuse a healthy tunnel to the same cluster, and surface the replacement before doing it.
+- The slot is machine-global, not session-local. Another agent or a human shell may own the running tunnel, and `~/.config/kuber-nagibator/state.yaml` records it; `kn reconnect` and `kn status` read that state, so `kn reconnect`'s "last cluster" is never a valid way to resolve a cluster.
+- The proxy namespace `kuber-client-<user>` is tunnel infrastructure, not task material: never delete, edit or scale its Deployment/ConfigMap to "fix" access, and never touch it as part of the user's cluster work. Repair goes through `kn connect`, `kn reconnect`, `kn disconnect`.
+- Always `kn disconnect` when cluster work ends, even after a failed attempt. A tunnel left alone keeps the proxy deployment running on the control plane.
+- Do not run `kn ingress`: it needs sudo for `/etc/hosts`, opens a browser and blocks the foreground. Reach ingress-only UIs with a kubectl port-forward plus `curl --resolve` (`references/agent-workflow.md`); if a real browser is required, the user runs that command.
+- No unbounded or interactive kubectl in the bash tool: no `logs -f`, no `watch`, no `exec -it` unless the user's task genuinely needs a shell. Bound output with `--tail`, `-o wide`, `--no-headers`.
+- Missing prerequisites are reported as exact missing components (`kn`, `kubectl`, `grpcurl`, `~/.config/kuber-nagibator/config.yaml`, credentials). Never improvise a substitute for `kn`, and never edit `~/.config/kuber-nagibator/` yourself — credentials are the user's.
+
+## Flow
+
+1. Preflight: `command -v kn kubectl grpcurl`, then `kn status`. A stale or foreign tunnel is resolved here, before a two-minute connect attempt.
+2. Resolve the cluster: `kn clusters` (add `--env stage`, `--all` for non-RUNNING clusters) and apply the exact-match rule. dev and stage hold different clusters and different credentials, so a cluster missing from one environment is searched in the other before the agent reports it as unknown.
+3. Connect: `kn connect <internal-id|mk8s-id> [--env dev|stage]` run with a bash timeout of at least 180s — a cold connect takes 2-3 minutes (kubeconfig fetch, proxy rollout wait up to 120s, health-checked port-forward with up to 5 attempts). Replace an existing live tunnel only with the user's knowledge. `--no-tunnel` retrieves the kubeconfig without a proxy; `--kubeconfig FILE` bypasses the id resolution and MK8S API when those are down.
+4. Prove the tunnel before real work: `kubectl --kubeconfig ~/kubernetes/config-b-via-a.yaml get ns`. A failure here is a tunnel diagnosis (`references/agent-workflow.md`): read `/tmp/kuber-nagibator-tunnel-8001.log` and the proxy deployment state before reconnecting, and never retry the same connect blindly.
+5. Confirm identity when the CLI resolved something: `connect` prints `Resolved <name> -> mk8s <id>`. If that name is not the cluster the user asked for, stop and re-resolve instead of continuing.
+6. Do the requested work, read-only unless authorized, with the explicit `--kubeconfig` flag on every kubectl invocation and an explicit `-n` (the tunnel context has no default namespace); use `-A` to locate an object when the namespace is unknown. A tunnel that breaks mid-change leaves the cluster state unknown: re-observe with `get`/`describe` before repeating anything.
+7. `kn disconnect`, then confirm with `kn status`. `kn cleanup` only when the user also wants `/etc/hosts` entries and state cleared (it needs sudo).
+
+## Completion
+
+Done means:
+
+- the cluster was resolved by exact match against `kn clusters`, environment included;
+- the tunnel was proven live with `get ns` before the first real command, and it served the intended cluster;
+- every mutation stayed inside the explicitly authorized scope, and conclusions rest on quoted kubectl output rather than assumption;
+- `kn disconnect` ran and `kn status` shows no running tunnel PID — or the reason a tunnel was deliberately left up is stated.
