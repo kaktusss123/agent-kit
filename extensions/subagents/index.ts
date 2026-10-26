@@ -59,7 +59,7 @@ import {
 	type ParentRuntimeFacts,
 } from "./provider-extensions";
 import { resolveAgentDir } from "../proxy/proxy-lib";
-import { defaultResultsDir, sumSessionCost } from "./result-store";
+import { defaultResultsDir, migrateLegacyResults, sumSessionCost } from "./result-store";
 import { ownDeliveryInFlight } from "./steering-wake";
 import type { WaitOutcome } from "./types";
 import {
@@ -291,6 +291,13 @@ function resolveChildProviderEntries(model: string): string[] {
 }
 
 export default function (pi: ExtensionAPI) {
+	// Relocate legacy flat results into per-session directories. Best effort:
+	// a failure must never block extension startup.
+	try {
+		migrateLegacyResults(defaultResultsDir());
+	} catch {
+		// ignore
+	}
 	let runtime: LocalSubagentRuntime | null = null;
 	let runs: WorkspaceRuns | null = null;
 	/** Running-agents push, attached when the runtime is first created. */

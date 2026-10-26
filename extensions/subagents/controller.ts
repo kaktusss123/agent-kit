@@ -39,7 +39,7 @@ import {
 	type SpawnFn,
 } from "./rpc-child";
 import { ProviderExtensionError } from "./provider-extensions";
-import { defaultResultsDir, loadResult, saveResult, sumSessionCost, summarizeText } from "./result-store";
+import { defaultResultsDir, listAllResults, loadResult, saveResult, sumSessionCost, summarizeText } from "./result-store";
 import { parseReadinessPayload, type ReadinessPayload } from "./readiness";
 import { ASK_WIRE_TITLE } from "./bridge-ask";
 import { formatAskRequestFlat, parseAskRequest, type AskInput } from "../ask/contract";
@@ -1651,25 +1651,7 @@ function eventToOutcome(ev: SubagentModelEvent): WaitOutcome {
  * the parsed result rides along for callers that rewrite it in place.
  */
 function runningMarkers(dir: string): AgentResult[] {
-	let entries: string[];
-	try {
-		entries = fs.readdirSync(dir);
-	} catch {
-		return [];
-	}
-	const markers: AgentResult[] = [];
-	for (const name of entries) {
-		if (!name.endsWith(".json")) continue; // also excludes saveResult's .tmp files
-		let result: AgentResult;
-		try {
-			result = JSON.parse(fs.readFileSync(path.join(dir, name), "utf8")) as AgentResult;
-		} catch {
-			continue; // corrupt/partial file: skip, never break the caller
-		}
-		if (!result || typeof result.id !== "string" || result.status !== "running") continue;
-		markers.push(result);
-	}
-	return markers;
+	return listAllResults(dir).filter((r) => typeof r.id === "string" && r.status === "running");
 }
 
 function isTerminal(state: AgentState): state is AgentResult["status"] {
