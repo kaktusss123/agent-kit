@@ -16,8 +16,8 @@
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import {
 	buildTitlePrompt,
-	modelClassesFile,
-	readCheapModelClass,
+	readExploreRoleModel,
+	rolesFile,
 	sanitizeTitle,
 	TITLE_SYSTEM_PROMPT,
 } from "./title";
@@ -81,10 +81,10 @@ export default function sessionTitleExtension(pi: ExtensionAPI): void {
 	});
 }
 
-/** Saved "cheap" class if resolvable and authenticated, else the active session model. */
+/** Model bound to the `explore` role if resolvable and authenticated, else the active session model. */
 function pickTitleModel(ctx: ExtensionContext): ExtensionContext["model"] {
 	try {
-		const saved = readCheapModelClass(modelClassesFile());
+		const saved = readExploreRoleModel(rolesFile());
 		if (saved) {
 			const slash = saved.indexOf("/");
 			const model = ctx.modelRegistry.find(saved.slice(0, slash), saved.slice(slash + 1));

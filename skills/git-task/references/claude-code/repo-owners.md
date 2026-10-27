@@ -11,7 +11,7 @@ A RepoOwner is an Agent-tool subagent of type `repo-owner` (agent-kit's `claude-
 - commits only through `agent-kit task commit` (`skills/git-commit/references/claude-code/checkpoint.md`);
 - when the session is unguarded, the manual routing rules from `references/claude-code/task-workspace.md` ("Without the guard") copied into the assignment verbatim — the owner does not load this reference by itself.
 
-Do not use `isolation: worktree` for owners: it creates a separate Claude-managed worktree on its own branch instead of the task worktree. Model choice: do not pass `model` on owner dispatches (the agent definition fixes it; an explicit user model choice still wins). An independent reviewer is a fresh `general-purpose` subagent with `model: opus` (Pi's `modelClass=smart`).
+Do not use `isolation: worktree` for owners: it creates a separate Claude-managed worktree on its own branch instead of the task worktree. Model choice: do not pass `model` on owner dispatches (the agent definition fixes it; an explicit user model choice still wins). Role mapping: `owner` is the `repo-owner` agent, `explore` is `Explore`, `helper` is `general-purpose` with no `model`, and `review` (the independent reviewer) is a fresh `general-purpose` subagent with `model: opus`.
 
 Parallel owners for independent repositories are parallel Agent calls in one message; dependent owners are dispatched in dependency order.
 

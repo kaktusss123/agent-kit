@@ -1,6 +1,6 @@
 /**
  * Pure helpers for session-title: title prompt construction, response
- * extraction/sanitization, and reading the saved "cheap" model class.
+ * extraction/sanitization, and reading the model bound to the `explore` role.
  *
  * The title is derived only from the user's first message; everything here is
  * deterministic so the LLM call itself stays in index.ts.
@@ -73,27 +73,32 @@ export function sanitizeTitle(raw: string): string | undefined {
 	return truncated.length > 0 ? truncated : undefined;
 }
 
-/** Default model-classes.json location, mirroring the model-classes extension. */
-export function modelClassesFile(env: Record<string, string | undefined> = process.env): string {
-	return join(env.PI_CODING_AGENT_DIR ?? join(homedir(), ".pi", "agent"), "model-classes.json");
+/** Default subagent-roles.json location, mirroring the subagents extension. */
+export function rolesFile(env: Record<string, string | undefined> = process.env): string {
+	return join(env.PI_CODING_AGENT_DIR ?? join(homedir(), ".pi", "agent"), "subagent-roles.json");
 }
 
 /**
- * Read the saved "cheap" class canonical id (`<provider>/<modelId>`) from
- * model-classes.json. Returns undefined when the file is missing, unparsable,
- * or has no cheap class — callers fall back to the active session model.
+ * Read the model bound to the `explore` (cheap research) role from
+ * subagent-roles.json, as a canonical `<provider>/<modelId>` (a trailing
+ * `:thinking` level is dropped; title generation does not use it). Returns
+ * undefined when the file is missing, unparsable, or has no explore binding
+ * — callers fall back to the active session model.
  */
-export function readCheapModelClass(file: string): string | undefined {
+export function readExploreRoleModel(file: string): string | undefined {
 	try {
 		const parsed: unknown = JSON.parse(readFileSync(file, "utf8"));
 		if (typeof parsed !== "object" || parsed === null) return undefined;
-		const cheap = (parsed as Record<string, unknown>)["cheap"];
-		if (typeof cheap !== "object" || cheap === null) return undefined;
-		const model = (cheap as Record<string, unknown>)["model"];
-		if (typeof model !== "string") return undefined;
+		const spec = (parsed as Record<string, unknown>)["explore"];
+		if (typeof spec !== "string") return undefined;
+		const colon = spec.lastIndexOf(":");
+		const suffix = colon > 0 ? spec.slice(colon + 1) : "";
+		const model = THINKING_LEVELS.includes(suffix) ? spec.slice(0, colon) : spec;
 		const slash = model.indexOf("/");
 		return slash > 0 && slash < model.length - 1 ? model : undefined;
 	} catch {
 		return undefined;
 	}
 }
+
+const THINKING_LEVELS = ["off", "minimal", "low", "medium", "high", "xhigh", "max"];

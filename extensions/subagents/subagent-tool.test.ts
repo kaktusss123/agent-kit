@@ -6,11 +6,9 @@
  */
 import { describe, expect, test } from "bun:test";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
-import { execFileSync } from "node:child_process";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
-import { pathToFileURL } from "node:url";
 import registerExtension from "./index";
 
 interface ToolDef {
@@ -48,7 +46,7 @@ function makeEnv() {
 	fs.mkdirSync(taskRootRaw, { recursive: true });
 	const previousTaskRoot = process.env.AGENT_TASK_ROOT;
 	process.env.AGENT_TASK_ROOT = fs.realpathSync(taskRootRaw);
-	// Model-class storage pinned to the fixture: spawn resolution must never
+	// Role-binding storage pinned to the fixture: spawn resolution must never
 	// depend on (or accidentally read) the real user's agent dir.
 	const previousAgentDir = process.env.PI_CODING_AGENT_DIR;
 	const agentDir = path.join(base, "agent-dir");
@@ -120,29 +118,23 @@ describe("subagent tool surface", () => {
 		expect(shape).toContain('"waitTimeoutSec"');
 		expect(shape).toContain("independent of deadlineSec");
 		expect(shape).toContain('"cwd"');
-		expect(shape).toContain('"modelClass"');
-		// modelClass is a free-form string (R4): no enum — runtime validation
-		const props = (def.parameters as { properties: Record<string, { type?: string; enum?: unknown; description?: string }> }).properties;
-		expect(props.modelClass).toMatchObject({ type: "string" });
-		expect(props.modelClass.enum).toBeUndefined();
-		expect(props.modelClass.description).toContain("routed default");
-		expect(props.modelClass.description).toContain('"default"');
+		expect(shape).toContain('"model"');
+		expect(shape).toContain('"role"');
+		const props = (def.parameters as { properties: Record<string, { type?: string; enum?: unknown; anyOf?: unknown; description?: string }> }).properties;
+		expect(props.model).toMatchObject({ type: "string" });
+		expect(props.model.description).toContain("provider/id[:thinking]");
+		expect(JSON.stringify(props.role)).toContain('"explore"');
+		expect(JSON.stringify(props.role)).toContain('"owner"');
+		expect(props.role.description).toContain("Mutually exclusive");
 		// workspace guidance lives in the prompt guidelines
 		const guidelines = (def.promptGuidelines ?? []).join("\n");
 		expect(guidelines).toContain("workspace");
 		expect(guidelines).toContain("git_facts");
-		// routing-aware class guidance; the old rejection wording is gone (R4)
-		expect(guidelines).toContain("routed default");
-		expect(guidelines).toContain("/model-class route");
-		expect(guidelines).not.toContain("do not pass modelClass");
-		expect(guidelines).not.toContain("it is rejected");
-		// the omission rule is scoped to workspace only: plain class selection
-		// (e.g. an explicit smart reviewer) must stay allowed
-		expect(guidelines).toContain("omit modelClass on workspace (RepoOwner) spawns unless the user explicitly requests a class");
-		expect(guidelines).not.toMatch(/omit modelClass unless the user/);
-		expect(guidelines).toContain("smart suits review and complex/nontrivial reasoning");
-		expect(props.modelClass.description).toContain("Omit on workspace (RepoOwner) spawns unless the user explicitly asks for a class");
-		expect(props.modelClass.description).toContain("on plain spawns pick a class yourself");
+		// explicit-model and role guidance
+		expect(guidelines).toContain("If the user named a model, pass `model`");
+		expect(guidelines).toContain("`review` for independent review");
+		expect(guidelines).toContain("Do not pass `model` or `role` on owner dispatches unless the user asked for a specific model");
+		expect(guidelines).toContain("/subagent-role");
 	});
 
 	test("workspace spawn without a session model → blocked, dispatched:false, no process", async () => {
@@ -166,7 +158,7 @@ describe("subagent tool surface", () => {
 		}
 	});
 
-	test("workspace spawn accepts modelClass: an unknown class is a blocked resolution failure, not a tool rejection (R4/R3)", async () => {
+	test("workspace spawn accepts model: an unknown model is a blocked resolution failure, not a tool rejection", async () => {
 		const { pi, tools } = makePi();
 		registerExtension(pi);
 		const env = makeEnv();
@@ -174,40 +166,34 @@ describe("subagent tool surface", () => {
 			const def = tools.get("subagent")!;
 			const res = (await def.execute(
 				"tc-2",
-				{ op: "spawn", workspace: "/definitely/not/here", task: "t", modelClass: "nosuch" },
+				{ op: "spawn", workspace: "/definitely/not/here", task: "t", model: "nosuch/model" },
 				undefined,
 				undefined,
 				REGISTRY_CTX,
 			)) as { details: Record<string, unknown>; isError?: boolean };
 			expect(res.isError).toBeUndefined(); // not a tool-level error: a run-layer blocked outcome
 			expect(res.details).toMatchObject({ status: "blocked", dispatched: false });
-			const reason = String(res.details.reason);
-			expect(reason).toContain('"nosuch"');
-			expect(reason).toContain("/model-class nosuch set");
+			expect(String(res.details.reason)).toContain('"nosuch/model"');
 		} finally {
 			env.restore();
 		}
 	});
 
-	test("workspace spawn with a resolvable modelClass proceeds past the model gate to workspace validation", async () => {
+	test("workspace spawn with a resolvable model proceeds past the model gate to workspace validation", async () => {
 		const { pi, tools } = makePi();
 		registerExtension(pi);
 		const env = makeEnv();
 		try {
-			fs.writeFileSync(
-				path.join(env.agentDir, "model-classes.json"),
-				JSON.stringify({ heavy: { model: "zai/glm-x", thinking: "high" } }),
-			);
 			const def = tools.get("subagent")!;
 			const res = (await def.execute(
 				"tc-2b",
-				{ op: "spawn", workspace: "/definitely/not/here", task: "t", modelClass: "heavy" },
+				{ op: "spawn", workspace: "/definitely/not/here", task: "t", model: "zai/glm-x:high" },
 				undefined,
 				undefined,
 				REGISTRY_CTX,
 			)) as { details: Record<string, unknown>; isError?: boolean };
-			// the class RESOLVED (model gate passed); the nonexistent workspace is
-			// what fails now — proof modelClass is accepted in workspace mode
+			// the model RESOLVED (model gate passed); the nonexistent workspace is
+			// what fails now — proof `model` is accepted in workspace mode
 			expect(res.details).toMatchObject({ status: "unsupported", dispatched: false });
 			expect(String(res.details.reason)).toContain("does not exist");
 		} finally {
@@ -215,7 +201,36 @@ describe("subagent tool surface", () => {
 		}
 	});
 
-	test("deadlineSec on a plain spawn is rejected; plain spawn resolves a model class", async () => {
+	test("workspace spawn uses the owner binding; a broken binding, a non-owner role, or model+role is blocked before dispatch", async () => {
+		const { pi, tools } = makePi();
+		registerExtension(pi);
+		const env = makeEnv();
+		try {
+			const def = tools.get("subagent")!;
+			const run = async (extra: Record<string, unknown>) =>
+				(await def.execute(
+					"tc-2c",
+					{ op: "spawn", workspace: "/definitely/not/here", task: "t", ...extra },
+					undefined,
+					undefined,
+					REGISTRY_CTX,
+				)) as { details: Record<string, unknown> };
+			fs.writeFileSync(path.join(env.agentDir, "subagent-roles.json"), JSON.stringify({ owner: "zai/glm-x:high" }));
+			expect((await run({})).details).toMatchObject({ status: "unsupported", dispatched: false });
+			fs.writeFileSync(path.join(env.agentDir, "subagent-roles.json"), JSON.stringify({ owner: "gone/model" }));
+			const broken = await run({});
+			expect(broken.details).toMatchObject({ status: "blocked", dispatched: false });
+			expect(String(broken.details.reason)).toContain("subagent-roles.json");
+			expect(String(broken.details.reason)).toContain("/subagent-role owner");
+			fs.rmSync(path.join(env.agentDir, "subagent-roles.json"));
+			expect((await run({ role: "review" })).details).toMatchObject({ status: "blocked", dispatched: false });
+			expect((await run({ role: "owner", model: "zai/glm-x" })).details).toMatchObject({ status: "blocked", dispatched: false });
+		} finally {
+			env.restore();
+		}
+	});
+
+	test("deadlineSec on a plain spawn is rejected; plain spawn rejects owner and model+role before any child starts", async () => {
 		const { pi, tools } = makePi();
 		registerExtension(pi);
 		const env = makeEnv();
@@ -230,6 +245,16 @@ describe("subagent tool surface", () => {
 			)) as { isError?: boolean; details: { error?: string } };
 			expect(res.isError).toBe(true);
 			expect(res.details.error).toContain("deadlineSec");
+			for (const extra of [{ role: "owner" }, { role: "review", model: "zai/glm-x" }, { model: "nosuch/model" }]) {
+				const bad = (await def.execute(
+					"tc-3b",
+					{ op: "spawn", task: "t", ...extra },
+					undefined,
+					undefined,
+					{ ...CTX, model: { provider: "zai", id: "glm-x" }, modelRegistry: REGISTRY_CTX.modelRegistry },
+				)) as { isError?: boolean };
+				expect(bad.isError).toBe(true);
+			}
 		} finally {
 			env.restore();
 		}
@@ -263,78 +288,11 @@ describe("subagent tool surface", () => {
 		expect(res.isError).toBe(true);
 	});
 
-	test("static descriptions enumerate the saved class names at extension LOAD, never at import (R4)", () => {
-		const base = fs.mkdtempSync(path.join(os.tmpdir(), "subagent-desc-test-"));
-		const agentDir1 = path.join(base, "agent-dir-1");
-		const agentDir2 = path.join(base, "agent-dir-2");
-		fs.mkdirSync(agentDir1, { recursive: true });
-		fs.mkdirSync(agentDir2, { recursive: true });
-		fs.writeFileSync(
-			path.join(agentDir1, "model-classes.json"),
-			JSON.stringify({
-				workhorse: { model: "zai/glm-x", thinking: "low" },
-				heavy: { model: "zai/glm-max", thinking: "high" },
-			}),
-		);
-		fs.writeFileSync(
-			path.join(agentDir2, "model-classes.json"),
-			JSON.stringify({ deep: { model: "zai/glm-max", thinking: "high" } }),
-		);
-		const indexPath = path.join(import.meta.dir, "index.ts");
-		// Fresh module load in a subprocess with NO agent dir pinned: the
-		// class list must be enumerated at REGISTRATION time (extension load),
-		// so the env is redirected AFTER the import, BEFORE each register().
-		// Each registration reads the storage that is current at that moment.
-		const script = [
-			`delete process.env.PI_CODING_AGENT_DIR;`,
-			`delete process.env.PI_SUBAGENT_ID;`,
-			`const { default: register } = await import(${JSON.stringify(pathToFileURL(indexPath).href)});`,
-			`const tools = new Map();`,
-			`const registerOnce = () => {`,
-			`	tools.clear();`,
-			`	register({`,
-			`		registerTool: (d) => tools.set(d.name, d),`,
-			`		registerCommand: () => {},`,
-			`		sendMessage: () => {},`,
-			`		getThinkingLevel: () => "low",`,
-			`		on: () => () => {},`,
-			`	});`,
-			`	return tools.get("subagent");`,
-			`};`,
-			`process.env.PI_CODING_AGENT_DIR = ${JSON.stringify(agentDir1)};`,
-			`const def1 = registerOnce();`,
-			`process.env.PI_CODING_AGENT_DIR = ${JSON.stringify(agentDir2)};`,
-			`const def2 = registerOnce();`,
-			`console.log(JSON.stringify({`,
-			`	d1: def1.parameters.properties.modelClass.description,`,
-			`	g1: def1.promptGuidelines,`,
-			`	d2: def2.parameters.properties.modelClass.description,`,
-			`}));`,
-		].join("\n");
-		try {
-			const out = execFileSync("bun", ["-e", script], { encoding: "utf8" });
-			const parsed = JSON.parse(out) as {
-				d1: string;
-				g1: string[];
-				d2: string;
-			};
-			expect(parsed.d1).toContain("currently: workhorse, heavy");
-			expect(parsed.g1.join("\n")).toContain("currently saved: workhorse, heavy");
-			expect(parsed.g1.join("\n")).toContain("/model-class route");
-			// the second registration enumerates CURRENT storage, not a list
-			// frozen at import time
-			expect(parsed.d2).toContain("currently: deep");
-			expect(parsed.d2).not.toContain("workhorse");
-		} finally {
-			fs.rmSync(base, { recursive: true, force: true });
-		}
-	}, 30000);
-
-	test("before_agent_start maintains a fresh subagent_model_defaults section from CURRENT storage", async () => {
+	test("before_agent_start maintains a fresh subagent_model_defaults section from CURRENT role bindings", async () => {
 		const base = fs.mkdtempSync(path.join(os.tmpdir(), "subagent-guidance-test-"));
 		const agentDir = path.join(base, "agent-dir");
 		fs.mkdirSync(agentDir, { recursive: true });
-		const storage = path.join(agentDir, "model-classes.json");
+		const storage = path.join(agentDir, "subagent-roles.json");
 		const prevAgentDir = process.env.PI_CODING_AGENT_DIR;
 		process.env.PI_CODING_AGENT_DIR = agentDir;
 		const writeStorage = (payload: unknown) =>
@@ -352,16 +310,14 @@ describe("subagent tool surface", () => {
 				await handler!(event, ctx);
 				return event.systemPromptOptions.sections["subagent_model_defaults"]!;
 			};
-			// saved heavy, no route: the section names the pair and the implicit default
-			writeStorage({ heavy: { model: "zai/glm-max", thinking: "xhigh" } });
-			const first = await run();
-			expect(first).toContain("heavy=zai/glm-max (xhigh)");
-			expect(first).toContain("implicit heavy -> zai/glm-max (xhigh)");
-			expect(first).toContain("current session model zai/glm-x (low)");
-			// mid-session routing change: the NEXT run reflects it (no stale snapshot)
-			writeStorage({ heavy: { model: "zai/glm-max", thinking: "xhigh" }, routing: { repoOwner: "heavy" } });
-			expect(await run()).toContain("route=heavy -> zai/glm-max (xhigh)");
-			// unreadable storage: explicit fail-closed note, never a silent default
+			// no file: every role is the session model
+			expect(await run()).toContain("- review (independent fresh-context reviewer): session");
+			writeStorage({ review: "zai/glm-max:xhigh" });
+			expect(await run()).toContain("- review (independent fresh-context reviewer): zai/glm-max:xhigh");
+			// mid-session rebind: the NEXT run reflects it (no stale snapshot)
+			writeStorage({ review: "zai/glm-x:low" });
+			expect(await run()).toContain("zai/glm-x:low");
+			// unreadable bindings: explicit fail-closed note, never a silent default
 			writeStorage("{ not json");
 			expect(await run()).toContain("unreadable");
 		} finally {
@@ -370,30 +326,34 @@ describe("subagent tool surface", () => {
 			fs.rmSync(base, { recursive: true, force: true });
 		}
 	}, 10000);
+
+	test("registers the /subagent-role command", () => {
+		const commands = new Map<string, unknown>();
+		const { pi } = makePi();
+		(pi as unknown as { registerCommand: (n: string, d: unknown) => void }).registerCommand = (n, d) => {
+			commands.set(n, d);
+		};
+		registerExtension(pi);
+		expect(commands.has("subagent-role")).toBe(true);
+	});
 });
 
 // ---------------------------------------------------------------------------
-// Nested spawn: main -> subagent(workspace=...) -> subagent(modelClass=...)
+// Nested spawn: main -> subagent(workspace=...) -> subagent(model=...)
 //
 // The workspace profile ships THIS extension's index.ts into the RepoOwner
 // child, so the worker owns the same `subagent` tool the main session has.
 // These tests load the real index.ts (the exact file the profile carries),
-// point the model-classes store at a scratch agent dir, and prove that a
-// `modelClass=cheap` spawn through the real tool execute() starts a real
-// grandchild process whose argv carries the RESOLVED class model.
+// point the role bindings at a scratch agent dir, and prove that an explicit
+// `model` or a bound `role` spawn through the real tool execute() starts a
+// real grandchild process whose argv carries the RESOLVED model.
 // ---------------------------------------------------------------------------
 
 describe("nested spawn from a workspace worker", () => {
-	test("child-embedded subagent tool resolves modelClass=cheap and starts the grandchild with it", async () => {
+	test("child-embedded subagent tool resolves an explicit model and starts the grandchild with it", async () => {
 		const base = fs.mkdtempSync(path.join(os.tmpdir(), "subagent-nested-test-"));
 		const agentDir = path.join(base, "agent-dir");
 		fs.mkdirSync(agentDir, { recursive: true });
-		// The persisted class store (same file /main/ writes; the worker reads
-		// it through the inherited PI_CODING_AGENT_DIR).
-		fs.writeFileSync(
-			path.join(agentDir, "model-classes.json"),
-			JSON.stringify({ cheap: { model: "budget/nano", thinking: "minimal" } }),
-		);
 		const argvOut = path.join(base, "grandchild-argv.json");
 		const probe = path.join(base, "argv-probe.js");
 		// The grandchild records its own CLI argv AND pid, then stays alive
@@ -421,7 +381,7 @@ describe("nested spawn from a workspace worker", () => {
 			registerExtension(pi);
 			const def = tools.get("subagent")!;
 			// The worker's tool context: its own model is the inherited main
-			// model; the registry is what stored classes resolve against.
+			// model; the registry is what explicit models resolve against.
 			const ctx = {
 				cwd: base,
 				model: { provider: "zai", id: "glm-x" },
@@ -433,13 +393,13 @@ describe("nested spawn from a workspace worker", () => {
 					],
 				},
 			};
-			// The spawn ack proves the class RESOLVED (fail closed otherwise),
+			// The spawn ack proves the model RESOLVED (fail closed otherwise),
 			// but the probe child never speaks RPC — the ack only lands after
 			// the runtime's acceptance timeout. Run the execute WITHOUT await
 			// and read the argv record while it is pending.
 			const pending = def.execute(
 				"tc-n1",
-				{ op: "spawn", task: "repo-local helper work", modelClass: "cheap" },
+				{ op: "spawn", task: "repo-local helper work", model: "budget/nano:minimal" },
 				undefined,
 				undefined,
 				ctx,
@@ -487,16 +447,13 @@ describe("nested spawn from a workspace worker", () => {
 		}
 	}, 30000);
 
-	test("smart resolves to the STORED pair (not the inherited session model) and starts the grandchild with it", async () => {
+	test("a bound role resolves to the BOUND pair (not the inherited session model) and starts the grandchild with it", async () => {
 		const base = fs.mkdtempSync(path.join(os.tmpdir(), "subagent-nested-test-"));
 		const agentDir = path.join(base, "agent-dir");
 		fs.mkdirSync(agentDir, { recursive: true });
-		// stored smart = zai/glm-x @ high; the worker session itself runs low —
-		// if the stored pair were ignored, --thinking would say low, not high.
-		fs.writeFileSync(
-			path.join(agentDir, "model-classes.json"),
-			JSON.stringify({ smart: { model: "zai/glm-x", thinking: "high" } }),
-		);
+		// review bound to zai/glm-x @ high; the worker session itself runs low —
+		// if the binding were ignored, --thinking would say low, not high.
+		fs.writeFileSync(path.join(agentDir, "subagent-roles.json"), JSON.stringify({ review: "zai/glm-x:high" }));
 		const argvOut = path.join(base, "grandchild-argv.json");
 		const probe = path.join(base, "argv-probe.js");
 		fs.writeFileSync(
@@ -528,7 +485,7 @@ describe("nested spawn from a workspace worker", () => {
 			};
 			const pending = def.execute(
 				"tc-n2",
-				{ op: "spawn", task: "critical review", modelClass: "smart" },
+				{ op: "spawn", task: "critical review", role: "review" },
 				undefined,
 				undefined,
 				ctx,
@@ -548,7 +505,7 @@ describe("nested spawn from a workspace worker", () => {
 			expect(argv).toContain("--model");
 			expect(argv[argv.indexOf("--model") + 1]).toBe("zai/glm-x");
 			expect(argv).toContain("--thinking");
-			expect(argv[argv.indexOf("--thinking") + 1]).toBe("high"); // stored, NOT the session's low
+			expect(argv[argv.indexOf("--thinking") + 1]).toBe("high"); // bound, NOT the session's low
 
 			try {
 				process.kill(recorded!.pid);
@@ -557,17 +514,17 @@ describe("nested spawn from a workspace worker", () => {
 			}
 			await pending;
 
-			// cheap is not configured in this dir → refused before any process.
+			// an unknown model is refused before any process.
 			const bad = (await def.execute(
 				"tc-n3",
-				{ op: "spawn", task: "t", modelClass: "cheap" },
+				{ op: "spawn", task: "t", model: "budget/nano" },
 				undefined,
 				undefined,
 				ctx,
 			)) as { isError?: boolean; details: { error?: string } };
 			expect(bad.isError).toBe(true);
-			expect(bad.details.error).toContain("cheap");
-			// no grandchild was ever started for the refused class
+			expect(bad.details.error).toContain("budget/nano");
+			// no grandchild was ever started for the refused model
 			expect(fs.existsSync(argvOut + ".second")).toBe(false);
 		} finally {
 			if (prevWorkerId === undefined) delete process.env.PI_SUBAGENT_ID;
@@ -581,7 +538,7 @@ describe("nested spawn from a workspace worker", () => {
 		}
 	}, 15000);
 
-	test("default inherits the worker's session model and starts the grandchild with it", async () => {
+	test("omitting model and role inherits the worker's session model and starts the grandchild with it", async () => {
 		const base = fs.mkdtempSync(path.join(os.tmpdir(), "subagent-nested-test-"));
 		const agentDir = path.join(base, "agent-dir");
 		fs.mkdirSync(agentDir, { recursive: true });
@@ -598,13 +555,13 @@ describe("nested spawn from a workspace worker", () => {
 		process.env.PI_SUBAGENT_ID = "sa-worker-followup";
 		const prevArgvOut = process.env.PI_ARGV_OUT;
 		const prevArgv1 = process.argv[1];
-		process.env.PI_CODING_AGENT_DIR = agentDir; // no stored classes: default must still work
+		process.env.PI_CODING_AGENT_DIR = agentDir; // no bindings: the session model must still work
 		process.env.PI_ARGV_OUT = argvOut;
 		process.argv[1] = probe;
 
 		try {
 			const { pi, tools } = makePi();
-			// the worker session's live thinking level feeds the default class
+			// the worker session's live thinking level feeds the session pair
 			(pi as unknown as { getThinkingLevel(): string }).getThinkingLevel = () => "high";
 			registerExtension(pi);
 			const def = tools.get("subagent")!;
@@ -616,7 +573,7 @@ describe("nested spawn from a workspace worker", () => {
 			};
 			const pending = def.execute(
 				"tc-n4",
-				{ op: "spawn", task: "helper" }, // no modelClass → default
+				{ op: "spawn", task: "helper" }, // no model/role → helper → unbound → session
 				undefined,
 				undefined,
 				ctx,
@@ -668,7 +625,7 @@ describe("nested spawn from a workspace worker", () => {
 		process.argv[1] = probe;
 		delete process.env.PI_SUBAGENT_ID;
 		// Pin an EMPTY agent dir: spawn resolution must never consult the real
-		// user's model-classes storage (a real plain route to a model outside
+		// user's role bindings (a real helper binding to a model outside
 		// this fake registry would make the spawn fail closed here).
 		const prevAgentDir = process.env.PI_CODING_AGENT_DIR;
 		const agentDir = path.join(base, "agent-dir");
@@ -786,7 +743,7 @@ describe("workspace spawn nesting is flat (fail closed)", () => {
 			await new Promise((r) => setTimeout(r, 600));
 			expect(fs.existsSync(argvOut)).toBe(false);
 
-			// (Plain modelClass helpers from the same worker keep working —
+			// (Plain model helpers from the same worker keep working —
 			// proven by the nested tests above, which run with
 			// PI_SUBAGENT_ID set.)
 		} finally {

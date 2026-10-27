@@ -13,7 +13,7 @@
   hooks;
 - **workflow `/spec` и `/dev`** — спецификация в Main-сессии, реализация
   субагентами-владельцами репозиториев;
-- **расширения Pi** — субагенты, `ask`, todo, классы моделей, footer,
+- **расширения Pi** — субагенты, `ask`, todo, роли моделей субагентов, footer,
   web search и прочее.
 
 Pi — основной host: всё, что требует расширений, живёт там. Claude Code
@@ -239,9 +239,8 @@ fork/exec. Если в этом окне лок всё-таки перехват
 | Расширение | Что делает |
 | --- | --- |
 | [`task-workspace`](extensions/task-workspace/README.md) | Инструменты task workspace, git-shim в `bash`, guard на `write`/`edit` |
-| [`subagents`](extensions/subagents/README.md) | Инструмент `subagent` (`spawn`, `status`, `steer`, `follow_up`, `wait`, `result`, `respond`, `cancel`); workspace-режим для RepoOwner с проверкой готовности, дедлайном и проверкой settled-состояния; `/subagents [kill-all]` |
+| [`subagents`](extensions/subagents/README.md) | Инструмент `subagent` (`spawn`, `status`, `steer`, `follow_up`, `wait`, `result`, `respond`, `cancel`); workspace-режим для RepoOwner с проверкой готовности, дедлайном и проверкой settled-состояния; явная модель (`model=provider/id[:thinking]`) и фиксированные роли `explore`/`helper`/`review`/`owner` с привязками в `subagent-roles.json` (`/subagent-role`); `/subagents [kill-all]`. Быстрое переключение модели сессии — штатная настройка Pi `enabledModels` |
 | [`ask`](extensions/ask/README.md) | Инструмент `ask`: диалог с пользователем в TUI, select/input в RPC, fail-closed без интерфейса; у субагентов вопрос уходит в Main |
-| [`model-classes`](extensions/model-classes/README.md) | Именованные классы моделей (`/model-class`, `Ctrl+Alt+P`) и маршрутизация моделей для субагентов |
 | [`todo`](extensions/todo/README.md) | Инструмент `todo` с фазами, HUD-виджет, напоминания, `/todo` |
 | [`web-search`](extensions/web-search/README.md) | Инструмент `web_search` через бэкенд ChatGPT Codex по логину `/login openai-codex` |
 | [`session-title`](extensions/session-title/README.md) | Имя сессии и заголовок терминала по первому промпту, дешёвой моделью |

@@ -33,8 +33,7 @@ import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
-import type { ModelLike } from "../model-classes/core";
-import type { ModelPair, ThinkingLevel } from "../model-classes/store";
+import type { ModelLike, ModelPair, ThinkingLevel } from "./model-spec";
 import { resolveSpawnPair } from "./spawn-model";
 import {
 	envelopeFileName,
@@ -218,12 +217,16 @@ export interface WorkspaceSpawnArgs {
 	signal?: AbortSignal;
 	onUpdate?: ToolUpdateCallback;
 	/**
-	 * Explicit model class override, valid for workspace spawns exactly like
-	 * plain spawns: a saved class name, or "default" for the live session
-	 * pair. Omitted → the repoOwner routing default (/model-class route),
-	 * else the saved heavy class when present, else the session pair.
+	 * Explicit model (`provider/id[:thinking]`), valid for workspace spawns
+	 * exactly like plain spawns. Mutually exclusive with `role`.
 	 */
-	modelClass?: string;
+	model?: string;
+	/**
+	 * Role under which the child runs: always `owner` for workspace spawns
+	 * (omitted or `owner`); its binding in subagent-roles.json decides the
+	 * model, else the session pair.
+	 */
+	role?: string;
 	/** Live session model: the inheritance source and the no-model gate fact. */
 	sessionModel?: { provider: string; id: string };
 	/** Registry-backed model catalogue for validating stored class pairs. */
@@ -824,16 +827,16 @@ export function createWorkspaceRuns(
 		const { workspace, task, signal, onUpdate, hasPendingMessages } = args;
 		const deadlineMs = Math.max(1000, (args.deadlineSec ?? DEFAULT_DEADLINE_MS / 1000) * 1000);
 		// Pre-dispatch gate 1: model resolution — no silent defaults. The child
-		// runs on the explicit class, the repoOwner routing default, or the live
+		// runs on the explicit model, the owner role binding, or the live
 		// session pair (resolved through the shared spawn boundary). Every
-		// resolution failure — no session model, unknown class, unroutable or
-		// unresolvable routing entry — is a Main-side configuration problem:
+		// resolution failure — no session model, unknown model, a broken
+		// binding, an invalid model/role combination — is a Main-side problem:
 		// blocked, dispatched:false, nothing started.
 		let pair: ModelPair;
 		try {
 			pair = resolveSpawnPair(
-				"repoOwner",
-				args.modelClass,
+				"workspace",
+				{ model: args.model, role: args.role },
 				{ model: args.sessionModel, modelRegistry: args.modelRegistry ?? { getAll: () => [] } },
 				(args.thinkingLevel as ThinkingLevel | undefined) ?? "off",
 			);
@@ -1203,7 +1206,7 @@ function formatDirty(dirty: DirtyState): string {
  * order and stops at the first block, so a blocked call (e.g. the mutation
  * guard refusing a raw no-verify commit) must already have invalidated the
  * previous report_result envelope. The subagents index follows: it registers
- * the plain `subagent` tool (nested repo-local helpers, modelClass applies)
+ * the plain `subagent` tool (nested repo-local helpers; `model` and `role` apply)
  * and owns no tool_call hooks, so it does not perturb the guard order. The
  * readiness probe comes LAST as a pure observer (no tools, no tool_call
  * hooks): its session_start handler fires after all factories have run

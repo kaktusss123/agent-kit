@@ -1,354 +1,176 @@
 /**
- * Unit tests for the subagent spawn modelClass boundary: the
- * literal `default` and omitted-with-no-storage resolve the live session
- * pair without ever consulting stored classes, explicit and routed classes
- * resolve persisted state through the registry, routing is per spawn mode,
- * and an unresolvable or unreadable target throws here — the tool calls
- * this immediately before `runtime.spawn()`, so a throw here IS the
- * no-child guarantee (fail closed, no fallback). An omitted param with
- * unreadable (corrupt) storage also fails closed: routing state is
- * unknown, not absent (D4).
+ * Unit tests for the spawn-time model boundary: explicit `model`, role
+ * bindings, the unbound-role session default, the mode/role validity
+ * matrix, and fail-closed errors. The tool calls resolveSpawnPair
+ * immediately before starting a child, so a throw here IS the no-child
+ * guarantee.
  *
  * Every case runs against a throwaway PI_CODING_AGENT_DIR: nothing here may
- * depend on (or accidentally read) the real user storage.
+ * depend on (or accidentally read) the real user bindings.
  */
-import { describe, expect, test } from "bun:test";
+import { afterEach, describe, expect, test } from "bun:test";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
-import type { ModelLike } from "../model-classes/core";
-import { resolveSpawnPair } from "./spawn-model";
+import type { ModelLike } from "./model-spec";
+import { effectiveRole, resolveSpawnPair } from "./spawn-model";
 
 const MAIN_MODEL: ModelLike = { provider: "prov-a", id: "model-a", reasoning: true };
-const HEAVY_MODEL: ModelLike = {
+const BIG_MODEL: ModelLike = {
 	provider: "prov-b",
 	id: "openai/gpt-oss-120b",
 	reasoning: true,
-	thinkingLevelMap: { xhigh: "xh", max: "mx" }, // GPT-5.6-style: exposes xhigh + max
+	thinkingLevelMap: { xhigh: "xh", max: "mx" },
 };
-
-function ctx(current: { provider: string; id: string } | null, models: ModelLike[]) {
-	return {
-		model: current ?? undefined,
-		modelRegistry: { getAll: () => models },
-	};
-}
-
+const REGISTRY = [MAIN_MODEL, BIG_MODEL];
 const SESSION = { provider: "prov-a", id: "model-a" };
 
-// Storage fixture: a throwaway PI_CODING_AGENT_DIR per case. `stored` is
-// either a raw JSON object payload (classes and/or routing), a raw string
-// payload (e.g. deliberately corrupt content), or undefined for NO storage
-// file.
+function ctx(current: { provider: string; id: string } | null = SESSION) {
+	return { model: current ?? undefined, modelRegistry: { getAll: () => REGISTRY } };
+}
+
 const tempDirs: string[] = [];
-function spawnStorageDir(stored?: Record<string, unknown> | string): string {
+afterEach(() => {
+	for (const d of tempDirs.splice(0)) fs.rmSync(d, { recursive: true, force: true });
+});
+/** Run with a throwaway agent dir; `stored` is a bindings object, raw string, or undefined for no file. */
+function withRoles<T>(stored: Record<string, unknown> | string | undefined, run: (file: string) => T): T {
 	const dir = fs.mkdtempSync(path.join(os.tmpdir(), "spawn-model-test-"));
 	tempDirs.push(dir);
-	if (stored !== undefined) {
-		const payload = typeof stored === "string" ? stored : JSON.stringify(stored);
-		fs.writeFileSync(path.join(dir, "model-classes.json"), payload);
-	}
-	return dir;
-}
-function withAgentDir<T>(
-	stored: Record<string, unknown> | string | undefined,
-	run: (dir: string) => T,
-): T {
+	const file = path.join(dir, "subagent-roles.json");
+	if (stored !== undefined) fs.writeFileSync(file, typeof stored === "string" ? stored : JSON.stringify(stored));
 	const prev = process.env.PI_CODING_AGENT_DIR;
-	const dir = spawnStorageDir(stored);
 	process.env.PI_CODING_AGENT_DIR = dir;
 	try {
-		return run(dir);
+		return run(file);
 	} finally {
 		if (prev === undefined) delete process.env.PI_CODING_AGENT_DIR;
 		else process.env.PI_CODING_AGENT_DIR = prev;
-		fs.rmSync(dir, { recursive: true, force: true });
 	}
 }
 
-/** Deliberately corrupt storage payload (default-independence fixture). */
-const CORRUPT = "{ not json";
-
-const STORED_HEAVY = { model: "prov-b/openai/gpt-oss-120b", thinking: "xhigh" as const };
-const REGISTRY = [MAIN_MODEL, HEAVY_MODEL];
-
-describe("resolveSpawnPair — the literal default / inheritance paths", () => {
-	test("\"default\" snapshots the current Main model + thinking", () => {
-		withAgentDir({ heavy: STORED_HEAVY }, () => {
-			const pair = resolveSpawnPair("plain", "default", ctx(SESSION, REGISTRY), "high");
-			expect(pair).toEqual({ model: "prov-a/model-a", thinking: "high" });
-		});
-		// Main switched since: the next spawn gets the new state, not a cache.
-		withAgentDir({ heavy: STORED_HEAVY }, () => {
-			const switched = resolveSpawnPair(
-				"plain",
-				"default",
-				ctx({ provider: "prov-b", id: "openai/gpt-oss-120b" }, REGISTRY),
-				"medium",
-			);
-			expect(switched).toEqual({ model: "prov-b/openai/gpt-oss-120b", thinking: "medium" });
-		});
+describe("effectiveRole", () => {
+	test("workspace is always owner; plain defaults to helper; invalid combinations throw", () => {
+		expect(effectiveRole("workspace", undefined)).toBe("owner");
+		expect(effectiveRole("workspace", "owner")).toBe("owner");
+		expect(() => effectiveRole("workspace", "review")).toThrow(/owner/);
+		expect(effectiveRole("plain", undefined)).toBe("helper");
+		expect(effectiveRole("plain", "review")).toBe("review");
+		expect(() => effectiveRole("plain", "owner")).toThrow(/workspace/);
+		expect(() => effectiveRole("plain", "fast")).toThrow(/Unknown role/);
 	});
+});
 
-	test("\"default\" works with missing storage", () => {
-		withAgentDir(undefined, () => {
-			const pair = resolveSpawnPair("plain", "default", ctx(SESSION, REGISTRY), "high");
-			expect(pair).toEqual({ model: "prov-a/model-a", thinking: "high" });
-		});
-	});
-
-	test("\"default\" works with corrupt storage", () => {
-		withAgentDir(CORRUPT, () => {
-			const pair = resolveSpawnPair("plain", "default", ctx(SESSION, REGISTRY), "high");
-			expect(pair).toEqual({ model: "prov-a/model-a", thinking: "high" });
-		});
-	});
-
-	test("omitted with no routing configured inherits the session pair (migration, A1)", () => {
-		withAgentDir({ cheap: { model: "prov-a/model-a", thinking: "low" } }, () => {
-			for (const mode of ["plain", "repoOwner"] as const) {
-				expect(resolveSpawnPair(mode, undefined, ctx(SESSION, REGISTRY), "medium")).toEqual({
-					model: "prov-a/model-a",
-					thinking: "medium",
+describe("resolveSpawnPair — explicit model", () => {
+	test("resolves exactly, with and without :thinking, in both modes", () => {
+		withRoles(undefined, () => {
+			for (const mode of ["plain", "workspace"] as const) {
+				expect(resolveSpawnPair(mode, { model: "prov-b/openai/gpt-oss-120b:xhigh" }, ctx(), "low")).toEqual({
+					model: "prov-b/openai/gpt-oss-120b",
+					thinking: "xhigh",
+				});
+				expect(resolveSpawnPair(mode, { model: "prov-b/openai/gpt-oss-120b" }, ctx(), "high")).toEqual({
+					model: "prov-b/openai/gpt-oss-120b",
+					thinking: "high",
 				});
 			}
 		});
 	});
 
-	test("omitted with missing storage inherits the session pair", () => {
-		withAgentDir(undefined, () => {
-			expect(resolveSpawnPair("plain", undefined, ctx(SESSION, REGISTRY), "low")).toEqual({
-				model: "prov-a/model-a",
-				thinking: "low",
-			});
+	test("unknown model and unsupported thinking throw; there is no fallback", () => {
+		withRoles({ helper: "prov-a/model-a:low" }, () => {
+			expect(() => resolveSpawnPair("plain", { model: "prov-x/none" }, ctx(), "low")).toThrow(/not available/);
+			expect(() => resolveSpawnPair("plain", { model: "prov-a/model-a:max" }, ctx(), "low")).toThrow(/does not support/);
 		});
 	});
 
-	test("omitted with an empty or whitespace-only storage file inherits the session pair (empty ≡ missing)", () => {
-		for (const payload of ["", "  \n\t"]) {
-			withAgentDir(payload, () => {
-				for (const mode of ["plain", "repoOwner"] as const) {
-					expect(resolveSpawnPair(mode, undefined, ctx(SESSION, REGISTRY), "medium")).toEqual({
-						model: "prov-a/model-a",
-						thinking: "medium",
-					});
-				}
-			});
-		}
-	});
-
-	test("an explicit class with an empty storage file still fails as unknown class", () => {
-		withAgentDir("", () => {
-			expect(() => resolveSpawnPair("plain", "heavy", ctx(SESSION, REGISTRY), "high")).toThrow(
-				/Model class "heavy" is not saved/,
-			);
+	test("does not read the bindings file (a corrupt file cannot break an explicit model)", () => {
+		withRoles("{ nope", () => {
+			expect(resolveSpawnPair("plain", { model: "prov-a/model-a:low" }, ctx(), "high").model).toBe("prov-a/model-a");
 		});
 	});
 
-	test("omitted with corrupt storage fails closed: routing state is unknown, not absent (D4)", () => {
-		withAgentDir(CORRUPT, (dir) => {
-			for (const mode of ["plain", "repoOwner"] as const) {
-				let message: string | undefined;
-				try {
-					resolveSpawnPair(mode, undefined, ctx(SESSION, REGISTRY), "low");
-				} catch (e) {
-					message = e instanceof Error ? e.message : String(e);
-				}
-				// actionable: names the corruption, the file path, and the fix
-				expect(message).toContain("corrupt");
-				expect(message).toContain(path.join(dir, "model-classes.json"));
-				expect(message).toContain("valid JSON");
-				expect(message).toContain("/model-class route <mode> <class|inherit>");
-			}
-		});
-	});
-
-	test("default with no resolved session model throws instead of guessing", () => {
-		withAgentDir(CORRUPT, () => {
-			expect(() => resolveSpawnPair("plain", "default", ctx(null, REGISTRY), "high")).toThrow(
-				/no model resolved in the current session/,
-			);
+	test("model and role together throw before anything resolves", () => {
+		withRoles(undefined, () => {
+			expect(() => resolveSpawnPair("plain", { model: "prov-a/model-a", role: "review" }, ctx(), "low")).toThrow(/mutually exclusive/);
+			expect(() => resolveSpawnPair("workspace", { model: "prov-a/model-a", role: "owner" }, ctx(), "low")).toThrow(/mutually exclusive/);
 		});
 	});
 });
 
-describe("resolveSpawnPair — explicit classes (both modes)", () => {
-	test("a saved class resolves the stored pair through the registry (A4)", () => {
-		withAgentDir({ heavy: STORED_HEAVY }, () => {
-			for (const mode of ["plain", "repoOwner"] as const) {
-				expect(resolveSpawnPair(mode, "heavy", ctx(SESSION, REGISTRY), "high")).toEqual(STORED_HEAVY);
+describe("resolveSpawnPair — roles", () => {
+	test("a bound role uses its binding; thinking defaults to the current level when unspecified", () => {
+		withRoles({ review: "prov-b/openai/gpt-oss-120b:max", explore: "prov-a/model-a" }, () => {
+			expect(resolveSpawnPair("plain", { role: "review" }, ctx(), "low")).toEqual({
+				model: "prov-b/openai/gpt-oss-120b",
+				thinking: "max",
+			});
+			expect(resolveSpawnPair("plain", { role: "explore" }, ctx(), "medium")).toEqual({
+				model: "prov-a/model-a",
+				thinking: "medium",
+			});
+		});
+	});
+
+	test("an unbound role (and an absent file) resolves to the session model + current thinking", () => {
+		withRoles(undefined, () => {
+			expect(resolveSpawnPair("plain", { role: "review" }, ctx(), "high")).toEqual({ model: "prov-a/model-a", thinking: "high" });
+			expect(resolveSpawnPair("plain", {}, ctx(), "low")).toEqual({ model: "prov-a/model-a", thinking: "low" });
+			expect(resolveSpawnPair("workspace", {}, ctx(), "low")).toEqual({ model: "prov-a/model-a", thinking: "low" });
+		});
+	});
+
+	test("plain without role uses the helper binding; workspace without params uses the owner binding", () => {
+		withRoles({ helper: "prov-a/model-a:minimal", owner: "prov-b/openai/gpt-oss-120b:xhigh", review: "prov-a/model-a:off" }, () => {
+			expect(resolveSpawnPair("plain", {}, ctx(), "high").thinking).toBe("minimal");
+			expect(resolveSpawnPair("workspace", {}, ctx(), "low")).toEqual({
+				model: "prov-b/openai/gpt-oss-120b",
+				thinking: "xhigh",
+			});
+		});
+	});
+
+	test("an unbound role with no session model throws", () => {
+		withRoles(undefined, () => {
+			expect(() => resolveSpawnPair("plain", {}, ctx(null), "low")).toThrow(/no model resolved/);
+		});
+	});
+
+	test("a broken binding fails closed naming the file, the role, and the fix", () => {
+		withRoles({ review: "gone/vanished:high" }, (file) => {
+			let message = "";
+			try {
+				resolveSpawnPair("plain", { role: "review" }, ctx(), "low");
+			} catch (e) {
+				message = (e as Error).message;
 			}
+			expect(message).toContain(file);
+			expect(message).toContain('"review"');
+			expect(message).toContain("/subagent-role review");
+		});
+		withRoles({ review: "prov-a/model-a:max" }, () => {
+			expect(() => resolveSpawnPair("plain", { role: "review" }, ctx(), "low")).toThrow(/does not support/);
 		});
 	});
 
-	test("old cheap/smart names keep working (compat)", () => {
-		withAgentDir({ cheap: { model: "prov-a/model-a", thinking: "low" }, smart: STORED_HEAVY }, () => {
-			expect(resolveSpawnPair("plain", "cheap", ctx(SESSION, REGISTRY), "high")).toEqual({
-				model: "prov-a/model-a",
-				thinking: "low",
-			});
-			expect(resolveSpawnPair("plain", "smart", ctx(SESSION, REGISTRY), "high")).toEqual(STORED_HEAVY);
+	test("corrupt JSON, an unknown key, and an unreadable path all fail closed — even for roles with no entry", () => {
+		withRoles("{ nope", (file) => {
+			expect(() => resolveSpawnPair("plain", {}, ctx(), "low")).toThrow(file);
+		});
+		withRoles({ fast: "prov-a/model-a" }, (file) => {
+			expect(() => resolveSpawnPair("workspace", {}, ctx(), "low")).toThrow(file);
+		});
+		withRoles(undefined, (file) => {
+			fs.mkdirSync(file); // a directory where the file should be → read error, not "absent"
+			expect(() => resolveSpawnPair("plain", {}, ctx(), "low")).toThrow(file);
 		});
 	});
 
-	test("corrupt storage fails an explicitly requested class, never masked", () => {
-		withAgentDir(CORRUPT, () => {
-			expect(() => resolveSpawnPair("plain", "smart", ctx(SESSION, REGISTRY), "high")).toThrow(/corrupt/);
-		});
-	});
-
-	test("an unset class throws before any child could be started, listing saved classes", () => {
-		withAgentDir({ heavy: STORED_HEAVY }, () => {
-			expect(() => resolveSpawnPair("plain", "cheap", ctx(SESSION, REGISTRY), "high")).toThrow(
-				/Model class "cheap" is not saved[\s\S]*heavy/,
-			);
-		});
-	});
-
-	test("`constructor` (inherited Object property) behaves exactly like an unknown class name", () => {
-		withAgentDir({ heavy: STORED_HEAVY }, () => {
-			expect(() => resolveSpawnPair("plain", "constructor", ctx(SESSION, REGISTRY), "high")).toThrow(
-				/Model class "constructor" is not saved[\s\S]*heavy/,
-			);
-		});
-	});
-
-	test("a stored model that is gone from the registry throws with no fallback", () => {
-		withAgentDir({ heavy: { model: "prov-gone/vanished", thinking: "high" } }, () => {
-			expect(() => resolveSpawnPair("plain", "heavy", ctx(SESSION, REGISTRY), "high")).toThrow(
-				/no longer available/,
-			);
-		});
-	});
-});
-
-describe("resolveSpawnPair — spawn-mode routing (R3)", () => {
-	test("omitted + route for the mode -> the routed pair, not the session pair (A2 cost isolation)", () => {
-		withAgentDir({ workhorse: { model: "prov-a/model-a", thinking: "low" }, routing: { plain: "workhorse" } }, () => {
-			// session runs heavy: the plain child still gets the workhorse pair
-			expect(
-				resolveSpawnPair(
-					"plain",
-					undefined,
-					ctx({ provider: "prov-b", id: "openai/gpt-oss-120b" }, REGISTRY),
-					"xhigh",
-				),
-			).toEqual({ model: "prov-a/model-a", thinking: "low" });
-		});
-	});
-
-	test("routing is per mode: an unrouted plain inherits the session pair (A3)", () => {
-		// no saved heavy class: the unrouted repoOwner also falls to the session pair
-		withAgentDir({ deep: STORED_HEAVY, routing: { plain: "deep" } }, () => {
-			expect(resolveSpawnPair("repoOwner", undefined, ctx(SESSION, REGISTRY), "high")).toEqual({
-				model: "prov-a/model-a",
-				thinking: "high",
-			});
-		});
-		withAgentDir({ heavy: STORED_HEAVY, routing: { repoOwner: "heavy" } }, () => {
-			expect(resolveSpawnPair("plain", undefined, ctx(SESSION, REGISTRY), "high")).toEqual({
-				model: "prov-a/model-a",
-				thinking: "high",
-			});
-		});
-	});
-
-	test("omitted repoOwner with a saved heavy and no route -> the implicit heavy pair, not the session pair", () => {
-		withAgentDir({ heavy: STORED_HEAVY }, () => {
-			expect(resolveSpawnPair("repoOwner", undefined, ctx(SESSION, REGISTRY), "low")).toEqual(STORED_HEAVY);
-			// plain never consults the implicit class
-			expect(resolveSpawnPair("plain", undefined, ctx(SESSION, REGISTRY), "low")).toEqual({
-				model: "prov-a/model-a",
-				thinking: "low",
-			});
-		});
-	});
-
-	test("unresolvable implicit heavy (dead model) fails closed at the spawn boundary", () => {
-		withAgentDir({ heavy: { model: "prov-gone/vanished", thinking: "high" } }, () => {
-			expect(() => resolveSpawnPair("repoOwner", undefined, ctx(SESSION, REGISTRY), "high")).toThrow(
-				/RepoOwner default model class "heavy"[\s\S]*no longer available[\s\S]*pass modelClass explicitly/,
-			);
-		});
-	});
-
-	test("repoOwner routing decouples the owner from the session model (A3)", () => {
-		withAgentDir({ heavy: STORED_HEAVY, routing: { repoOwner: "heavy" } }, () => {
-			expect(resolveSpawnPair("repoOwner", undefined, ctx(SESSION, REGISTRY), "low")).toEqual(STORED_HEAVY);
-		});
-	});
-
-	test("explicit \"default\" overrides routing for both modes (A5 escape hatch)", () => {
-		withAgentDir({ heavy: STORED_HEAVY, routing: { plain: "heavy", repoOwner: "heavy" } }, () => {
-			for (const mode of ["plain", "repoOwner"] as const) {
-				expect(resolveSpawnPair(mode, "default", ctx(SESSION, REGISTRY), "medium")).toEqual({
-					model: "prov-a/model-a",
-					thinking: "medium",
-				});
-			}
-		});
-	});
-
-	test("explicit saved class overrides routing (A4)", () => {
-		withAgentDir(
-			{
-				workhorse: { model: "prov-a/model-a", thinking: "low" },
-				heavy: STORED_HEAVY,
-				routing: { plain: "heavy", repoOwner: "workhorse" },
-			},
-			() => {
-				expect(resolveSpawnPair("plain", "workhorse", ctx(SESSION, REGISTRY), "high")).toEqual({
-					model: "prov-a/model-a",
-					thinking: "low",
-				});
-				expect(resolveSpawnPair("repoOwner", "heavy", ctx(SESSION, REGISTRY), "high")).toEqual(STORED_HEAVY);
-			},
-		);
-	});
-
-	test("route to a class that is not saved fails closed naming class, mode, and fix (A6)", () => {
-		withAgentDir({ routing: { repoOwner: "nosuch" } }, () => {
-			expect(() => resolveSpawnPair("repoOwner", undefined, ctx(SESSION, REGISTRY), "high")).toThrow(
-				/routing for mode "repoOwner" is set to class "nosuch"[\s\S]*\/model-class route repoOwner <class\|inherit>[\s\S]*\/model-class nosuch set/,
-			);
-			// the plain mode is unaffected by the broken repoOwner route
-			expect(resolveSpawnPair("plain", undefined, ctx(SESSION, REGISTRY), "high")).toEqual({
-				model: "prov-a/model-a",
-				thinking: "high",
-			});
-		});
-	});
-
-	test("route to a dead model fails closed the same way (A7)", () => {
-		withAgentDir({ workhorse: { model: "prov-gone/vanished", thinking: "high" }, routing: { plain: "workhorse" } }, () => {
-			expect(() => resolveSpawnPair("plain", undefined, ctx(SESSION, REGISTRY), "high")).toThrow(
-				/no longer available/,
-			);
-		});
-	});
-
-	test("hand-edited routing to a non-class string target fails closed, not silent inheritance (A6, both modes)", () => {
-		// "default" is a reserved word, not a saved class: it must fail as a
-		// routing error — never be reinterpreted as the session-pair literal.
-		withAgentDir({ heavy: STORED_HEAVY, routing: { repoOwner: "default" } }, () => {
-			expect(() => resolveSpawnPair("repoOwner", undefined, ctx(SESSION, REGISTRY), "high")).toThrow(
-				/routing for mode "repoOwner" is set to class "default"[\s\S]*is not saved[\s\S]*heavy/,
-			);
-		});
-		// garbage grammar target: same failure shape, exactly like a dead class
-		withAgentDir({ heavy: STORED_HEAVY, routing: { plain: "INVALID!" } }, () => {
-			expect(() => resolveSpawnPair("plain", undefined, ctx(SESSION, REGISTRY), "high")).toThrow(
-				/routing for mode "plain" is set to class "INVALID!"[\s\S]*\/model-class route plain <class\|inherit>/,
-			);
-		});
-	});
-
-	test("hand-edited non-object routing degrades to inheritance (cannot be a route at all)", () => {
-		withAgentDir({ routing: "workhorse" }, () => {
-			expect(resolveSpawnPair("plain", undefined, ctx(SESSION, REGISTRY), "high")).toEqual({
-				model: "prov-a/model-a",
-				thinking: "high",
-			});
+	test("bindings are read fresh on every call", () => {
+		withRoles({ review: "prov-a/model-a:low" }, (file) => {
+			expect(resolveSpawnPair("plain", { role: "review" }, ctx(), "high").thinking).toBe("low");
+			fs.writeFileSync(file, JSON.stringify({ review: "prov-a/model-a:high" }));
+			expect(resolveSpawnPair("plain", { role: "review" }, ctx(), "off").thinking).toBe("high");
 		});
 	});
 });
