@@ -267,12 +267,13 @@ Claude Code получает:
   worktree;
 - команды `/spec` и `/dev` (`claude-code/commands/`);
 - роли субагентов (`claude-code/agents/`, симлинки в `~/.claude/agents/`):
-  `Explore` переопределяет встроенный (haiku, `effort: low`, только Read/Grep/Glob),
-  `repo-owner` — RepoOwner для managed worktree (sonnet, `effort: medium`).
-  Всё остальное — встроенный `general-purpose`, уровень цены задаётся параметром
-  `model` вызова Agent (`haiku` — дешёвые ограниченные задачи, без `model` —
-  модель сессии, `opus` — независимый ревьюер). Новый тип агента заводится только
-  ради своего system prompt или набора tools ([ADR-0010](docs/adr/adr-0010.md));
+  роли `explore` → `Explore` (переопределяет встроенный; `model: haiku`,
+  `effort: low`, только Read/Grep/Glob), `owner` → `repo-owner` (RepoOwner для
+  managed worktree; `model: sonnet`, `effort: medium`), `review` →
+  `general-purpose` с `model: opus` в вызове Agent, `helper` → `general-purpose`
+  без `model`. Модели в определениях заданы алиасами; новый тип агента
+  заводится только ради своего system prompt или набора tools
+  ([ADR-0010](docs/adr/adr-0010.md), [ADR-0011](docs/adr/adr-0011.md));
 - плагин `agent-kit` (`claude-code/plugin`, ставится как
   `~/.claude/skills/agent-kit`): кладёт `agent-kit` в `PATH` для Bash и
   регистрирует hooks:
@@ -282,7 +283,7 @@ Claude Code получает:
     pre-tool-use`: guard записи в primary checkout.
 
 Рекомендуемая настройка пользователя в `~/.claude/settings.json` (agent-kit
-`settings.json` не пишет): уровень effort по моделям.
+`settings.json` не пишет). Уровень effort по моделям:
 
 ```json
 "modelSettings": {
@@ -292,9 +293,13 @@ Claude Code получает:
 }
 ```
 
-Открытый вопрос: документация не говорит, перекрывает ли `effort` во
-frontmatter агента `modelSettings.<model>.effortLevel`; если нет, `Explore`
-работает на haiku high. Проверяется эмпирически после установки.
+Подмена модели на машине: `env` с `ANTHROPIC_DEFAULT_HAIKU_MODEL`,
+`ANTHROPIC_DEFAULT_SONNET_MODEL`, `ANTHROPIC_DEFAULT_OPUS_MODEL`
+([model-config](https://code.claude.com/docs/en/model-config)). Подмена общая
+для алиаса, а не для роли. `effort` во frontmatter агента перекрывает effort
+сессии, но не `CLAUDE_CODE_EFFORT_LEVEL`. Открытый риск: документация явно не
+говорит, что `ANTHROPIC_DEFAULT_*` применяется к алиасу во frontmatter
+субагента; проверяется эмпирически ([ADR-0011](docs/adr/adr-0011.md)).
 
 Ограничения ([ADR-0008](docs/adr/adr-0008.md)):
 
@@ -396,5 +401,6 @@ bun test extensions/<name>/     # расширения (bun:test)
   - [0008](docs/adr/adr-0008.md) — task-workspace runtime в Claude Code: CLI + плагин
   - [0009](docs/adr/adr-0009.md) — выбор host'ов при установке
   - [0010](docs/adr/adr-0010.md) — роли субагентов в Claude Code
+  - [0011](docs/adr/adr-0011.md) — алиасы моделей и словарь ролей субагентов в Claude Code
 - [`docs/specs/`](docs/specs/) и [`docs/research/`](docs/research/) — спецификации и исследования этапов
 - README расширений в `extensions/*/README.md` — контракты конкретных расширений

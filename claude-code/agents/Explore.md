@@ -1,7 +1,7 @@
 ---
 name: Explore
 description: Read-only codebase exploration, symbol lookup, call-path tracing, and dependency mapping.
-model: claude-haiku-5-5
+model: haiku
 effort: low
 tools: Read, Grep, Glob
 omitClaudeMd: true

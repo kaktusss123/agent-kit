@@ -14,8 +14,8 @@ agent-kit skills and AGENTS.md are written for both Pi and Claude Code; Pi tool 
 
 ## Subagents
 
-- `Explore` (agent-kit override, cheap): read-only research. `repo-owner`: RepoOwners only.
-- Everything else is `general-purpose`; pick the cost tier with the per-call `model`: `haiku` for cheap bounded tasks, omitted for the session model, `opus` for an independent reviewer (independence comes from fresh context, not an agent type).
+- Roles map to Claude Code agents: `explore` → `Explore` (agent-kit override, cheap, read-only); `owner` → `repo-owner` (RepoOwners only); `review` → `general-purpose` with `model: opus`; `helper` → `general-purpose` without `model`.
+- Agent definitions pin aliases (`haiku`, `sonnet`), not model IDs. A machine remaps an alias globally (not per role) through `env` in `~/.claude/settings.json`: `ANTHROPIC_DEFAULT_HAIKU_MODEL`, `ANTHROPIC_DEFAULT_SONNET_MODEL`, `ANTHROPIC_DEFAULT_OPUS_MODEL`.
 - Never pass `model` to an agent whose definition sets its own `model`; the parameter overrides it.
 - Add a new agent type only when a role needs its own system prompt or tool set, never for price or effort alone.
 - Do not use the haiku tier as the sole authority for root-cause analysis, security review, or design decisions.

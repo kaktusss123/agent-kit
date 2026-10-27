@@ -1,7 +1,7 @@
 ---
 name: repo-owner
 description: RepoOwner for one managed task worktree. Use only when Main dispatches an owner into a worktree returned by `agent-kit task ensure` (skill git-task); not for general delegation.
-model: claude-sonnet-5-5
+model: sonnet
 effort: medium
 ---
 
