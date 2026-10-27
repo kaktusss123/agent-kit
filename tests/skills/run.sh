@@ -188,6 +188,13 @@ else
 	bad "git-task: single-repo dev must dispatch exactly one RepoOwner (no direct implementation, no /move)"
 fi
 
+if grep -q 'role=explore' "$SELF_DIR/prompts/spec.md" && \
+	grep -q 'role=explore' "$SKILLS/git-task/SKILL.md"; then
+	ok "research delegation: spec prompt and git-task name role=explore"
+else
+	bad "research delegation: prompts/spec.md and git-task SKILL.md must name role=explore for research subagents"
+fi
+
 # --- /dev independent review: explicit decision point, never a mandatory reviewer --
 
 if grep -q 'role=review' "$SELF_DIR/prompts/dev.md" && \

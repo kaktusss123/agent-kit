@@ -61,7 +61,7 @@ Main owns discovery and specification: the user conversation, product and design
 
 Durable artifacts (`SPEC.md`, `ADR-*.md`, `specs/<repo>.md`) live in the task workspace next to the worktrees; `SPEC.md` is the canonical entrypoint. For multi-repo tasks, `SPEC.md` fixes the cross-repo contract, writable repositories, ownership, dependencies/parallelism, and integration acceptance criteria.
 
-Research subagents are bounded helpers: one explicit question, one boundary, read-only findings synthesized in Main. They never own decisions or the problem.
+Research subagents are bounded helpers (spawned with `role=explore`; in Claude Code the `Explore` agent): one explicit question, one boundary, read-only findings synthesized in Main. They never own decisions or the problem.
 
 ## /dev
 
