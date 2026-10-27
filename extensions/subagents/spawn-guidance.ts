@@ -42,7 +42,7 @@ export function buildSpawnModelSection(state: SpawnGuidanceState): string {
 export function buildSpawnModelSectionError(cause: string): string {
 	return (
 		"Subagent model roles: the role bindings file is unreadable, so role-dependent spawns fail closed " +
-		"until it is repaired or deleted (an explicit `model` still works).\n" +
+		"until the file is fixed by hand or deleted and the roles are rebound (an explicit `model` still works).\n" +
 		`Cause: ${cause}`
 	);
 }

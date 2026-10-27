@@ -69,6 +69,11 @@ describe("saveRoleBinding / unsetRoleBinding", () => {
 		expect(loadRoleBindings(file)).toEqual({ explore: "p/c" });
 	});
 
+	test("the fix advice says to edit/delete and rebind, not to unset", () => {
+		const file = tmpFile("{nope");
+		expect(() => loadRoleBindings(file)).toThrow(/edit the file by hand.*delete it and rebind.*cannot repair/);
+	});
+
 	test("a corrupt file aborts writes and is left untouched", () => {
 		const file = tmpFile("{ nope");
 		expect(() => saveRoleBinding(file, "review", "p/m")).toThrow(file);

@@ -7,8 +7,8 @@
  */
 
 import { readFileSync } from "node:fs";
-import { homedir } from "node:os";
 import { join } from "node:path";
+import { resolveAgentDir } from "../subagents/agent-dir";
 
 /** Hard cap for a generated title, in code points (tab titles must stay short). */
 export const TITLE_MAX_CODE_POINTS = 30;
@@ -75,7 +75,7 @@ export function sanitizeTitle(raw: string): string | undefined {
 
 /** Default subagent-roles.json location, mirroring the subagents extension. */
 export function rolesFile(env: Record<string, string | undefined> = process.env): string {
-	return join(env.PI_CODING_AGENT_DIR ?? join(homedir(), ".pi", "agent"), "subagent-roles.json");
+	return join(resolveAgentDir(env), "subagent-roles.json");
 }
 
 /**

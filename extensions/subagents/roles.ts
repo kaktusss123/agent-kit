@@ -15,8 +15,8 @@
  * Pure module: no pi imports.
  */
 import * as fs from "node:fs";
-import * as os from "node:os";
 import * as path from "node:path";
+import { resolveAgentDir } from "./agent-dir";
 
 /** The closed role set, in display order. */
 export const ROLES = ["explore", "helper", "review", "owner"] as const;
@@ -40,14 +40,14 @@ export type RoleBindings = Partial<Record<Role, string>>;
 
 /** Default location: `<agent-dir>/subagent-roles.json` (honors PI_CODING_AGENT_DIR). */
 export function rolesPath(agentDir?: string): string {
-	const dir = agentDir ?? process.env.PI_CODING_AGENT_DIR ?? path.join(os.homedir(), ".pi", "agent");
+	const dir = agentDir ?? resolveAgentDir();
 	return path.join(dir, "subagent-roles.json");
 }
 
 function corrupt(file: string, why: string): Error {
 	return new Error(
 		`subagent role bindings are invalid (${why}): ${file}. ` +
-			`Fix: repair the file, or reset it with \`/subagent-role <role> unset\` / delete it.`,
+			`Fix: edit the file by hand to a valid table, or delete it and rebind with \`/subagent-role <role> <provider/id[:thinking]>\`; \`/subagent-role <role> unset\` cannot repair it.`,
 	);
 }
 
@@ -58,7 +58,7 @@ function readObject(file: string): Record<string, unknown> {
 	} catch (e) {
 		if ((e as NodeJS.ErrnoException).code === "ENOENT") return {};
 		throw new Error(
-			`subagent role bindings are unreadable: ${file} (${e instanceof Error ? e.message : String(e)}). Fix: repair permissions or delete the file.`,
+			`subagent role bindings are unreadable: ${file} (${e instanceof Error ? e.message : String(e)}). Fix: repair permissions or delete the file, then rebind with \`/subagent-role <role> <provider/id[:thinking]>\`.`,
 		);
 	}
 	if (raw.trim() === "") return {};

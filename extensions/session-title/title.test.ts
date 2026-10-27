@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import {
@@ -223,6 +223,8 @@ describe("readExploreRoleModel", () => {
 describe("rolesFile", () => {
 	test("honors PI_CODING_AGENT_DIR", () => {
 		expect(rolesFile({ PI_CODING_AGENT_DIR: "/custom/agent-dir" })).toBe("/custom/agent-dir/subagent-roles.json");
+		expect(rolesFile({ PI_CODING_AGENT_DIR: "" })).toContain(join(".pi", "agent"));
+		expect(rolesFile({ PI_CODING_AGENT_DIR: "~/x" })).toBe(join(homedir(), "x", "subagent-roles.json"));
 		expect(rolesFile({})).toContain(join(".pi", "agent"));
 	});
 });
