@@ -51,8 +51,15 @@ the main process. No daemon, no shared hub.
 The child transcript never enters main context. The model sees only the short
 event message; the full final result, session location, timestamps, token
 usage, and failure reason live in a persisted result file
-(`$PI_CODING_AGENT_DIR/subagents/results/<id>.json`, default
+(`$PI_CODING_AGENT_DIR/subagents/results/by-session/<key>/<id>.json`, default
 `~/.pi/agent/subagents/results/`), fetched lazily via `subagent op=result`.
+`<key>` is the first 32 lowercase hex chars of the SHA-256 of the exact
+`parentSession` string (UTF-8); ZAVOD derives the same key, so this is a
+cross-repo contract. Results without `parentSession`, and results written by
+older versions, live flat at `results/<id>.json`; nothing is moved or deleted.
+Readers merge the per-session directories and the flat one by id (a terminal
+record beats `running`; between equals the later `endedAt`, else `startedAt`,
+wins).
 Each result also carries `parentSession` (the spawning main session file), so
 a session's subagent spend survives a resume: the runtime sums results
 attributed to the current session (resume base) plus live per-child stats and

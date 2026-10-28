@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
-import { defaultResultsDir, saveResult, sumSessionCost } from "./result-store";
+import { defaultResultsDir, listAllResults, loadResult, saveResult, sessionKey, sumSessionCost } from "./result-store";
 import type { AgentResult } from "./types";
 
 function makeDir(): string {
@@ -66,6 +66,130 @@ describe("defaultResultsDir", () => {
 		} finally {
 			if (prev === undefined) delete process.env.PI_CODING_AGENT_DIR;
 			else process.env.PI_CODING_AGENT_DIR = prev;
+		}
+	});
+});
+
+function writeLegacy(dir: string, r: AgentResult): string {
+	const file = path.join(dir, `${r.id}.json`);
+	fs.writeFileSync(file, JSON.stringify(r), "utf8");
+	return file;
+}
+
+describe("per-session layout", () => {
+	test("sessionKey is the first 32 hex chars of SHA-256 (cross-repo vector)", () => {
+		expect(sessionKey("/sessions/main.jsonl")).toBe("addc20b5f17570458c7148ef1f258114");
+		expect(sessionKey("")).toBe("e3b0c44298fc1c149afbf4c8996fb924");
+	});
+
+	test("saveResult writes per-session when parentSession is set, flat otherwise", () => {
+		const dir = makeDir();
+		try {
+			const a = saveResult(result({ id: "a" }), dir);
+			expect(a).toBe(path.join(dir, "by-session", sessionKey("/sessions/main.jsonl"), "a.json"));
+			expect(fs.existsSync(a)).toBe(true);
+			const { parentSession: _p, ...noParent } = result({ id: "b" });
+			expect(saveResult(noParent as AgentResult, dir)).toBe(path.join(dir, "b.json"));
+			expect(fs.readdirSync(dir).filter((n) => n.endsWith(".tmp"))).toEqual([]);
+		} finally {
+			fs.rmSync(dir, { recursive: true, force: true });
+		}
+	});
+
+	test("loadResult finds per-session and flat-only legacy results", () => {
+		const dir = makeDir();
+		try {
+			saveResult(result({ id: "new", task: "per-session" }), dir);
+			writeLegacy(dir, result({ id: "old", task: "legacy" }));
+			expect(loadResult("new", dir)?.task).toBe("per-session");
+			expect(loadResult("old", dir)?.task).toBe("legacy");
+			expect(loadResult("missing", dir)).toBeNull();
+		} finally {
+			fs.rmSync(dir, { recursive: true, force: true });
+		}
+	});
+
+	test("flat running + by-session terminal (same id): terminal wins in loadResult, listing and cost", () => {
+		const dir = makeDir();
+		try {
+			writeLegacy(dir, result({ id: "a", status: "running", startedAt: 5, tokens: undefined }));
+			saveResult(result({ id: "a", status: "completed", startedAt: 5, endedAt: 9 }), dir);
+			expect(loadResult("a", dir)?.status).toBe("completed");
+			const listed = listAllResults(dir);
+			expect(listed).toHaveLength(1);
+			expect(listed[0]?.status).toBe("completed");
+			expect(sumSessionCost(dir, "/sessions/main.jsonl")).toBe(0.25);
+		} finally {
+			fs.rmSync(dir, { recursive: true, force: true });
+		}
+	});
+
+	test("by-session running + flat terminal (same id): terminal wins, cost counted once", () => {
+		const dir = makeDir();
+		try {
+			saveResult(result({ id: "a", status: "running", startedAt: 5, tokens: undefined }), dir);
+			writeLegacy(dir, result({ id: "a", status: "failed", startedAt: 5, endedAt: 9 }));
+			expect(loadResult("a", dir)?.status).toBe("failed");
+			const listed = listAllResults(dir);
+			expect(listed).toHaveLength(1);
+			expect(listed[0]?.status).toBe("failed");
+			expect(sumSessionCost(dir, "/sessions/main.jsonl")).toBe(0.25);
+		} finally {
+			fs.rmSync(dir, { recursive: true, force: true });
+		}
+	});
+
+	test("between two terminal copies the later endedAt wins", () => {
+		const dir = makeDir();
+		try {
+			saveResult(result({ id: "a", task: "early", endedAt: 10 }), dir);
+			writeLegacy(dir, result({ id: "a", task: "late", endedAt: 20 }));
+			expect(loadResult("a", dir)?.task).toBe("late");
+			saveResult(result({ id: "b", task: "late", endedAt: 30 }), dir);
+			writeLegacy(dir, result({ id: "b", task: "early", endedAt: 15 }));
+			expect(loadResult("b", dir)?.task).toBe("late");
+		} finally {
+			fs.rmSync(dir, { recursive: true, force: true });
+		}
+	});
+
+	test("sumSessionCost spans per-session and legacy files without double counting", () => {
+		const dir = makeDir();
+		try {
+			saveResult(result({ id: "a", tokens: { input: 1, output: 1, total: 2, cost: 1 } }), dir);
+			writeLegacy(dir, result({ id: "b", tokens: { input: 1, output: 1, total: 2, cost: 2 } }));
+			writeLegacy(dir, result({ id: "a", tokens: { input: 1, output: 1, total: 2, cost: 1 } }));
+			expect(sumSessionCost(dir, "/sessions/main.jsonl")).toBe(3);
+		} finally {
+			fs.rmSync(dir, { recursive: true, force: true });
+		}
+	});
+});
+
+describe("extension start", () => {
+	test("importing the extension entry does not touch the results directory", async () => {
+		const dir = makeDir();
+		const prev = process.env.PI_CODING_AGENT_DIR;
+		try {
+			process.env.PI_CODING_AGENT_DIR = dir;
+			const resultsDir = defaultResultsDir();
+			writeLegacy((fs.mkdirSync(resultsDir, { recursive: true }), resultsDir), result({ id: "a" }));
+			const snapshot = (): string[] => fs.readdirSync(resultsDir, { recursive: true }).map(String).sort();
+			const before = snapshot();
+			const mod = await import("./index");
+			const handlers: unknown[] = [];
+			const pi = new Proxy({}, { get: () => (...args: unknown[]) => handlers.push(args) });
+			try {
+				(mod.default as (pi: unknown) => void)(pi);
+			} catch {
+				// registration may need a fuller host; only filesystem effects matter here
+			}
+			expect(snapshot()).toEqual(before);
+			expect(fs.existsSync(path.join(resultsDir, "a.json"))).toBe(true);
+		} finally {
+			if (prev === undefined) delete process.env.PI_CODING_AGENT_DIR;
+			else process.env.PI_CODING_AGENT_DIR = prev;
+			fs.rmSync(dir, { recursive: true, force: true });
 		}
 	});
 });
