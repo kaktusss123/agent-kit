@@ -56,10 +56,10 @@ usage, and failure reason live in a persisted result file
 `<key>` is the first 32 lowercase hex chars of the SHA-256 of the exact
 `parentSession` string (UTF-8); ZAVOD derives the same key, so this is a
 cross-repo contract. Results without `parentSession`, and results written by
-older versions, live flat at `results/<id>.json`; readers check the
-per-session directories first, then the flat one, and the extension moves
-legacy flat files that carry `parentSession` into their per-session directory
-on start (idempotent, rename-safe across concurrent processes, nothing deleted).
+older versions, live flat at `results/<id>.json`; nothing is moved or deleted.
+Readers merge the per-session directories and the flat one by id (a terminal
+record beats `running`; between equals the later `endedAt`, else `startedAt`,
+wins).
 Each result also carries `parentSession` (the spawning main session file), so
 a session's subagent spend survives a resume: the runtime sums results
 attributed to the current session (resume base) plus live per-child stats and

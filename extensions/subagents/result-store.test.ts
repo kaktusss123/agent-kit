@@ -1,9 +1,8 @@
 import { describe, expect, test } from "bun:test";
-import { spawn } from "node:child_process";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
-import { defaultResultsDir, loadResult, migrateLegacyResults, saveResult, sessionKey, sumSessionCost } from "./result-store";
+import { defaultResultsDir, listAllResults, loadResult, saveResult, sessionKey, sumSessionCost } from "./result-store";
 import type { AgentResult } from "./types";
 
 function makeDir(): string {
@@ -97,21 +96,58 @@ describe("per-session layout", () => {
 		}
 	});
 
-	test("loadResult prefers the legacy flat copy while one exists (transition protocol)", () => {
+	test("loadResult finds per-session and flat-only legacy results", () => {
 		const dir = makeDir();
 		try {
 			saveResult(result({ id: "new", task: "per-session" }), dir);
 			writeLegacy(dir, result({ id: "old", task: "legacy" }));
-			writeLegacy(dir, result({ id: "both", task: "legacy" }));
-			saveResult(result({ id: "both", task: "per-session" }), dir);
 			expect(loadResult("new", dir)?.task).toBe("per-session");
 			expect(loadResult("old", dir)?.task).toBe("legacy");
-			// A flat file for an id that ALSO has a per-session copy is a legacy
-			// writer's re-write that landed AFTER the copy was migrated: the
-			// legacy writer only ever moves a record forward (spawn marker ->
-			// terminal), so while the flat file exists it is the newer state.
-			expect(loadResult("both", dir)?.task).toBe("legacy");
 			expect(loadResult("missing", dir)).toBeNull();
+		} finally {
+			fs.rmSync(dir, { recursive: true, force: true });
+		}
+	});
+
+	test("flat running + by-session terminal (same id): terminal wins in loadResult, listing and cost", () => {
+		const dir = makeDir();
+		try {
+			writeLegacy(dir, result({ id: "a", status: "running", startedAt: 5, tokens: undefined }));
+			saveResult(result({ id: "a", status: "completed", startedAt: 5, endedAt: 9 }), dir);
+			expect(loadResult("a", dir)?.status).toBe("completed");
+			const listed = listAllResults(dir);
+			expect(listed).toHaveLength(1);
+			expect(listed[0]?.status).toBe("completed");
+			expect(sumSessionCost(dir, "/sessions/main.jsonl")).toBe(0.25);
+		} finally {
+			fs.rmSync(dir, { recursive: true, force: true });
+		}
+	});
+
+	test("by-session running + flat terminal (same id): terminal wins, cost counted once", () => {
+		const dir = makeDir();
+		try {
+			saveResult(result({ id: "a", status: "running", startedAt: 5, tokens: undefined }), dir);
+			writeLegacy(dir, result({ id: "a", status: "failed", startedAt: 5, endedAt: 9 }));
+			expect(loadResult("a", dir)?.status).toBe("failed");
+			const listed = listAllResults(dir);
+			expect(listed).toHaveLength(1);
+			expect(listed[0]?.status).toBe("failed");
+			expect(sumSessionCost(dir, "/sessions/main.jsonl")).toBe(0.25);
+		} finally {
+			fs.rmSync(dir, { recursive: true, force: true });
+		}
+	});
+
+	test("between two terminal copies the later endedAt wins", () => {
+		const dir = makeDir();
+		try {
+			saveResult(result({ id: "a", task: "early", endedAt: 10 }), dir);
+			writeLegacy(dir, result({ id: "a", task: "late", endedAt: 20 }));
+			expect(loadResult("a", dir)?.task).toBe("late");
+			saveResult(result({ id: "b", task: "late", endedAt: 30 }), dir);
+			writeLegacy(dir, result({ id: "b", task: "early", endedAt: 15 }));
+			expect(loadResult("b", dir)?.task).toBe("late");
 		} finally {
 			fs.rmSync(dir, { recursive: true, force: true });
 		}
@@ -130,94 +166,29 @@ describe("per-session layout", () => {
 	});
 });
 
-describe("migrateLegacyResults", () => {
-	test("moves legacy files with parentSession, leaves the rest, is idempotent", () => {
+describe("extension start", () => {
+	test("importing the extension entry does not touch the results directory", async () => {
 		const dir = makeDir();
+		const prev = process.env.PI_CODING_AGENT_DIR;
 		try {
-			writeLegacy(dir, result({ id: "a" }));
-			writeLegacy(dir, result({ id: "b", parentSession: "/sessions/other.jsonl" }));
-			const { parentSession: _p, ...noParent } = result({ id: "c" });
-			writeLegacy(dir, noParent as AgentResult);
-			fs.writeFileSync(path.join(dir, "broken.json"), "{not json", "utf8");
-			fs.writeFileSync(path.join(dir, "keep.json.tmp"), "{}", "utf8");
-
-			expect(migrateLegacyResults(dir)).toBe(2);
-			const key = (s: string) => path.join(dir, "by-session", sessionKey(s));
-			expect(fs.existsSync(path.join(key("/sessions/main.jsonl"), "a.json"))).toBe(true);
-			expect(fs.existsSync(path.join(key("/sessions/other.jsonl"), "b.json"))).toBe(true);
-			expect(fs.existsSync(path.join(dir, "a.json"))).toBe(false);
-			expect(fs.existsSync(path.join(dir, "c.json"))).toBe(true);
-			expect(fs.existsSync(path.join(dir, "broken.json"))).toBe(true);
-			expect(fs.existsSync(path.join(dir, "keep.json.tmp"))).toBe(true);
-			expect(loadResult("a", dir)?.id).toBe("a");
-
-			expect(migrateLegacyResults(dir)).toBe(0);
-			expect(migrateLegacyResults(path.join(dir, "absent"))).toBe(0);
-		} finally {
-			fs.rmSync(dir, { recursive: true, force: true });
-		}
-	});
-
-	test("a stale migrated snapshot is upgraded from the legacy re-write", () => {
-		const dir = makeDir();
-		try {
-			// A migrated snapshot still says "running" while the legacy writer
-			// has already re-published a terminal state to the flat path: the
-			// pass must adopt the terminal record, not pin the stale marker
-			// behind an EEXIST skip.
-			saveResult(result({ id: "a", status: "running" }), dir);
-			writeLegacy(dir, result({ id: "a" }));
-			expect(migrateLegacyResults(dir)).toBe(1);
-			expect(fs.existsSync(path.join(dir, "a.json"))).toBe(false);
-			expect(loadResult("a", dir)?.status).toBe("completed");
-			const key = path.join(dir, "by-session", sessionKey("/sessions/main.jsonl"));
-			expect(JSON.parse(fs.readFileSync(path.join(key, "a.json"), "utf8")).status).toBe("completed");
-			expect(migrateLegacyResults(dir)).toBe(0);
-		} finally {
-			fs.rmSync(dir, { recursive: true, force: true });
-		}
-	});
-
-	test("F1: a live legacy writer's terminal re-write is served, not shadowed", () => {
-		const dir = makeDir();
-		try {
-			writeLegacy(dir, result({ id: "a", status: "running" })); // old process spawn marker
-			expect(migrateLegacyResults(dir)).toBe(1); // the upgrade migrates the marker
-			// the still-running old process publishes its terminal state to the
-			// flat path, exactly as the pre-upgrade code does
-			writeLegacy(dir, result({ id: "a" }));
-			expect(loadResult("a", dir)?.status).toBe("completed");
-			// the next pass adopts the terminal record instead of skipping it
-			expect(migrateLegacyResults(dir)).toBe(1);
-			expect(fs.existsSync(path.join(dir, "a.json"))).toBe(false);
-			expect(loadResult("a", dir)?.status).toBe("completed");
-		} finally {
-			fs.rmSync(dir, { recursive: true, force: true });
-		}
-	});
-
-	test("two concurrent migrations leave every result exactly once and do not throw", async () => {
-		const dir = makeDir();
-		try {
-			const ids = Array.from({ length: 200 }, (_, i) => `r${i}`);
-			for (const id of ids) writeLegacy(dir, result({ id, parentSession: `/sessions/s${Number(id.slice(1)) % 5}.jsonl` }));
-			// Two real processes race over the same directory.
-			const script = `import { migrateLegacyResults } from ${JSON.stringify(path.join(import.meta.dir, "result-store.ts"))};
-migrateLegacyResults(${JSON.stringify(dir)});`;
-			const run = () =>
-				new Promise<number | null>((resolve) => {
-					const child = spawn(process.execPath, ["-e", script], { stdio: "ignore" });
-					child.on("exit", (code) => resolve(code));
-				});
-			expect(await Promise.all([run(), run()])).toEqual([0, 0]);
-			expect(fs.readdirSync(dir).filter((n) => n.endsWith(".json"))).toEqual([]);
-			let count = 0;
-			for (const k of fs.readdirSync(path.join(dir, "by-session"))) {
-				count += fs.readdirSync(path.join(dir, "by-session", k)).length;
+			process.env.PI_CODING_AGENT_DIR = dir;
+			const resultsDir = defaultResultsDir();
+			writeLegacy((fs.mkdirSync(resultsDir, { recursive: true }), resultsDir), result({ id: "a" }));
+			const snapshot = (): string[] => fs.readdirSync(resultsDir, { recursive: true }).map(String).sort();
+			const before = snapshot();
+			const mod = await import("./index");
+			const handlers: unknown[] = [];
+			const pi = new Proxy({}, { get: () => (...args: unknown[]) => handlers.push(args) });
+			try {
+				(mod.default as (pi: unknown) => void)(pi);
+			} catch {
+				// registration may need a fuller host; only filesystem effects matter here
 			}
-			expect(count).toBe(ids.length);
-			for (const id of ids) expect(loadResult(id, dir)?.id).toBe(id);
+			expect(snapshot()).toEqual(before);
+			expect(fs.existsSync(path.join(resultsDir, "a.json"))).toBe(true);
 		} finally {
+			if (prev === undefined) delete process.env.PI_CODING_AGENT_DIR;
+			else process.env.PI_CODING_AGENT_DIR = prev;
 			fs.rmSync(dir, { recursive: true, force: true });
 		}
 	});
