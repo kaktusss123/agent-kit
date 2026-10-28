@@ -8,16 +8,16 @@ import { describe, expect, test } from "bun:test";
 import { buildSpawnModelSection, buildSpawnModelSectionError, SPAWN_MODEL_SECTION } from "./spawn-guidance";
 
 describe("buildSpawnModelSection", () => {
-	test("lists all roles; unbound roles read as session", () => {
+	test("lists all roles; unbound roles say they use the session model", () => {
 		const text = buildSpawnModelSection({ bindings: {} });
 		for (const role of ["explore", "helper", "review", "owner"]) expect(text).toContain(`- ${role} (`);
-		expect(text.match(/: session$/gm)).toHaveLength(4);
+		expect(text.match(/: unbound \(uses the session model\)$/gm)).toHaveLength(4);
 	});
 
 	test("bound roles render their spec and reflect changes between builds", () => {
 		const first = buildSpawnModelSection({ bindings: { review: "zai/glm-max:xhigh" } });
 		expect(first).toContain("- review (independent fresh-context reviewer): zai/glm-max:xhigh");
-		expect(first).toContain("- explore (cheap read-only research): session");
+		expect(first).toContain("- explore (cheap read-only research): unbound (uses the session model)");
 		const second = buildSpawnModelSection({ bindings: { review: "zai/glm-x:low", explore: "zai/cheap" } });
 		expect(second).toContain("review (independent fresh-context reviewer): zai/glm-x:low");
 		expect(second).toContain("explore (cheap read-only research): zai/cheap");

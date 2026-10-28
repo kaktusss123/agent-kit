@@ -1139,6 +1139,9 @@ function repoOwnerPrompt(task: string, deadlineMs: number): string {
 		Number((milliseconds / 1000).toFixed(3)).toString();
 	return (
 		`${task}\n\n` +
+		`Required owner skills: before the first edit read \`skill://implementation\`; ` +
+		`before the first commit read \`skill://git-commit\` and its \`references/checkpoint.md\`; ` +
+		`read \`skill://verification-design\` when changing observable behavior.\n\n` +
 		`Runtime budget (enforced):\n` +
 		`- Hard deadline: ${seconds(deadlineMs)} seconds.\n` +
 		`- Finalization reserve: ${seconds(reserveMs)} seconds ` +

@@ -327,6 +327,9 @@ describe("RepoOwner dispatch budget", () => {
 
 				expect(prompt?.message).toBe(
 					`${task}\n\n` +
+						`Required owner skills: before the first edit read \`skill://implementation\`; ` +
+						`before the first commit read \`skill://git-commit\` and its \`references/checkpoint.md\`; ` +
+						`read \`skill://verification-design\` when changing observable behavior.\n\n` +
 						`Runtime budget (enforced):\n` +
 						`- Hard deadline: ${timeoutMs / 1000} seconds.\n` +
 						`- Finalization reserve: ${reserveSeconds} seconds (starts ${finalizationStartsAt} seconds after dispatch).\n` +

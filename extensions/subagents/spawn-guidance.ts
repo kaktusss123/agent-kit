@@ -32,7 +32,9 @@ export const SPAWN_MODEL_RULE =
 export function buildSpawnModelSection(state: SpawnGuidanceState): string {
 	const lines: string[] = ["Subagent model roles (fresh from subagent-roles.json; unbound = the session model):"];
 	for (const role of ROLES) {
-		lines.push(`- ${role} (${ROLE_DESCRIPTIONS[role]}): ${state.bindings[role] ?? "session"}`);
+		lines.push(
+			`- ${role} (${ROLE_DESCRIPTIONS[role]}): ${state.bindings[role] ?? "unbound (uses the session model)"}`,
+		);
 	}
 	lines.push(`Usage: ${SPAWN_MODEL_RULE}`);
 	return lines.join("\n");

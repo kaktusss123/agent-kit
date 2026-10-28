@@ -41,7 +41,7 @@ git clone <url> ~/src/agent-kit
 | `prompts/*` | `prompts/*` | — |
 | `rules/AGENTS.md` | `AGENTS.md` | `rules/agent-kit.md` |
 | `rules/claude-code.md` | — | `rules/agent-kit-claude-code.md` |
-| `claude-code/plugin` | — | `skills/agent-kit` (плагин) |
+| `claude-code/plugin` | — | `skills/agent-kit` (плагин, не skill; hooks — после регистрации плагина) |
 | `claude-code/commands/*` | — | `commands/*` |
 | `claude-code/agents/*` | — | `agents/*` |
 
@@ -276,12 +276,13 @@ Claude Code получает:
   без `model`. Модели в определениях заданы алиасами; новый тип агента
   заводится только ради своего system prompt или набора tools
   ([ADR-0010](docs/adr/adr-0010.md), [ADR-0011](docs/adr/adr-0011.md));
-- плагин `agent-kit` (`claude-code/plugin`, ставится как
-  `~/.claude/skills/agent-kit`): hooks плагина и его `bin/` работают только
-  после однократной регистрации плагина в Claude Code. На этом хосте плагин
-  не зарегистрирован, hooks не включены, а `agent-kit` в `PATH` даёт
-  `~/.local/bin/agent-kit` из инсталлера, не `bin/` плагина. После
-  регистрации плагин включает:
+- плагин `agent-kit` (`claude-code/plugin`): инсталлер линкует каталог в
+  `~/.claude/skills/agent-kit` как skills-directory plugin, а не как skill —
+  в каталоге нет `SKILL.md`, его грузит загрузчик плагинов. Hooks плагина и
+  его `bin/` работают только после однократной регистрации плагина в Claude
+  Code; по умолчанию плагин не зарегистрирован и hooks не включены.
+  `agent-kit` в `PATH` даёт `~/.local/bin/agent-kit` из инсталлера, не `bin/`
+  плагина. После регистрации плагин включает:
   - `SessionStart` → `agent-kit task hook session-start`: включает git-shim для
     всех Bash-команд сессии и её субагентов и экспортирует `AGENT_KIT_POLICY`;
   - `PreToolUse` на `Edit|Write|MultiEdit|NotebookEdit` → `agent-kit task hook

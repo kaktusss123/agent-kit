@@ -83,6 +83,12 @@ export function resolveSpawnPair(
 		throw new Error("`model` and `role` are mutually exclusive: pass `model` when the user named a model, otherwise a role.");
 	}
 	const role = effectiveRole(mode, request.role);
+	// Legacy prompts passed the literal `session` to mean "the session model";
+	// it is not a registry model id, so accept it as the documented default
+	// instead of failing an otherwise unambiguous spawn.
+	if (request.model !== undefined && request.model.trim() === "session") {
+		return sessionPair(ctx, currentThinking);
+	}
 	const env: ModelSpecEnv = {
 		findModel: createExactModelMatcher(ctx.modelRegistry.getAll()),
 		defaultThinking: currentThinking,

@@ -84,6 +84,21 @@ describe("resolveSpawnPair — explicit model", () => {
 		});
 	});
 
+	test("literal session inherits the session model and thinking", () => {
+		withRoles({ helper: "prov-b/openai/gpt-oss-120b:xhigh" }, () => {
+			expect(resolveSpawnPair("plain", { model: "session" }, ctx(), "high")).toEqual({
+				model: "prov-a/model-a",
+				thinking: "high",
+			});
+			// Still the session pair, never the bound role.
+			expect(resolveSpawnPair("workspace", { model: "session" }, ctx({ provider: "prov-b", id: "openai/gpt-oss-120b" }), "low")).toEqual({
+				model: "prov-b/openai/gpt-oss-120b",
+				thinking: "low",
+			});
+			expect(() => resolveSpawnPair("plain", { model: "session", role: "review" }, ctx(), "low")).toThrow(/mutually exclusive/);
+		});
+	});
+
 	test("does not read the bindings file (a corrupt file cannot break an explicit model)", () => {
 		withRoles("{ nope", () => {
 			expect(resolveSpawnPair("plain", { model: "prov-a/model-a:low" }, ctx(), "high").model).toBe("prov-a/model-a");
