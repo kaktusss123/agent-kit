@@ -127,6 +127,59 @@ process.exit(migrateLegacyResults(dir, io) >= 0 ? 0 : 1);
 	}, 30_000);
 });
 
+describe("a broken lock vs a second owner", () => {
+	test("a second owner's adoption survives the former owner's resume, and the lock is never double-released", async () => {
+		const dir = makeDir();
+		const control = path.join(dir, "..", `${path.basename(dir)}-gate2`);
+		const storeFile = path.join(import.meta.dir, "result-store.ts");
+		const script = `
+import * as fs from "node:fs";
+import { migrateLegacyResults } from ${JSON.stringify(storeFile)};
+const dir = ${JSON.stringify(dir)}, control = ${JSON.stringify(control)};
+let parked = false;
+const wait = () => {
+	fs.writeFileSync(control + ".ready", "ready");
+	const end = Date.now() + 15000;
+	while (!fs.existsSync(control + ".release")) {
+		if (Date.now() > end) throw new Error("barrier timeout");
+		Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 5);
+	}
+};
+const io = { ...fs,
+	writeFileSync: (...args) => {
+		if (!parked && String(args[0]).includes("by-session")) { parked = true; wait(); }
+		return fs.writeFileSync(...args);
+	},
+};
+process.exit(migrateLegacyResults(dir, io) >= 0 ? 0 : 1);
+`;
+		try {
+			publish(dir, result({ id: "a", status: "running" }));
+			const child = Bun.spawn([process.execPath, "-e", script], { stdout: "inherit", stderr: "inherit" });
+			const deadline = Date.now() + 10_000;
+			while (!fs.existsSync(`${control}.ready`) && Date.now() < deadline) await Bun.sleep(5);
+			expect(fs.existsSync(`${control}.ready`)).toBe(true); // parked inside the adopt, holding the lock
+			// The lock is force-broken out from under the parked owner (any
+			// breaker path); a second owner then migrates the terminal publish.
+			fs.unlinkSync(path.join(dir, "a.json.adopt-lock"));
+			publish(dir, result({ id: "a" }));
+			expect(migrateLegacyResults(dir)).toBe(1);
+			expect(loadResult("a", dir)?.status).toBe("completed");
+			fs.writeFileSync(`${control}.release`, "go");
+			expect(await child.exited).toBe(0);
+			// The former owner resumes: its stale snapshot loses by content
+			// order (running < terminal), and its release cannot touch the
+			// successor's lock because ownership is re-proved by content.
+			expect(loadResult("a", dir)?.status).toBe("completed");
+			expect(fs.readdirSync(dir).filter((n) => n.startsWith("a.json"))).toEqual([]);
+		} finally {
+			fs.rmSync(dir, { recursive: true, force: true });
+			fs.rmSync(`${control}.ready`, { force: true });
+			fs.rmSync(`${control}.release`, { force: true });
+		}
+	}, 30_000);
+});
+
 describe("reads vs a concurrent migration", () => {
 	test("a file moved between a rollup's directory walks is still counted", () => {
 		const dir = makeDir();

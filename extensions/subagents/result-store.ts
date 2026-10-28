@@ -36,7 +36,7 @@ import { validateLastAssistantText } from "./last-text";
  * deterministically in tests; production callers use the default. */
 export type ResultStoreIo = Pick<
 	typeof fs,
-	"readdirSync" | "readFileSync" | "statSync" | "mkdirSync" | "writeFileSync" | "renameSync" | "unlinkSync" | "utimesSync" | "openSync" | "closeSync" | "writeSync"
+	"readdirSync" | "readFileSync" | "statSync" | "mkdirSync" | "writeFileSync" | "renameSync" | "unlinkSync" | "openSync" | "closeSync" | "writeSync"
 >;
 
 export function defaultResultsDir(): string {
@@ -186,14 +186,12 @@ interface FileIdentity {
 	dev: bigint;
 	ino: bigint;
 	mtimeNs: bigint;
-	/** Publish time in ms — the ordering key for concurrent adoptions. */
-	mtimeMs: number;
 }
 
 function statIdentity(file: string, io: ResultStoreIo): FileIdentity | null {
 	try {
-		const st = io.statSync(file, { bigint: true }) as unknown as { dev: bigint; ino: bigint; mtimeNs: bigint; mtimeMs: bigint | number };
-		return { dev: st.dev, ino: st.ino, mtimeNs: st.mtimeNs, mtimeMs: Number(st.mtimeMs) };
+		const st = io.statSync(file, { bigint: true }) as unknown as { dev: bigint; ino: bigint; mtimeNs: bigint };
+		return { dev: st.dev, ino: st.ino, mtimeNs: st.mtimeNs };
 	} catch {
 		return null;
 	}
@@ -290,89 +288,144 @@ const migratable = (parsed: Partial<AgentResult> | null, name: string): parsed i
 	!!parsed.parentSession &&
 	`${sanitizeId(parsed.id)}.json` === name;
 
-/** Write the snapshot to its per-session target when it is newer than what
- * the target already holds; keep the original publish time on the copy so
- * the target's mtime stays the ordering key for every later pass. */
-function adoptSnapshot(dir: string, name: string, parsed: Partial<AgentResult>, published: FileIdentity, io: ResultStoreIo): void {
+/** The ordering key of a record travels WITH its bytes: terminal states
+ * outrank the spawn-time "running" marker, and within the same rank the
+ * writer's own timestamps order the publishes (`endedAt` for terminal
+ * records, `startedAt` for markers). No filesystem metadata takes part in
+ * the ordering, so no crash window, utimes failure, sub-millisecond tie or
+ * clock jump can poison it: a partial adoption can only ever leave the
+ * record's OWN key on disk. */
+interface ContentOrder {
+	rank: number;
+	at: number;
+}
+
+function contentOrder(parsed: Partial<AgentResult>): ContentOrder {
+	const at = typeof parsed.endedAt === "number" ? parsed.endedAt : typeof parsed.startedAt === "number" ? parsed.startedAt : Number.NaN;
+	return { rank: statusRank(parsed.status), at };
+}
+
+/** Write the snapshot to its per-session target only when it outranks what
+ * the target already holds. An exact key tie with DIFFERENT bytes still
+ * adopts: the writer legitimately re-publishes a terminal record with more
+ * information (e.g. a late `processKilledAt`) while keeping `endedAt`. */
+function adoptSnapshot(dir: string, name: string, parsed: Partial<AgentResult>, io: ResultStoreIo): boolean {
 	const target = sessionDir(dir, parsed.parentSession as string);
 	io.mkdirSync(target, { recursive: true });
 	const dest = path.join(target, name);
-	const destStat = statIdentity(dest, io);
-	if (destStat) {
-		let destStatus: unknown;
-		try {
-			destStatus = (JSON.parse(io.readFileSync(dest, "utf8")) as { status?: unknown }).status;
-		} catch {
-			destStatus = undefined;
-		}
-		const newer = published.mtimeMs > destStat.mtimeMs;
-		const tieUpgrade = published.mtimeMs === destStat.mtimeMs && statusRank(parsed.status) > statusRank(destStatus);
-		if (!newer && !tieUpgrade) return; // never downgrade an adopted record
-	}
 	const tmp = `${dest}.tmp`;
 	io.writeFileSync(tmp, JSON.stringify(parsed, null, "\t"), "utf8");
+	// Re-check right before the rename: the target may have moved on since
+	// this adoption began (a broken lock can produce a second writer), and a
+	// stale snapshot must never land over a record that outranks it.
+	const settled = readResultFile(dest, io);
+	if (settled && !outranksOrEnriches(parsed, settled)) {
+		try {
+			io.unlinkSync(tmp);
+		} catch {
+			// tmp is invisible to readers; a leftover is swept by nothing but is harmless
+		}
+		return false; // never downgrade an adopted record
+	}
 	io.renameSync(tmp, dest);
+	return true;
+}
+
+/** Does `incoming` outrank `current`, or enrich it under the same key? */
+function outranksOrEnriches(parsed: Partial<AgentResult>, existing: Partial<AgentResult>): boolean {
+	const incoming = contentOrder(parsed);
+	const current = contentOrder(existing);
+	const outranks =
+		incoming.rank > current.rank ||
+		(incoming.rank === current.rank && (Number.isNaN(current.at) ? !Number.isNaN(incoming.at) : !Number.isNaN(incoming.at) && incoming.at > current.at));
+	const richer = incoming.rank === current.rank && incoming.at === current.at && JSON.stringify(parsed) !== JSON.stringify(existing);
+	return outranks || richer;
+}
+
+function lockOwner(lock: string, io: ResultStoreIo): number {
 	try {
-		io.utimesSync(dest, new Date(published.mtimeMs), new Date(published.mtimeMs));
+		return Number.parseInt(String(io.readFileSync(lock, "utf8")).trim(), 10);
 	} catch {
-		// ordering key best-effort: without it a later pass may re-adopt the same record once
+		return Number.NaN;
 	}
 }
 
-/** Is the adoption lock held by a LIVE process (or too fresh to break)?
- * The lock holds its owner's pid; a dead owner means a crashed migration
- * whose lock is broken on the spot. An unparsable lock is broken only
- * after a grace period, and even a live owner cannot hold a name forever:
- * no migration runs for minutes, so an old-enough lock is broken too. */
-function adoptionLockHeld(lock: string, io: ResultStoreIo): boolean {
-	let owner = Number.NaN;
+function ownerAlive(pid: number): boolean {
+	if (!Number.isInteger(pid) || pid <= 0) return false;
+	if (pid === process.pid) return true;
 	try {
-		owner = Number.parseInt(String(io.readFileSync(lock, "utf8")).trim(), 10);
-	} catch {
-		// absent or unreadable: not held
-		return false;
+		process.kill(pid, 0);
+		return true;
+	} catch (err) {
+		return (err as NodeJS.ErrnoException)?.code !== "ESRCH"; // EPERM etc: exists — treat as alive
 	}
-	const age = () => {
+}
+
+/** Break a lock whose owner is provably dead, without ever deleting a lock
+ * another process may have (re)created. The stale lock is claimed by an
+ * atomic RENAME first and re-inspected: if a new, live owner's lock
+ * appears in between, it is renamed back into place untouched. */
+function breakStaleLock(dir: string, lock: string, io: ResultStoreIo): boolean {
+	const dead = lockOwner(lock, io);
+	if (Number.isInteger(dead)) {
+		if (ownerAlive(dead)) return false; // live owners are NEVER broken, however long they sit: a stuck-but-alive owner only leaves one flat file readable, while breaking one can lose a terminal record. Known cost: a lock whose dead owner's pid was recycled stays until that pid exits — degradation is one unmigrated (still readable) flat file.
+	} else {
+		// Unparsable: either an owner paused between creating the lock and
+		// writing its pid, or an owner that crashed in that window. Break it
+		// only after a grace period, so the paused-but-alive owner keeps its
+		// exclusion while the crashed one is still reclaimed quickly.
 		const st = statIdentity(lock, io);
-		return st ? Date.now() - st.mtimeMs : Number.POSITIVE_INFINITY;
-	};
-	if (Number.isInteger(owner) && owner !== process.pid) {
-		try {
-			process.kill(owner, 0);
-			return age() < 600_000; // alive, and no migration holds a name for ten minutes
-		} catch (err) {
-			if ((err as NodeJS.ErrnoException)?.code === "ESRCH") return false; // owner is gone: break it
-			return age() < 600_000; // not ours to signal: trust it while fresh
-		}
+		if (!st || Date.now() - Number(st.mtimeNs) / 1e6 < 60_000) return false;
 	}
-	return age() < 120_000; // unparsable/self-leftover: give it a grace period only
+	const claimed = `${lock}.break-${process.pid}`;
+	try {
+		io.renameSync(lock, claimed);
+	} catch {
+		return false; // ENOENT: someone else broke it first (or it was released)
+	}
+	// Re-inspect the CLAIMED bytes: the path could have been recreated by a new owner between the read and the rename.
+	const claimedOwner = lockOwner(claimed, io);
+	if (claimedOwner === dead || (Number.isNaN(claimedOwner) && Number.isNaN(dead))) {
+		try {
+			io.unlinkSync(claimed);
+		} catch {
+			// raced: ignore
+		}
+		return true; // broken — retry acquisition
+	}
+	// A new owner's lock slid in: put it back untouched.
+	try {
+		io.renameSync(claimed, lock);
+	} catch {
+		// ENOENT on the destination: the new owner already finished and released — nothing to restore
+	}
+	return false;
 }
 
 /** Run `body` as the ONLY migrator of this result name. One writer per
  * name kills the check-then-write race on the target: a paused migrator
  * can no longer overwrite a newer record a concurrent pass adopted,
- * because no concurrent pass touches the name while the lock is held. */
+ * because no concurrent pass touches the name while the lock is held. The
+ * lock is released only after re-proving ownership (by content), so a
+ * stale-breaker can never make this finally delete a successor's lock. */
 function withAdoptionLock(dir: string, name: string, io: ResultStoreIo, body: () => number): number {
 	const lock = path.join(dir, `${name}.adopt-lock`);
-	for (let attempt = 0; attempt < 3; attempt++) {
+	for (let attempt = 0; attempt < 4; attempt++) {
 		let fd: number | undefined;
 		try {
 			fd = io.openSync(lock, "wx");
 		} catch (err) {
 			if ((err as NodeJS.ErrnoException)?.code !== "EEXIST") return 0; // unexpected: skip this pass
-			if (adoptionLockHeld(lock, io)) return 0; // a live migration owns this name: it finishes the job
-			try {
-				io.unlinkSync(lock); // stale (crashed owner): break and retry
-			} catch {
-				// raced: another process broke it first
-			}
+			if (ownerAlive(lockOwner(lock, io))) return 0; // a live migration owns this name: it finishes the job
+			if (!breakStaleLock(dir, lock, io)) return 0; // could not safely break: another pass owns it now
 			continue;
 		}
+		let owned = true;
 		try {
 			try {
 				io.writeSync(fd, String(process.pid));
 			} catch {
-				// lock content is best-effort; the pid check degrades to the age grace
+				// lock content is best-effort; an unparsable lock of a dead process is still breakable
 			}
 			return body();
 		} finally {
@@ -381,10 +434,12 @@ function withAdoptionLock(dir: string, name: string, io: ResultStoreIo, body: ()
 			} catch {
 				// already closed
 			}
-			try {
-				io.unlinkSync(lock);
-			} catch {
-				// already released by a stale-breaker after the grace period
+			if (owned && lockOwner(lock, io) === process.pid) {
+				try {
+					io.unlinkSync(lock);
+				} catch {
+					// already released by a breaker that saw this process dead
+				}
 			}
 		}
 	}
@@ -399,7 +454,7 @@ function migrateOne(dir: string, name: string, src: string, io: ResultStoreIo, r
 		try {
 		const snap = stableRead(src, io);
 		if (!snap || !migratable(snap.parsed, name)) return 0;
-		adoptSnapshot(dir, name, snap.parsed, snap.identity, io);
+		adoptSnapshot(dir, name, snap.parsed, io);
 		if (recovery) {
 			// A leftover claim: only its owner ever renames into that name and
 			// the owner adopted the content before creating it, so removing it
@@ -426,15 +481,21 @@ function migrateOne(dir: string, name: string, src: string, io: ResultStoreIo, r
 		}
 		// Whatever ended up at the claim name is adopted before the claim is
 		// removed: our own snapshot when nothing raced, or the writer's newer
-		// publish when its rename slid in first.
+		// publish when its rename slid in first. If the claim cannot be READ
+		// (a transient I/O error), its bytes are NOT deleted — the recovery
+		// sweep of a later pass retries the adoption instead of losing it.
 		const claimed = stableRead(trash, io);
-		if (claimed && migratable(claimed.parsed, name)) adoptSnapshot(dir, name, claimed.parsed, claimed.identity, io);
-		try {
-			io.unlinkSync(trash);
-			return 1;
-		} catch {
-			return 0;
+		if (!claimed) return 0;
+		if (migratable(claimed.parsed, name)) adoptSnapshot(dir, name, claimed.parsed, io);
+		if (sameIdentity(statIdentity(trash, io) ?? ({ dev: 0n, ino: 0n, mtimeNs: 0n } as FileIdentity), claimed.identity)) {
+			try {
+				io.unlinkSync(trash);
+				return 1;
+			} catch {
+				return 0;
+			}
 		}
+		return 0;
 	} catch {
 			// unexpected filesystem error: leave everything for the next pass
 			return 0;
