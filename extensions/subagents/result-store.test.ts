@@ -97,7 +97,7 @@ describe("per-session layout", () => {
 		}
 	});
 
-	test("loadResult reads per-session first and falls back to legacy flat", () => {
+	test("loadResult prefers the legacy flat copy while one exists (transition protocol)", () => {
 		const dir = makeDir();
 		try {
 			saveResult(result({ id: "new", task: "per-session" }), dir);
@@ -106,7 +106,11 @@ describe("per-session layout", () => {
 			saveResult(result({ id: "both", task: "per-session" }), dir);
 			expect(loadResult("new", dir)?.task).toBe("per-session");
 			expect(loadResult("old", dir)?.task).toBe("legacy");
-			expect(loadResult("both", dir)?.task).toBe("per-session");
+			// A flat file for an id that ALSO has a per-session copy is a legacy
+			// writer's re-write that landed AFTER the copy was migrated: the
+			// legacy writer only ever moves a record forward (spawn marker ->
+			// terminal), so while the flat file exists it is the newer state.
+			expect(loadResult("both", dir)?.task).toBe("legacy");
 			expect(loadResult("missing", dir)).toBeNull();
 		} finally {
 			fs.rmSync(dir, { recursive: true, force: true });
@@ -154,14 +158,39 @@ describe("migrateLegacyResults", () => {
 		}
 	});
 
-	test("an existing per-session target is never overwritten", () => {
+	test("a stale migrated snapshot is upgraded from the legacy re-write", () => {
 		const dir = makeDir();
 		try {
-			saveResult(result({ id: "a", task: "new" }), dir);
-			const legacy = writeLegacy(dir, result({ id: "a", task: "old" }));
+			// A migrated snapshot still says "running" while the legacy writer
+			// has already re-published a terminal state to the flat path: the
+			// pass must adopt the terminal record, not pin the stale marker
+			// behind an EEXIST skip.
+			saveResult(result({ id: "a", status: "running" }), dir);
+			writeLegacy(dir, result({ id: "a" }));
+			expect(migrateLegacyResults(dir)).toBe(1);
+			expect(fs.existsSync(path.join(dir, "a.json"))).toBe(false);
+			expect(loadResult("a", dir)?.status).toBe("completed");
+			const key = path.join(dir, "by-session", sessionKey("/sessions/main.jsonl"));
+			expect(JSON.parse(fs.readFileSync(path.join(key, "a.json"), "utf8")).status).toBe("completed");
 			expect(migrateLegacyResults(dir)).toBe(0);
-			expect(fs.existsSync(legacy)).toBe(true);
-			expect(loadResult("a", dir)?.task).toBe("new");
+		} finally {
+			fs.rmSync(dir, { recursive: true, force: true });
+		}
+	});
+
+	test("F1: a live legacy writer's terminal re-write is served, not shadowed", () => {
+		const dir = makeDir();
+		try {
+			writeLegacy(dir, result({ id: "a", status: "running" })); // old process spawn marker
+			expect(migrateLegacyResults(dir)).toBe(1); // the upgrade migrates the marker
+			// the still-running old process publishes its terminal state to the
+			// flat path, exactly as the pre-upgrade code does
+			writeLegacy(dir, result({ id: "a" }));
+			expect(loadResult("a", dir)?.status).toBe("completed");
+			// the next pass adopts the terminal record instead of skipping it
+			expect(migrateLegacyResults(dir)).toBe(1);
+			expect(fs.existsSync(path.join(dir, "a.json"))).toBe(false);
+			expect(loadResult("a", dir)?.status).toBe("completed");
 		} finally {
 			fs.rmSync(dir, { recursive: true, force: true });
 		}
