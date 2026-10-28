@@ -4,7 +4,7 @@ Claude Code binding of the same deterministic core the Pi extension uses (`exten
 
 ## Calling the runtime
 
-`agent-kit task <op> '<json params>'` through Bash (the agent-kit plugin puts `agent-kit` on the Bash PATH; `-` instead of the JSON reads params from stdin). Params are the Pi tool parameters verbatim, snake_case keys:
+`agent-kit task <op> '<json params>'` through Bash (the installer puts `agent-kit` on the Bash PATH via `~/.local/bin/agent-kit`; the plugin's `bin/` is a separate PATH entry only after the plugin is registered; `-` instead of the JSON reads params from stdin). Params are the Pi tool parameters verbatim, snake_case keys:
 
 | Pi tool | CLI |
 | --- | --- |
@@ -24,7 +24,7 @@ Statuses, required reactions, and guarantees per operation: `references/task-wor
 The agent-kit plugin applies the same policy as Pi through Claude Code hooks:
 
 - A `SessionStart` hook arms the git PATH shim for every Bash command of the session and its subagents (via `CLAUDE_ENV_FILE`): mutating git on the primary checkout of a repository that has managed worktrees is blocked with the worktree paths, `--no-verify` is blocked everywhere, `--git-dir`/`--work-tree` redirection blocks local mutations; read-only git and `push` pass. Same documented bypasses as in Pi (absolute git path, `sudo`, inline `PATH=`); it is routing protection, not a sandbox.
-- A `PreToolUse` hook denies `Edit`/`Write`/`MultiEdit`/`NotebookEdit` of tracked primary-checkout files of such a repository (ignored untracked files stay writable) and of `.git` metadata, naming the managed worktrees.
+- A `PreToolUse` hook denies `Edit`/`Write`/`MultiEdit`/`NotebookEdit` of tracked primary-checkout files of such a repository (ignored untracked files stay writable) and of `.git` metadata, naming the managed worktrees. This guard covers only those edit tools: writes performed through Bash (`sed -i`, `cp`, redirection, scripts) are not intercepted and are covered only by the RepoOwner contract and the routing rules below.
 - Without its environment (plugin disabled, `bun` missing) the guard fails open and Bash behaves stock.
 
 A guard denial is a routing failure: address the managed worktree instead; never repeat the mutation through another tool, `cp`, `sed`, Python, or another agent.

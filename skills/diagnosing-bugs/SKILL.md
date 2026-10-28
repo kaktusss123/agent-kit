@@ -1,6 +1,6 @@
 ---
 name: diagnosing-bugs
-description: "Evidence-first diagnosis for hard bugs, regressions, flaky failures, and performance problems. Use when something is broken, failing, intermittently wrong, or unexpectedly slow and the agent needs a tight reproduction loop, ranked falsifiable hypotheses, focused instrumentation, a root-cause fix, and regression proof rather than theory-first patching."
+description: "Evidence-first diagnosis for hard bugs, regressions, flaky failures, performance problems, and live operational failures. Use when: something is broken, failing, intermittently wrong, or unexpectedly slow; connectivity, routing, DNS, tunnel, deploy, or runtime-config trouble misbehaves with no obvious cause; you need a tight reproduction loop, ranked falsifiable hypotheses, focused instrumentation, a root-cause fix, and regression proof rather than theory-first patching. Not for: reading how a subsystem is designed; use skill://system-understanding."
 ---
 
 # Diagnosing bugs

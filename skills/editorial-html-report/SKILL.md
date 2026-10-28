@@ -1,7 +1,6 @@
 ---
 name: editorial-html-report
-description: >-
-  Create a polished self-contained single-file HTML report in a dark editorial style. Use when the deliverable is a shareable `.html` page — report, spec, implementation plan, postmortem, research summary — and prefer it over Markdown when hierarchy, comparisons, metrics, or lightweight interaction materially improve readability.
+description: "Create a polished self-contained single-file HTML report in a dark editorial style. Use when: the deliverable is a shareable .html page (report, spec, implementation plan, postmortem, research summary); hierarchy, comparisons, metrics, or lightweight interaction materially improve readability over Markdown. Not for: editing the prose quality of an existing text deliverable; use skill://unslop."
 ---
 
 # Editorial HTML report
@@ -18,6 +17,12 @@ Create one standalone HTML5 document that is easy to scan, easy to share, and vi
 6. Produce one `.html` file with essential CSS inline. Keep JavaScript inline and optional.
 7. Verify the finished file in a browser when browser tooling is available. Check one wide viewport and one narrow viewport, exercise every interactive control, and fix overflow, clipping, unreadable contrast, broken anchors, dead controls, and incorrect reset behavior.
 8. Publication is a separate public side effect, never implicit in report generation. Follow **Optional public publishing** below.
+
+## Executive summary
+
+Put a one-screen executive summary before any detail: the 5–7 decisions or findings the reader must leave with, each one sentence, with a pointer to its evidence below. The summary is not a table of contents and not a restatement of the title. Push supporting evidence, methodology, and long detail below it.
+
+Do not pad the report to look complete. If there are three findings, the summary has three.
 
 ## Output contract
 

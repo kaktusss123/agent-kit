@@ -1,6 +1,6 @@
 ---
 name: handoff
-description: "Compact an active engineering conversation or investigation so another agent or future session can continue without replaying the transcript. Use in ordinary chat, plan mode, long investigations, session changes, or before context reset when durable state, decisions, evidence, open questions, and next actions must survive."
+description: "Compact an active engineering conversation or investigation so another agent or future session can continue without replaying the transcript. Use when: context is about to reset; a session or investigation is handed to another agent; durable state, decisions, evidence, open questions, and next actions must survive a long investigation. Not for: writing the implementation spec itself; use skill://specification."
 ---
 
 # Handoff

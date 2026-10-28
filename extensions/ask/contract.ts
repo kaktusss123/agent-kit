@@ -83,6 +83,7 @@ export const RESERVED_OPTION_LABELS: ReadonlySet<string> = new Set([
 export const ASK_TOOL_DESCRIPTION = [
 	"Request missing information or a decision when it cannot be safely determined from the available context.",
 	"Use it only when the missing answer materially affects how to proceed.",
+	"Never ask the user to gather a fact you can obtain yourself (API, config backup, logs); ask only for decisions, permissions, and physical actions.",
 	"Group related questions when practical and provide concise, distinct options with useful tradeoff descriptions.",
 	"The runtime automatically adds a free-form response action — never include it yourself.",
 ].join(" ");

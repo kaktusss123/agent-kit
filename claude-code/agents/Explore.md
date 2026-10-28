@@ -1,6 +1,6 @@
 ---
 name: Explore
-description: Read-only codebase exploration, symbol lookup, call-path tracing, and dependency mapping.
+description: Read-only codebase exploration, symbol lookup, call-path tracing, and dependency mapping. (haiku, read-only)
 model: haiku
 effort: low
 tools: Read, Grep, Glob

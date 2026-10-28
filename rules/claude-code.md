@@ -19,3 +19,9 @@ agent-kit skills and AGENTS.md are written for both Pi and Claude Code; Pi tool 
 - Never pass `model` to an agent whose definition sets its own `model`; the parameter overrides it.
 - Add a new agent type only when a role needs its own system prompt or tool set, never for price or effort alone.
 - Do not use the haiku tier as the sole authority for root-cause analysis, security review, or design decisions.
+- Explore returns bounded findings. Bulk verbatim extraction (whole files, long logs) is Main's job; do not delegate it.
+
+## Session mechanics
+
+- The skill listing is frozen at session start. After a task that adds or renames a skill, run `/reload-skills` before relying on it.
+- A Bash call that exceeds the timeout moves to the background and notifies you on completion. Do not arm Monitors for a call your own tool will report.

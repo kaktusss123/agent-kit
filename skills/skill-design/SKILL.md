@@ -1,6 +1,6 @@
 ---
 name: skill-design
-description: "Design, refactor, and prune agent skills, role prompts, AGENTS-style guidance, and reusable workflow instructions. Use when creating or improving agent skills or any document consumed by an agent, especially to separate generic capabilities from workflow adapters, reduce context load, sharpen triggers, and keep deterministic policy in code instead of prose."
+description: "Design, refactor, and prune agent skills, role prompts, AGENTS-style guidance, and reusable workflow instructions. Use when: creating or improving a skill; auditing a skill portfolio for dead, overlapping, or never-firing descriptions; deciding whether a new skill is justified; separating generic capabilities from workflow adapters and reducing context load. Not for: designing product architecture; use skill://simple-design."
 ---
 
 # Skill design

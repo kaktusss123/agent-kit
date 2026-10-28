@@ -1,6 +1,6 @@
 ---
 name: code-archaeology
-description: "Investigate why existing code, architecture, or a constraint is shaped the way it is. Use when a strange design may encode historical intent, when refactoring risks deleting a compatibility or operational reason, or when commits, ADRs, issues, tests, and surrounding code need to be reconciled before changing behavior."
+description: "Investigate why existing code, architecture, or a constraint is shaped the way it is. Use when: a strange design may encode historical intent; a refactor risks deleting a compatibility or operational reason; commits, ADRs, issues, and tests disagree; you need to know whether a constraint still applies before changing behavior. Not for: tracing only current runtime behavior; use skill://system-understanding."
 ---
 
 # Code archaeology

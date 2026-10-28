@@ -18,7 +18,8 @@
 
 Pi — основной host: всё, что требует расширений, живёт там. Claude Code
 получает skills, правила, `/spec` и `/dev`, а task-workspace runtime — в виде
-CLI `agent-kit task` и hooks плагина `agent-kit`.
+CLI `agent-kit task` и hooks плагина `agent-kit` после его однократной
+регистрации.
 
 ## Установка
 
@@ -217,10 +218,11 @@ fork/exec. Если в этом окне лок всё-таки перехват
 ### `/spec` и `/dev`
 
 - **`/spec [задача]`** — Main определяет задачу, создаёт worktree и исследует
-  код уже в нём. По ходу использует `grilling`, `system-understanding`,
-  `engineering-research`, `code-archaeology`, `prototype`, а итог оформляет
-  через `specification` в `SPEC.md` в task workspace. Продуктовый код в этом
-  режиме не пишется. Готово, когда реализация не требует угадывать намерения.
+  код уже в нём. По ходу использует `system-understanding`,
+  `engineering-research`, `code-archaeology`, `prototype`, а факты и решения
+  собирает и оформляет через `specification` в `SPEC.md` в task workspace.
+  Продуктовый код в этом режиме не пишется. Готово, когда реализация не
+  требует угадывать намерения.
 - **`/dev [задача]`** — Main переиспользует worktree и `SPEC.md`, запускает по
   одному RepoOwner на каждый изменяемый репозиторий (независимые —
   параллельно), проверяет объективные git-факты после их отчёта, решает,
@@ -275,8 +277,11 @@ Claude Code получает:
   заводится только ради своего system prompt или набора tools
   ([ADR-0010](docs/adr/adr-0010.md), [ADR-0011](docs/adr/adr-0011.md));
 - плагин `agent-kit` (`claude-code/plugin`, ставится как
-  `~/.claude/skills/agent-kit`): кладёт `agent-kit` в `PATH` для Bash и
-  регистрирует hooks:
+  `~/.claude/skills/agent-kit`): hooks плагина и его `bin/` работают только
+  после однократной регистрации плагина в Claude Code. На этом хосте плагин
+  не зарегистрирован, hooks не включены, а `agent-kit` в `PATH` даёт
+  `~/.local/bin/agent-kit` из инсталлера, не `bin/` плагина. После
+  регистрации плагин включает:
   - `SessionStart` → `agent-kit task hook session-start`: включает git-shim для
     всех Bash-команд сессии и её субагентов и экспортирует `AGENT_KIT_POLICY`;
   - `PreToolUse` на `Edit|Write|MultiEdit|NotebookEdit` → `agent-kit task hook
@@ -315,7 +320,7 @@ Claude Code получает:
 - В sandbox-режиме Bash сетевые операции (`git push`/`fetch` по SSH, `gh`,
   `glab`) агент не выполняет, а отдаёт пользователю готовую команду `! …`.
 
-## Skills
+## Skills (23)
 
 Процесс и git:
 
@@ -327,8 +332,7 @@ Claude Code получает:
 
 Спецификация и исследование:
 
-- [`grilling`](skills/grilling/SKILL.md) — выяснить решения вопросами, не угадывая
-- [`specification`](skills/specification/SKILL.md) — превратить намерения и решения в контракт реализации
+- [`specification`](skills/specification/SKILL.md) — добыть факты, выяснить решения вопросами, не угадывая, и превратить намерения в контракт реализации
 - [`system-understanding`](skills/system-understanding/SKILL.md) — как подсистема работает на самом деле
 - [`code-archaeology`](skills/code-archaeology/SKILL.md) — почему код устроен именно так
 - [`engineering-research`](skills/engineering-research/SKILL.md) — исследование по первоисточникам
@@ -338,21 +342,18 @@ Claude Code получает:
 
 - [`implementation`](skills/implementation/SKILL.md) — реализация по согласованному плану минимальными связными диффами
 - [`tdd`](skills/tdd/SKILL.md) — red-green от поведения, где есть тестовый шов
-- [`verification-design`](skills/verification-design/SKILL.md) — минимальный достоверный план проверки
+- [`verification-design`](skills/verification-design/SKILL.md) — минимальный достоверный план проверки и локальный harness, чтобы запустить, проверить и прибрать приложение
 - [`diagnosing-bugs`](skills/diagnosing-bugs/SKILL.md) — отладка от воспроизведения и ранжированных гипотез
-- [`project-verification`](skills/project-verification/SKILL.md) — локальный способ запустить и проверить приложение
 
 Ревью и проверка:
 
-- [`code-review`](skills/code-review/SKILL.md) — верность контракту и инженерное качество
-- [`change-verification`](skills/change-verification/SKILL.md) — независимая проверка закоммиченного кандидата, `PASS`/`FAIL`
+- [`code-review`](skills/code-review/SKILL.md) — верность контракту и инженерное качество, включая независимую fresh-context проверку закоммиченного кандидата с `PASS`/`FAIL`
 - [`blast-radius`](skills/blast-radius/SKILL.md) — неочевидные поломки ниже по течению
 - [`security-review`](skills/security-review/SKILL.md) — security-линза
 
 Дизайн:
 
-- [`simple-design`](skills/simple-design/SKILL.md) — минимально достаточный дизайн
-- [`codebase-design`](skills/codebase-design/SKILL.md) — где живут ответственность, состояние и интерфейсы, когда сложность оправдана
+- [`simple-design`](skills/simple-design/SKILL.md) — минимально достаточный дизайн и где живут ответственность, состояние, интерфейсы и швы, когда сложность оправдана
 
 Тексты и мета:
 
@@ -361,6 +362,11 @@ Claude Code получает:
 - [`skill-design`](skills/skill-design/SKILL.md) — проектирование и чистка skills и AGENTS-инструкций
 
 Skills ссылаются друг на друга как `skill://<name>`.
+
+UI-работа требует двух skills, которые живут вне agent-kit: `interface-design`
+и `design-taste-frontend` (на этом хосте — `~/.agents/skills/`). Инсталлер
+agent-kit их не ставит; для продуктового UI, дашбордов и лендингов подключайте
+их отдельно.
 
 Скилл `fleet` живёт в репозитории Fleet: <https://github.com/kaktusss123/fleet>.
 

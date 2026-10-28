@@ -1,6 +1,6 @@
 ---
 name: engineering-research
-description: "Primary-source technical research for APIs, frameworks, dependencies, standards, runtime behavior, and uncertain engineering facts. Use in ordinary chat, plan mode, task discovery, debugging, or implementation when local evidence is insufficient and exact versions or authoritative external behavior matter."
+description: "Primary-source technical research for APIs, frameworks, dependencies, standards, runtime behavior, versions, and uncertain engineering facts. Use when: local evidence is insufficient; a question turns on why a config or flag does not take effect, which mechanism updates a value, or what an exact installed version does; authoritative external behavior matters. Not for: deciding what to build once the facts are known; use skill://simple-design."
 ---
 
 # Engineering research

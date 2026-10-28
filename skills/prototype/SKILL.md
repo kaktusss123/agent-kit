@@ -1,6 +1,6 @@
 ---
 name: prototype
-description: "Build a disposable experiment to answer a concrete uncertain engineering question before committing to architecture or implementation. Use when a small runnable spike can settle API feasibility, framework behavior, UX mechanics, performance shape, integration assumptions, or competing design options faster than more discussion."
+description: "Build a disposable experiment to answer a concrete uncertain engineering question before committing to architecture or implementation. Use when: a small runnable spike can settle API feasibility, framework behavior, UX mechanics, performance shape, integration assumptions, or competing design options faster than more discussion. Not for: diagnosing an existing bug; use skill://diagnosing-bugs."
 ---
 
 # Prototype
