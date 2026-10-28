@@ -1,6 +1,6 @@
 ---
 name: security-review
-description: "Focused security review lens for code changes, designs, authentication and authorization flows, secret handling, external inputs, privileged operations, network boundaries, persistence, or other security-sensitive work. Use when security risk is materially present or explicitly requested; inspect concrete trust boundaries and attack paths, produce evidence-backed findings, and avoid generic checklist noise."
+description: "Focused security review lens for code changes, designs, authentication and authorization flows, secret handling, external inputs, privileged operations, network boundaries, and persistence. Use when: security risk is materially present or explicitly requested; you need concrete trust boundaries and attack paths with evidence-backed findings instead of checklist noise. Not for: ordinary low-risk edits; use skill://code-review."
 ---
 
 # Security review

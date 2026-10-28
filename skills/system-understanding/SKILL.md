@@ -1,6 +1,6 @@
 ---
 name: system-understanding
-description: "Trace how an existing subsystem actually works before designing or modifying it. Use in ordinary chat, plan mode, debugging, architecture work, or task discovery when file-name reconnaissance is insufficient and the agent needs a causal model of entry points, data/control flow, state ownership, contracts, side effects, failure paths, and tests."
+description: "Trace how an existing subsystem actually works before designing or modifying it. Use when: file-name reconnaissance is insufficient; you need a causal model of entry points, data and control flow, state ownership, contracts, side effects, failure paths, and tests; an unfamiliar area must be understood before a change. Not for: recovering why the design exists historically; use skill://code-archaeology."
 ---
 
 # System understanding

@@ -1,11 +1,11 @@
 ---
 name: implementation
-description: "General implementation discipline for building a feature or change from an agreed plan, spec, issue, or clear user request. Use in ordinary chat, coding mode, or workflow implementer sessions when code must be changed with minimal coherent diffs, vertical progress, fast feedback, scope discipline, and explicit escalation when the requested contract conflicts with repository reality."
+description: "General implementation discipline for building a feature or change from an agreed plan, spec, issue, or clear user request. Use when: before the first edit in a coding task; turning an agreed contract into minimal coherent diffs with vertical progress, fast feedback, and scope discipline; escalating when the requested contract conflicts with repository reality. Not for: designing the structure the change must fit; use skill://simple-design."
 ---
 
 # Implementation
 
-Implement the intended behavior against the real codebase, not a remembered plan of the codebase.
+Implement the intended behavior against the real codebase, not a remembered plan of the codebase. In a task workflow (`skill://git-task`), a RepoOwner loads this before the first edit.
 
 ## Start grounded
 

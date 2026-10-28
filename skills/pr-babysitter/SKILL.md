@@ -1,6 +1,6 @@
 ---
 name: pr-babysitter
-description: "Overnight/shift gatekeeping over PRs authored by a fleet of parallel agents: watch open PRs and CI to a deadline, review each PR with fresh subagents, repair red CI, merge in dependency order, and deploy safely while other agents keep working — without killing live workloads the deploy would restart. Use when the user asks to 'watch the PRs', 'merge everything by morning', 'deploy while the agents run', or hands over repos whose agents are still working and a deploy would restart the service underneath them."
+description: "Gatekeeping over PRs authored by a fleet of parallel agents: watch open PRs and CI to a deadline, review each PR with fresh subagents, repair red CI, merge in dependency order, and deploy safely while other agents keep working. Use when: the user asks to watch the PRs, merge everything by morning, merge and watch CI during the day, verify the deploy after merging, or deploy while agents run without killing live workloads. Not for: reviewing a single MR from a link; use skill://lazy-mr-review."
 ---
 
 # PR babysitter
@@ -91,11 +91,8 @@ Classify before acting; never blind-rerun:
 - Pre-existing on main → prove by running the same suite on a pristine
   checkout of main; then it is out of scope for the shift.
 - Env noise ≠ failure (expected-refusal lists, intentional error-path tests).
-- Known trap class: e2e fixtures comparing LOCAL calendar days break in the
-  first hour after local midnight on UTC runners — "an hour ago" reads as
-  yesterday, and any "today at <fixed future time>" seed sorts above real
-  events in newest-first orders. Seed `max(now - N, local-midnight)` and
-  share the constant with time-format assertions.
+- Known trap class: read `references/known-traps.md` before treating a
+  date-dependent e2e failure as flaky.
 - Merge commits can break e2e semantically: after resolving conflicts, grep
   for identifiers whose definition lived on the other side (`ReferenceError`
   in a shard = lost definition), and re-check expectations written against
@@ -151,22 +148,4 @@ No ceremony.
 
 ---
 
-## Example profile: zavod homelab
-
-One filled-in set of seams, kept as the reference answer sheet:
-
-- **deploy trigger**: green push to `main` runs a CI `deploy` job that POSTs
-  the SHA to the server; the server updates itself and restarts its systemd
-  units (server + node). Base URL: repo variable `ZAVOD_DEPLOY_URL`.
-- **blast radius**: `POST $DEPLOY/api/sessions/reconcile` → per-node
-  runtimes; `capacity.live` is the count, `activity.at` the liveness stamp.
-- **graceful stop**: `POST $DEPLOY/api/sessions/:id/stop` (record survives,
-  resumable).
-- **author channel**: `POST $DEPLOY/api/sessions/:id/command` with
-  `{"command":"steer","params":{"message":"…"}}` — queues while the author's
-  turn runs.
-- **verification surface**: `GET /api/health` (revision), `GET
-  /api/system/update` (terminal job state), `GET /api/nodes` (auto nodes
-  report the new revision; manual-mode nodes legitimately lag). Smoke:
-  create a throwaway session (also proves pre-session dependency updates,
-  e.g. `agent-kit update`), `getState`, stop, delete.
+A filled-in example of the seams as a reference answer sheet lives in `references/example-profile.md`.

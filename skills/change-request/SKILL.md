@@ -1,6 +1,6 @@
 ---
 name: change-request
-description: Draft, inspect, create, or explicitly update GitHub pull requests and GitLab merge requests with a consistent description format. Use when the user asks to prepare or standardize a PR/MR description, publish completed changes as a PR/MR, inspect an existing change request, or update one. Use gh for GitHub and glab for GitLab after the publication target is resolved. Keep git mutation such as commit, push, rebase, and branch management outside this skill.
+description: "Draft, inspect, create, or explicitly update GitHub pull requests and GitLab merge requests with a consistent description format. Use when: the user asks to prepare or standardize a PR/MR description; publish completed changes as a PR/MR; inspect or update an existing change request. Not for: reviewing someone else's MR/PR from a link; use skill://lazy-mr-review."
 ---
 
 # Change request

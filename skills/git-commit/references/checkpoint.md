@@ -9,7 +9,7 @@ checkpoint_commit(repo, paths, message, allow_primary?, deferred_hook?)
 ```
 
 - `repo` — repository path (root or any directory inside one); must be a git repository.
-- `paths` — the exact intended file paths to stage and commit. This is the entire intended scope; the tool stages exactly these paths and, after hooks run, verifies the created commit against this set.
+- `paths` — the exact intended file paths to stage and commit. This is the entire intended scope; the tool stages exactly these paths and, after hooks run, verifies the created commit against this set. For a merge commit, `paths` must list every path the merge brings from the first parent; the commit cannot be narrower than the merge.
 - `message` — the full commit message per SKILL.md policy.
 - `allow_primary` — set only for the explicit user-requested manual-source commit; anything else on a primary checkout is rejected.
 - `deferred_hook` — evidence object; see below. Never a first attempt.

@@ -1,6 +1,6 @@
 ---
 name: lazy-mr-review
-description: "Review GitLab MRs or GitHub PRs from URLs and report findings in chat; publish comments only after the user explicitly chooses what to publish. Use when the user shares MR/PR links and asks to review them, asks follow-up questions about a completed review, or asks to publish findings as comments. Creating or updating MRs/PRs themselves is change-request's job."
+description: "Review GitLab MRs or GitHub PRs from URLs and report findings in chat; publish comments only after the user explicitly chooses what to publish. Use when: the user shares MR/PR links and asks to review them; the user asks follow-up questions about a completed review; the user asks to publish findings as comments. Not for: creating or updating MRs/PRs; use skill://change-request."
 ---
 
 # Lazy MR review

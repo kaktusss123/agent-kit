@@ -1,6 +1,6 @@
 ---
 name: git-task
-description: "Judgment layer for Git task workspaces: decide task mode vs read-only chat, resolve ticket/branch identity, route single-repo vs multi-repo implementation through managed task worktrees and repository owners. Use before any task-oriented specification or code mutation in a Git repository."
+description: "Judgment layer for Git task workspaces: decide task mode vs read-only chat, resolve ticket/branch identity, route single-repo vs multi-repo implementation through managed task worktrees and repository owners. Use when: before task-oriented specification or code mutation in a Git repository; deciding whether a subagent owns a question; choosing whether a candidate needs an independent reviewer; recovering from a failed task notification. Not for: the mechanics of the checkpoint commit itself; use skill://git-commit."
 ---
 
 # Git task workspaces
@@ -61,7 +61,7 @@ Main owns discovery and specification: the user conversation, product and design
 
 Durable artifacts (`SPEC.md`, `ADR-*.md`, `specs/<repo>.md`) live in the task workspace next to the worktrees; `SPEC.md` is the canonical entrypoint. For multi-repo tasks, `SPEC.md` fixes the cross-repo contract, writable repositories, ownership, dependencies/parallelism, and integration acceptance criteria.
 
-Research subagents are bounded helpers (spawned with `role=explore`; in Claude Code the `Explore` agent): one explicit question, one boundary, read-only findings synthesized in Main. They never own decisions or the problem.
+Research subagents are bounded helpers (spawned with `role=explore`; in Claude Code the `Explore` agent): one explicit question, one boundary, read-only findings synthesized in Main. They never own decisions or the problem. A subagent owns a question that needs more than one command or more context than Main holds; single-command lookups stay in Main.
 
 ## /dev
 
@@ -83,14 +83,14 @@ Main performs the final diff/contract review on the settled state after each own
 
 After accepting each final-verified committed candidate, Main makes an explicit review decision: whether its own review and verification are enough, or the candidate deserves an independent fresh-context reviewer. For a local, obvious, low-risk change the answer is usually no reviewer — review it in Main and move on. For substantial work the expectation shifts toward the reviewer: a large or wide diff, changes to architecture, contracts, or ownership boundaries, impact across several components, security sensitivity or expensive-to-regress behavior, correctness that ordinary tests cannot convincingly demonstrate, a suspicious or ambiguous owner report, a high cost of error, or an explicit user request. None of these automatically forces a reviewer, but skipping one on a substantial candidate must be a stated decision with a reason, never the default reached by silence.
 
-An independent reviewer is a plain `subagent` spawn rooted at the managed worktree (`cwd=<worktree>`, no `workspace`) with `role=review` (the user's bound reviewer model, else the session model; pass `model` instead when the user named one): a fresh session, never the implementing owner — its independence comes from the fresh context, not from a differing model. A model or binding that fails to resolve still fails closed before dispatch; never invent a fallback. The assignment carries the goal or the `SPEC.md` path when one exists, the base SHA Main dispatched against and the candidate HEAD from `git_facts`, the worktree path, and what to verify — at minimum intent fidelity to the task/spec, engineering correctness, and regressions or missed failure modes, working per `skill://code-review`. Review is read-only; the reviewer returns a compact verdict: `PASS`, or actionable findings with evidence.
+An independent reviewer is a plain `subagent` spawn rooted at the managed worktree (`cwd=<worktree>`, no `workspace`) with `role=review` (the user's bound reviewer model, else the session model; pass `model` instead when the user named one): a fresh session, never the implementing owner — its independence comes from the fresh context, not from a differing model. A model or binding that fails to resolve still fails closed before dispatch; never invent a fallback. The assignment carries the goal or the `SPEC.md` path when one exists, the base SHA Main dispatched against and the candidate HEAD from `git_facts`, the worktree path, and what to verify — at minimum intent fidelity to the task/spec, engineering correctness, and regressions or missed failure modes, working per `skill://code-review`. Review is read-only; the verdict and output contract are `skill://code-review`'s, not repeated here.
 
 On a substantial FAIL, repair through the existing path: a new owner whose task carries the findings and begins by inspecting current state. Main neither patches the candidate itself nor sends the reviewer to fix what it flagged. After a repair, Main again decides whether another independent round adds value; do not loop mechanically.
 
-A reviewer is never spawned ritually; the same judgment governs a separate fresh-context verifier (`skill://change-verification`) when an acceptance is itself a big independent task.
+A reviewer is never spawned ritually; the same judgment governs a separate fresh-context verifier using `skill://code-review`'s checkpoint verification mode when an acceptance is itself a big independent task.
 
 Delegation follows context and independence — never create committer/branch-fixer/pusher-style microagents to route around broken or blocked tooling. When the runtime tools work, Main calls them directly.
 
 ## Checkpoints
 
-When to checkpoint is judgment; mechanics are the runtime's. Commit exact intended paths with hooks run, no blanket staging, no push. Primary-checkout commits happen only as the explicit user-requested manual-source exception. Push only on an explicit user request, as a separate action. The concrete commit contract lives in the git-commit skill and its checkpoint reference.
+The commit contract is `skill://git-commit` and its `skills/git-commit/references/checkpoint.md`: exact intended paths, hooks run, no blanket staging, no push. A merge into a branch that triggers CI or a deploy is an external side effect; verify the run for that branch and the deployed revision, or state explicitly that the merge was unverified.

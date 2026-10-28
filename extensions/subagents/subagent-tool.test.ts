@@ -17,6 +17,7 @@ interface ToolDef {
 	parameters: unknown;
 	promptGuidelines?: string[];
 	description?: string;
+	prepareArguments?: (args: unknown) => unknown;
 }
 
 function makePi() {
@@ -123,6 +124,7 @@ describe("subagent tool surface", () => {
 		const props = (def.parameters as { properties: Record<string, { type?: string; enum?: unknown; anyOf?: unknown; description?: string }> }).properties;
 		expect(props.model).toMatchObject({ type: "string" });
 		expect(props.model.description).toContain("provider/id[:thinking]");
+		expect(props.model.description).toContain("inherit the session pair");
 		expect(JSON.stringify(props.role)).toContain('"explore"');
 		expect(JSON.stringify(props.role)).toContain('"owner"');
 		expect(props.role.description).toContain("Mutually exclusive");
@@ -260,6 +262,106 @@ describe("subagent tool surface", () => {
 		}
 	});
 
+	test("prepareArguments rejects the removed modelClass and passes normal payloads through", () => {
+		const { pi, tools } = makePi();
+		registerExtension(pi);
+		const prepare = tools.get("subagent")!.prepareArguments!;
+		expect(() => prepare({ op: "spawn", task: "t", modelClass: "fast" })).toThrow(
+			"modelClass was removed; use role=<explore|helper|review|owner> or model=<provider/id[:thinking]>",
+		);
+		expect(() => prepare({ op: "spawn", task: "t", modelClass: undefined })).not.toThrow();
+		const normal = { op: "spawn", task: "t", role: "helper" };
+		expect(prepare(normal)).toBe(normal);
+	});
+
+	test("status/wait/steer/cancel fall back to a persisted terminal record", async () => {
+		const { pi, tools } = makePi();
+		registerExtension(pi);
+		const env = makeEnv();
+		try {
+			const resultsDir = path.join(env.agentDir, "subagents", "results");
+			fs.mkdirSync(resultsDir, { recursive: true });
+			fs.writeFileSync(
+				path.join(resultsDir, "sa-done.json"),
+				JSON.stringify({
+					id: "sa-done",
+					label: "finished-helper",
+					task: "old task",
+					cwd: "/tmp",
+					status: "completed",
+					finalText: "the final assistant text",
+					summary: "the summary",
+					startedAt: 1,
+					endedAt: 2,
+				}),
+			);
+			const def = tools.get("subagent")!;
+			const call = (op: string, extra: Record<string, unknown> = {}) =>
+				def.execute("tc-p", { op, id: "sa-done", ...extra }, undefined, undefined, CTX) as Promise<{
+					content: Array<{ text: string }>;
+					details: Record<string, unknown>;
+					isError?: boolean;
+				}>;
+
+			const status = await call("status");
+			expect(status.isError).toBeUndefined();
+			expect(status.content[0]!.text).toContain("No live run in this process; persisted terminal record: completed — the summary.");
+			expect(status.content[0]!.text).toContain("Full record via op=result");
+			expect(status.content[0]!.text).toContain("the final assistant text");
+			expect((status.details.result as { id: string }).id).toBe("sa-done");
+
+			const waited = await call("wait");
+			expect(waited.isError).toBeUndefined();
+			expect(waited.content[0]!.text).toContain("the final assistant text");
+			expect((waited.details.result as { id: string }).id).toBe("sa-done");
+
+			const steered = await call("steer", { message: "m" });
+			expect(steered.isError).toBe(true);
+			expect(steered.details.error).toContain("already finished");
+			expect(steered.details.error).toContain("persisted terminal record: completed — the summary");
+
+			const cancelled = await call("cancel");
+			expect(cancelled.isError).toBeUndefined();
+			expect(cancelled.content[0]!.text).toContain("already finished");
+		} finally {
+			env.restore();
+		}
+	});
+
+	test("wait on a persisted failed record surfaces a tool error with the failure reason", async () => {
+		const { pi, tools } = makePi();
+		registerExtension(pi);
+		const env = makeEnv();
+		try {
+			const resultsDir = path.join(env.agentDir, "subagents", "results");
+			fs.mkdirSync(resultsDir, { recursive: true });
+			fs.writeFileSync(
+				path.join(resultsDir, "sa-failed.json"),
+				JSON.stringify({
+					id: "sa-failed",
+					label: "broken-helper",
+					task: "old task",
+					cwd: "/tmp",
+					status: "failed",
+					failureReason: "provider refused the request",
+					startedAt: 1,
+					endedAt: 2,
+				}),
+			);
+			const waited = (await tools.get("subagent")!.execute(
+				"tc-pf",
+				{ op: "wait", id: "sa-failed" },
+				undefined,
+				undefined,
+				CTX,
+			)) as { content: Array<{ text: string }>; details: { error?: string }; isError?: boolean };
+			expect(waited.isError).toBe(true);
+			expect(waited.details.error).toBe("Subagent sa-failed failed: provider refused the request");
+		} finally {
+			env.restore();
+		}
+	});
+
 	test("ops on unknown ids error uniformly (no workspace knowledge needed)", async () => {
 		const { pi, tools } = makePi();
 		registerExtension(pi);
@@ -311,7 +413,7 @@ describe("subagent tool surface", () => {
 				return event.systemPromptOptions.sections["subagent_model_defaults"]!;
 			};
 			// no file: every role is the session model
-			expect(await run()).toContain("- review (independent fresh-context reviewer): session");
+			expect(await run()).toContain("- review (independent fresh-context reviewer): unbound (uses the session model)");
 			writeStorage({ review: "zai/glm-max:xhigh" });
 			expect(await run()).toContain("- review (independent fresh-context reviewer): zai/glm-max:xhigh");
 			// mid-session rebind: the NEXT run reflects it (no stale snapshot)

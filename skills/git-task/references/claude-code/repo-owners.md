@@ -29,6 +29,14 @@ agent-kit task status '{"path": "<worktree>"}'
 
 The matching `taskWorkspaces[].repos[]` entry carries `branch`, `headSha`, `upstream`, and `dirty` (staged/unstaged). A `done` report is accepted only when HEAD moved to a new commit on the task branch and the tree is clean (untracked non-ignored files count as dirt); otherwise treat it as `blocked` (`done_rejected`) and repair through a fresh owner that first inspects the worktree.
 
+## Failed task notification
+
+When a task notification arrives incomplete or never arrives, do not guess what the owner finished:
+
+1. Read the facts yourself: `agent-kit task status '{"path": "<worktree>"}'` plus `git status --short` in the worktree.
+2. If a long gate (full suite, build, deploy) is still ahead, require a checkpoint commit of the current coherent work before starting it, so the next failure leaves a recoverable candidate.
+3. Resume the same owner with `SendMessage` naming the HEAD it produced, the dirty paths you observed, and the step that failed; do not dispatch a fresh owner for an unfinished run.
+
 ## Report, review, repair
 
 The worker report contract, done-means-committed-and-verified ordering, review, and repair rules are those of `references/repo-owners.md` and SKILL.md. An independent reviewer is a fresh Agent-tool subagent rooted (by explicit path) at the worktree, read-only, never the implementing owner.

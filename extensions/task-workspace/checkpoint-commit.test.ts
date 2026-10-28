@@ -50,7 +50,9 @@ function setHook(repo: string, script: string): void {
 }
 
 function commitFiles(repo: string): string[] {
-  return sh(repo, "git", "diff-tree", "--no-commit-id", "--name-only", "-r", "--root", "HEAD")
+  // --diff-merges=first-parent: a merge commit's own change set is the diff
+  // against its first parent (plain diff-tree prints nothing for merges).
+  return sh(repo, "git", "diff-tree", "--no-commit-id", "--name-only", "-r", "--root", "--diff-merges=first-parent", "HEAD")
     .split("\n")
     .filter((f) => f)
     .sort();
@@ -135,6 +137,125 @@ describe("checkpoint_commit exact scope", () => {
     // The reported commit is the real created commit.
     expect(scope.commit).toBe(sh(repo, "git", "rev-parse", "HEAD"));
     expect(commitFiles(repo)).toEqual(["a.txt"]);
+  });
+
+  // Acceptance coverage, NOT a red-before-fix regression proof: modern Git
+  // stages a plain deletion with `git add <path>` too, so this test passes
+  // with or without the defensive `-A` in checkpoint_commit.
+  test("a deleted tracked path (deleted via rm) commits as a deletion", async () => {
+    const repo = makeRepo("clean-deletion");
+    writeFileSync(join(repo, "doomed.txt"), "bye\n");
+    sh(repo, "git", "add", "-A");
+    sh(repo, "git", "commit", "-qm", "add doomed");
+    rmSync(join(repo, "doomed.txt"));
+
+    const r = await commit(repo, ["doomed.txt"]);
+
+    expect(r.status).toBe("committed");
+    expect(commitFiles(repo)).toEqual(["doomed.txt"]);
+    expect(sh(repo, "git", "show", "--name-status", "--format=", "HEAD")).toBe("D\tdoomed.txt");
+  });
+
+  test("a pre-staged subset is allowed and the full intended set is committed", async () => {
+    const repo = makeRepo("staged-subset");
+    writeFileSync(join(repo, "a.txt"), "aaa\n");
+    writeFileSync(join(repo, "b.txt"), "bbb\n");
+    sh(repo, "git", "add", "--", "a.txt");
+
+    const r = await commit(repo, ["a.txt", "b.txt"]);
+
+    expect(r.status).toBe("committed");
+    expect(commitFiles(repo)).toEqual(["a.txt", "b.txt"]);
+  });
+
+  test("a pre-staged path outside the intended set still rejects as ambiguous", async () => {
+    const repo = makeRepo("staged-outside");
+    writeFileSync(join(repo, "a.txt"), "aaa\n");
+    writeFileSync(join(repo, "other.txt"), "other\n");
+    sh(repo, "git", "add", "--", "other.txt");
+
+    const r = await commit(repo, ["a.txt"]);
+
+    expect(r.status).toBe("ambiguous_staged");
+    expect((r as { staged: string[] }).staged).toEqual(["other.txt"]);
+  });
+
+  test("a real merge commit keeps both parents and an exact first-parent scope", async () => {
+    const repo = makeRepo("merge");
+    sh(repo, "git", "checkout", "-qb", "side");
+    writeFileSync(join(repo, "side.txt"), "side\n");
+    sh(repo, "git", "add", "-A");
+    sh(repo, "git", "commit", "-qm", "side change");
+    sh(repo, "git", "checkout", "-q", "main");
+    // Diverge main so the merge produces a real two-parent commit.
+    writeFileSync(join(repo, "main.txt"), "main\n");
+    sh(repo, "git", "add", "-A");
+    sh(repo, "git", "commit", "-qm", "main change");
+    // --no-commit leaves MERGE_HEAD set and the merged-in side.txt staged.
+    sh(repo, "git", "merge", "--no-commit", "side");
+
+    const r = await commit(repo, ["side.txt"], "merge checkpoint");
+
+    expect(r.status).toBe("committed");
+    expect(sh(repo, "git", "rev-list", "--parents", "-n", "1", "HEAD").split(" ")).toHaveLength(3);
+    expect(commitFiles(repo)).toEqual(["side.txt"]);
+    expect(sh(repo, "git", "status", "--porcelain")).toBe("");
+  });
+
+  /** A repo left in a real merge state whose side branch brings TWO paths. */
+  function makeTwoPathMerge(name: string): string {
+    const repo = makeRepo(name);
+    sh(repo, "git", "checkout", "-qb", "side");
+    writeFileSync(join(repo, "side-a.txt"), "a\n");
+    writeFileSync(join(repo, "side-b.txt"), "b\n");
+    sh(repo, "git", "add", "-A");
+    sh(repo, "git", "commit", "-qm", "side change");
+    sh(repo, "git", "checkout", "-q", "main");
+    writeFileSync(join(repo, "main.txt"), "main\n");
+    sh(repo, "git", "add", "-A");
+    sh(repo, "git", "commit", "-qm", "main change");
+    sh(repo, "git", "merge", "--no-commit", "side");
+    return repo;
+  }
+
+  test("merging two paths commits exactly when both are listed", async () => {
+    const repo = makeTwoPathMerge("merge-two");
+
+    const r = await commit(repo, ["side-a.txt", "side-b.txt"], "merge two paths");
+
+    expect(r.status).toBe("committed");
+    expect(sh(repo, "git", "rev-list", "--parents", "-n", "1", "HEAD").split(" ")).toHaveLength(3);
+    expect(commitFiles(repo)).toEqual(["side-a.txt", "side-b.txt"]);
+    expect(sh(repo, "git", "status", "--porcelain")).toBe("");
+  });
+
+  test("listing only one path of a merge fails closed — the merge scope is the whole merge", async () => {
+    const repo = makeTwoPathMerge("merge-partial");
+    const headBefore = sh(repo, "git", "rev-parse", "HEAD");
+
+    const r = await commit(repo, ["side-a.txt"], "partial merge");
+
+    // The merge itself already staged BOTH merged paths, so a narrower path
+    // list is caught by the pre-staged guard (an outside path in the index)
+    // before any commit exists: the merge cannot be committed narrower than
+    // the merge.
+    expect(r.status).toBe("ambiguous_staged");
+    const refused = r as { staged: string[]; intended: string[] };
+    expect(refused.intended).toEqual(["side-a.txt"]);
+    expect(refused.staged.sort()).toEqual(["side-a.txt", "side-b.txt"]);
+    expect(sh(repo, "git", "rev-parse", "HEAD")).toBe(headBefore);
+  });
+
+  test("a merge commit narrowed by a hook is caught by the scope postcondition", async () => {
+    const repo = makeTwoPathMerge("merge-narrowed");
+    setHook(repo, "git rm -q --cached side-b.txt\nexit 0\n");
+
+    const r = await commit(repo, ["side-a.txt", "side-b.txt"], "narrowed merge");
+
+    expect(r.status).toBe("commit_scope_mismatch");
+    const scope = r as { intended: string[]; actual: string[] };
+    expect(scope.intended).toEqual(["side-a.txt", "side-b.txt"]);
+    expect(scope.actual).toEqual(["side-a.txt"]);
   });
 
   test("deletions commit exactly, even under an extra-staging hook", async () => {

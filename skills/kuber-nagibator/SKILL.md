@@ -1,6 +1,6 @@
 ---
 name: kuber-nagibator
-description: "Reach Kubernetes DataPlatform data-plane clusters by name or ID through the installed `kn` (kuber-nagibator) CLI: list clusters, connect through the control-plane proxy tunnel, work inside a cluster with kubectl (get/describe/logs/exec/apply), inspect or repair the tunnel, disconnect. Use for any DataPlatform cluster access request, including ingress-only UIs and tunnel troubleshooting; not for generic Kubernetes or kubectl questions without a DataPlatform cluster target."
+description: "Reach Kubernetes DataPlatform data-plane clusters by name or ID through the installed kn (kuber-nagibator) CLI: list clusters, connect through the control-plane proxy tunnel, work inside a cluster with kubectl, inspect or repair the tunnel, disconnect. Use when: a DataPlatform cluster access request names a cluster; an ingress-only UI must be reached through the tunnel; the tunnel itself is broken. Not for: generic Kubernetes or kubectl questions without a DataPlatform cluster target."
 ---
 
 # kuber-nagibator: data-plane cluster access

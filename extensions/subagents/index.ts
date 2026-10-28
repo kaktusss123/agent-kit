@@ -48,7 +48,7 @@
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { DefaultPackageManager, SettingsManager } from "@earendil-works/pi-coding-agent";
 import { StringEnum } from "@earendil-works/pi-ai";
-import { Type } from "typebox";
+import { Type, type Static } from "typebox";
 import { LocalSubagentRuntime } from "./controller";
 import { resolveSpawnPair } from "./spawn-model";
 import { loadRoleBindings, rolesPath } from "./roles";
@@ -87,7 +87,7 @@ import {
 } from "./spawn-guidance";
 import { taskStatus } from "../task-workspace/flows";
 import { resolveTaskRoot } from "../task-workspace/task-root";
-import type { AgentSnapshot } from "./types";
+import type { AgentResult, AgentSnapshot } from "./types";
 import { setSubagentInspectionSource } from "./inspection-seam";
 import {
 	attachRunningAgentsPush,
@@ -149,7 +149,7 @@ function buildSubagentParams() {
 		model: Type.Optional(
 			Type.String({
 				description:
-					"spawn (plain and workspace): explicit child model in Pi pattern syntax `provider/id[:thinking]` (thinking: off|minimal|low|medium|high|xhigh|max). Exact registry match; an unknown model or an unsupported thinking level fails the spawn. Omitted thinking = your current thinking level. Use when the user named a model; mutually exclusive with `role`",
+					"spawn (plain and workspace): explicit child model in Pi pattern syntax `provider/id[:thinking]` (thinking: off|minimal|low|medium|high|xhigh|max). Exact registry match; an unknown model or an unsupported thinking level fails the spawn. The literal `session` means “inherit the session pair” (provider/id/thinking of this session). Omitted thinking = your current thinking level. Use when the user named a model; mutually exclusive with `role`",
 			}),
 		),
 		role: Type.Optional(
@@ -171,6 +171,25 @@ function buildSubagentParams() {
 			Type.Integer({ description: "wait: max seconds to block (default 600)", minimum: 1, maximum: 3600 }),
 		),
 	});
+}
+
+/** Parsed tool arguments (pi's `prepareArguments` return contract). */
+type SubagentArgs = Static<ReturnType<typeof buildSubagentParams>>;
+
+/**
+ * Argument pre-flight that runs on the RAW tool arguments, before the schema
+ * strips unknown keys: `modelClass` was removed in favor of `role`/`model`,
+ * and an old prompt must fail loudly instead of silently losing its model
+ * selection. Every other argument passes through unchanged for schema
+ * validation.
+ */
+export function prepareSubagentArguments(args: unknown): SubagentArgs {
+	if (args && typeof args === "object" && (args as Record<string, unknown>).modelClass !== undefined) {
+		throw new Error(
+			"modelClass was removed; use role=<explore|helper|review|owner> or model=<provider/id[:thinking]>",
+		);
+	}
+	return args as SubagentArgs;
 }
 
 // =============================================================================
@@ -437,6 +456,7 @@ export default function (pi: ExtensionAPI) {
 			"If a workspace run failed or settled blocked, do not re-dispatch blindly: inspect its worktree — after dispatch there is no fallback, the repair path is a new workspace spawn whose task begins with inspecting current state.",
 		],
 		parameters: SubagentParams,
+		prepareArguments: prepareSubagentArguments,
 		renderCall: renderSubagentCall,
 		renderResult: renderSubagentResult,
 
@@ -527,7 +547,16 @@ export default function (pi: ExtensionAPI) {
 					}
 					case "status": {
 						const snaps = rt.inspect(params.id);
-						if (params.id && snaps.length === 0) return err(`unknown agent id: ${params.id}`);
+						if (params.id && snaps.length === 0) {
+							// Not live in this process (e.g. after a main restart): a
+							// persisted terminal record is still a real outcome and
+							// must not read as an unknown id.
+							const persisted = await rt.result(params.id);
+							if (!persisted) return err(`unknown agent id: ${params.id}`);
+							return ok(`${persistedTerminalLine(persisted)}\n\n${formatResult(persisted)}`, {
+								result: persisted,
+							});
+						}
 						const views = new Map<string, WorkspaceRunView>();
 						for (const s of snaps) {
 							const v = runs?.runView(s.id);
@@ -548,7 +577,16 @@ export default function (pi: ExtensionAPI) {
 						requireId(params);
 						if (!params.message) return err("steer requires `message`");
 						if (runs?.isManaged(params.id!)) await runs.steerRun(params.id!, params.message);
-						else await rt.steer(params.id!, params.message);
+						else if (rt.inspect(params.id!).length > 0) await rt.steer(params.id!, params.message);
+						else {
+							const persisted = await rt.result(params.id!);
+							if (persisted) {
+								return err(
+									`Subagent ${params.id} already finished (${persistedTerminalLine(persisted)}); nothing was steered.`,
+								);
+							}
+							return err(`unknown agent id: ${params.id}`);
+						}
 						return ok(`Steering delivered to ${params.id}.`);
 					}
 					case "follow_up": {
@@ -579,6 +617,22 @@ export default function (pi: ExtensionAPI) {
 							timeoutSec: params.timeoutSec, signal, onUpdate,
 							hasPendingMessages: typeof ctx.hasPendingMessages === "function" ? () => ctx.hasPendingMessages() : undefined,
 						});
+						// No live run in this process: a persisted terminal record IS the
+						// outcome of the wait instead of an unknown-id rejection.
+						if (rt.inspect(id).length === 0) {
+							const persisted = await rt.result(id);
+							if (persisted) {
+								// Mirror the live outcome switch below: a persisted failure is a
+								// failed wait, not a successful one carrying failure text.
+								if (persisted.status === "failed") {
+									return err(`Subagent ${id} failed: ${persisted.failureReason ?? "failed"}`);
+								}
+								if (persisted.status === "cancelled") {
+									return ok(`Subagent ${id} was cancelled.`, { result: persisted });
+								}
+								return ok(formatResult(persisted), { result: persisted });
+							}
+						}
 						// Live progress: while blocked, periodically render a
 						// truthful snapshot of the child (state, current tool,
 						// bounded recent activity) into the tool call. Display-only;
@@ -728,7 +782,16 @@ export default function (pi: ExtensionAPI) {
 					case "cancel": {
 						requireId(params);
 						if (runs?.isManaged(params.id!)) await runs.cancelRun(params.id!);
-						else await rt.cancel(params.id!);
+						else if (rt.inspect(params.id!).length > 0) await rt.cancel(params.id!);
+						else {
+							const persisted = await rt.result(params.id!);
+							if (persisted) {
+								return ok(
+									`Subagent ${params.id} already finished (${persistedTerminalLine(persisted)}); nothing to cancel.`,
+								);
+							}
+							return err(`unknown agent id: ${params.id}`);
+						}
 						return ok(`Subagent ${params.id} cancelled and terminated.`);
 					}
 				}
@@ -853,6 +916,18 @@ function err(text: string) {
 		details: { error: text },
 		isError: true,
 	};
+}
+
+/** One-line identity of a persisted terminal record, shared by the
+ *  status/steer/cancel fallbacks that run when no live record exists. */
+function persistedTerminalLine(result: AgentResult): string {
+	const reason =
+		result.status === "failed"
+			? result.failureReason ?? "failed"
+			: result.status === "cancelled"
+				? "cancelled"
+				: result.summary ?? "completed";
+	return `No live run in this process; persisted terminal record: ${result.status} — ${reason}. Full record via op=result.`;
 }
 
 function clipSnapshot(s: ReturnType<LocalSubagentRuntime["inspect"]>[number]) {

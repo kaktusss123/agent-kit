@@ -1,5 +1,7 @@
 # Аудит skills и расширений — 2026-10-15
 
+Историческая справка: 2026-10-28 состав портфеля изменился — `grilling`, `project-verification`, `codebase-design` и `change-verification` удалены, их содержание перешло в `specification`, `verification-design`, `simple-design` и `code-review`; текст аудита ниже не переписывался.
+
 База: `origin/main`, `b1ab96a`. Ветка `chore/audit_skills_extensions` (работа без тикета авторизована).
 Охват: все 25 skills, все 15 точек расширений Pi (14 каталогов в `extensions/` плюс корневой `proxy-toggle.ts`),
 материалы Claude Code, контракт установщика, раскладка, проверка skills.

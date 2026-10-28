@@ -1,11 +1,11 @@
 ---
 name: tdd
-description: "Behavior-first test-driven development for features and bug fixes where a useful test seam exists. Use when red-green work will clarify behavior, protect a regression, or guide a vertical slice. Avoid implementation-coupled tests, tautological assertions, and bulk horizontal test writing."
+description: "Behavior-first test-driven development for features and bug fixes where a useful test seam exists. Use when: writing a failing test first will clarify behavior, protect a regression, or guide a vertical slice. Not for: choosing the overall verification plan or project harness; use skill://verification-design."
 ---
 
 # TDD
 
-Use a red to green loop at a behavior seam.
+Use a red to green loop at a behavior seam. In a task workflow (`skill://git-task`), load this when writing a failing test first and a real behavioral seam exists.
 
 ## Choose the seam
 

@@ -945,6 +945,11 @@ async function commitFiles(repoRoot: string, commitSha: string): Promise<string[
     "--name-only",
     "-r",
     "--root",
+    // A merge commit has two parents; its own change set is the diff
+    // against the first parent. Without this Git prints nothing for merges
+    // (verified on git 2.47) and the scope postcondition would reject a
+    // legitimate merge.
+    "--diff-merges=first-parent",
     commitSha,
   );
   return r.ok ? r.stdout.split("\n").filter((f) => f) : [];
@@ -1062,9 +1067,11 @@ export async function checkpointCommit(
     const intendedSet = new Set(
       resolvedPaths.map((p) => relative(repoRoot, p)),
     );
-    const different =
-      existingStaged.size !== intendedSet.size ||
-      [...existingStaged].some((f) => !intendedSet.has(f));
+    // A staged SUBSET is allowed (idempotent retry, partial pre-staging):
+    // staging below adds the remaining intended paths, so the commit's file
+    // set is still exactly `intended`. Only an outside path is ambiguous —
+    // it would silently broaden the commit.
+    const different = [...existingStaged].some((f) => !intendedSet.has(f));
     if (different) {
       return {
         status: "ambiguous_staged",
@@ -1076,7 +1083,10 @@ export async function checkpointCommit(
 
   // 5. Stage exactly the intended paths
   const relPaths = resolvedPaths.map((p) => relative(repoRoot, p));
-  const stage = await git(repoRoot, "add", "--", ...relPaths);
+  // -A is defensive: it stages a deleted intended path as a deletion for
+  // path states where plain `git add <path>` rejects it. It is not required
+  // for the ordinary case — modern Git stages deletions with plain `add` too.
+  const stage = await git(repoRoot, "add", "-A", "--", ...relPaths);
   if (!stage.ok) {
     return {
       status: "error",
@@ -1096,7 +1106,7 @@ export async function checkpointCommit(
       const modifiedFiles = new Set(diffCheck.stdout.split("\n"));
       const needsRestage = relPaths.some((p) => modifiedFiles.has(p));
       if (needsRestage) {
-        await git(repoRoot, "add", "--", ...relPaths);
+        await git(repoRoot, "add", "-A", "--", ...relPaths);
         commit = await git(repoRoot, "commit", "-m", params.message);
       }
     }

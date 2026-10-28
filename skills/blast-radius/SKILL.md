@@ -1,6 +1,6 @@
 ---
 name: blast-radius
-description: "Find non-obvious downstream breakage a code or contract change could cause and prove the key safety assumptions with real evidence. Use for risky, cross-cutting, integration, compatibility, lifecycle, persistence, concurrency, or small-but-suspicious changes where grep of direct callers is not enough."
+description: "Find non-obvious downstream breakage a code or contract change could cause and prove the key safety assumptions with real evidence. Use when: grep of direct callers is not enough; a change touches serialized formats, lifecycle, ordering, retries, persistence, concurrency, or another service reading the same contract; a small diff in shared code looks suspicious. Not for: deciding whether the complexity is justified; use skill://simple-design."
 ---
 
 # Blast radius
@@ -32,9 +32,7 @@ Mark unproven assumptions as unproven.
 
 ## Output
 
-Return:
-- what changed semantically;
-- key safety facts and proof level;
-- confirmed risks with likelihood/impact in practical terms;
-- important risks checked and cleared;
-- cheapest check to run before acceptance.
+Return exactly three lines:
+- `Semantics changed: ...`
+- `Safety facts: ... (proof level: source | traced | executed | fixture | live runtime | unproven)`
+- `Risks: cleared ...; unproven ...; cheapest check: ...`

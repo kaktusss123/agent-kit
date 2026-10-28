@@ -11,6 +11,6 @@ Work per `skill://git-task`:
 
 - Resolve or continue the task identity, and establish the canonical managed worktree(s) before substantive repository analysis.
 - Once the worktree exists, repository evidence comes from the managed worktree: read files and run inspection commands by its explicit path, or root bounded research subagents there (`subagent op=spawn` with `role=explore` and `cwd` set to the worktree). The dirty source checkout is no longer repository evidence for this task, and this session's cwd does not change.
-- Use `skill://grilling`, `skill://system-understanding`, `skill://engineering-research`, `skill://code-archaeology`, or `skill://prototype` as the task demands, and `skill://specification` for the final contract.
+- Use `skill://system-understanding`, `skill://engineering-research`, `skill://code-archaeology`, or `skill://prototype` as the task demands, and `skill://specification` for facts-and-decisions discovery and the final contract.
 
 Write or update `SPEC.md` in the task workspace as the canonical entrypoint (multi-repo: cross-repo contract, writable repositories, dependencies, integration acceptance). Done when implementation would not require guessing product intent.

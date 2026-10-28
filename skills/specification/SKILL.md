@@ -1,15 +1,25 @@
 ---
 name: specification
-description: "Turn established intent, evidence, and decisions into a semantic implementation specification. Use in ordinary planning, plan mode, tickets, or task workflows when work needs a durable contract that explains desired behavior, constraints, decisions, acceptance scenarios, testing seams, non-goals, and risks without overfitting to temporary file paths or code snippets."
+description: "Turn established intent, evidence, and decisions into a semantic implementation specification. Use when: planning, plan mode, tickets, or task workflows need a durable contract covering desired behavior, constraints, decisions, acceptance scenarios, testing seams, non-goals, and risks; the contract must survive without the conversation. Not for: implementing the change; use skill://implementation."
 ---
 
 # Specification
 
 Write the contract another capable engineer can implement without inheriting the conversation.
 
+## Facts and decisions
+
+Facts are the agent's job to discover. Decisions belong to the user when more than one valid answer changes intent, observable behavior, public contracts, architecture, compatibility, rollout, risk acceptance, or scope.
+
+- Never ask the user for a fact obtainable from evidence; establish it and cite the evidence.
+- Never turn your recommendation into a decision silently; state it as a recommendation and ask when the answer changes the result.
+- Ask only decisions that materially change the result, with the meaningful options, tradeoffs, and your recommendation.
+
+Resolve the frontier of decisions whose prerequisites are already settled before asking downstream questions; prefer a small coherent round over a questionnaire.
+
 ## Before writing
 
-Do not use the spec to hide unresolved decisions. If material intent is ambiguous, use `skill://grilling` first.
+Do not use the spec to hide unresolved decisions. If material intent is ambiguous, settle it through the facts-and-decisions rule above before writing the contract.
 
 Ground claims about existing behavior in repository evidence or authoritative external sources. Keep facts separate from decisions.
 
