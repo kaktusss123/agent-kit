@@ -76,6 +76,57 @@ describe("migration vs a live legacy writer", () => {
 	});
 });
 
+describe("a paused adopter vs a live writer", () => {
+	test("a paused adopter never downgrades the terminal state a writer published mid-pause", async () => {
+		const dir = makeDir();
+		const control = path.join(dir, "..", `${path.basename(dir)}-gate`);
+		const storeFile = path.join(import.meta.dir, "result-store.ts");
+		const script = `
+import * as fs from "node:fs";
+import * as path from "node:path";
+import { migrateLegacyResults } from ${JSON.stringify(storeFile)};
+const dir = ${JSON.stringify(dir)}, control = ${JSON.stringify(control)};
+let parked = false;
+const wait = () => {
+	fs.writeFileSync(control + ".ready", "ready");
+	const end = Date.now() + 15000;
+	while (!fs.existsSync(control + ".release")) {
+		if (Date.now() > end) throw new Error("barrier timeout");
+		Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 5);
+	}
+};
+const io = { ...fs,
+	writeFileSync: (...args) => {
+		if (!parked && String(args[0]).includes("by-session")) { parked = true; wait(); }
+		return fs.writeFileSync(...args);
+	},
+};
+process.exit(migrateLegacyResults(dir, io) >= 0 ? 0 : 1);
+`;
+		try {
+			publish(dir, result({ id: "a", status: "running" })); // legacy spawn marker
+			const child = Bun.spawn([process.execPath, "-e", script], { stdout: "inherit", stderr: "inherit" });
+			const deadline = Date.now() + 10_000;
+			while (!fs.existsSync(`${control}.ready`) && Date.now() < deadline) await Bun.sleep(5);
+			expect(fs.existsSync(`${control}.ready`)).toBe(true); // the adopter is parked mid-adopt, holding the name's lock
+			publish(dir, result({ id: "a" })); // the legacy writer publishes its terminal state
+			expect(loadResult("a", dir)?.status).toBe("completed"); // served from the flat file immediately
+			expect(migrateLegacyResults(dir)).toBe(0); // a concurrent pass skips: the lock is held live
+			fs.writeFileSync(`${control}.release`, "go");
+			expect(await child.exited).toBe(0);
+			// the paused adopter resumes: its stale snapshot loses to the publish
+			// it finds at its own claim, and the store converges terminal.
+			expect(loadResult("a", dir)?.status).toBe("completed");
+			expect(migrateLegacyResults(dir)).toBe(0);
+			expect(fs.readdirSync(dir).filter((n) => n.startsWith("a.json"))).toEqual([]);
+		} finally {
+			fs.rmSync(dir, { recursive: true, force: true });
+			fs.rmSync(`${control}.ready`, { force: true });
+			fs.rmSync(`${control}.release`, { force: true });
+		}
+	}, 30_000);
+});
+
 describe("reads vs a concurrent migration", () => {
 	test("a file moved between a rollup's directory walks is still counted", () => {
 		const dir = makeDir();

@@ -36,7 +36,7 @@ import { validateLastAssistantText } from "./last-text";
  * deterministically in tests; production callers use the default. */
 export type ResultStoreIo = Pick<
 	typeof fs,
-	"readdirSync" | "readFileSync" | "statSync" | "mkdirSync" | "writeFileSync" | "renameSync" | "unlinkSync"
+	"readdirSync" | "readFileSync" | "statSync" | "mkdirSync" | "writeFileSync" | "renameSync" | "unlinkSync" | "utimesSync" | "openSync" | "closeSync" | "writeSync"
 >;
 
 export function defaultResultsDir(): string {
@@ -123,7 +123,7 @@ function readResultFile(file: string, io: ResultStoreIo = fs): AgentResult | nul
  */
 export function sumSessionCost(dir: string, parentSession: string, io: ResultStoreIo = fs): number {
 	let total = 0;
-	for (const result of listResults([dir, sessionDir(dir, parentSession)], io)) {
+	for (const result of listResults(() => [dir, sessionDir(dir, parentSession)], io)) {
 		if (result.parentSession === parentSession) total += result.tokens?.cost ?? 0;
 	}
 	return total;
@@ -145,11 +145,11 @@ export function sumSessionCost(dir: string, parentSession: string, io: ResultSto
  * name that existed when it began; names already seen are skipped, so the
  * second pass adds only what the first one lost.
  */
-function listResults(bases: string[], io: ResultStoreIo = fs): AgentResult[] {
+function listResults(basesOf: () => string[], io: ResultStoreIo = fs): AgentResult[] {
 	const seen = new Set<string>();
 	const out: AgentResult[] = [];
 	const sweep = (): void => {
-		for (const base of bases) {
+		for (const base of basesOf()) {
 			let entries: string[];
 			try {
 				entries = io.readdirSync(base) as string[];
@@ -176,65 +176,75 @@ function listResults(bases: string[], io: ResultStoreIo = fs): AgentResult[] {
 
 /** Every parsed result in the store: the legacy flat directory first, then all per-session ones. */
 export function listAllResults(dir: string, io: ResultStoreIo = fs): AgentResult[] {
-	return listResults([dir, ...sessionDirs(dir, io)], io);
+	return listResults(() => [dir, ...sessionDirs(dir, io)], io);
 }
 
 /** dev/ino/mtime identity of a path: the legacy writer publishes by rename
  * (a fresh inode) and nothing rewrites a published file in place, so equal
  * identity means the bytes read are still the bytes at that path. */
-function statIdentity(file: string, io: ResultStoreIo): { dev: bigint; ino: bigint; mtimeNs: bigint } | null {
+interface FileIdentity {
+	dev: bigint;
+	ino: bigint;
+	mtimeNs: bigint;
+	/** Publish time in ms — the ordering key for concurrent adoptions. */
+	mtimeMs: number;
+}
+
+function statIdentity(file: string, io: ResultStoreIo): FileIdentity | null {
 	try {
-		const st = io.statSync(file, { bigint: true }) as unknown as { dev: bigint; ino: bigint; mtimeNs: bigint };
-		return { dev: st.dev, ino: st.ino, mtimeNs: st.mtimeNs };
+		const st = io.statSync(file, { bigint: true }) as unknown as { dev: bigint; ino: bigint; mtimeNs: bigint; mtimeMs: bigint | number };
+		return { dev: st.dev, ino: st.ino, mtimeNs: st.mtimeNs, mtimeMs: Number(st.mtimeMs) };
 	} catch {
 		return null;
 	}
 }
 
-const sameIdentity = (a: { dev: bigint; ino: bigint; mtimeNs: bigint }, b: { dev: bigint; ino: bigint; mtimeNs: bigint }): boolean =>
-	a.dev === b.dev && a.ino === b.ino && a.mtimeNs === b.mtimeNs;
+const sameIdentity = (a: FileIdentity, b: FileIdentity): boolean => a.dev === b.dev && a.ino === b.ino && a.mtimeNs === b.mtimeNs;
+
+/** Terminal states outrank the spawn-time "running" marker. Used ONLY to
+ * break an exact mtime tie (two publishes in the same millisecond) — never
+ * to order distinct publishes. */
+const statusRank = (status: unknown): number => (status === "running" ? 0 : 1);
 
 /**
  * Move legacy flat result files that carry `parentSession` into their
  * per-session directory, and keep an already-migrated snapshot honest
  * while its legacy writer is still alive (an old process keeps publishing
- * to the flat path across an upgrade).
+ * to the flat path across an upgrade). The protocol has three invariants:
  *
- * Per file, in this order:
- *
- * 1. The content is read against a stable source: if the file's identity
- *    (dev/ino/mtimeNs) changes between the pre-read and post-read stat, it
- *    is re-read \u2014 the writer published mid-read; what is copied is exactly
- *    the state the post-read stat points at.
- * 2. The target is written by tmp+rename \u2014 an atomic REPLACE, not a link
- *    with an EEXIST skip: a migrated copy is only a snapshot, and when the
- *    legacy writer has re-published a newer state (a terminal record after
- *    the snapshotted spawn-time "running" marker), the copy MUST be
- *    upgraded; skipping it would pin the stale marker forever.
- * 3. The source is renamed away to `<name>.migrating` \u2014 atomic against
- *    the writer's own rename: whichever of the two renames lands first, the
- *    other side's state stays visible at one of the two names, so a
- *    publish is never destroyed by the removal. The `.migrating` file is
- *    unlinked only when its identity still equals the snapshot; otherwise
- *    (the writer's newer publish slid into the rename) it is adopted by
- *    the recovery sweep below or the next pass. Readers never list
- *    `.migrating` names, so a stranded newer state waits for a pass
- *    instead of being lost.
+ * - ADOPTION IS ORDERED BY PUBLISH TIME. Every copy keeps the original
+ *   file's mtime (utimes after the rename), and a snapshot is written to
+ *   the target only when it is newer than what the target already holds
+ *   (an exact mtime tie is broken by state: terminal beats the spawn-time
+ *   "running" marker). A migrator paused between its read and its write
+ *   can therefore never downgrade a newer record another pass adopted.
+ * - A PUBLISH IS NEVER DESTROYED BY A REMOVAL. The source is claimed by an
+ *   atomic RENAME to `<name>.migrating`: whichever of the two renames (the
+ *   writer's publish or this claim) lands first, the other side's state
+ *   stays visible at one of the two names. Whatever bytes end up at the
+ *   claim name are re-read and adopted before the claim is removed, so a
+ *   newer publish that slid into the rename is carried over, not lost.
+ * - NO NESTED CLAIMS. Only the regular pass renames a source into the
+ *   fixed `.migrating` name (replacing a leftover claim of the same file
+ *   is safe: that leftover was always adopted before it was created). The
+ *   recovery sweep below adopts and removes leftovers WITHOUT renaming,
+ *   so `.migrating.migrating` names cannot come into existence.
  *
  * The recovery sweep at the end adopts `*.json.migrating` leftovers from
- * interrupted passes with the same read/write/unlink discipline. Idempotent
- * and safe across concurrent processes (both writers publish the same
- * bytes; the last rename wins and converges). Unreadable or unparseable
- * files, and files without a string `parentSession` or whose name is not
- * their own sanitized id, stay in place. Never throws. Returns the number
- * of source files this call removed.
+ * interrupted passes with the same read/adopt/remove discipline. Safe
+ * across concurrent processes: adoptions converge by publish time, claims
+ * serialize on the single trash name, and a claim whose owner died is
+ * recovered by the next pass. Unreadable or unparseable files, and files
+ * without a string `parentSession` or whose name is not their own
+ * sanitized id, stay in place. Never throws. Returns the number of source
+ * files this call removed.
  */
 export function migrateLegacyResults(dir: string, io: ResultStoreIo = fs): number {
 	let moved = 0;
 	try {
 		for (const name of io.readdirSync(dir) as string[]) {
 			if (!name.endsWith(".json")) continue;
-			moved += migrateOne(dir, name, path.join(dir, name), io);
+			moved += migrateOne(dir, name, path.join(dir, name), io, false);
 		}
 	} catch {
 		// unreadable directory: nothing to do
@@ -242,7 +252,7 @@ export function migrateLegacyResults(dir: string, io: ResultStoreIo = fs): numbe
 	try {
 		for (const name of io.readdirSync(dir) as string[]) {
 			if (!name.endsWith(".json.migrating")) continue;
-			moved += migrateOne(dir, name.slice(0, -".migrating".length), path.join(dir, name), io);
+			moved += migrateOne(dir, name.slice(0, -".migrating".length), path.join(dir, name), io, true);
 		}
 	} catch {
 		// unreadable directory: nothing to do
@@ -250,60 +260,186 @@ export function migrateLegacyResults(dir: string, io: ResultStoreIo = fs): numbe
 	return moved;
 }
 
-/** Migrate one file whose result name is `name`, currently parked at `src`
- * (the flat `<dir>/<name>` or its `.migrating` shadow). Returns 1 when the
- * source was removed. Never throws. */
-function migrateOne(dir: string, name: string, src: string, io: ResultStoreIo): number {
-	try {
-		// Read against a stable source; a file the writer keeps replacing is
-		// retried a bounded number of times and otherwise left to the next pass.
+/** Read `src` against a stable identity: the legacy writer publishes by
+ * rename (a fresh inode), so if the identity changes between the pre-read
+ * and post-read stat the writer published mid-read and the read repeats —
+ * what is returned is exactly the state the post-read stat points at.
+ * Gives up after a bounded number of retries (a writer hot-looping on the
+ * file is left entirely to the next pass). */
+function stableRead(src: string, io: ResultStoreIo): { parsed: Partial<AgentResult> | null; identity: FileIdentity } | null {
+	for (let attempt = 0; attempt < 4; attempt++) {
+		const before = statIdentity(src, io);
+		if (!before) return null; // vanished (another process moved it)
 		let parsed: Partial<AgentResult> | null = null;
-		let snapshot: { dev: bigint; ino: bigint; mtimeNs: bigint } | null = null;
-		for (let attempt = 0; attempt < 4; attempt++) {
-			const before = statIdentity(src, io);
-			if (!before) break; // vanished (another process moved it)
-			const read = JSON.parse(io.readFileSync(src, "utf8")) as Partial<AgentResult> | null;
-			const after = statIdentity(src, io);
-			if (after && sameIdentity(before, after)) {
-				parsed = read;
-				snapshot = after;
-				break;
+		try {
+			parsed = JSON.parse(io.readFileSync(src, "utf8")) as Partial<AgentResult> | null;
+		} catch {
+			return null; // corrupt/unreadable: leave to the next pass
+		}
+		const after = statIdentity(src, io);
+		if (after && sameIdentity(before, after)) return { parsed, identity: after };
+	}
+	return null;
+}
+
+const migratable = (parsed: Partial<AgentResult> | null, name: string): parsed is Partial<AgentResult> =>
+	!!parsed &&
+	typeof parsed === "object" &&
+	typeof parsed.id === "string" &&
+	typeof parsed.parentSession === "string" &&
+	!!parsed.parentSession &&
+	`${sanitizeId(parsed.id)}.json` === name;
+
+/** Write the snapshot to its per-session target when it is newer than what
+ * the target already holds; keep the original publish time on the copy so
+ * the target's mtime stays the ordering key for every later pass. */
+function adoptSnapshot(dir: string, name: string, parsed: Partial<AgentResult>, published: FileIdentity, io: ResultStoreIo): void {
+	const target = sessionDir(dir, parsed.parentSession as string);
+	io.mkdirSync(target, { recursive: true });
+	const dest = path.join(target, name);
+	const destStat = statIdentity(dest, io);
+	if (destStat) {
+		let destStatus: unknown;
+		try {
+			destStatus = (JSON.parse(io.readFileSync(dest, "utf8")) as { status?: unknown }).status;
+		} catch {
+			destStatus = undefined;
+		}
+		const newer = published.mtimeMs > destStat.mtimeMs;
+		const tieUpgrade = published.mtimeMs === destStat.mtimeMs && statusRank(parsed.status) > statusRank(destStatus);
+		if (!newer && !tieUpgrade) return; // never downgrade an adopted record
+	}
+	const tmp = `${dest}.tmp`;
+	io.writeFileSync(tmp, JSON.stringify(parsed, null, "\t"), "utf8");
+	io.renameSync(tmp, dest);
+	try {
+		io.utimesSync(dest, new Date(published.mtimeMs), new Date(published.mtimeMs));
+	} catch {
+		// ordering key best-effort: without it a later pass may re-adopt the same record once
+	}
+}
+
+/** Is the adoption lock held by a LIVE process (or too fresh to break)?
+ * The lock holds its owner's pid; a dead owner means a crashed migration
+ * whose lock is broken on the spot. An unparsable lock is broken only
+ * after a grace period, and even a live owner cannot hold a name forever:
+ * no migration runs for minutes, so an old-enough lock is broken too. */
+function adoptionLockHeld(lock: string, io: ResultStoreIo): boolean {
+	let owner = Number.NaN;
+	try {
+		owner = Number.parseInt(String(io.readFileSync(lock, "utf8")).trim(), 10);
+	} catch {
+		// absent or unreadable: not held
+		return false;
+	}
+	const age = () => {
+		const st = statIdentity(lock, io);
+		return st ? Date.now() - st.mtimeMs : Number.POSITIVE_INFINITY;
+	};
+	if (Number.isInteger(owner) && owner !== process.pid) {
+		try {
+			process.kill(owner, 0);
+			return age() < 600_000; // alive, and no migration holds a name for ten minutes
+		} catch (err) {
+			if ((err as NodeJS.ErrnoException)?.code === "ESRCH") return false; // owner is gone: break it
+			return age() < 600_000; // not ours to signal: trust it while fresh
+		}
+	}
+	return age() < 120_000; // unparsable/self-leftover: give it a grace period only
+}
+
+/** Run `body` as the ONLY migrator of this result name. One writer per
+ * name kills the check-then-write race on the target: a paused migrator
+ * can no longer overwrite a newer record a concurrent pass adopted,
+ * because no concurrent pass touches the name while the lock is held. */
+function withAdoptionLock(dir: string, name: string, io: ResultStoreIo, body: () => number): number {
+	const lock = path.join(dir, `${name}.adopt-lock`);
+	for (let attempt = 0; attempt < 3; attempt++) {
+		let fd: number | undefined;
+		try {
+			fd = io.openSync(lock, "wx");
+		} catch (err) {
+			if ((err as NodeJS.ErrnoException)?.code !== "EEXIST") return 0; // unexpected: skip this pass
+			if (adoptionLockHeld(lock, io)) return 0; // a live migration owns this name: it finishes the job
+			try {
+				io.unlinkSync(lock); // stale (crashed owner): break and retry
+			} catch {
+				// raced: another process broke it first
+			}
+			continue;
+		}
+		try {
+			try {
+				io.writeSync(fd, String(process.pid));
+			} catch {
+				// lock content is best-effort; the pid check degrades to the age grace
+			}
+			return body();
+		} finally {
+			try {
+				io.closeSync(fd);
+			} catch {
+				// already closed
+			}
+			try {
+				io.unlinkSync(lock);
+			} catch {
+				// already released by a stale-breaker after the grace period
 			}
 		}
-		if (parsed === null || snapshot === null) return 0;
-		if (!parsed || typeof parsed !== "object") return 0;
-		if (typeof parsed.id !== "string" || typeof parsed.parentSession !== "string" || !parsed.parentSession) return 0;
-		if (`${sanitizeId(parsed.id)}.json` !== name) return 0;
-		const target = sessionDir(dir, parsed.parentSession);
-		io.mkdirSync(target, { recursive: true });
-		const dest = path.join(target, name);
-		const tmp = `${dest}.tmp`;
-		io.writeFileSync(tmp, JSON.stringify(parsed, null, "\t"), "utf8");
-		io.renameSync(tmp, dest);
-		// Rename the source away \u2014 atomic against the writer's own publish.
+	}
+	return 0;
+}
+
+/** Migrate one file whose result name is `name`, currently parked at `src`
+ * (the flat `<dir>/<name>`, or its `.migrating` leftover for the recovery
+ * sweep). Returns 1 when the source was removed. Never throws. */
+function migrateOne(dir: string, name: string, src: string, io: ResultStoreIo, recovery: boolean): number {
+	return withAdoptionLock(dir, name, io, () => {
+		try {
+		const snap = stableRead(src, io);
+		if (!snap || !migratable(snap.parsed, name)) return 0;
+		adoptSnapshot(dir, name, snap.parsed, snap.identity, io);
+		if (recovery) {
+			// A leftover claim: only its owner ever renames into that name and
+			// the owner adopted the content before creating it, so removing it
+			// by identity can never destroy an unadopted state.
+			const current = statIdentity(src, io);
+			if (current && sameIdentity(current, snap.identity)) {
+				try {
+					io.unlinkSync(src);
+					return 1;
+				} catch {
+					return 0;
+				}
+			}
+			return 0;
+		}
+		// Claim the source by an atomic rename: the writer's own publish and
+		// this rename serialize, so whichever lands first, the other side's
+		// bytes survive at one of the two names.
 		const trash = `${src}.migrating`;
 		try {
 			io.renameSync(src, trash);
 		} catch {
-			return 0; // ENOENT (another process moved it): dest already converged
+			return 0; // ENOENT (another process finished it) or claim race: done elsewhere
 		}
-		// Remove only the exact file that was snapshotted; a newer publish
-		// that slid into the rename stays parked at the trash name for the
-		// recovery sweep of this or a later pass.
-		const parked = statIdentity(trash, io);
-		if (parked && sameIdentity(parked, snapshot)) {
-			try {
-				io.unlinkSync(trash);
-				return 1;
-			} catch {
-				return 0;
-			}
+		// Whatever ended up at the claim name is adopted before the claim is
+		// removed: our own snapshot when nothing raced, or the writer's newer
+		// publish when its rename slid in first.
+		const claimed = stableRead(trash, io);
+		if (claimed && migratable(claimed.parsed, name)) adoptSnapshot(dir, name, claimed.parsed, claimed.identity, io);
+		try {
+			io.unlinkSync(trash);
+			return 1;
+		} catch {
+			return 0;
 		}
-		return 0;
 	} catch {
-		// ENOENT (moved by another process), unreadable or unparseable: leave as is
-		return 0;
-	}
+			// unexpected filesystem error: leave everything for the next pass
+			return 0;
+		}
+	});
 }
 
 /** Derive a one-line summary from the child's final assistant text. */
