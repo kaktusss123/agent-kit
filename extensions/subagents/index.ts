@@ -149,7 +149,7 @@ function buildSubagentParams() {
 		model: Type.Optional(
 			Type.String({
 				description:
-					"spawn (plain and workspace): explicit child model in Pi pattern syntax `provider/id[:thinking]` (thinking: off|minimal|low|medium|high|xhigh|max). Exact registry match; an unknown model or an unsupported thinking level fails the spawn. Omitted thinking = your current thinking level. Use when the user named a model; mutually exclusive with `role`",
+					"spawn (plain and workspace): explicit child model in Pi pattern syntax `provider/id[:thinking]` (thinking: off|minimal|low|medium|high|xhigh|max). Exact registry match; an unknown model or an unsupported thinking level fails the spawn. The literal `session` means “inherit the session pair” (provider/id/thinking of this session). Omitted thinking = your current thinking level. Use when the user named a model; mutually exclusive with `role`",
 			}),
 		),
 		role: Type.Optional(
@@ -621,7 +621,17 @@ export default function (pi: ExtensionAPI) {
 						// outcome of the wait instead of an unknown-id rejection.
 						if (rt.inspect(id).length === 0) {
 							const persisted = await rt.result(id);
-							if (persisted) return ok(formatResult(persisted), { result: persisted });
+							if (persisted) {
+								// Mirror the live outcome switch below: a persisted failure is a
+								// failed wait, not a successful one carrying failure text.
+								if (persisted.status === "failed") {
+									return err(`Subagent ${id} failed: ${persisted.failureReason ?? "failed"}`);
+								}
+								if (persisted.status === "cancelled") {
+									return ok(`Subagent ${id} was cancelled.`, { result: persisted });
+								}
+								return ok(formatResult(persisted), { result: persisted });
+							}
 						}
 						// Live progress: while blocked, periodically render a
 						// truthful snapshot of the child (state, current tool,

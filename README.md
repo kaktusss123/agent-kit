@@ -360,6 +360,11 @@ Claude Code получает:
 - [`code-review`](skills/code-review/SKILL.md) — верность контракту и инженерное качество, включая независимую fresh-context проверку закоммиченного кандидата с `PASS`/`FAIL`
 - [`blast-radius`](skills/blast-radius/SKILL.md) — неочевидные поломки ниже по течению
 - [`security-review`](skills/security-review/SKILL.md) — security-линза
+- [`pr-babysitter`](skills/pr-babysitter/SKILL.md) — ночное дежурство по PR флота агентов: ревью, починка красного CI, мерж в порядке зависимостей и безопасный деплой без убийства живых workload'ов
+
+Эксплуатация:
+
+- [`kuber-nagibator`](skills/kuber-nagibator/SKILL.md) — доступ к data-plane кластерам DataPlatform через CLI `kn`: список кластеров, tunnel через control-plane, kubectl внутри кластера
 
 Дизайн:
 

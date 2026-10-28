@@ -1083,7 +1083,9 @@ export async function checkpointCommit(
 
   // 5. Stage exactly the intended paths
   const relPaths = resolvedPaths.map((p) => relative(repoRoot, p));
-  // -A so a deleted intended path is staged as a deletion too.
+  // -A is defensive: it stages a deleted intended path as a deletion for
+  // path states where plain `git add <path>` rejects it. It is not required
+  // for the ordinary case — modern Git stages deletions with plain `add` too.
   const stage = await git(repoRoot, "add", "-A", "--", ...relPaths);
   if (!stage.ok) {
     return {
