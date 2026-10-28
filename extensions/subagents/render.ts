@@ -91,7 +91,8 @@ export interface SubagentCallArgs {
 	label?: string;
 	cwd?: string;
 	workspace?: string;
-	modelClass?: string;
+	model?: string;
+	role?: string;
 }
 
 export function renderSubagentCall(args: SubagentCallArgs, theme: Theme): Component {
@@ -100,11 +101,10 @@ export function renderSubagentCall(args: SubagentCallArgs, theme: Theme): Compon
 		if (args.workspace) parts.push(`workspace=${basename(forDisplay(args.workspace))}`);
 		else if (args.cwd) parts.push(`cwd=${basename(forDisplay(args.cwd))}`);
 		if (args.label) parts.push(`label=${forDisplay(args.label)}`);
-		// Explicit class/default first, so an override is visible in the call
-		// line before the task preview; omitted stays absent (no bogus class).
-		// Keyed as modelClass, not model: this is a class name or "default",
-		// not a concrete model id.
-		if (args.modelClass) parts.push(`modelClass=${forDisplay(args.modelClass)}`);
+		// Explicit model/role first, so an override is visible in the call
+		// line before the task preview; omitted stays absent.
+		if (args.model) parts.push(`model=${forDisplay(args.model)}`);
+		if (args.role) parts.push(`role=${forDisplay(args.role)}`);
 		if (args.task) parts.push(capChars(forDisplay(args.task.replace(/\s+/g, " ").trim()), TASK_PREVIEW_CAP));
 	} else if (args.id) {
 		parts.push(`id=${forDisplay(args.id)}`);

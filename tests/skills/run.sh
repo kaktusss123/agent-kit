@@ -188,24 +188,31 @@ else
 	bad "git-task: single-repo dev must dispatch exactly one RepoOwner (no direct implementation, no /move)"
 fi
 
+if grep -q 'role=explore' "$SELF_DIR/prompts/spec.md" && \
+	grep -q 'role=explore' "$SKILLS/git-task/SKILL.md"; then
+	ok "research delegation: spec prompt and git-task name role=explore"
+else
+	bad "research delegation: prompts/spec.md and git-task SKILL.md must name role=explore for research subagents"
+fi
+
 # --- /dev independent review: explicit decision point, never a mandatory reviewer --
 
-if grep -q 'modelClass=smart' "$SELF_DIR/prompts/dev.md" && \
+if grep -q 'role=review' "$SELF_DIR/prompts/dev.md" && \
 	grep -q 'independent fresh-context reviewer' "$SELF_DIR/prompts/dev.md"; then
 	ok "dev prompt: independent-review decision point surfaced"
 else
-	bad "dev prompt: must surface the explicit own-review vs independent-reviewer decision (plain spawn, modelClass=smart)"
+	bad "dev prompt: must surface the explicit own-review vs independent-reviewer decision (plain spawn, role=review)"
 fi
 
 if grep -q 'explicit review decision' "$SKILLS/git-task/SKILL.md" && \
-	grep -q 'modelClass=smart' "$SKILLS/git-task/SKILL.md" && \
+	grep -q 'role=review' "$SKILLS/git-task/SKILL.md" && \
 	grep -q 'plain `subagent` spawn' "$SKILLS/git-task/SKILL.md" && \
 	grep -q 'skill://code-review' "$SKILLS/git-task/SKILL.md" && \
 	grep -q 'never the default reached by silence' "$SKILLS/git-task/SKILL.md" && \
 	! grep -qiE 'must (always )?spawn (a |an )?(independent )?reviewer|reviewer (is |becomes )mandatory|independent review (is )?required for every' "$SKILLS/git-task/SKILL.md"; then
-	ok "git-task: independent review policy states the decision and smart plain-spawn mechanics without mandating it"
+	ok "git-task: independent review policy states the decision and review-role plain-spawn mechanics without mandating it"
 else
-	bad "git-task: must state the explicit review decision + modelClass=smart plain-spawn mechanics, without an always-reviewer mandate"
+	bad "git-task: must state the explicit review decision + role=review plain-spawn mechanics, without an always-reviewer mandate"
 fi
 
 # --- regression probe: the validator must catch nested dangling references -----

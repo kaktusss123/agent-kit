@@ -11,7 +11,7 @@ import { execFileSync } from "node:child_process";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
-import type { ModelLike } from "../model-classes/core";
+import type { ModelLike } from "./model-spec";
 import { LocalSubagentRuntime } from "./controller";
 import {
 	autoAcceptPrompt,
@@ -86,8 +86,8 @@ function makeLayer(layerOpts?: {
 	const taskRoot = fs.realpathSync(taskRootRaw);
 	// Pin the task root for the layer under test: AGENT_TASK_ROOT is set
 	// to the fixture, proving the override feeds the layer (and that an
-	// ambient value cannot leak). Restored in cleanup(). The model-classes
-	// storage is pinned the same way: routed-pair resolution must never
+	// ambient value cannot leak). Restored in cleanup(). The role-bindings
+	// file is pinned the same way: routed-pair resolution must never
 	// depend on (or accidentally read) the real user's agent dir.
 	const previousGeneric = process.env.AGENT_TASK_ROOT;
 	process.env.AGENT_TASK_ROOT = taskRoot;
@@ -184,7 +184,8 @@ function dispatchCall(
 		waitTimeoutSec: params.waitTimeoutSec as number | undefined,
 		signal,
 		hasPendingMessages,
-		modelClass: params.modelClass as string | undefined,
+		model: params.model as string | undefined,
+		role: params.role as string | undefined,
 		sessionModel: ctx.model,
 		modelRegistry: ctx.modelRegistry,
 		thinkingLevel: ctx.thinkingLevel,
@@ -1053,8 +1054,8 @@ describe("provider propagation fail-fast (R2)", () => {
 	}, 20000);
 });
 
-describe("spawn-mode routing (R3)", () => {
-	/** Registry with two distinct models so routed vs session pairs differ. */
+describe("workspace model selection", () => {
+	/** Registry with two distinct models so bound vs session pairs differ. */
 	const ROUTED_REGISTRY: ModelLike[] = [
 		{ provider: "zai", id: "glm-x", reasoning: true },
 		{ provider: "zai", id: "glm-max", reasoning: true, thinkingLevelMap: { xhigh: "xh", max: "mx" } },
@@ -1066,21 +1067,18 @@ describe("spawn-mode routing (R3)", () => {
 		modelRegistry: { getAll: () => ROUTED_REGISTRY },
 	};
 
-	/** Write routing storage into the harness's pinned agent dir. */
-	function seedAgentStorage(h: Harness, stored: Record<string, unknown>): void {
+	/** Write role bindings into the harness's pinned agent dir. */
+	function seedRoles(_h: Harness, stored: Record<string, unknown> | string): void {
 		fs.writeFileSync(
-			path.join(process.env.PI_CODING_AGENT_DIR!, "model-classes.json"),
-			JSON.stringify(stored),
+			path.join(process.env.PI_CODING_AGENT_DIR!, "subagent-roles.json"),
+			typeof stored === "string" ? stored : JSON.stringify(stored),
 		);
 	}
 
-	test("route repoOwner heavy: session on the light model, owner dispatched with the heavy pair (A3)", async () => {
+	test("owner binding: session on the light model, owner dispatched with the bound pair", async () => {
 		const h = makeLayer();
 		try {
-			seedAgentStorage(h, {
-				heavy: { model: "zai/glm-max", thinking: "xhigh" },
-				routing: { repoOwner: "heavy" },
-			});
+			seedRoles(h, { owner: "zai/glm-max:xhigh" });
 			const ws = makeWorktree(h.taskRoot, "routed-ws");
 			const { pending, proc } = await driveToRunning(h, { workspace: ws, task: "own it" }, undefined, ROUTED_CTX);
 			const args = proc.spec.args;
@@ -1098,10 +1096,10 @@ describe("spawn-mode routing (R3)", () => {
 		}
 	}, 20000);
 
-	test("no routing, no saved heavy: owner falls to the session pair (migration, A1)", async () => {
+	test("no owner binding: owner runs the session pair", async () => {
 		const h = makeLayer();
 		try {
-			seedAgentStorage(h, { deep: { model: "zai/glm-max", thinking: "xhigh" } });
+			seedRoles(h, { review: "zai/glm-max:xhigh" });
 			const ws = makeWorktree(h.taskRoot, "inherit-ws");
 			const { pending, proc } = await driveToRunning(h, { workspace: ws, task: "t" }, undefined, ROUTED_CTX);
 			const args = proc.spec.args;
@@ -1116,43 +1114,20 @@ describe("spawn-mode routing (R3)", () => {
 		}
 	}, 20000);
 
-	test("no routing, saved heavy: owner runs the implicit heavy pair, not the session pair", async () => {
+	test("explicit model overrides the owner binding; omitted thinking is the session level", async () => {
 		const h = makeLayer();
 		try {
-			seedAgentStorage(h, { heavy: { model: "zai/glm-max", thinking: "xhigh" } });
-			const ws = makeWorktree(h.taskRoot, "implicit-heavy-ws");
-			const { pending, proc } = await driveToRunning(h, { workspace: ws, task: "own it" }, undefined, ROUTED_CTX);
-			const args = proc.spec.args;
-			expect(args[args.indexOf("--model") + 1]).toBe("zai/glm-max");
-			expect(args[args.indexOf("--thinking") + 1]).toBe("xhigh");
-			writeEnvelope(h, h.agentId());
-			settleRun(proc, "done");
-			expect((await pending).details).toMatchObject({ status: "done" });
-		} finally {
-			await h.runtime.shutdown();
-			h.cleanup();
-		}
-	}, 20000);
-
-	test("explicit modelClass overrides repoOwner routing (A4)", async () => {
-		const h = makeLayer();
-		try {
-			seedAgentStorage(h, {
-				smart: { model: "zai/glm-max", thinking: "max" },
-				heavy: { model: "zai/glm-max", thinking: "xhigh" },
-				routing: { repoOwner: "smart" },
-			});
-			// routing points at smart/max, the explicit class asks for xhigh
+			seedRoles(h, { owner: "zai/glm-max:max" });
 			const ws = makeWorktree(h.taskRoot, "override-ws");
 			const { pending, proc } = await driveToRunning(
 				h,
-				{ workspace: ws, task: "t", modelClass: "heavy" },
+				{ workspace: ws, task: "t", model: "zai/glm-max" },
 				undefined,
 				ROUTED_CTX,
 			);
 			const args = proc.spec.args;
 			expect(args[args.indexOf("--model") + 1]).toBe("zai/glm-max");
-			expect(args[args.indexOf("--thinking") + 1]).toBe("xhigh"); // heavy, not the routed smart/max
+			expect(args[args.indexOf("--thinking") + 1]).toBe("low"); // session level, not the binding's max
 			writeEnvelope(h, h.agentId());
 			settleRun(proc, "done");
 			expect((await pending).details).toMatchObject({ status: "done" });
@@ -1162,73 +1137,46 @@ describe("spawn-mode routing (R3)", () => {
 		}
 	}, 20000);
 
-	test("broken routing (class not saved) → blocked, dispatched:false, no process, fix named (A6)", async () => {
+	test("dead bound model → blocked, dispatched:false, no process, file and fix named", async () => {
 		const h = makeLayer();
 		try {
-			seedAgentStorage(h, { routing: { repoOwner: "nosuch" } });
-			const ws = makeWorktree(h.taskRoot, "brokenroute-ws");
-			const res = await dispatchCall(h, { workspace: ws, task: "t" }, undefined, ROUTED_CTX);
-			expect(res.details).toMatchObject({ status: "blocked", dispatched: false });
-			const reason = String(res.details.reason);
-			expect(reason).toContain('"repoOwner"');
-			expect(reason).toContain('"nosuch"');
-			expect(reason).toContain("/model-class route repoOwner <class|inherit>");
-			expect(h.harness.spawned).toHaveLength(0);
-		} finally {
-			h.cleanup();
-		}
-	});
-
-	test("hand-edited invalid routing target (\"default\") → blocked with the routing fix, never silent inheritance (A6)", async () => {
-		const h = makeLayer();
-		try {
-			// "default" is a reserved word, not a saved class: it must fail as a
-			// routing error — not be reinterpreted as the session pair.
-			seedAgentStorage(h, { heavy: { model: "zai/glm-max", thinking: "xhigh" }, routing: { repoOwner: "default" } });
-			const ws = makeWorktree(h.taskRoot, "invalidroute-ws");
-			const res = await dispatchCall(h, { workspace: ws, task: "t" }, undefined, ROUTED_CTX);
-			expect(res.details).toMatchObject({ status: "blocked", dispatched: false });
-			const reason = String(res.details.reason);
-			expect(reason).toContain('set to class "default"');
-			expect(reason).toContain('"repoOwner"');
-			expect(reason).toContain("/model-class route repoOwner <class|inherit>");
-			expect(h.harness.spawned).toHaveLength(0);
-		} finally {
-			h.cleanup();
-		}
-	});
-
-	test("routed dead model → blocked with the re-save fix (A7)", async () => {
-		const h = makeLayer();
-		try {
-			seedAgentStorage(h, { heavy: { model: "gone/vanished", thinking: "high" }, routing: { repoOwner: "heavy" } });
+			seedRoles(h, { owner: "gone/vanished:high" });
 			const ws = makeWorktree(h.taskRoot, "deadmodel-ws");
 			const res = await dispatchCall(h, { workspace: ws, task: "t" }, undefined, ROUTED_CTX);
 			expect(res.details).toMatchObject({ status: "blocked", dispatched: false });
 			const reason = String(res.details.reason);
-			expect(reason).toContain("no longer available");
-			expect(reason).toContain("/model-class heavy set");
+			expect(reason).toContain("subagent-roles.json");
+			expect(reason).toContain('"owner"');
+			expect(reason).toContain("not available");
+			expect(reason).toContain("/subagent-role owner");
 			expect(h.harness.spawned).toHaveLength(0);
 		} finally {
 			h.cleanup();
 		}
 	});
 
-	test("explicit unknown modelClass on a workspace spawn → blocked with the saved names listed", async () => {
+	test("corrupt bindings file → blocked before any process", async () => {
 		const h = makeLayer();
 		try {
-			seedAgentStorage(h, { heavy: { model: "zai/glm-max", thinking: "xhigh" } });
-			const ws = makeWorktree(h.taskRoot, "unknownclass-ws");
-			const res = await dispatchCall(
-				h,
-				{ workspace: ws, task: "t", modelClass: "nosuch" },
-				undefined,
-				ROUTED_CTX,
-			);
+			seedRoles(h, "{ not json");
+			const ws = makeWorktree(h.taskRoot, "corrupt-ws");
+			const res = await dispatchCall(h, { workspace: ws, task: "t" }, undefined, ROUTED_CTX);
 			expect(res.details).toMatchObject({ status: "blocked", dispatched: false });
-			const reason = String(res.details.reason);
-			expect(reason).toContain('"nosuch"');
-			expect(reason).toContain("heavy"); // the saved class list
+			expect(String(res.details.reason)).toContain("subagent-roles.json");
+			expect(h.harness.spawned).toHaveLength(0);
+		} finally {
+			h.cleanup();
+		}
+	});
+
+	test("unknown model, non-owner role, and model+role → blocked before any process", async () => {
+		const h = makeLayer();
+		try {
+			const ws = makeWorktree(h.taskRoot, "badparams-ws");
+			for (const extra of [{ model: "zai/nosuch" }, { role: "review" }, { role: "owner", model: "zai/glm-x" }]) {
+				const res = await dispatchCall(h, { workspace: ws, task: "t", ...extra }, undefined, ROUTED_CTX);
+				expect(res.details).toMatchObject({ status: "blocked", dispatched: false });
+			}
 			expect(h.harness.spawned).toHaveLength(0);
 		} finally {
 			h.cleanup();
@@ -1258,7 +1206,7 @@ describe("N1 profile order and sequential report", () => {
 		expect(entries[0]).toContain("reporting-bridge.ts");
 		expect(entries[1]).toContain(path.join("task-workspace", "index.ts"));
 		// The subagents index loads into the workspace child so a RepoOwner
-		// can spawn plain `subagent` helpers (modelClass applies to those).
+		// can spawn plain `subagent` helpers (`model` and `role` apply to those).
 		expect(entries[2]).toBe(path.join("/ext", "index.ts"));
 		// The probe is a subagents-owned file and comes last: its session_start
 		// observer must not perturb the capability entries' tool_call order.

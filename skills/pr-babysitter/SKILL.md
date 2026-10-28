@@ -64,7 +64,7 @@ cross-repo contracts together, both directions). Prompt essentials:
   `conditional`.
 - Severity ladder: blocker / major (must fix before merge) / minor / suggestion.
 - Model fallback: if the review subagent dies on a provider rate limit,
-  respawn on another model class.
+  respawn on another model.
 
 Never merge with an open blocker/major from a review you trust.
 

@@ -1,97 +1,108 @@
 /**
- * Spawn-time model class resolution — the LLM/orchestration → runtime
- * boundary for `subagent` spawn (both plain and workspace modes).
+ * Spawn-time model resolution — the LLM/orchestration → runtime boundary for
+ * `subagent` spawn (plain and workspace modes).
  *
- * The model picks a CLASS, never a concrete provider/model; this module is
- * the only place that turns `modelClass` (or the mode's routing default)
- * into the concrete model + thinking pair the child process needs, through
- * the same resolver `/model-class` uses (../model-classes/core). Resolution
- * is fail closed: an unknown/unresolvable class or routing entry throws
- * here, so the caller can never start a child for an unresolvable target
- * and there is no fallback.
+ * A spawn names its child's model in exactly one of three ways:
  *
- * Storage rules at this boundary:
- * - the literal `"default"` resolves the live session pair WITHOUT
- *   consulting storage — the escape hatch can never be broken by a storage
- *   problem;
- * - an omitted param with NO storage file (or an empty one) legitimately
- *   means "no routing": the session pair applies (loadStoredFile returns an
- *   empty table for that case without throwing);
- * - anything else reads storage, and a read failure (corrupt JSON,
- *   unreadable file) means the routing state is UNKNOWN, not absent — a
- *   possibly-routed mode must not silently downgrade to the session model,
- *   so the failure propagates with the file path and the fix named.
+ * - `model`: Pi pattern syntax `provider/id[:thinking]`, resolved exactly
+ *   against the registry (the user named a model);
+ * - `role`: one of the fixed roles, resolved through the per-machine binding
+ *   in `subagent-roles.json` (read fresh on every call);
+ * - neither: the mode's default role — `owner` for workspace spawns,
+ *   `helper` for plain spawns.
+ *
+ * An unbound role resolves to the live session model + current thinking;
+ * that is the documented default. Every other failure — unknown or
+ * unsupported model/thinking, a bound role that no longer resolves, an
+ * unreadable or corrupt bindings file, an invalid parameter combination —
+ * throws here, so the caller never starts a child for an unresolvable
+ * target and there is no fallback.
  *
  * Pure module: no runtime imports (pi types only appear as structural
  * parameters), so bun tests can exercise the boundary directly.
  */
 import {
 	createExactModelMatcher,
-	resolveSpawnTarget,
-	type ModelClassEnv,
+	resolveModelSpec,
 	type ModelLike,
-} from "../model-classes/core";
-import {
-	loadStoredFile,
-	modelClassesPath,
 	type ModelPair,
-	type SpawnMode,
-	type StoredModelClasses,
+	type ModelSpecEnv,
 	type ThinkingLevel,
-} from "../model-classes/store";
+} from "./model-spec";
+import { isRole, loadRoleBindings, rolesPath, ROLES, type Role } from "./roles";
 
-/** Structural view of the tool ctx needed for spawn-time class resolution. */
+/** Spawn modes: `plain` (cwd) and `workspace` (RepoOwner). */
+export type SpawnMode = "plain" | "workspace";
+
+/** Structural view of the tool ctx needed for spawn-time resolution. */
 export interface SpawnModelCtx {
 	model?: { provider: string; id: string } | undefined;
 	modelRegistry: { getAll(): ModelLike[] };
 }
 
-function envFor(ctx: SpawnModelCtx, currentThinking: ThinkingLevel): ModelClassEnv {
-	return {
-		currentPair: () =>
-			ctx.model ? { model: `${ctx.model.provider}/${ctx.model.id}`, thinking: currentThinking } : null,
-		findModel: createExactModelMatcher(ctx.modelRegistry.getAll()),
-	};
+/** The spawn parameters that select a model. */
+export interface SpawnModelRequest {
+	model?: string | undefined;
+	role?: string | undefined;
+}
+
+/** The role a spawn runs under, after mode defaults and validation. */
+export function effectiveRole(mode: SpawnMode, role: string | undefined): Role {
+	if (role !== undefined && !isRole(role)) {
+		throw new Error(`Unknown role "${role}". Roles: ${ROLES.join(", ")}.`);
+	}
+	if (mode === "workspace") {
+		if (role !== undefined && role !== "owner") {
+			throw new Error(`Workspace spawns always run as role "owner"; role "${role}" is not valid here. Omit role or pass "owner".`);
+		}
+		return "owner";
+	}
+	if (role === "owner") {
+		throw new Error('Role "owner" is for workspace spawns only; use "helper", "explore" or "review" on plain spawns.');
+	}
+	return role ?? "helper";
+}
+
+function sessionPair(ctx: SpawnModelCtx, currentThinking: ThinkingLevel): ModelPair {
+	if (!ctx.model) throw new Error("no model resolved in the current session");
+	return { model: `${ctx.model.provider}/${ctx.model.id}`, thinking: currentThinking };
 }
 
 /**
- * Resolve the concrete pair for one spawn. `mode` selects the fallback
- * chain when `requested` is omitted: plain → the plain routing default,
- * else the live session pair; repoOwner → the repoOwner routing default,
- * else the implicit default class ("heavy" when saved), else the live
- * session pair. An explicit `requested` (a saved class name or the literal
- * `"default"`) overrides all defaults for both modes. Storage is read
- * fresh per call.
+ * Resolve the concrete pair for one spawn. Throws on any failure; the
+ * bindings file is read fresh per call and only when a role decides the
+ * model.
  */
 export function resolveSpawnPair(
 	mode: SpawnMode,
-	requested: string | undefined,
+	request: SpawnModelRequest,
 	ctx: SpawnModelCtx,
 	currentThinking: ThinkingLevel,
 ): ModelPair {
-	if (requested === "default") {
-		return pairOrThrow(resolveSpawnTarget(mode, "default", {}, {}, envFor(ctx, currentThinking)));
+	if (request.model !== undefined && request.role !== undefined) {
+		throw new Error("`model` and `role` are mutually exclusive: pass `model` when the user named a model, otherwise a role.");
 	}
-	// Everything else reads storage fresh. A read failure is unknown routing
-	// state, not absent routing: it must fail closed here rather than silently
-	// downgrade a possibly-routed mode to the session pair. Only a
-	// missing/empty file legitimately means "no routing" — loadStoredFile
-	// returns an empty table for that case without throwing.
-	let stored: StoredModelClasses;
-	try {
-		stored = loadStoredFile(modelClassesPath());
-	} catch (e) {
+	const role = effectiveRole(mode, request.role);
+	const env: ModelSpecEnv = {
+		findModel: createExactModelMatcher(ctx.modelRegistry.getAll()),
+		defaultThinking: currentThinking,
+	};
+
+	if (request.model !== undefined) {
+		const outcome = resolveModelSpec(request.model, env);
+		if (!outcome.ok) throw new Error(outcome.error);
+		return outcome.pair;
+	}
+
+	const file = rolesPath();
+	const bound = loadRoleBindings(file)[role];
+	if (bound === undefined) return sessionPair(ctx, currentThinking);
+	const outcome = resolveModelSpec(bound, env);
+	if (!outcome.ok) {
 		throw new Error(
-			`${e instanceof Error ? e.message : String(e)}\n` +
-				`Spawn routing state is unknown, so the spawn is refused rather than silently inheriting the session model. ` +
-				`Fix: repair the file so it is valid JSON, or delete it and re-save what you need ` +
-				`(classes: \`/model-class <class> set\`; routing: \`/model-class route <mode> <class|inherit>\`).`,
+			`Role "${role}" is bound to "${bound}" in ${file}, but it cannot be resolved:\n${outcome.error}\n` +
+				`Fix: \`/subagent-role ${role} <provider/id[:thinking]>\` to rebind, or \`/subagent-role ${role} unset\` to use the session model.`,
 		);
 	}
-	return pairOrThrow(resolveSpawnTarget(mode, requested, stored.classes, stored.routing, envFor(ctx, currentThinking)));
-}
-
-function pairOrThrow(outcome: { ok: true; pair: ModelPair } | { ok: false; error: string }): ModelPair {
-	if (!outcome.ok) throw new Error(outcome.error);
 	return outcome.pair;
 }

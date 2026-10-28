@@ -169,21 +169,38 @@ Generic children therefore cannot spawn recursively by construction; a
 workspace worker additionally carries the subagents index (see the
 workspace section) and may spawn plain `subagent` helpers. Normal
 skills/context files stay on.
-Per-spawn `cwd`, `label`, and `modelClass` (a free-form string, valid for
-BOTH spawn modes; resolved to concrete model + thinking by the
-model-classes resolver — routing-aware — before the process starts; see
-`../model-classes/README.md`). Omitted, the spawn mode's routed default
-applies (`/model-class route <plain|repoOwner> <class|inherit>`); with no
-route a plain child inherits the current main session pair, while a
-workspace (RepoOwner) child falls to the implicit default class `heavy`
-when it is saved (else the session pair). An explicit saved class name
-overrides all defaults, and `"default"` matches the live session
-pair regardless of routing. A present route — or an unresolvable saved
-`heavy` — that cannot be resolved (dead
-class, hand-edited garbage target) or unreadable model-class storage fails
-the spawn closed instead of silently inheriting. The runtime never maps roles to classes or
-picks a class itself — routing and the saved `heavy` default are the user's
-machine-global configuration.
+Per-spawn `cwd`, `label`, and the model choice (valid for BOTH spawn modes;
+resolved to concrete model + thinking before the process starts):
+
+- `model`: Pi pattern syntax `provider/id[:thinking]` (thinking: `off`,
+  `minimal`, `low`, `medium`, `high`, `xhigh`, `max`). Exact match against the
+  model registry, no fuzzy matching. Omitted thinking is the parent's current
+  level, validated the same way. An unknown model or a thinking level the
+  model does not support fails the spawn closed — nothing starts, no fallback.
+  Use it when the user names a model.
+- `role`: one of the fixed roles `explore` (cheap read-only research),
+  `helper` (generic plain subagent), `review` (independent fresh-context
+  reviewer), `owner` (RepoOwner). Users cannot invent roles; they bind a role
+  to a model per machine in `<pi agent dir>/subagent-roles.json`
+  (`PI_CODING_AGENT_DIR` applies), e.g.
+  `{ "review": "openai-codex/gpt-6.1-sol:high", "explore": "zai/glm-5.3-flash" }`,
+  or with `/subagent-role` (no args: table of roles and effective models;
+  `<role> <provider/id[:thinking]>`: validate against the registry, then save;
+  `<role> current`: save the current session model + thinking;
+  `<role> unset`: remove the binding). The file is read fresh on every spawn
+  and written atomically. An unbound role runs on the live session model with
+  the current thinking level. A bound role that no longer resolves, an unknown
+  key, or unreadable/corrupt JSON fails the spawn closed with the file, role,
+  and fix named.
+- `model` and `role` are mutually exclusive. Workspace spawns always run as
+  `owner` (omitted or `owner` accepted; another role is an error); plain
+  spawns default to `helper` and reject `owner`.
+
+Quick session-model cycling is Pi's own `enabledModels` setting
+(`provider/id:thinking` patterns limit Ctrl+P cycling); this extension no
+longer carries a cycling shortcut. Main sees each role's effective model in
+the `subagent_model_defaults` system-prompt section (refreshed when bindings
+change).
 The internal runtime boundary (`SpawnOptions`) still carries concrete
 `model`/`thinking` because the child needs literal CLI flags.
 Child sessions are ordinary pi sessions named `subagent:<label>`, inspectable
@@ -191,11 +208,11 @@ with standard tooling.
 
 ## Spawn waves and provider rate limits
 
-Parallel children resolving to the same provider + model class share one rate
+Parallel children resolving to the same provider + model share one rate
 budget: a large same-model wave can draw HTTP 429s that kill several children
 at once (observed on zai — children died ~2 minutes after dispatch). Mixed
-waves are fine (e.g. three implement owners on `default` plus one reviewer on
-`smart`); keep same-model waves small (<=3 in practice) or stagger them.
+waves are fine (e.g. three owners on the session model plus one reviewer on
+the `review` binding); keep same-model waves small (<=3 in practice) or stagger them.
 A 429-killed child is simply re-spawnable; the cost is lost work plus the
 provider's rate-limit cooldown. There is deliberately no runtime concurrency
 limiter — wave discipline is the caller's job.
@@ -234,16 +251,15 @@ Workspace is a MODE of a `subagent` spawn, not a separate agent kind:
 `subagent op=spawn workspace=<managed worktree> task=... deadlineSec=...`
 runs a RepoOwner — a child rooted in a managed task worktree with a strict
 protocol on top of the shared subagent runtime. Plain `cwd` spawns keep
-working exactly as before (no ownership semantics, `modelClass` applies);
-`modelClass` applies to workspace spawns identically — omitted, the
-`repoOwner` routing default decides, else the implicit `heavy` class when
-saved, else the main session's model + thinking —
+working exactly as before (no ownership semantics; `model` and `role` apply);
+`model` applies to workspace spawns identically — omitted, the `owner` role
+binding decides, else the main session's model + thinking —
 and resolution failures classify as `blocked` (`dispatched:false`,
 nothing started).
 
 - **Per-spawn profile**: RepoOwner children load the task-workspace entry, a
   reporting bridge, the subagents index (so the owner can spawn plain
-  `subagent` helpers — routing-aware modelClass applies to those too), and a
+  `subagent` helpers — `model` and `role` apply to those too), and a
   readiness probe in addition to the base bridge
   (`SpawnOptions.additionalExtensions`; the probe comes last as a pure
   observer — no tools, no tool_call hooks). Generic children are
@@ -312,12 +328,11 @@ nothing started).
   stays queryable via
   `subagent op=result id=<agentId>` for the rest of the session. Runs are
   identified by their agentId; there is no separate run-id namespace.
-- **Model selection**: the child runs on the explicit `modelClass`, else
-  the `repoOwner` routing default, else the implicit `heavy` class when
-  saved, else the main session's resolved model and thinking level; a
-  resolution failure refuses the spawn (`blocked`). Main sees the current
-  class pairs and effective defaults in the `subagent_model_defaults`
-  system-prompt section (refreshed when they change).
+- **Model selection**: the child runs on the explicit `model`, else the
+  `owner` role binding, else the main session's resolved model and thinking
+  level; a resolution failure refuses the spawn (`blocked`). Main sees the
+  effective model per role in the `subagent_model_defaults` system-prompt
+  section (refreshed when bindings change).
 - **Live operator observability**: while a workspace spawn waits, the tool
   call re-renders a compact status view via Pi's transient `onUpdate`
   channel (display-only — never Main's LLM context, child transcript stays

@@ -26,7 +26,7 @@ State the exact question before broad searching. Follow important claims back to
 
 If sources disagree, preserve the disagreement and explain which one governs the target environment.
 
-Do not require a background agent. The current agent may research directly or delegate if the host provides a useful mechanism.
+Do not require a background agent. The current agent may research directly or delegate if the host provides a useful mechanism, using the read-only research role (`role=explore` in Pi, `Explore` in Claude Code).
 
 ## Output
 

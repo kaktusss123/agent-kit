@@ -9,13 +9,14 @@ title: it paints the bare session name and overrides pi's composed
 
 ## Model selection
 
-1. The saved `cheap` class from `<agent-dir>/model-classes.json`
-   (the `model-classes` extension's artifact), if that model exists in the
-   registry and has configured auth;
+1. The model bound to the `explore` role in `<agent-dir>/subagent-roles.json`
+   (managed with `/subagent-role explore <provider/id>`; a trailing
+   `:thinking` is ignored), if that model exists in the registry and has
+   configured auth;
 2. otherwise the active session model.
 
-No new configuration surface: configure `/model-class cheap set` once and
-every naming call reuses it.
+No new configuration surface: bind `explore` once and every naming call
+reuses it.
 
 ## Guarantees
 
@@ -32,5 +33,5 @@ every naming call reuses it.
 ## Tests
 
 `bun test` in this directory covers prompt construction, response
-sanitization (fences, quotes, truncation by code points), and saved-class
+sanitization (fences, quotes, truncation by code points), and explore-binding
 parsing, including model ids that contain slashes.
