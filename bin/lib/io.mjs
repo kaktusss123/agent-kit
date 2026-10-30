@@ -16,6 +16,7 @@ import {
 	readlinkSync,
 	renameSync,
 	statSync,
+	symlinkSync,
 	writeFileSync,
 	writeSync,
 } from "node:fs";
@@ -101,6 +102,24 @@ export function writeFileAtomic(file, content) {
 	const tmp = `${file}.tmp-${process.pid}`;
 	writeFileSync(tmp, content);
 	renameSync(tmp, file);
+}
+
+// Replace a symlink in one rename, so the path always names a complete link.
+// The temporary name is created without replacing anything: a file that
+// happens to sit at a predictable temporary path is not agent-kit's to remove.
+export function replaceSymlink(dst, target) {
+	for (let attempt = 0; attempt < 16; attempt += 1) {
+		const tmp = `${dst}.agent-kit-${process.pid}-${attempt}`;
+		try {
+			symlinkSync(target, tmp);
+		} catch (err) {
+			if (err?.code === "EEXIST") continue;
+			throw err;
+		}
+		renameSync(tmp, dst);
+		return;
+	}
+	die(`cannot replace ${dst}: no free temporary name next to it`);
 }
 
 // Run a child with the caller's stdio and translate its termination into a

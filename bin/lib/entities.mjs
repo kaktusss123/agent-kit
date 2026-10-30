@@ -7,7 +7,7 @@
 
 import { readdirSync } from "node:fs";
 import { join } from "node:path";
-import { die, statOrNull } from "./io.mjs";
+import { die, statOrNull, warn } from "./io.mjs";
 import { isSafeRel } from "./paths.mjs";
 
 // Shell glob `*` semantics: dotfiles are not entities, and an entry whose
@@ -24,6 +24,12 @@ function topLevelEntries(dir) {
 	const entries = [];
 	for (const name of names.sort()) {
 		if (name.startsWith(".")) continue;
+		if (/[\t\n\r]/.test(name)) {
+			// Ownership is a line-based record; a name that would break the
+			// record's framing can never be owned safely, so it is never linked.
+			warn(`skipping entity whose name has a control character: ${JSON.stringify(name)}`);
+			continue;
+		}
 		const abs = join(dir, name);
 		if (!statOrNull(abs)) continue;
 		entries.push({ name, abs });
@@ -75,5 +81,8 @@ export function desiredEntities(host, repo) {
 // before the first filesystem change.
 export function validateEntity(repo, { rel, src }) {
 	if (!isSafeRel(rel)) die(`unsafe destination path: '${rel}'`);
-	if (!src.startsWith(`${repo}/`)) die(`source outside the repository: '${src}'`);
+	if (/[\t\n\r]/.test(src)) die(`unsafe source path: '${src}'`);
+	// AGENT_KIT_ROOT is taken verbatim, so a trailing slash is part of it.
+	const prefix = repo.endsWith("/") ? repo : `${repo}/`;
+	if (!src.startsWith(prefix)) die(`source outside the repository: '${src}'`);
 }

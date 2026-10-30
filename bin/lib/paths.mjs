@@ -14,18 +14,26 @@
 import { execFileSync } from "node:child_process";
 import { realpathSync } from "node:fs";
 import { homedir } from "node:os";
-import { dirname, join } from "node:path";
+import { dirname, join, posix } from "node:path";
 import { die, statOrNull } from "./io.mjs";
 
 export const HOSTS = ["pi", "claude-code"];
 
+// A recorded destination must name exactly the path it appears to name: no
+// traversal, no control characters that a line-based record cannot carry, and
+// no segment that path normalization would rewrite. Bash used to concatenate
+// "<root>/<rel>" literally, so a row like "victim/." addressed a different
+// path than it named; normalizing here instead would widen what a corrupt
+// record is allowed to delete, so such rows are dropped.
 export function isSafeRel(path) {
 	if (path === "" || path.startsWith("/") || path.includes("..")) return false;
-	return true;
+	if (/[\t\n\r]/.test(path)) return false;
+	return posix.normalize(path) === path;
 }
 
 export function isSafeSource(path) {
-	return path.startsWith("/") && !path.includes("..");
+	if (!path.startsWith("/") || path.includes("..")) return false;
+	return !/[\t\n\r]/.test(path);
 }
 
 export function isKnownHost(name) {
@@ -49,13 +57,7 @@ export function validateHosts(names) {
 // git's idea of the top level, then the parent of bin/. AGENT_KIT_ROOT exists
 // for tests and sandboxes and is taken verbatim, exactly as recorded sources
 // are compared against it.
-export function resolveRepository(entryPath) {
-	let script;
-	try {
-		script = realpathSync(entryPath);
-	} catch {
-		die(`cannot resolve the executable path: ${entryPath}`);
-	}
+export function resolveRepository(script) {
 	const scriptDir = dirname(script);
 	let repo;
 	try {
@@ -97,7 +99,7 @@ export function resolvePaths(entryPath) {
 	const linkStateFile = (host) =>
 		host === "pi" ? join(stateDir, "links.tsv") : join(stateDir, `links-${host}.tsv`);
 
-	const repo = resolveRepository(entryPath);
+	const repo = resolveRepository(entry);
 
 	return {
 		repo,

@@ -15,8 +15,9 @@ import { runChild, statOrNull, writeStdout } from "./io.mjs";
 
 function findExecutable(name) {
 	const path = process.env.PATH ?? "";
-	for (const dir of path.split(delimiter)) {
-		if (!dir) continue;
+	for (const component of path.split(delimiter)) {
+		// An empty PATH component means the current directory, as in a shell.
+		const dir = component === "" ? "." : component;
 		const candidate = join(dir, name);
 		if (statOrNull(candidate)?.isFile() !== true) continue;
 		try {

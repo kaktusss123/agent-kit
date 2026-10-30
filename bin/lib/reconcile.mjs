@@ -9,10 +9,10 @@
 // written once at the end, so an interrupted run leaves the previous record
 // rather than a claim about a link that was never created.
 
-import { mkdirSync, renameSync, rmSync, symlinkSync } from "node:fs";
+import { mkdirSync, rmSync, symlinkSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { desiredEntities, validateEntity } from "./entities.mjs";
-import { lstatOrNull, msg, readlinkOrNull, statOrNull, warn } from "./io.mjs";
+import { lstatOrNull, msg, readlinkOrNull, replaceSymlink, statOrNull, warn } from "./io.mjs";
 import { HOSTS, hostList } from "./paths.mjs";
 import {
 	loadCommandRecord,
@@ -82,12 +82,8 @@ export function reconcile(context) {
 			}
 			if (recorded && cur === recorded.src) {
 				// Still where agent-kit last put it: safe to repoint at this
-				// checkout. The replacement is a rename over the old link, so the
-				// path never disappears.
-				const tmp = `${dst}.agent-kit-relink-${process.pid}`;
-				rmSync(tmp, { force: true });
-				symlinkSync(entry.src, tmp);
-				renameSync(tmp, dst);
+				// checkout.
+				replaceSymlink(dst, entry.src);
 				final.push(entry);
 				msg(`  relink  ${entry.rel}`);
 				msg(`            was: ${cur}`);
@@ -253,10 +249,7 @@ export function bootstrapSelf(paths) {
 			return;
 		}
 		if (record.dst === paths.launcher && cur === record.src) {
-			const tmp = `${paths.launcher}.agent-kit-relink-${process.pid}`;
-			rmSync(tmp, { force: true });
-			symlinkSync(target, tmp);
-			renameSync(tmp, paths.launcher);
+			replaceSymlink(paths.launcher, target);
 			saveCommandRecord(paths.commandFile, paths.launcher, target);
 			msg(`  command ${paths.launcher}`);
 			msg(`            was: ${cur}`);

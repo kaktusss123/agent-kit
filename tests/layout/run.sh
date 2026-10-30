@@ -59,7 +59,7 @@ check "installer names retired runtimes only in the legacy state module" \
 check "installer declares a single Pi root" \
 	bash -c "grep -q 'PI_AGENT_DIR' '$REPO/bin/lib/paths.mjs' && grep -q 'join(home, \".pi\", \"agent\")' '$REPO/bin/lib/paths.mjs'"
 check "installer host arguments are limited to the known hosts (ADR-0009)" \
-	bash -c "grep -q '^export const HOSTS = \[\"pi\", \"claude-code\"\];$' '$REPO/bin/lib/paths.mjs' && awk '/case \"install\":/,/break;/' '$REPO/bin/agent-kit' | grep -q 'validateHosts(rest)'"
+	bash -c "grep -q '^export const HOSTS = \[\"pi\", \"claude-code\"\];$' '$REPO/bin/lib/paths.mjs' && awk '/case \"install\":/,/case \"uninstall\":/' '$REPO/bin/agent-kit' | grep -q 'validateHosts(rest)'"
 check "installer declares the claude-code root" \
 	bash -c "grep -q 'CLAUDE_CONFIG_DIR' '$REPO/bin/lib/paths.mjs' && grep -q 'join(home, \".claude\")' '$REPO/bin/lib/paths.mjs'"
 

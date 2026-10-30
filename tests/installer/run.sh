@@ -1112,39 +1112,63 @@ use_path_empty
 make_kit "$SANDBOX/kit"
 	mkdir -p "$SANDBOX/kit/extensions/task-workspace" "$SANDBOX/bin"
 	printf 'export const x = 1\n' > "$SANDBOX/kit/extensions/task-workspace/cli.ts"
+	# A stand-in for Bun that reports exactly what it was given: argv boundaries,
+	# its own stdin and the exit code the wrapper must propagate.
 	cat > "$SANDBOX/bin/bun" <<'EOB'
-#!/bin/sh
-printf '{"args":"%s"}\n' "$*"
-exit "${FAKE_BUN_EXIT:-0}"
+#!/usr/bin/env node
+import { readFileSync } from "node:fs";
+let stdin = "";
+try {
+	stdin = readFileSync(0, "utf8");
+} catch {
+	stdin = "";
+}
+process.stdout.write(`${JSON.stringify({ argv: process.argv.slice(2), stdin })}\n`);
+process.exit(Number(process.env.FAKE_BUN_EXIT ?? 0));
 EOB
 	chmod +x "$SANDBOX/bin/bun"
+	NODE_DIR="$(dirname "$(command -v node)")"
+	TASK_PATH="$SANDBOX/bin:$NODE_DIR:/usr/bin:/bin"
 	run_task() { # <path> <argv...> — <path> is PATH for the call
 		local path="$1"
 		shift
 		if OUT="$(PATH="$path" AGENT_KIT_ROOT="$SANDBOX/kit" "$SANDBOX/kit/bin/agent-kit" task "$@" 2>&1)"; then RC=0; else RC=$?; fi
 	}
-	run_task "$SANDBOX/bin:/usr/bin:/bin" status '{"path":"/tmp/x"}'
+	task_field() { # <field> — a field of the single JSON object on stdout
+		printf '%s' "$OUT" | node -e '
+			let text = "";
+			process.stdin.on("data", (chunk) => (text += chunk)).on("end", () => {
+				process.stdout.write(JSON.stringify(JSON.parse(text)[process.argv[1]]));
+			});
+		' "$1"
+	}
+	CLI="$SANDBOX/kit/extensions/task-workspace/cli.ts"
+	run_task "$TASK_PATH" status '{"path":"/tmp/x"}'
 	assert_eq "$RC" 0 "task exit code"
-	assert_eq "$OUT" "{\"args\":\"$SANDBOX/kit/extensions/task-workspace/cli.ts status {\"path\":\"/tmp/x\"}\"}" "task argv and stdout"
+	assert_eq "$(task_field argv)" "$(node -e 'process.stdout.write(JSON.stringify(process.argv.slice(1)))' "$CLI" status '{"path":"/tmp/x"}')" "task argv and stdout"
+	assert_eq "$(task_field stdin)" '""' "task leaves stdin to the runtime"
 	assert_eq "$(printf '%s\n' "$OUT" | grep -c .)" 1 "task stdout is a single line"
-	FAKE_BUN_EXIT=3 run_task "$SANDBOX/bin:/usr/bin:/bin" status -
-	assert_eq "$RC" 3 "runtime exit code is propagated"
 	# stdin is the caller's: `-` reads the JSON request from it
-	if OUT="$(printf '{"path":"/tmp/y"}' | PATH="$SANDBOX/bin:/usr/bin:/bin" AGENT_KIT_ROOT="$SANDBOX/kit" "$SANDBOX/kit/bin/agent-kit" task status - 2>&1)"; then RC=0; else RC=$?; fi
+	if OUT="$(printf '{"path":"/tmp/y"}' | PATH="$TASK_PATH" AGENT_KIT_ROOT="$SANDBOX/kit" "$SANDBOX/kit/bin/agent-kit" task status - 2>&1)"; then RC=0; else RC=$?; fi
 	assert_eq "$RC" 0 "task reads stdin"
-	case "$OUT" in
-	*"status -"*) : ;;
-	*) fail "stdin request must be passed through, got: $OUT" ;;
-	esac
+	assert_eq "$(task_field stdin)" '"{\"path\":\"/tmp/y\"}"' "stdin request is passed through unchanged"
+	assert_eq "$(task_field argv)" "$(node -e 'process.stdout.write(JSON.stringify(process.argv.slice(1)))' "$CLI" status -)" "argv after a stdin request"
+	FAKE_BUN_EXIT=3 run_task "$TASK_PATH" status -
+	assert_eq "$RC" 3 "runtime exit code is propagated"
+	# an empty PATH component means the current directory, as in a shell
+	if OUT="$(cd "$SANDBOX/bin" && PATH=":$NODE_DIR:/usr/bin:/bin" AGENT_KIT_ROOT="$SANDBOX/kit" "$SANDBOX/kit/bin/agent-kit" task status '{}' 2>&1)"; then RC=0; else RC=$?; fi
+	assert_eq "$RC" 0 "empty PATH component finds ./bun"
+	assert_eq "$(task_field argv)" "$(node -e 'process.stdout.write(JSON.stringify(process.argv.slice(1)))' "$CLI" status '{}')" "argv through a cwd lookup"
 	# without bun: a hook fails open, an explicit operation fails as JSON
-	if OUT="$(PATH="/usr/bin:/bin" AGENT_KIT_ROOT="$SANDBOX/kit" "$SANDBOX/kit/bin/agent-kit" task hook session-start 2>&1)"; then RC=0; else RC=$?; fi
+	if OUT="$(PATH="$NODE_DIR:/usr/bin:/bin" AGENT_KIT_ROOT="$SANDBOX/kit" "$SANDBOX/kit/bin/agent-kit" task hook session-start 2>&1)"; then RC=0; else RC=$?; fi
 	assert_eq "$RC" 0 "hook without bun fails open"
 	assert_eq "$OUT" "" "hook without bun prints nothing"
-	if OUT="$(PATH="/usr/bin:/bin" AGENT_KIT_ROOT="$SANDBOX/kit" "$SANDBOX/kit/bin/agent-kit" task status '{}' 2>&1)"; then RC=0; else RC=$?; fi
+	if OUT="$(PATH="$NODE_DIR:/usr/bin:/bin" AGENT_KIT_ROOT="$SANDBOX/kit" "$SANDBOX/kit/bin/agent-kit" task status '{}' 2>&1)"; then RC=0; else RC=$?; fi
 	assert_eq "$RC" 1 "task without bun fails"
 	assert_eq "$OUT" '{"status":"error","message":"agent-kit task requires bun on PATH"}' "task error JSON"
+	assert_eq "$(printf '%s' "$OUT" | node -e 'let t="";process.stdin.on("data",(c)=>(t+=c)).on("end",()=>{JSON.parse(t);process.stdout.write("one object")})')" "one object" "error output is one JSON object"
 	rm -rf "$SANDBOX/kit/extensions/task-workspace"
-	if OUT="$(PATH="$SANDBOX/bin:/usr/bin:/bin" AGENT_KIT_ROOT="$SANDBOX/kit" "$SANDBOX/kit/bin/agent-kit" task status '{}' 2>&1)"; then RC=0; else RC=$?; fi
+	if OUT="$(PATH="$TASK_PATH" AGENT_KIT_ROOT="$SANDBOX/kit" "$SANDBOX/kit/bin/agent-kit" task status '{}' 2>&1)"; then RC=0; else RC=$?; fi
 	assert_eq "$RC" 1 "missing CLI fails"
 	case "$OUT" in
 	'{"status":"error","message":"task-workspace CLI missing: '*'"}') : ;;
@@ -1208,6 +1232,76 @@ make_kit "$SANDBOX/kit"
 run_install
 	assert_eq "$RC" 0 "install without node_modules"
 	assert_link "$PI_ROOT/skills/alpha" "$SANDBOX/kit/skills/alpha" "links created"
+pass
+
+
+# ==============================================================================
+# T41: a recorded row can never name a different path than it contains, and an
+# entity whose name breaks the line-based record is not installable, so state
+# cannot widen what agent-kit is allowed to delete
+
+new_test "T41 state cannot widen the owned path set"
+use_path_empty
+make_kit "$SANDBOX/kit"
+	mkdir -p "$SANDBOX/outside/target"
+	printf 'external\n' > "$SANDBOX/outside/target/SKILL.md"
+	mkdir -p "$PI_ROOT"
+	ln -s "$SANDBOX/outside/target" "$PI_ROOT/victim"
+run_install
+	assert_eq "$RC" 0 "base install"
+	# a row whose destination normalizes to a different path (trailing "/.")
+	printf 'victim/.\t%s\n' "$SANDBOX/kit/skills/alpha" > "$STATE"
+run_uninstall
+	assert_eq "$RC" 0 "uninstall with a non-normalized row"
+	assert_link "$PI_ROOT/victim" "$SANDBOX/outside/target" "non-normalized row never authorizes a delete"
+	case "$OUT" in
+	*"ignoring invalid state line: victim/."*) : ;;
+	*) fail "non-normalized row should be dropped with a warning, got: $OUT" ;;
+	esac
+	# an entity name carrying a newline would split one record into two rows,
+	# the second of which would claim a path the repository never wanted
+	rm -rf "$PI_ROOT"
+	rm -rf "$SANDBOX/kit2"
+	mkdir -p "$SANDBOX/kit2/bin"
+	cp -R "$REAL_REPO/bin/." "$SANDBOX/kit2/bin/"
+	NEWLINE_DIR="$(printf 'beta\nvictim')"
+	mkdir -p "$SANDBOX/kit2/skills/alpha" "$SANDBOX/kit2/skills/$NEWLINE_DIR"
+	printf '# alpha\n' > "$SANDBOX/kit2/skills/alpha/SKILL.md"
+	printf '# split\n' > "$SANDBOX/kit2/skills/$NEWLINE_DIR/SKILL.md"
+if OUT="$(AGENT_KIT_ROOT="$SANDBOX/kit2" "$SANDBOX/kit2/bin/agent-kit" install 2>&1)"; then RC=0; else RC=$?; fi
+	assert_eq "$RC" 0 "install skips the unrepresentable name"
+	case "$OUT" in
+	*"control character"*) : ;;
+	*) fail "a newline in an entity name should be reported, got: $OUT" ;;
+	esac
+	assert_eq "$(awk -F '\t' '$1 == "victim"' "$STATE" | grep -c .)" 0 "no forged victim row"
+	ln -sfn "$SANDBOX/kit2/skills/alpha" "$PI_ROOT/victim"
+run_uninstall
+	assert_link "$PI_ROOT/victim" "$SANDBOX/kit2/skills/alpha" "forged-looking row is not owned"
+pass
+
+# ==============================================================================
+# T42: AGENT_KIT_ROOT is taken verbatim, so a trailing slash is not a reason to
+# refuse the checkout as a source
+
+new_test "T42 trailing slash in AGENT_KIT_ROOT"
+use_path_empty
+make_kit "$SANDBOX/kit"
+if OUT="$(AGENT_KIT_ROOT="$SANDBOX/kit/" "$SANDBOX/kit/bin/agent-kit" install 2>&1)"; then RC=0; else RC=$?; fi
+	assert_eq "$RC" 0 "install with a trailing slash in the root"
+	assert_link "$PI_ROOT/skills/alpha" "$SANDBOX/kit/skills/alpha" "links created from the same checkout"
+	assert_eq "$(state_entries)" 6 "state records every entity"
+	STATE_BEFORE="$(cat "$STATE")"
+if OUT="$(AGENT_KIT_ROOT="$SANDBOX/kit/" "$SANDBOX/kit/bin/agent-kit" install 2>&1)"; then RC=0; else RC=$?; fi
+	assert_eq "$RC" 0 "reinstall with a trailing slash"
+	case "$OUT" in
+	*"0 created, 0 relinked, 6 up to date"*) : ;;
+	*) fail "trailing slash must not cause relinks, got: $OUT" ;;
+	esac
+	assert_eq "$(cat "$STATE")" "$STATE_BEFORE" "state unchanged"
+if OUT="$(AGENT_KIT_ROOT="$SANDBOX/kit/" "$SANDBOX/kit/bin/agent-kit" uninstall 2>&1)"; then RC=0; else RC=$?; fi
+	assert_eq "$RC" 0 "uninstall with a trailing slash"
+	assert_no_file "$PI_ROOT/skills/alpha" "links removed"
 pass
 
 printf '\n%d passed, %d failed\n' "$PASS" "$FAIL"
