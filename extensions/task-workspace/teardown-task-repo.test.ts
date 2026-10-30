@@ -19,6 +19,8 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { afterAll, describe, expect, test } from "bun:test";
 import { ensureTaskRepo, teardownTaskRepo } from "./flows";
+import { taskWorkspacePath } from "./git";
+import { acquireOwnerLease, releaseOwnerLease } from "./owner-lock";
 
 let rootDir: string | null = null;
 
@@ -88,7 +90,7 @@ async function buildMultiRepoWorkspace(name: string): Promise<Built> {
   expect(canonicalB.status).toBe("attached");
   return {
     taskRoot,
-    workspace: join(taskRoot, "task_multi"),
+    workspace: taskWorkspacePath("task/multi", taskRoot),
     repos: {
       a: { source: repoA, canonical: (canonicalA as { worktree: string }).worktree },
       b: { source: repoB, canonical: (canonicalB as { worktree: string }).worktree },
@@ -116,6 +118,28 @@ describe("teardown_task_repo guards", () => {
     expect(r.status).toBe("error");
     expect(String((r as { message: string }).message)).toContain("does not resolve");
     expect(existsSync(dirname(taskRoot))).toBe(true);
+  }, 60_000);
+
+  test("refuses to remove a worktree with a live owner", async () => {
+    const built = await buildMultiRepoWorkspace("owned");
+    const lease = await acquireOwnerLease(built.taskRoot, realpathSync(built.repos.a.canonical));
+    expect(lease.ok).toBe(true);
+    try {
+      const r = await teardownTaskRepo({ task: "task/multi" }, built.taskRoot, {
+        taskRoot: built.taskRoot,
+      });
+      expect(r.status).toBe("owner_active");
+      expect(existsSync(built.workspace)).toBe(true);
+      expect(sh(built.repos.a.source, "git", "branch", "--list", "task/multi")).not.toBe("");
+    } finally {
+      if (lease.ok) releaseOwnerLease(lease.lease);
+    }
+    // Once the owner is gone the same teardown proceeds.
+    const after = await teardownTaskRepo({ task: "task/multi" }, built.taskRoot, {
+      taskRoot: built.taskRoot,
+    });
+    expect(after.status).toBe("torn_down");
+    expect(existsSync(built.workspace)).toBe(false);
   }, 60_000);
 
   test("refuses dirty worktrees and removes nothing", async () => {

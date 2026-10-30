@@ -100,6 +100,14 @@ export interface TaskWorkspaceRepoLike {
 	headSha: string;
 	upstream: string | null;
 	dirty: DirtyState;
+	/** Cross-process ownership: who currently holds the right to write. */
+	owner?: {
+		state: string;
+		holder?: {
+			agentId?: string;
+			processes: { pid: number; role: string; alive: boolean }[];
+		};
+	};
 }
 
 export interface TaskWorkspaceLike {
@@ -141,6 +149,14 @@ function dirtyText(dirty: DirtyState): string {
 	return parts.length > 0 ? `dirty: ${parts.join(", ")}` : "clean";
 }
 
+/** `owner: <agentId|pid> (parent|child)` or the non-live ownership state. */
+function ownerText(owner: NonNullable<TaskWorkspaceRepoLike["owner"]>, theme: Theme): string {
+	if (owner.state !== "owned") return theme.fg("warning", `owner: ${forDisplay(owner.state)}`);
+	const live = (owner.holder?.processes ?? []).find((p) => p.alive);
+	const who = owner.holder?.agentId ?? (live ? `pid ${live.pid}` : "live");
+	return theme.fg("warning", `owner: ${forDisplay(who)}${live ? ` (${forDisplay(live.role)})` : ""}`);
+}
+
 function repoRow(repo: TaskWorkspaceRepoLike, taskKey: string, theme: Theme): string {
 	const segments: string[] = [];
 	if (repo.kind === "lane") {
@@ -161,6 +177,9 @@ function repoRow(repo: TaskWorkspaceRepoLike, taskKey: string, theme: Theme): st
 	);
 	const dirty = dirtyText(repo.dirty);
 	segments.push(dirty === "clean" ? theme.fg("dim", dirty) : theme.fg("warning", dirty));
+	if (repo.owner && repo.owner.state !== "free") {
+		segments.push(ownerText(repo.owner, theme));
+	}
 	return truncateToWidth(segments.join(dot(theme)), ROW_CAP);
 }
 
