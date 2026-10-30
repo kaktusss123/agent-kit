@@ -24,9 +24,11 @@
 //     rename;
 //   * current is flipped by renaming a freshly created symlink over it in one
 //     syscall, so current always names a complete snapshot.
-// A failed run leaves the previous current untouched; the leftover temporary
-// tree is removed on the way out, and a SIGKILLed run's leftovers are swept by
-// the next run that owns the releases dir.
+// A failed run leaves the previous current untouched and removes its temporary
+// tree on the way out. A terminated run (SIGKILL, and SIGTERM/SIGINT too, which
+// Node cannot service while the synchronous copy holds the stack - the default
+// disposition ends the process at once) leaves its temporary tree and the lock
+// of a dead owner behind; the next run that owns the releases dir sweeps both.
 //
 // Content: extensions/ is a real copy (symlinks preserved, modes preserved).
 // node_modules/ is hardlinked from the previous complete snapshot - a published
@@ -76,11 +78,9 @@ import {
 	unlinkSync,
 	writeFileSync,
 } from "node:fs";
-import { constants as osConstants, hostname } from "node:os";
+import { hostname } from "node:os";
 import { basename, join, resolve } from "node:path";
 import { FatalError, die, lstatOrNull, msg, readlinkOrNull, warn } from "./io.mjs";
-
-const SIGNAL_NUMBERS = osConstants.signals;
 
 // Latest snapshots kept beyond current's target, as documented in the help text
 // and the README; the number is a contract, not a tuning knob.
@@ -749,16 +749,12 @@ export function snapshot(repo, args) {
 		releaseLock(lock);
 		lock = null;
 	};
+	// A refusal or a failed build cleans up here. A signal does not: the command
+	// is synchronous, so Node cannot run a handler while the copy holds the
+	// stack, and a queued handler would only fire after the work it was meant to
+	// interrupt. Installing one would therefore turn a hard stop into a late one;
+	// the leftovers are the next run's job, exactly as after SIGKILL.
 	process.on("exit", cleanup);
-	// A signal ends the process without running the exit hook, so an interrupted
-	// run cleans up the way a failed one does instead of leaving the temporary
-	// tree and a lock that only the next run could clear.
-	const interrupted = ["SIGINT", "SIGTERM", "SIGHUP"];
-	const onSignal = (signal) => {
-		cleanup();
-		process.exit(128 + (SIGNAL_NUMBERS[signal] ?? 0));
-	};
-	for (const signal of interrupted) process.on(signal, onSignal);
 
 	try {
 		lock = acquireLock(releases, lockTimeoutMs());
@@ -798,6 +794,5 @@ export function snapshot(repo, args) {
 	} finally {
 		cleanup();
 		process.off("exit", cleanup);
-		for (const signal of interrupted) process.off(signal, onSignal);
 	}
 }

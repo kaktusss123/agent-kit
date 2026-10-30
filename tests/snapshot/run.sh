@@ -1117,6 +1117,45 @@ TARGET="$(resolve_link "$RELEASES/current" || true)"
 pass
 
 # ==============================================================================
+# T24: SIGTERM mid-build is a hard stop, exactly like SIGKILL: the previous
+# current stays untouched, the temporary tree and the dead owner's lock remain,
+# and the next run adopts the releases dir. (Node cannot service a signal handler
+# while the synchronous copy holds the stack, so the writer installs none and the
+# default disposition ends the process immediately.)
+
+new_test "T24 SIGTERM is a hard stop the next run recovers from"
+make_kit "$KIT"
+SHA1="$(head_sha)"
+run_snapshot
+	assert_eq "$RC" 0 "first snapshot"
+mkdir -p "$KIT/extensions/bulk"
+i=0
+while [ "$i" -lt 20000 ]; do
+	printf 'export const n = %s\n' "$i" >"$KIT/extensions/bulk/f$i.js"
+	i=$((i + 1))
+done
+git_commit_all "$KIT" "next"
+SHA2="$(head_sha)"
+AGENT_KIT_ROOT="$KIT" "$INSTALLER" snapshot "$RELEASES" >"$SANDBOX/out" 2>&1 &
+INTERRUPTED=$!
+if ! wait_for_releases_entry ".tmp-"; then
+	fail "test setup: the copy finished before it could be interrupted"
+fi
+kill -TERM "$INTERRUPTED" 2>/dev/null || true
+TERM_STATUS=0
+wait "$INTERRUPTED" 2>/dev/null || TERM_STATUS=$?
+	assert_eq "$TERM_STATUS" 143 "the process died from SIGTERM"
+	assert_no_file "$RELEASES/$SHA2" "the interrupted run published nothing"
+	assert_link "$RELEASES/current" "$SHA1" "current still names the previous snapshot"
+	if [ "$(tmp_dirs)" -eq 0 ]; then
+		fail "test setup: expected the interrupted run to leave its temporary tree"
+	fi
+run_snapshot
+	assert_eq "$RC" 0 "the next run succeeds"
+	assert_link "$RELEASES/current" "$SHA2" "current advanced"
+pass
+
+# ==============================================================================
 
 [ -n "$SANDBOX" ] && [ -d "$SANDBOX" ] && chmod -R u+w "$SANDBOX" 2>/dev/null || true
 printf '\n%d passed, %d failed\n' "$PASS" "$FAIL"
