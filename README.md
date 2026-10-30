@@ -23,13 +23,20 @@ Claude Code грузит из `~/.claude/skills/agent-kit` сам.
 
 ## Установка
 
-Нужны `bash`, `git` и [`bun`](https://bun.sh) (на нём работают `agent-kit task`
-и hooks Claude Code). Для Pi-части — установленный Pi.
+Нужны Node.js >= 24 и `git`; для `agent-kit task` и hooks Claude Code —
+[`bun`](https://bun.sh); для Pi-части — установленный Pi. Для `snapshot` до его
+переноса на Node нужен ещё и Bash.
 
 ```sh
 git clone <url> ~/src/agent-kit
 ~/src/agent-kit/bin/agent-kit install
 ```
+
+`bin/agent-kit` — Node-скрипт без зависимостей: он работает сразу после
+`git clone`, без `npm install`, сборки и сети. Откат на прежнюю реализацию —
+запустить `bin/agent-kit` из предыдущего commit'а или из прежнего checkout'а:
+форматы state и симлинков не менялись, оба варианта читают одни и те же файлы.
+Подробности — [ADR-0012](docs/adr/adr-0012.md).
 
 `install` без аргументов линкует checkout в оба host'а и кладёт лаунчер
 `~/.local/bin/agent-kit` (симлинк на `bin/agent-kit` этого checkout'а):
@@ -80,7 +87,9 @@ agent-kit uninstall             # удалить ссылки всех host'ов
 Headless-сессии (zavod) запускают pi с `--no-extensions` и явными путями
 `-e`, поэтому не читают живой checkout: им нужен неизменяемый набор
 расширений. `agent-kit snapshot <releases-dir>` создаёт такой набор и
-переключает на него стабильный указатель:
+переключает на него стабильный указатель (команда пока делегируется
+`bin/agent-kit-snapshot` — временному Bash-писателю, который исчезнет вместе с
+переносом снимков на Node):
 
 ```sh
 agent-kit snapshot ~/.local/share/zavod/agent-kit-releases
@@ -423,5 +432,6 @@ bun test extensions/<name>/     # расширения (bun:test)
   - [0009](docs/adr/adr-0009.md) — выбор host'ов при установке
   - [0010](docs/adr/adr-0010.md) — роли субагентов в Claude Code
   - [0011](docs/adr/adr-0011.md) — алиасы моделей и словарь ролей субагентов в Claude Code
+  - [0012](docs/adr/adr-0012.md) — инсталлер agent-kit на Node.js
 - [`docs/specs/`](docs/specs/) и [`docs/research/`](docs/research/) — спецификации и исследования этапов
 - README расширений в `extensions/*/README.md` — контракты конкретных расширений

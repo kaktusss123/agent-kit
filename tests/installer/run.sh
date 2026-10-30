@@ -126,7 +126,9 @@ make_kit() { # <checkout-dir>
 		"$d/skills/alpha" "$d/skills/beta" \
 		"$d/extensions/todo" \
 		"$d/prompts"
-	cp "$INSTALLER" "$d/bin/agent-kit"
+	# The whole executable tree: the entrypoint imports its modules from bin/lib,
+	# and `snapshot` is delegated to the temporary Bash writer next to it.
+	cp -R "$REAL_REPO/bin/." "$d/bin/"
 	echo "# alpha" > "$d/skills/alpha/SKILL.md"
 	echo "# beta" > "$d/skills/beta/SKILL.md"
 	echo "export const x = 1" > "$d/extensions/todo/index.ts"
@@ -776,10 +778,11 @@ git -C "$SANDBOX/seed" push -q "$SANDBOX/origin.git" main
 git clone -q "$SANDBOX/origin.git" "$SANDBOX/kit"
 run_install_from "$SANDBOX/kit"
 	assert_eq "$RC" 0 "install from cloned checkout"
-# upstream ships a changed installer: its install announces itself
-awk '{ print } /^cmd_install\(\) \{$/ { print "\tmsg \"fresh installer reconcile\"" }' \
-	"$SANDBOX/seed/bin/agent-kit" > "$SANDBOX/agent-kit.new"
-cat "$SANDBOX/agent-kit.new" > "$SANDBOX/seed/bin/agent-kit"
+# upstream replaces the installer with one that announces itself, so the test
+# observes which file the update executes rather than which code it loaded
+echo '#!/bin/sh' > "$SANDBOX/seed/bin/agent-kit"
+echo 'echo "fresh installer reconcile"' >> "$SANDBOX/seed/bin/agent-kit"
+chmod +x "$SANDBOX/seed/bin/agent-kit"
 git_commit_all "$SANDBOX/seed" "change installer"
 git -C "$SANDBOX/seed" push -q "$SANDBOX/origin.git" main
 run_update
@@ -1042,6 +1045,169 @@ run_status
 	*"hosts: claude-code (derived"*) : ;;
 	*) fail "status should report the derived selection, got: $OUT" ;;
 	esac
+pass
+
+
+# ==============================================================================
+# T35: state written by the previous installer (one extra trailing blank line)
+# is read as-is, and the first rewrite drops it without losing ownership
+
+new_test "T35 previous state format is read and normalized"
+use_path_empty
+make_kit "$SANDBOX/kit"
+run_install
+	assert_eq "$RC" 0 "base install"
+	assert_eq "$(state_entries)" 6 "state records every entity"
+# the previous implementation terminated every state file with a blank line
+printf '\n' >> "$STATE"
+OUT="$(AGENT_KIT_ROOT="$SANDBOX/kit" "$SANDBOX/kit/bin/agent-kit" status 2>&1)"
+	case "$OUT" in
+	*"6 managed — 6 up to date"*) : ;;
+	*) fail "old-format state must stay fully owned, got: $OUT" ;;
+	esac
+run_install
+	assert_eq "$RC" 0 "reinstall on the old-format state"
+	case "$OUT" in
+	*"0 created, 0 relinked, 6 up to date"*) : ;;
+	*) fail "reinstall must keep every link, got: $OUT" ;;
+	esac
+	[ -n "$(tail -1 "$STATE")" ] || fail "state must not end with a blank line after the rewrite"
+	assert_eq "$(state_entries)" 6 "row count unchanged"
+pass
+
+# ==============================================================================
+# T36: no command depends on a TTY: nothing prompts, and stdout carries no
+# terminal escape sequences
+
+new_test "T36 non-TTY output"
+use_path_empty
+make_kit "$SANDBOX/kit"
+if OUT="$(AGENT_KIT_ROOT="$SANDBOX/kit" "$SANDBOX/kit/bin/agent-kit" install </dev/null 2>&1)"; then RC=0; else RC=$?; fi
+	assert_eq "$RC" 0 "install with stdin closed"
+	case "$OUT" in
+	*$'\033'*) fail "install printed an escape sequence in a non-TTY" ;;
+	*) : ;;
+	esac
+if OUT="$(AGENT_KIT_ROOT="$SANDBOX/kit" "$SANDBOX/kit/bin/agent-kit" status </dev/null 2>&1)"; then RC=0; else RC=$?; fi
+	assert_eq "$RC" 0 "status with stdin closed"
+	case "$OUT" in
+	*$'\033'*) fail "status printed an escape sequence in a non-TTY" ;;
+	*) : ;;
+	esac
+if OUT="$(AGENT_KIT_ROOT="$SANDBOX/kit" "$SANDBOX/kit/bin/agent-kit" help </dev/null 2>&1)"; then RC=0; else RC=$?; fi
+	assert_eq "$RC" 0 "help with stdin closed"
+	case "$OUT" in
+	*$'\033'*) fail "help printed an escape sequence in a non-TTY" ;;
+	*) : ;;
+	esac
+pass
+
+# ==============================================================================
+# T37: the task wrapper hands its arguments to the task-workspace CLI verbatim,
+# keeps stdout to one JSON object and propagates the runtime's exit code; the
+# bun-less hook stays fail-open while an explicit operation reports the error
+
+new_test "T37 task wrapper"
+use_path_empty
+make_kit "$SANDBOX/kit"
+	mkdir -p "$SANDBOX/kit/extensions/task-workspace" "$SANDBOX/bin"
+	printf 'export const x = 1\n' > "$SANDBOX/kit/extensions/task-workspace/cli.ts"
+	cat > "$SANDBOX/bin/bun" <<'EOB'
+#!/bin/sh
+printf '{"args":"%s"}\n' "$*"
+exit "${FAKE_BUN_EXIT:-0}"
+EOB
+	chmod +x "$SANDBOX/bin/bun"
+	run_task() { # <path> <argv...> — <path> is PATH for the call
+		local path="$1"
+		shift
+		if OUT="$(PATH="$path" AGENT_KIT_ROOT="$SANDBOX/kit" "$SANDBOX/kit/bin/agent-kit" task "$@" 2>&1)"; then RC=0; else RC=$?; fi
+	}
+	run_task "$SANDBOX/bin:/usr/bin:/bin" status '{"path":"/tmp/x"}'
+	assert_eq "$RC" 0 "task exit code"
+	assert_eq "$OUT" "{\"args\":\"$SANDBOX/kit/extensions/task-workspace/cli.ts status {\"path\":\"/tmp/x\"}\"}" "task argv and stdout"
+	assert_eq "$(printf '%s\n' "$OUT" | grep -c .)" 1 "task stdout is a single line"
+	FAKE_BUN_EXIT=3 run_task "$SANDBOX/bin:/usr/bin:/bin" status -
+	assert_eq "$RC" 3 "runtime exit code is propagated"
+	# stdin is the caller's: `-` reads the JSON request from it
+	if OUT="$(printf '{"path":"/tmp/y"}' | PATH="$SANDBOX/bin:/usr/bin:/bin" AGENT_KIT_ROOT="$SANDBOX/kit" "$SANDBOX/kit/bin/agent-kit" task status - 2>&1)"; then RC=0; else RC=$?; fi
+	assert_eq "$RC" 0 "task reads stdin"
+	case "$OUT" in
+	*"status -"*) : ;;
+	*) fail "stdin request must be passed through, got: $OUT" ;;
+	esac
+	# without bun: a hook fails open, an explicit operation fails as JSON
+	if OUT="$(PATH="/usr/bin:/bin" AGENT_KIT_ROOT="$SANDBOX/kit" "$SANDBOX/kit/bin/agent-kit" task hook session-start 2>&1)"; then RC=0; else RC=$?; fi
+	assert_eq "$RC" 0 "hook without bun fails open"
+	assert_eq "$OUT" "" "hook without bun prints nothing"
+	if OUT="$(PATH="/usr/bin:/bin" AGENT_KIT_ROOT="$SANDBOX/kit" "$SANDBOX/kit/bin/agent-kit" task status '{}' 2>&1)"; then RC=0; else RC=$?; fi
+	assert_eq "$RC" 1 "task without bun fails"
+	assert_eq "$OUT" '{"status":"error","message":"agent-kit task requires bun on PATH"}' "task error JSON"
+	rm -rf "$SANDBOX/kit/extensions/task-workspace"
+	if OUT="$(PATH="$SANDBOX/bin:/usr/bin:/bin" AGENT_KIT_ROOT="$SANDBOX/kit" "$SANDBOX/kit/bin/agent-kit" task status '{}' 2>&1)"; then RC=0; else RC=$?; fi
+	assert_eq "$RC" 1 "missing CLI fails"
+	case "$OUT" in
+	'{"status":"error","message":"task-workspace CLI missing: '*'"}') : ;;
+	*) fail "missing CLI must be one JSON object, got: $OUT" ;;
+	esac
+pass
+
+# ==============================================================================
+# T38: snapshot is delegated to the temporary Bash writer, which validates its
+# own arguments and the checkout before touching anything
+
+new_test "T38 snapshot delegation"
+use_path_empty
+make_kit "$SANDBOX/kit"
+	if OUT="$(AGENT_KIT_ROOT="$SANDBOX/kit" "$SANDBOX/kit/bin/agent-kit" snapshot 2>&1)"; then RC=0; else RC=$?; fi
+	assert_eq "$RC" 2 "snapshot without a releases dir is refused"
+	case "$OUT" in
+	*"snapshot takes exactly one argument"*) : ;;
+	*) fail "expected the snapshot usage error, got: $OUT" ;;
+	esac
+	if OUT="$(AGENT_KIT_ROOT="$SANDBOX/kit" "$SANDBOX/kit/bin/agent-kit" snapshot "$SANDBOX/releases" 2>&1)"; then RC=0; else RC=$?; fi
+	assert_eq "$RC" 2 "snapshot of a non-git checkout is refused"
+	case "$OUT" in
+	*"is not a git checkout"*) : ;;
+	*) fail "expected the non-git refusal, got: $OUT" ;;
+	esac
+	assert_no_file "$SANDBOX/releases" "refusal creates nothing"
+pass
+
+# ==============================================================================
+# T39: the CLI works from a checkout whose path contains spaces
+
+new_test "T39 spaced checkout path"
+use_path_empty
+	SPACED="$SANDBOX/Agent Kit (v2)"
+make_kit "$SPACED"
+if OUT="$(AGENT_KIT_ROOT="$SPACED" "$SPACED/bin/agent-kit" install 2>&1)"; then RC=0; else RC=$?; fi
+	assert_eq "$RC" 0 "install from a spaced checkout"
+	assert_link "$PI_ROOT/skills/alpha" "$SPACED/skills/alpha" "link into a spaced checkout"
+	assert_eq "$(state_entries)" 6 "state records the spaced sources"
+if OUT="$(AGENT_KIT_ROOT="$SPACED" "$SPACED/bin/agent-kit" uninstall 2>&1)"; then RC=0; else RC=$?; fi
+	assert_eq "$RC" 0 "uninstall from a spaced checkout"
+	assert_no_file "$PI_ROOT/skills/alpha" "spaced checkout links removed"
+pass
+
+# ==============================================================================
+# T40: a fresh checkout installs without node_modules, a build step or network
+# access; the committed executable tree is self-contained Node ESM
+
+new_test "T40 fresh checkout without dependencies"
+use_path_empty
+make_kit "$SANDBOX/kit"
+	[ -e "$SANDBOX/kit/node_modules" ] && fail "fixture must not carry node_modules"
+	head -1 "$SANDBOX/kit/bin/agent-kit" | grep -qx '#!/usr/bin/env node' || fail "entrypoint must be a Node script"
+	grep -q '"type": "module"' "$SANDBOX/kit/bin/package.json" || fail "entrypoint tree must declare ESM"
+	# no dependency outside the Node standard library and relative modules
+	if grep -rhE 'from "[^.]' "$SANDBOX/kit/bin/agent-kit" "$SANDBOX/kit/bin/lib" \
+		| grep -vE 'from "node:' > "$SANDBOX/imports"; then
+		fail "installer must only import node: builtins and relative modules: $(cat "$SANDBOX/imports")"
+	fi
+run_install
+	assert_eq "$RC" 0 "install without node_modules"
+	assert_link "$PI_ROOT/skills/alpha" "$SANDBOX/kit/skills/alpha" "links created"
 pass
 
 printf '\n%d passed, %d failed\n' "$PASS" "$FAIL"

@@ -48,26 +48,20 @@ check "every entry under skills/ is a directory" \
 # --- installer hosts ---------------------------------------------------------
 
 # The legacy state migration legitimately names retired runtimes; that
-# knowledge must stay confined to the legacy_* functions. Strip them and
-# require the remainder to be free of any retired-runtime or old-tree
-# references.
-REST="$(mktemp "${TMPDIR:-/tmp}/agent-kit-layout.XXXXXX")"
-awk '
-	/^legacy_roots\(\) \{/ || /^legacy_retire\(\) \{/ || /^migrate_legacy_state\(\) \{/ { skip = 1; next }
-	skip { if (/^}/) skip = 0; next }
-	{ print }
-' "$REPO/bin/agent-kit" > "$REST"
+# knowledge lives in exactly one module, and the rest of the executable must
+# stay free of any retired-runtime or old-tree reference.
 check "installer keeps the legacy state migration" \
-	bash -c "grep -q '^migrate_legacy_state() {' '$REPO/bin/agent-kit'"
-check "installer has retired-runtime knowledge only inside legacy_* functions" \
-	bash -c "! grep -iqE '\bomp\b|opencode|runtimes/' '$REST'"
+	grep -q 'export function migrateLegacyState' "$REPO/bin/lib/legacy-state.mjs"
+check "legacy state module still names the retired runtimes it cleans up" \
+	bash -c "grep -qiE '\\bomp\\b|opencode' '$REPO/bin/lib/legacy-state.mjs'"
+check "installer names retired runtimes only in the legacy state module" \
+	bash -c "! grep -rliE '\\bomp\\b|opencode|runtimes/' '$REPO/bin' --exclude=legacy-state.mjs | grep -q ."
 check "installer declares a single Pi root" \
-	bash -c "grep -q 'PI_AGENT_DIR:.*/.pi/agent' '$REPO/bin/agent-kit'"
+	bash -c "grep -q 'PI_AGENT_DIR' '$REPO/bin/lib/paths.mjs' && grep -q 'join(home, \".pi\", \"agent\")' '$REPO/bin/lib/paths.mjs'"
 check "installer host arguments are limited to the known hosts (ADR-0009)" \
-	bash -c "grep -q '^HOSTS=\"pi claude-code\"\$' '$REPO/bin/agent-kit' && grep -q 'validate_hosts \"\$@\"; cmd_install' '$REPO/bin/agent-kit'"
+	bash -c "grep -q '^export const HOSTS = \[\"pi\", \"claude-code\"\];$' '$REPO/bin/lib/paths.mjs' && awk '/case \"install\":/,/break;/' '$REPO/bin/agent-kit' | grep -q 'validateHosts(rest)'"
 check "installer declares the claude-code root" \
-	bash -c "grep -q 'CLAUDE_CONFIG_DIR:.*/.claude' '$REPO/bin/agent-kit'"
-rm -f "$REST"
+	bash -c "grep -q 'CLAUDE_CONFIG_DIR' '$REPO/bin/lib/paths.mjs' && grep -q 'join(home, \".claude\")' '$REPO/bin/lib/paths.mjs'"
 
 # --- task root carries no retired-run location legacy ----------------------------
 
