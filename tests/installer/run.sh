@@ -1180,7 +1180,7 @@ pass
 # T38: snapshot is delegated to the temporary Bash writer, which validates its
 # own arguments and the checkout before touching anything
 
-new_test "T38 snapshot delegation"
+new_test "T38 snapshot command"
 use_path_empty
 make_kit "$SANDBOX/kit"
 	if OUT="$(AGENT_KIT_ROOT="$SANDBOX/kit" "$SANDBOX/kit/bin/agent-kit" snapshot 2>&1)"; then RC=0; else RC=$?; fi
