@@ -29,7 +29,7 @@
  * and the session environment untouched (the guard is routing protection,
  * not a sandbox).
  */
-import { appendFileSync, readFileSync } from "node:fs";
+import { appendFileSync, readFileSync, realpathSync } from "node:fs";
 import { dirname, isAbsolute, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { BOOTSTRAP_CONFIG } from "./bootstrap-config";
@@ -233,6 +233,19 @@ export async function main(argv: string[]): Promise<number> {
   }
 }
 
-if (import.meta.main) {
+// `import.meta.main` needs Node >= 24.2; on 24.0/24.1 it is always falsy and
+// the CLI would silently do nothing (exit 0, empty stdout). Fall back to an
+// entry-file comparison so the declared `>= 24` floor keeps working.
+const thisFile = fileURLToPath(import.meta.url);
+const entryFile = process.argv[1]
+  ? (() => {
+      try {
+        return realpathSync(process.argv[1]);
+      } catch {
+        return process.argv[1];
+      }
+    })()
+  : "";
+if (import.meta.main || (entryFile !== "" && entryFile === thisFile)) {
   main(process.argv.slice(2)).then((code) => process.exit(code));
 }

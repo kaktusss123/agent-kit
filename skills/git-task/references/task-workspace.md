@@ -11,7 +11,8 @@ Deterministic contract of the `task-workspace` Pi extension. Every guarantee bel
 Classifies a path and reports current Git facts.
 
 - Input: `path` (optional; defaults to the session cwd).
-- Output: classification of the path (`PRIMARY_CHECKOUT`, `MANAGED_TASK_WORKTREE`, …) plus every managed task workspace with its key (the workspace directory name, the flattened branch), repos, paths, branches, HEAD, upstream, canonical-or-lane kind, slot, dirty paths, and artifacts.
+- Output: classification of the path (`PRIMARY_CHECKOUT`, `MANAGED_TASK_WORKTREE`, …) plus every managed task workspace with its key (the workspace directory name), its `identity` (the task identity the directory encodes), repos, paths, branches, HEAD, upstream, canonical-or-lane kind, slot, dirty paths, artifacts, and per-repo `owner` state.
+- `owner` reports cross-process worktree ownership: `free`, `owned` (with the holding process ids, roles, and run id), `stale` (recorded processes are dead, so it is recoverable), `foreign_host`, or `unknown`. Use it to answer "who is working in this worktree right now" without guessing; it is the same record the RepoOwner dispatch checks.
 - Use it to discover existing task workspaces before creating anything, and to check which checkout a branch is attached to.
 
 ## ensure_task_repo

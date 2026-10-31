@@ -394,13 +394,22 @@ export default function (pi: ExtensionAPI) {
 		// Main session is gone: owned children must not become orphans.
 		if (runtime) {
 			const r = runtime;
+			const w = runs;
 			runtime = null;
 			runs = null;
 			// Best-effort empty frame BEFORE the children are killed: the host
 			// must not keep a stale running count once this runtime is gone.
 			runningAgentsPush?.shutdown();
 			runningAgentsPush = null;
-			await r.shutdown();
+			let stopped = true;
+			try {
+				await r.shutdown();
+			} catch {
+				// A shutdown that did not prove the children dead keeps their
+				// worktree leases: crash recovery must verify them, not a guess.
+				stopped = false;
+			}
+			if (stopped) w?.releaseAll();
 		}
 		pushContext = undefined;
 		setSubagentInspectionSource(undefined);

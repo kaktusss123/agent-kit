@@ -26,12 +26,15 @@ import {
   getWorktreeList,
   isLinkedWorktree,
   laneIdentity,
+  legacyTaskWorkspacePath,
   parseLaneName,
   parseWorktreePaths,
   realpath,
+  resolveTaskWorkspacePath,
   scanTaskWorkspaces,
   taskWorkspacePath,
 } from "./git";
+import { describeOwner, removeDeadOwnerRecord, type OwnerView } from "./owner-lock";
 import { bootstrapWorktreeDependencies } from "./bootstrap";
 import type { BootstrapConfig } from "./bootstrap";
 import { isSecretPath } from "./guard";
@@ -180,10 +183,31 @@ export async function ensureTaskRepo(
       message: "Task identity is required: pass branch, or slot together with task",
     };
   }
-  const ws = taskWorkspacePath(identity, opts.taskRoot);
-  const target = params.slot
-    ? join(ws, `${basename(sourceRoot)}__${params.slot}`)
-    : join(ws, basename(sourceRoot));
+  const targetName = params.slot
+    ? `${basename(sourceRoot)}__${params.slot}`
+    : basename(sourceRoot);
+  let workspaceDir = taskWorkspacePath(identity, opts.taskRoot);
+  let target = join(workspaceDir, targetName);
+  // Workspaces created before the reversible path encoding stored a
+  // slash-bearing identity as `a_b`. Reuse such a directory only when its Git
+  // worktree provably carries the requested branch of this source repository;
+  // a mismatch falls through to the identity's own directory (whose existing
+  // checks then create it or refuse), never to a takeover of the old one.
+  let legacyLayout = false;
+  if (!existsSync(target)) {
+    const legacyDir = legacyTaskWorkspacePath(identity, opts.taskRoot);
+    const legacyTarget = legacyDir === null ? null : join(legacyDir, targetName);
+    if (
+      legacyDir !== null &&
+      legacyTarget !== null &&
+      existsSync(legacyTarget) &&
+      (await legacyWorkspaceMatches(legacyTarget, sourceRoot, params.branch))
+    ) {
+      workspaceDir = legacyDir;
+      target = legacyTarget;
+      legacyLayout = true;
+    }
+  }
 
   // 3. Check if target exists but is not a worktree of source
   if (existsSync(target)) {
@@ -244,6 +268,7 @@ export async function ensureTaskRepo(
           base: null,
           inputRepo,
           headSha,
+          ...(legacyLayout ? { layout: "legacy" as const } : {}),
         }, target, opts.bootstrap);
       }
       return {
@@ -292,7 +317,7 @@ export async function ensureTaskRepo(
     }
 
     // Branch is free — create worktree
-    await mkdir(ws, { recursive: true });
+    await mkdir(workspaceDir, { recursive: true });
     const add = await git(
       sourceRoot,
       "worktree",
@@ -386,7 +411,7 @@ export async function ensureTaskRepo(
     );
     if (remoteRef.ok) {
       const remoteSha = remoteRef.stdout.split(/\s+/)[0];
-      await mkdir(ws, { recursive: true });
+      await mkdir(workspaceDir, { recursive: true });
       const add = await git(
         sourceRoot,
         "worktree",
@@ -501,7 +526,7 @@ export async function ensureTaskRepo(
     baseRef = baseBranch;
   }
   // Create branch from base
-  await mkdir(ws, { recursive: true });
+  await mkdir(workspaceDir, { recursive: true });
   const add = await git(
     sourceRoot,
     "worktree",
@@ -534,6 +559,23 @@ export async function ensureTaskRepo(
   }, target, opts.bootstrap);
 }
 
+/** Proof that a pre-encoding directory really is the requested task: a linked
+ *  worktree of the same source repository, on exactly the requested branch,
+ *  registered in that repository's worktree list. */
+async function legacyWorkspaceMatches(
+  target: string,
+  sourceRoot: string,
+  branch: string,
+): Promise<boolean> {
+  if (!isLinkedWorktree(target)) return false;
+  if ((await getRepoBranch(target)) !== branch) return false;
+  const resolved = realpath(target);
+  const list = await getWorktreeList(sourceRoot);
+  return list.some(
+    (entry) => realpath(entry.path) === resolved && entry.branch === branch,
+  );
+}
+
 // ─── remove_task_lane ───────────────────────────────────────────────────
 
 export async function removeTaskLane(
@@ -543,7 +585,7 @@ export async function removeTaskLane(
 ) {
   const cwd = realpath(ctxCwd);
   const target = realpath(expandPath(params.path, cwd));
-  const workspace = realpath(taskWorkspacePath(params.task, opts.taskRoot));
+  const workspace = realpath(resolveTaskWorkspacePath(params.task, opts.taskRoot));
   const relativeTarget = relative(workspace, target);
   const laneName = basename(target);
   const parsedLane = parseLaneName(laneName);
@@ -621,6 +663,21 @@ export async function removeTaskLane(
       ...facts,
       reason:
         "Refusing to remove a dirty lane; inspect or commit its changes first.",
+    };
+  }
+
+  // Ownership guard (mirrors the teardown guard): a lane whose worktree is
+  // held by a live (or unverifiable) cross-process owner is never removed
+  // from under that owner. A provably-dead record is not a blocker.
+  const laneOwner = describeOwner(opts.taskRoot, target);
+  if (laneOwner.state === "owned" || laneOwner.state === "unknown" || laneOwner.state === "foreign_host") {
+    return {
+      status: "owner_active",
+      task: params.task,
+      path: target,
+      owner: laneOwner,
+      reason:
+        "Refusing to remove a lane whose worktree is held by a RepoOwner that is alive or cannot be proven gone. Wait for that owner to settle (its record is released after the child exits and the final Git check finishes); nothing was removed.",
     };
   }
 
@@ -762,7 +819,7 @@ export async function teardownTaskRepo(
     return { status: "error", message: "Task identity is required." };
   }
   const taskRoot = realpath(opts.taskRoot);
-  const workspace = realpath(taskWorkspacePath(params.task, taskRoot));
+  const workspace = realpath(resolveTaskWorkspacePath(params.task, taskRoot));
   if (dirname(workspace) !== taskRoot || workspace === taskRoot) {
     return {
       status: "error",
@@ -800,6 +857,28 @@ export async function teardownTaskRepo(
       })),
       reason:
         "Refusing teardown: a worktree in this task workspace has uncommitted changes. Commit, discard, or move them first; nothing was removed.",
+    };
+  }
+
+  // 2b. Ownership guard: a worktree with a live (or unverifiable) cross-
+  // process owner is never removed from under that owner. A record whose
+  // processes are provably dead is not a blocker; it is cleaned up after the
+  // removal (see step 6).
+  const ownedWorktrees: { name: string; path: string; owner: OwnerView }[] = [];
+  for (const w of allWorktrees) {
+    const owner = describeOwner(taskRoot, realpath(w.path));
+    if (owner.state === "owned" || owner.state === "unknown" || owner.state === "foreign_host") {
+      ownedWorktrees.push({ name: w.name, path: w.path, owner });
+    }
+  }
+  if (ownedWorktrees.length > 0) {
+    return {
+      status: "owner_active",
+      task: params.task,
+      workspace,
+      owners: ownedWorktrees,
+      reason:
+        "Refusing teardown: a worktree in this task workspace is held by a RepoOwner that is alive or cannot be proven gone. Wait for that owner to settle (its record is released after the child exits and the final Git check finishes), or inspect the owner record; nothing was removed.",
     };
   }
 
@@ -921,6 +1000,9 @@ export async function teardownTaskRepo(
   // 6. Clean the task root metadata directory — every guard has passed and
   // every worktree is unregistered, so only artifact files remain inside.
   rmSync(workspace, { recursive: true, force: true });
+  // Ownership records of the removed worktrees: provably dead by the guard
+  // above, so they carry no ownership anymore.
+  for (const w of allWorktrees) removeDeadOwnerRecord(taskRoot, realpath(w.path));
 
   return {
     status: "torn_down",
