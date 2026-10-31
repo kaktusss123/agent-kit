@@ -4,20 +4,21 @@
  * captures the RPC gate from session_start. Frame formatting/dedup/budget
  * semantics are unit-tested in running-agents-push.test.ts.
  */
-import { describe, expect, test } from "bun:test";
+import { describe, test } from "node:test";
+import { expect } from "../../tests/support/expect.ts";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
-import { LocalSubagentRuntime } from "./controller";
+import { LocalSubagentRuntime } from "./controller.ts";
 import {
 	attachRunningAgentsPush,
 	RUNNING_AGENTS_STATUS_KEY,
 	type RunningAgentRow,
 	type RunningAgentsPush,
-} from "./running-agents-push";
-import { autoAcceptPrompt, createFakeSpawnFactory, settleRun } from "./fake-rpc";
-import registerExtension from "./index";
+} from "./running-agents-push.ts";
+import { autoAcceptPrompt, createFakeSpawnFactory, settleRun } from "./fake-rpc.ts";
+import registerExtension from "./index.ts";
 
 interface WireFrame {
 	key: string;

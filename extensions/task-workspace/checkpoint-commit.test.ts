@@ -12,8 +12,9 @@ import { execFileSync } from "node:child_process";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterAll, describe, expect, test } from "bun:test";
-import { checkpointCommit } from "./flows";
+import { after as afterAll, describe, test } from "node:test";
+import { expect } from "../../tests/support/expect.ts";
+import { checkpointCommit } from "./flows.ts";
 
 let rootDir: string | null = null;
 

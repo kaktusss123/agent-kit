@@ -32,6 +32,6 @@ reuses it.
 
 ## Tests
 
-`bun test` in this directory covers prompt construction, response
+`node --test` in this directory covers prompt construction, response
 sanitization (fences, quotes, truncation by code points), and explore-binding
 parsing, including model ids that contain slashes.

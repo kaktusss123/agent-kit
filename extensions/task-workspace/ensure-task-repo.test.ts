@@ -7,8 +7,9 @@ import { execFileSync } from "node:child_process";
 import { existsSync, mkdirSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterAll, describe, expect, test } from "bun:test";
-import { ensureTaskRepo } from "./flows";
+import { after as afterAll, describe, test } from "node:test";
+import { expect } from "../../tests/support/expect.ts";
+import { ensureTaskRepo } from "./flows.ts";
 
 let rootDir: string | null = null;
 
@@ -165,7 +166,7 @@ describe("ensure_task_repo remote-backed repositories", () => {
     expect(sh(worktree, "git", "rev-parse", "--abbrev-ref", "@{upstream}")).toBe(
       `origin/${branch}`,
     );
-  }, 15_000);
+  });
 
   test("creates an absent task branch from the refreshed remote default", async () => {
     const { source, remote, taskRoot } = makeSourceRepo("remote-default");
@@ -186,23 +187,25 @@ describe("ensure_task_repo remote-backed repositories", () => {
     });
     expect((r as { headSha: string }).headSha).toBe(expectedSha);
     expect(sh(source, "git", "rev-parse", "origin/main")).toBe(expectedSha);
-  }, 15_000);
+  });
 });
 
 describe("ensure_task_repo protected branches", () => {
-  test.each(["main", "master", "develop"])("refuses %s as a canonical task branch", async (branch) => {
-    const { source, taskRoot } = makeSourceRepo("prot-" + branch);
-    const before = worktreeCount(source);
+  for (const branch of ["main", "master", "develop"]) {
+    test(`refuses ${branch} as a canonical task branch`, async () => {
+      const { source, taskRoot } = makeSourceRepo("prot-" + branch);
+      const before = worktreeCount(source);
 
-    const r = await ensureTaskRepo({ branch, source_path: source }, source, { taskRoot });
+      const r = await ensureTaskRepo({ branch, source_path: source }, source, { taskRoot });
 
-    expect(r.status).toBe("error");
-    expect((r as { message: string }).message).toContain("task branch");
-    expect((r as { message: string }).message).toContain(branch);
-    // Nothing was created or changed before the refusal.
-    expect(worktreeCount(source)).toBe(before);
-    expect(existsSync(taskRoot) ? readdirSync(taskRoot) : []).toEqual([]);
-  });
+      expect(r.status).toBe("error");
+      expect((r as { message: string }).message).toContain("task branch");
+      expect((r as { message: string }).message).toContain(branch);
+      // Nothing was created or changed before the refusal.
+      expect(worktreeCount(source)).toBe(before);
+      expect(existsSync(taskRoot) ? readdirSync(taskRoot) : []).toEqual([]);
+    });
+  }
 
   test("refuses a protected branch as a secondary lane branch", async () => {
     const { source, taskRoot } = makeSourceRepo("prot-lane");

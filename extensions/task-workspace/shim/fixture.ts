@@ -10,7 +10,7 @@ import { realpathSync } from "node:fs";
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join } from "node:path";
-import { ensureTaskRepo } from "../flows";
+import { ensureTaskRepo } from "../flows.ts";
 
 export interface GuardFixture {
   root: string;

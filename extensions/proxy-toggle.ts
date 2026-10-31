@@ -23,7 +23,7 @@ import {
 	readProxyState,
 	reapplyIfDrifted,
 	writeProxyState,
-} from "./proxy/proxy-lib";
+} from "./proxy/proxy-lib.ts";
 
 interface PushResult {
 	enabled?: boolean;

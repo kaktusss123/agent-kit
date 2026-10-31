@@ -16,8 +16,8 @@ import {
 	resolveModelSpec,
 	type ModelLike,
 	type ThinkingLevel,
-} from "./model-spec";
-import { isRole, loadRoleBindings, ROLES, ROLE_DESCRIPTIONS, saveRoleBinding, unsetRoleBinding } from "./roles";
+} from "./model-spec.ts";
+import { isRole, loadRoleBindings, ROLES, ROLE_DESCRIPTIONS, saveRoleBinding, unsetRoleBinding } from "./roles.ts";
 
 export const SUBAGENT_ROLE_USAGE = [
 	"Usage:",

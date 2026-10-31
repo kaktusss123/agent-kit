@@ -1,6 +1,6 @@
 /**
- * Transport-rig child process (run under NODE, not bun: bun does not
- * reproduce undici's socket timer semantics, see proxy-rig.test.ts).
+ * Transport-rig child process (run under Node: only Node reproduces
+ * undici's socket timer semantics, see proxy-rig.test.ts).
  *
  * Self-contained per invocation: hosts an HTTP backend that delays its
  * response headers, and — for proxy-ON cases — a local loopback proxy that

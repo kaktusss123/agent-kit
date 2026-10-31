@@ -14,16 +14,16 @@ import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 // subagent source therefore live in one process-wide registry on globalThis
 // (owned by the inspection seam): re-evaluated factories reuse the sole
 // stream pair already attached to the process-owned transport.
-import { inspectionRegistry as registry, inspectSubagents } from "../subagents/inspection-seam";
+import { inspectionRegistry as registry, inspectSubagents } from "../subagents/inspection-seam.ts";
 import {
   buildCurrentTaskProjection,
   matchActiveOwners,
   type CurrentTaskProjection,
   type OwnersFor,
   type SessionSelectionEntry,
-} from "../task-workspace/current";
-import { taskStatus } from "../task-workspace/flows";
-import { resolveTaskRoot } from "../task-workspace/task-root";
+} from "../task-workspace/current.ts";
+import { taskStatus } from "../task-workspace/flows.ts";
+import { resolveTaskRoot } from "../task-workspace/task-root.ts";
 
 export const REQUEST_FD_ENV = "AGENTKIT_INSPECT_REQUEST_FD";
 export const RESPONSE_FD_ENV = "AGENTKIT_INSPECT_RESPONSE_FD";

@@ -1,5 +1,6 @@
-import { describe, expect, test } from "bun:test";
-import sessionTitleExtension from "./index";
+import { describe, test } from "node:test";
+import { expect } from "../../tests/support/expect.ts";
+import sessionTitleExtension from "./index.ts";
 
 type Handler = (event: any, ctx: any) => any;
 

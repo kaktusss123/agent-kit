@@ -2,11 +2,12 @@ import { execFileSync } from "node:child_process";
 import { mkdtempSync, realpathSync, rmSync, symlinkSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
-import { describe, expect, test } from "bun:test";
-import { realpath } from "./git";
-import { resolveTaskRoot } from "./task-root";
+import { describe, test } from "node:test";
+import { expect } from "../../tests/support/expect.ts";
+import { realpath } from "./git.ts";
+import { resolveTaskRoot } from "./task-root.ts";
 
-const RESOLVER_ENTRY = join(import.meta.dir, "task-root.ts");
+const RESOLVER_ENTRY = join(import.meta.dirname, "task-root.ts");
 
 function withTempRoot(run: (root: string) => void): void {
   // realpathSync: on macOS /var is a symlink to /private/var, and the

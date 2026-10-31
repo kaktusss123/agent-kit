@@ -1,5 +1,5 @@
 import type * as fs from "node:fs";
-import type { AgentSnapshot } from "./types";
+import type { AgentSnapshot } from "./types.ts";
 
 export type SubagentInspectionSource = {
 	inspect: () => AgentSnapshot[];

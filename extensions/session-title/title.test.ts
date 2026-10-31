@@ -1,4 +1,8 @@
-import { afterEach, describe, expect, test } from "bun:test";
+import { afterEach, describe, test } from "node:test";
+import { createRequire } from "node:module";
+import { expect } from "../../tests/support/expect.ts";
+
+const require = createRequire(import.meta.url);
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
@@ -10,7 +14,7 @@ import {
 	sanitizeTitle,
 	TITLE_MAX_CODE_POINTS,
 	TITLE_SYSTEM_PROMPT,
-} from "./title";
+} from "./title.ts";
 
 describe("buildTitlePrompt", () => {
 	test("wraps the first message without altering it", () => {

@@ -1,9 +1,10 @@
 /** Unit tests for role bindings storage: fresh reads, strict validation, atomic writes. */
-import { afterEach, describe, expect, test } from "bun:test";
+import { afterEach, describe, test } from "node:test";
+import { expect } from "../../tests/support/expect.ts";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
-import { loadRoleBindings, rolesPath, saveRoleBinding, unsetRoleBinding } from "./roles";
+import { loadRoleBindings, rolesPath, saveRoleBinding, unsetRoleBinding } from "./roles.ts";
 
 const dirs: string[] = [];
 function tmpFile(content?: string): string {

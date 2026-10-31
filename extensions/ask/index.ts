@@ -13,9 +13,9 @@
  */
 import { type ExtensionAPI, DynamicBorder } from "@earendil-works/pi-coding-agent";
 import { Container, Text } from "@earendil-works/pi-tui";
-import type { AskInput, AskOutcome } from "./contract";
-import { AskDialog, type AskDialogResult } from "./dialog";
-import { buildAskTool, rpcFallbackAsk, type AskBackend } from "./tool";
+import type { AskInput, AskOutcome } from "./contract.ts";
+import { AskDialog, type AskDialogResult } from "./dialog.ts";
+import { buildAskTool, rpcFallbackAsk, type AskBackend } from "./tool.ts";
 
 export default function (pi: ExtensionAPI) {
 	const backend: AskBackend = async (questions, signal, rawCtx) => {

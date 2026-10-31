@@ -46,7 +46,7 @@ intent rather than reacting to a stray dot.
 ## Tests
 
 ```sh
-bun test extensions/continue-shortcut/
+node --test 'extensions/continue-shortcut/*.test.ts'
 ```
 
 Matching matrix (`.`, `c`, whitespace padding, `C`/`..`/`c.` lookalikes) and

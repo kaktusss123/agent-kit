@@ -1,9 +1,10 @@
-import { describe, expect, test } from "bun:test";
+import { describe, test } from "node:test";
+import { expect } from "../../tests/support/expect.ts";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
-import { FakeRpcProcess } from "./fake-rpc";
-import { RpcChildConnection, type ExitInfo } from "./rpc-child";
+import { FakeRpcProcess } from "./fake-rpc.ts";
+import { RpcChildConnection, type ExitInfo } from "./rpc-child.ts";
 
 const tick = (ms = 20) => new Promise((r) => setTimeout(r, ms));
 

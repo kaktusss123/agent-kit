@@ -19,7 +19,7 @@
  *      managed worktrees → blocked with the routing message.
  *   5. Never throws: internal errors fail closed.
  *
- * The policy is host-neutral glue: plain ESM, node/bun stdlib only, and it
+ * The policy is host-neutral glue: plain ESM, Node.js stdlib only, and it
  * reads exactly one piece of configuration — AGENT_TASK_ROOT from its
  * environment, placed there by the extension's bash spawnHook.
  */

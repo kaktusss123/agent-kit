@@ -1,9 +1,10 @@
-import { describe, expect, test } from "bun:test";
+import { describe, test } from "node:test";
+import { expect } from "../../tests/support/expect.ts";
 import { visibleWidth } from "@earendil-works/pi-tui";
 import type { Theme } from "@earendil-works/pi-coding-agent";
-import { phasesWith } from "./test-fixtures";
-import { type TodoPhase, type TodoToolDetails } from "./core";
-import { buildCompactTodoLine, buildHudLines, renderTodoCall, renderTodoResult } from "./render";
+import { phasesWith } from "./test-fixtures.ts";
+import { type TodoPhase, type TodoToolDetails } from "./core.ts";
+import { buildCompactTodoLine, buildHudLines, renderTodoCall, renderTodoResult } from "./render.ts";
 
 /** Plain-text fake theme: assertions read like `[accent]…[/accent]`. */
 function fakeTheme(): Theme {

@@ -3,19 +3,19 @@ import { readdirSync, readFileSync, realpathSync } from "node:fs";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { describe, expect, test } from "bun:test";
-
-const CORE_DIR = import.meta.dir;
+import { describe, test } from "node:test";
+import { expect } from "../../tests/support/expect.ts";
+const CORE_DIR = import.meta.dirname;
 
 describe("task-workspace core host independence", () => {
   test("core modules import and run without any host context", async () => {
     // Dynamic import is intentional (module-loading boundary exception): the
     // subject under test IS the bare-context load of the core — each module
     // must import and run with no fake pi, no SDK, no extension plumbing.
-    const gitCore = await import("./git");
-    const guardCore = await import("./guard");
-    const flowsCore = await import("./flows");
-    const taskRootCore = await import("./task-root");
+    const gitCore = await import("./git.ts");
+    const guardCore = await import("./guard.ts");
+    const flowsCore = await import("./flows.ts");
+    const taskRootCore = await import("./task-root.ts");
     const classify = await import("./shim/classify.mjs");
 
     expect(typeof gitCore.classifyPath).toBe("function");
@@ -80,8 +80,8 @@ describe("task-workspace core host independence", () => {
   });
 
   test("core follows an injected task root — binding shape, no default root", async () => {
-    const gitCore = await import("./git");
-    const flowsCore = await import("./flows");
+    const gitCore = await import("./git.ts");
+    const flowsCore = await import("./flows.ts");
 
     // realpathSync mirrors the host binding's own task-root resolution
     // contract (macOS /var -> /private/var must not create prefix drift).
@@ -99,9 +99,10 @@ describe("task-workspace core host independence", () => {
       execFileSync("git", ["-C", sourceRepo, "commit", "-qm", "init"]);
       execFileSync("git", ["-C", sourceRepo, "branch", "feat/host2"]);
 
-      // Workspace path math follows the injected root, not any default.
+      // Workspace path math follows the injected root, not any default, and
+      // encodes the identity reversibly (distinct identities, distinct dirs).
       expect(gitCore.taskWorkspacePath("some/task", hostRoot)).toBe(
-        join(hostRoot, "some_task"),
+        join(hostRoot, "some%2Ftask"),
       );
 
       // A real flow materializes the workspace under the injected root.
@@ -124,9 +125,10 @@ describe("task-workspace core host independence", () => {
       );
       const scan = await gitCore.scanTaskWorkspaces(hostRoot);
       // scanTaskWorkspaces lists one entry per workspace directory (the
-      // flattened branch) inside the injected root.
+      // encoded identity) inside the injected root.
       expect(scan.length).toBe(1);
-      expect(scan[0]!.workspace).toBe(join(hostRoot, "feat_host2"));
+      expect(scan[0]!.workspace).toBe(join(hostRoot, "feat%2Fhost2"));
+      expect(scan[0]!.identity).toBe("feat/host2");
       expect(scan[0]!.repos.map((r) => r.path)).toContain(worktree);
     } finally {
       await rm(hostRoot, { recursive: true, force: true });

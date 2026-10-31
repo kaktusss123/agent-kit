@@ -1,71 +1,44 @@
 /**
  * LocalSubagentRuntime — the local-process implementation of the subagent
- * runtime: model-facing semantics (spawn/steer/wait/…) over local child pi
- * processes speaking pi RPC.
+ * runtime: the COLLECTION of child agents behind model-facing semantics
+ * (spawn/steer/wait/…).
  *
- * Each agent is an independent pi process in `--mode rpc` running with
- * `--no-extensions -e <bridge>` so children get a minimal, controlled
- * environment (no parent extension stack; a generic child cannot spawn
- * subagents at all — only a workspace worker carries the subagents index,
- * and its nested spawns are plain helpers only: workspace ownership is
- * created exclusively by the main session).
- *
- * Event flow (proven against pi 0.85.1):
- * - child `agent_start` -> authoritative run boundary: reset run-local state
- * - child settles  -> fetch state + final text + stats -> terminal result
- * - child exits before settling -> failed (never a stuck "running")
- * - child extension_ui_request (the `ask` tool) -> waiting_input; answered
- *   via extension_ui_response, which resumes the very same tool call. The
- *   pending question is cleared when the ask tool call ends, so an aborted
- *   or resolved dialog cannot desync the controller. The structured
- *   canonical request travels through the request payload losslessly.
- * - cancel -> RPC abort, then SIGTERM (pi exits cleanly even while blocked in
- *   a UI dialog), then SIGKILL escalation
- *
- * Input delivery (steer / follow_up) always goes through
- * `prompt` + `streamingBehavior`, letting pi — not a controller-side copy of
- * its state machine — atomically decide between queueing and a fresh run.
+ * Each child is an independent pi process in `--mode rpc`, owned by one
+ * ChildAgentProcess (its RPC, readiness handshake, dispatch preflight,
+ * questions, timers, cancellation and settlement). This class owns what
+ * belongs to the collection: the agent list, user operations across agents,
+ * event and result routing, persistence, cost rollup, and the shutdown of
+ * every child.
  *
  * Model-visible events are consumed by `wait()` first; events nobody waits on
  * are handed to background listeners (the extension delivers them to the main
- * model at the next safe boundary).
+ * model at the next safe boundary). Workspace-routed children have exactly one
+ * event owner — the workspace run registry — so neither generic waiters nor
+ * generic listeners ever see their lifecycle.
  */
-import * as fs from "node:fs";
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
+import { resolvePiInvocation, type SpawnFn } from "./rpc-child.ts";
 import {
-	RpcChildConnection,
-	resolvePiInvocation,
-	type SpawnFn,
-} from "./rpc-child";
-import { ProviderExtensionError } from "./provider-extensions";
-import { defaultResultsDir, listAllResults, loadResult, saveResult, sumSessionCost, summarizeText } from "./result-store";
-import { parseReadinessPayload, type ReadinessPayload } from "./readiness";
-import { ASK_WIRE_TITLE } from "./bridge-ask";
-import { formatAskRequestFlat, parseAskRequest, type AskInput } from "../ask/contract";
+	buildChildLaunch,
+	ChildAgentProcess,
+	type ChildAgentHost,
+	type ChildAgentSpec,
+	type ChildMarkerFacts,
+	type ChildResultFacts,
+	type ChildTimeouts,
+} from "./child-process.ts";
+import { defaultResultsDir, listAllResults, loadResult, saveResult, sumSessionCost, summarizeText } from "./result-store.ts";
 import type {
 	AgentResult,
 	AgentSnapshot,
-	AgentState,
 	ForeignRunningMarker,
-	SessionStats,
 	SpawnOptions,
 	SubagentModelEvent,
-	ToolActivity,
 	WaitOutcome,
-} from "./types";
-import { summarizeToolActivity } from "./activity";
-import { loadProgress, type RunHistory } from "./progress";
-import {
-	normalizeLastText,
-	publicAssistantText,
-	validateLastAssistantText,
-	type LastAssistantText,
-} from "./last-text";
-
-/** Live tool-activity bounds: status telemetry, never a log buffer. */
-const ACTIVE_TOOLS_MAX = 8;
-const RECENT_ACTIVITY_MAX = 4;
+} from "./types.ts";
+import { loadProgress, type RunHistory } from "./progress.ts";
+import { validateLastAssistantText } from "./last-text.ts";
 
 /**
  * Default idle-exit delay (F003): settled children are plain RPC processes
@@ -75,9 +48,6 @@ const RECENT_ACTIVITY_MAX = 4;
  * the timer. Per-spawn `idleExitMs` overrides; `<= 0` disables.
  */
 const DEFAULT_IDLE_EXIT_MS = 30 * 60 * 1000;
-
-/** An active tool entry keeps its RPC correlation id internally. */
-type ActiveToolEntry = ToolActivity & { toolCallId: string };
 
 export interface ControllerOptions {
 	/** Fallback cwd for children when spawn() has no cwd (main cwd). */
@@ -120,89 +90,15 @@ export interface ControllerOptions {
 	defaultIdleExitMs?: number;
 }
 
-interface AgentRecord {
-	id: string;
-	label: string;
-	task: string;
-	initialPrompt: string;
-	cwd: string;
-	model?: string;
-	thinking?: string;
-	state: AgentState;
-	conn: RpcChildConnection;
-	startedAt: number;
-	endedAt?: number;
-	lastActivityAt: number;
-	sessionFile?: string;
-	/** Pi-reported path held until a real session file exists on disk. */
-	pendingSessionFile?: string;
-	sessionId?: string;
-	finalText?: string;
-	/** Last PUBLIC assistant text (bounded automatic projection, accepted from completed message_end events). */
-	lastAssistantText?: LastAssistantText;
-	/** Failure of the current run; cleared by `agent_start` and on success. */
-	runError?: string;
-	/** Process-level failure (spawn, watchdog, unexpected exit). */
-	lastError?: string;
-	/** Latest live session stats (tokens, cost, context fill); replaced wholesale on every report. */
-	stats?: SessionStats;
-	exitCode?: number | null;
-	signal?: string | null;
-	/** Kill timestamp when the process died after the record had settled. */
-	processKilledAt?: number;
-	pendingQuestion?: { requestId: string; request: AskInput; question: string; askedAt: number };
-	/** Tools currently executing, keyed by toolCallId (pi may run tools in parallel). */
-	activeTools: Map<string, ActiveToolEntry>;
-	/** Most recently finished tools, oldest first, hard-capped (RECENT_ACTIVITY_MAX). */
-	recentActivity: ToolActivity[];
-	cancelRequested: boolean;
-	/**
-	 * New work was dispatched (prompt + streamingBehavior) while the agent
-	 * was in a terminal state. Until the child's `agent_start` proves the new
-	 * run actually began, wait()/result() must not present the previous
-	 * terminal result as the outcome of the pending work.
-	 */
-	pendingDispatch: boolean;
-	/** True between child `agent_start` and the matching `agent_settled`. */
-	runActive: boolean;
-	waiters: Array<(outcome: WaitOutcome) => void>;
-	spawnWaiters: Array<(ok: boolean) => void>;
-	dispatchWaiters: Map<string, (ev: Record<string, unknown>) => void>;
-	spawnSettled: boolean;
-	settleFetchDone: boolean;
-	/** Lifecycle events route to the workspace layer, not the generic policy. */
-	eventRoute?: "workspace";
-	/** Terminal retire requested: kill the process, keep the terminal record. */
-	retireRequested: boolean;
-	/**
-	 * Idle-exit delay for this child (F003): ms in a terminal state before
-	 * the process is retired. `<= 0` disables.
-	 */
-	idleExitMs: number;
-	/** Armed idle-exit timer; cleared by any dispatch, new run, or question. */
-	idleTimer?: NodeJS.Timeout;
-	/** Readiness contract: entry id -> required tool names (handshake pending). */
-	readinessExpected: Map<string, string[]>;
-	readinessDone: boolean;
-	acceptTimer?: NodeJS.Timeout;
-	readinessTimer?: NodeJS.Timeout;
-	onAccepted?: (snapshot: AgentSnapshot) => void;
-	run?: RunHistory;
-}
-
-const ASK_TOOL = "ask";
-
-/**
- * Bounded stderr excerpt surfaced in startup-failure messages. The
- * connection keeps the full 8000-char tail for diagnostics; the surfaced
- * reason carries only the last ~2000 chars so the model-facing error stays
- * readable while still showing the real cause (e.g. `Error: Model ... not
- * found` from a child that died before RPC).
- */
-const STDERR_SURFACE_MAX = 2000;
+/** One waiter of `wait()`; kept here because wait() is a collection operation. */
+type Waiter = (outcome: WaitOutcome) => void;
 
 export class LocalSubagentRuntime {
-	private readonly records = new Map<string, AgentRecord>();
+	private readonly children = new Map<string, ChildAgentProcess>();
+	/** Pending model-facing waits, per agent (all waiters of one event get a copy). */
+	private readonly waiters = new Map<string, Waiter[]>();
+	/** Workspace run history per child; persisted with results, never executed. */
+	private readonly runHistories = new Map<string, RunHistory>();
 	private readonly listeners = new Set<(ev: SubagentModelEvent) => void>();
 	private shutDown = false;
 
@@ -215,10 +111,7 @@ export class LocalSubagentRuntime {
 	private readonly spawnFn?: SpawnFn;
 	private readonly defaultCwd: string;
 	private readonly resultsDir: string;
-	private readonly killGraceMs: number;
-	private readonly startTimeoutMs: number;
-	private readonly dispatchTimeoutMs: number;
-	private readonly readinessTimeoutMs: number;
+	private readonly timeouts: ChildTimeouts;
 	private readonly workspaceListeners = new Set<(ev: SubagentModelEvent) => void>();
 	/**
 	 * Runtime-wide record mutation listeners (running-agents push and future
@@ -246,10 +139,12 @@ export class LocalSubagentRuntime {
 		this.providerResolution = opts.providerResolution;
 		this.spawnFn = opts.spawnFn;
 		this.resultsDir = opts.resultsDir ?? defaultResultsDir();
-		this.killGraceMs = opts.killGraceMs ?? 3000;
-		this.startTimeoutMs = opts.startTimeoutMs ?? 30000;
-		this.dispatchTimeoutMs = opts.dispatchTimeoutMs ?? 10000;
-		this.readinessTimeoutMs = opts.readinessTimeoutMs ?? 15000;
+		this.timeouts = {
+			killGraceMs: opts.killGraceMs ?? 3000,
+			startMs: opts.startTimeoutMs ?? 30000,
+			dispatchMs: opts.dispatchTimeoutMs ?? 10000,
+			readinessMs: opts.readinessTimeoutMs ?? 15000,
+		};
 		this.parentSession = opts.parentSession;
 		this.onCostChange = opts.onCostChange;
 		this.persistedBaseCost = this.parentSession
@@ -289,57 +184,25 @@ export class LocalSubagentRuntime {
 			? this.providerResolution(opts.model)
 			: [];
 
-		const args = [
-			...this.piInvocation.args,
-			"--mode", "rpc",
-			"--no-extensions",
-			// Base profile: bridge (ask/proxy plumbing) + web_search. Every child
-			// gets both; `--no-extensions` keeps discovery off, so the base is the
-			// only capability source for generic children.
-			"-e", this.bridgePath,
-			"-e", this.webSearchPath,
-			// Provider entries sit between the base and the profile entries so the
-			// RepoOwner handler order (reporting-bridge first, readiness last)
-			// stays untouched regardless of how many packages resolve.
-			...providerEntries.flatMap((entry) => ["-e", entry]),
-		];
-		// Per-spawn profile: extra extension entries are loaded into this child
-		// only (`-e` is repeatable; `--no-extensions` keeps CLI paths). Profile
-		// entries keep their order (reporting-bridge before task-workspace,
-		// readiness probe last) — the base never perturbs it.
-		for (const ext of opts.additionalExtensions ?? []) {
-			args.push("-e", ext);
-		}
-		args.push("--name", `subagent:${label}`);
-		if (opts.model) args.push("--model", opts.model);
-		if (opts.thinking) args.push("--thinking", opts.thinking);
+		const launch = buildChildLaunch({
+			piInvocation: this.piInvocation,
+			bridgePath: this.bridgePath,
+			webSearchPath: this.webSearchPath,
+			providerEntries,
+			additionalExtensions: opts.additionalExtensions,
+			label,
+			model: opts.model,
+			thinking: opts.thinking,
+			resultsDir: this.resultsDir,
+			subagentId: id,
+		});
 
-		const env: NodeJS.ProcessEnv = {
-			...process.env,
-			PI_SUBAGENT_ID: id,
-			PI_SUBAGENT_LABEL: label,
-			PI_SUBAGENT_RESULTS_DIR: this.resultsDir,
-		};
-		// The inspection channel belongs only to this Pi process. Never inherit
-		// its descriptors into either plain or workspace children.
-		delete env.AGENTKIT_INSPECT_REQUEST_FD;
-		delete env.AGENTKIT_INSPECT_RESPONSE_FD;
-		const readinessEntries = opts.readinessEntries ?? {};
 		// The readiness contract stays MAIN-SIDE (this spawn's readinessEntries);
 		// the child-side probe reports only the observed tool set, and the
 		// controller judges it against this map. No readiness data travels to
 		// the child: profiled and generic children get byte-identical
 		// environments.
-
-		const conn = new RpcChildConnection({
-			command: this.piInvocation.command,
-			args,
-			cwd,
-			env,
-			spawnFn: this.spawnFn,
-		});
-
-		const record: AgentRecord = {
+		const spec: ChildAgentSpec = {
 			id,
 			label,
 			task: opts.task,
@@ -347,648 +210,51 @@ export class LocalSubagentRuntime {
 			cwd,
 			model: opts.model,
 			thinking: opts.thinking,
-			state: "starting",
-			conn,
-			startedAt: Date.now(),
-			lastActivityAt: Date.now(),
-			activeTools: new Map(),
-			recentActivity: [],
-			cancelRequested: false,
-			pendingDispatch: false,
-			runActive: false,
-			waiters: [],
-			spawnWaiters: [],
-			dispatchWaiters: new Map(),
-			spawnSettled: false,
-			settleFetchDone: false,
+			command: this.piInvocation.command,
+			args: launch.args,
+			env: launch.env,
+			spawnFn: this.spawnFn,
+			readinessEntries: opts.readinessEntries,
 			eventRoute: opts.eventRoute,
-			retireRequested: false,
 			idleExitMs: opts.idleExitMs ?? this.defaultIdleExitMs,
-			readinessExpected: new Map(Object.entries(readinessEntries)),
-			readinessDone: false,
 			onAccepted: opts.onAccepted,
 		};
-		this.records.set(id, record);
-		opts.onCreated?.(this.snapshot(record));
+		const host: ChildAgentHost = {
+			emit: (ev, routeOpts) => this.routeEvent(id, opts.eventRoute, ev, routeOpts),
+			changed: () => this.notifyRecordsChanged(),
+			persistResult: (facts) => this.writeResult(facts),
+			persistMarker: (facts) => this.writeMarker(facts),
+			costReported: (agentId, cost) => this.recordCost(agentId, cost),
+		};
+
+		const child = new ChildAgentProcess(spec, this.timeouts, host);
+		this.children.set(id, child);
+		opts.onCreated?.(child.snapshot());
 		this.notifyRecordsChanged();
 
 		// Spawn-time partial marker (F003): persist a minimal "running" record
 		// AT process creation. If the parent dies before the child settles,
 		// startup reconciliation turns this marker into a failed result; the
 		// terminal write at settle supersedes it in place (same file).
-		this.persistSpawnMarker(record);
+		this.writeMarker(child.markerFacts());
 
-		conn.onLine = (line) => this.handleChildLine(record, line);
-		conn.onStderr = () => {
-			record.lastActivityAt = Date.now();
-		};
-		conn.onError = (err) => {
-			record.lastError = `spawn error: ${err.message}`;
-			this.finishWithFailure(record, `spawn error: ${err.message}`);
-		};
-		conn.onExit = (info) => this.handleChildExit(record, info);
-
-		// Pre-dispatch abort (N3): until the initial task prompt is RPC-
-		// accepted, an abort kills the child and fails the spawn. After
-		// acceptance the handler is inert (spawnSettled guard) — ownership of
-		// the signal moves to the caller (abort = detach).
-		const onSpawnAbort = () => {
-			if (!record.spawnSettled) {
-				this.failSpawn(record, "aborted before dispatch", "SIGKILL");
-			}
-		};
-		opts.signal?.addEventListener("abort", onSpawnAbort, { once: true });
-
-		if (record.readinessExpected.size > 0) {
-			// Fail-closed dispatch: the task prompt is withheld until every
-			// profiled extension confirmed initialization over the readiness
-			// handshake, so a broken/missing extension can never reach the model.
-			record.readinessTimer = setTimeout(() => {
-				if (record.readinessDone || record.spawnSettled) return;
-				this.failSpawn(record, `readiness handshake did not complete in time${stderrExcerpt(record)}`, "SIGKILL");
-			}, this.readinessTimeoutMs);
-			record.readinessTimer.unref?.();
-		} else {
-			this.sendInitialPrompt(record);
-		}
-
-		return new Promise<AgentSnapshot>((resolve, reject) => {
-			record.spawnWaiters.push((ok) => {
-				this.clearSpawnTimers(record);
-				opts.signal?.removeEventListener("abort", onSpawnAbort);
-				record.readinessDone = true;
-				if (ok) resolve(this.snapshot(record));
-				else reject(new Error(record.lastError ?? "child failed to start"));
-			});
-		});
-	}
-
-	// ------------------------------------------------------- child RPC plumbing
-
-	/** Arm the acceptance timer and send the initial task prompt. */
-	private sendInitialPrompt(record: AgentRecord): void {
-		if (record.spawnSettled || record.conn.exit) return;
-		record.acceptTimer = setTimeout(() => {
-			if (!record.spawnSettled) {
-				record.lastError = `child did not accept the initial prompt in time${stderrExcerpt(record)}`;
-				this.finishWithFailure(record, record.lastError);
-				this.conn(record).kill("SIGKILL");
-			}
-		}, this.startTimeoutMs);
-		record.acceptTimer.unref?.();
-		this.conn(record).send({ id: "spawn-prompt", type: "prompt", message: record.initialPrompt });
-	}
-
-	private clearSpawnTimers(record: AgentRecord): void {
-		if (record.acceptTimer) clearTimeout(record.acceptTimer);
-		if (record.readinessTimer) clearTimeout(record.readinessTimer);
-	}
-
-	/**
-	 * Fail a spawn before dispatch: mark the spawn settled with failure,
-	 * surface the terminal failure, and kill the child. The task prompt has
-	 * not been sent (dispatched stays false).
-	 */
-	private failSpawn(record: AgentRecord, reason: string, signal?: string): void {
-		if (record.spawnSettled) return;
-		record.readinessDone = true;
-		this.clearSpawnTimers(record);
-		record.spawnSettled = true;
-		record.lastError = reason;
-		for (const w of record.spawnWaiters.splice(0)) w(false);
-		this.finishWithFailure(record, reason);
-		if (signal && !record.conn.exit) this.conn(record).kill(signal);
-	}
-
-	private handleChildLine(record: AgentRecord, line: string): void {
-		let ev: Record<string, unknown>;
-		try {
-			ev = JSON.parse(line);
-		} catch {
-			return; // not protocol JSON — ignore
-		}
-		record.lastActivityAt = Date.now();
-		const type = ev.type as string;
-
-		if (type === "extension_ui_request") {
-			this.handleUiRequest(record, ev);
-			return;
-		}
-		// The ask tool call ended: the dialog was resolved one way or
-		// another (answer, user dismiss, or an abort that never sends an
-		// extension_ui_response). Sync the controller so the child cannot
-		// leave a phantom pending question behind. Workspace-routed
-		// children also learn about the resolution (input_resolved), so the
-		// run registry stops reporting a question that is no longer pending.
-		if (type === "tool_execution_start") {
-			this.trackToolStart(record, ev);
-			return;
-		}
-		if (type === "tool_execution_end") {
-			this.trackToolEnd(record, ev);
-			// The ask tool call ended: the dialog was resolved one way or
-			// another (answer, user dismiss, or an abort that never sends an
-			// extension_ui_response). Sync the controller so the child cannot
-			// leave a phantom pending question behind. Workspace-routed
-			// children also learn about the resolution (input_resolved), so the
-			// run registry stops reporting a question that is no longer pending.
-			if (ev.toolName === ASK_TOOL && record.pendingQuestion) {
-				record.pendingQuestion = undefined;
-				if (record.state === "waiting_input") {
-					record.state = "running";
-					this.notifyRecordsChanged();
-				}
-				if (record.eventRoute === "workspace") {
-					this.pushEvent(record, { kind: "input_resolved", agentId: record.id, label: record.label });
-				}
-			}
-			return;
-		}
-
-		if (type === "agent_start") {
-			// Authoritative run boundary: reset run-local state. A queued
-			// follow-up starting here also proves the child is working again —
-			// any armed idle-exit timer is stale.
-			this.clearIdleExit(record);
-			record.runActive = true;
-			record.runError = undefined;
-			record.finalText = undefined;
-			record.endedAt = undefined;
-			record.pendingQuestion = undefined;
-			record.pendingDispatch = false;
-			record.activeTools.clear();
-			record.recentActivity = [];
-			if (!record.cancelRequested && record.state !== "starting") {
-				record.state = "running";
-			}
-			this.notifyRecordsChanged();
-			return;
-		}
-
-		if (type === "agent_settled") {
-			record.runActive = false;
-			record.pendingQuestion = undefined;
-			if (record.cancelRequested) return; // exit path will mark cancelled
-			// Collect state, final text, and stats. Responses correlate by
-			// command, so all three can go out at once.
-			record.settleFetchDone = false;
-			connGetState(record, "ctl-state");
-			connGetStats(record);
-			connGetLastText(record);
-			return;
-		}
-
-		if (type === "response") {
-			const dispatchWaiter = record.dispatchWaiters.get(ev.id as string);
-			if (dispatchWaiter) {
-				record.dispatchWaiters.delete(ev.id as string);
-				dispatchWaiter(ev);
-				return;
-			}
-			const cmd = ev.command as string;
-			if (cmd === "prompt" && ev.id === "spawn-prompt") {
-				if (!record.spawnSettled) {
-					record.spawnSettled = true;
-					record.state = isTerminal(record.state) ? record.state : record.pendingQuestion ? "waiting_input" : "running";
-					// Session identity is fetched EARLY (single RPC request, no
-					// polling) so the live operator view can show the session id
-					// while the child runs — not only after settlement.
-					if (ev.success === true) {
-						record.onAccepted?.(this.snapshot(record));
-						connGetState(record, "ctl-state-early");
-					}
-					record.onAccepted = undefined;
-					for (const w of record.spawnWaiters.splice(0)) w(ev.success === true);
-					this.notifyRecordsChanged();
-					if (ev.success !== true) {
-						record.lastError = `initial prompt rejected: ${String(ev.error ?? "unknown")}`;
-						this.finishWithFailure(record, record.lastError);
-					}
-				}
-				return;
-			}
-			if (cmd === "get_state" && ev.success === true) {
-				const data = ev.data as { sessionFile?: string; sessionId?: string } | undefined;
-				record.sessionId = data?.sessionId ?? record.sessionId;
-				// Pi reports the path before it creates the file. Keep that early
-				// identity private until a bounded existence check succeeds; terminal
-				// get_state retains its existing authoritative behavior.
-				if (ev.id === "ctl-state-early") {
-					if (typeof data?.sessionFile === "string" && data.sessionFile) {
-						record.pendingSessionFile = data.sessionFile;
-						this.promoteSessionFile(record);
-					}
-				} else {
-					record.sessionFile = data?.sessionFile ?? record.sessionFile;
-					record.pendingSessionFile = undefined;
-				}
-				return;
-			}
-			if (cmd === "get_last_assistant_text" && ev.success === true) {
-				record.finalText = (ev.data as { text?: string } | undefined)?.text ?? "";
-				this.completeSettle(record);
-				return;
-			}
-			if (cmd === "get_session_stats" && ev.success === true) {
-				const data = ev.data as SessionStats | undefined;
-				if (data?.tokens) {
-					record.stats = {
-						tokens: {
-							input: data.tokens.input ?? 0,
-							output: data.tokens.output ?? 0,
-							total: data.tokens.total ?? 0,
-							...(typeof data.tokens.cacheRead === "number" ? { cacheRead: data.tokens.cacheRead } : {}),
-							...(typeof data.tokens.cacheWrite === "number" ? { cacheWrite: data.tokens.cacheWrite } : {}),
-						},
-						...(typeof data.cost === "number" ? { cost: data.cost } : {}),
-						...(data.contextUsage ? { contextUsage: data.contextUsage } : {}),
-					};
-					if (typeof data.cost === "number") {
-						this.countedCost.set(record.id, data.cost);
-						this.notifyCostChange();
-					}
-				}
-				return;
-			}
-			return;
-		}
-
-		if (type === "message_end") {
-			const msg = ev.message as
-				| { role?: string; stopReason?: string; errorMessage?: string; content?: unknown }
-				| undefined;
-			if (msg?.role === "assistant") {
-				// Persistence can lag this event. inspect() retries the same check.
-				this.promoteSessionFile(record);
-				if (msg.stopReason === "error" && msg.errorMessage) {
-					record.runError = msg.errorMessage;
-				} else {
-					// A successful assistant response supersedes any transient
-					// provider error from an earlier retry attempt.
-					record.runError = undefined;
-				}
-				// Live stats refresh: every completed assistant message moves the
-				// cumulative token/cost/context numbers. Fire-and-forget — the
-				// response handler is command-keyed and replaces record.stats.
-				connGetStats(record);
-				this.acceptLastAssistantText(record, msg);
-			}
-			return;
-		}
-
-		if (type === "auto_retry_end") {
-			if (ev.success === false && typeof ev.finalError === "string") {
-				record.runError = ev.finalError;
-			} else if (ev.success === true) {
-				record.runError = undefined;
-			}
-		}
-	}
-
-	/**
-	 * Child UI dialogs. With the minimal child environment the dialog sources
-	 * are the base bridge's ask tool (`input`, title "ask") and
-	 * the readiness handshake of profiled children (fire-and-forget `notify`
-	 * carrying the readiness payload, fired from session_start handlers —
-	 * blocking dialogs would deadlock: the child's stdin reader only attaches
-	 * after rebindSession completes). Fire-and-forget requests other than
-	 * readiness notifies are ignored.
-	 */
-	private handleUiRequest(record: AgentRecord, ev: Record<string, unknown>): void {
-		const method = ev.method as string;
-		const id = ev.id as string;
-		if (!id) return;
-		if (method === "notify") {
-			const payload = parseReadinessPayload(ev.message as string | undefined);
-			if (payload) this.confirmReadiness(record, payload);
-			return; // generic notifies are not dialogs
-		}
-		if (method !== "input") return; // select/confirm/editor are not produced by the bridge
-		const title = ev.title as string;
-		if (title !== ASK_WIRE_TITLE) return;
-		// The payload is the child's structured canonical ask request; the
-		// controller never flattens it — Main receives the original ids,
-		// options, descriptions, previews, multi, and recommended flags.
-		const request = parseAskRequest(ev.placeholder as string | undefined);
-		if (!request) {
-			// Unparseable payload: not produced by the current bridge. Fail
-			// closed — cancel the dialog so the child tool gets "no answer"
-			// instead of dead-waiting forever.
-			this.conn(record).send({ type: "extension_ui_response", id, cancelled: true });
-			return;
-		}
-		if (record.pendingQuestion) {
-			// A previous question is still open: dismiss the duplicate so the
-			// child tool gets "no answer" instead of dead-waiting forever.
-			this.conn(record).send({ type: "extension_ui_response", id, cancelled: true });
-			return;
-		}
-		record.pendingQuestion = {
-			requestId: id,
-			request,
-			question: formatAskRequestFlat(request),
-			askedAt: Date.now(),
-		};
-		record.state = "waiting_input";
-		// Never idle-exit a child that is waiting for user input (F003 guard).
-		this.clearIdleExit(record);
-		this.pushEvent(record, {
-			kind: "needs_input",
-			agentId: record.id,
-			label: record.label,
-			question: record.pendingQuestion.question,
-			request,
-		});
-		this.notifyRecordsChanged();
-	}
-
-	/**
-	 * Readiness report (profiled children only): the child-side probe
-	 * reported the tool set visible in the child session at session_start.
-	 * The controller validates it against THIS spawn's readiness contract:
-	 * any entry with missing required tools fails the spawn with the child
-	 * killed and the task prompt never sent (dispatched:false, fail closed).
-	 * All entries satisfied → the task prompt is sent (the dispatch point
-	 * follows its acceptance).
-	 */
-	private confirmReadiness(record: AgentRecord, payload: ReadinessPayload): void {
-		if (record.readinessDone || record.spawnSettled) return;
-		if (record.readinessExpected.size === 0) return; // not a profiled spawn; ignore
-		const problems: string[] = [];
-		for (const [entry, required] of record.readinessExpected) {
-			const missing = required.filter((t) => !payload.tools.includes(t));
-			if (missing.length > 0) problems.push(`entry "${entry}" is missing required tools: ${missing.join(", ")}`);
-		}
-		if (problems.length > 0) {
-			this.failSpawn(record, `readiness handshake failed: ${problems.join("; ")}`, "SIGKILL");
-			return;
-		}
-		record.readinessDone = true;
-		if (record.readinessTimer) clearTimeout(record.readinessTimer);
-		this.sendInitialPrompt(record);
-	}
-
-	private handleChildExit(record: AgentRecord, info: { code: number | null; signal: string | null }): void {
-		if (isTerminal(record.state)) {
-			// A kill landed after the record had already gone terminal.
-			// First: a child that died before its spawn settled (the accept
-			// timer or a spawn error already failed the record) must still
-			// reject its pending spawn waiters — that rejection is the
-			// caller's only outcome, so terminal preservation must not
-			// swallow it.
-			if (!record.spawnSettled) {
-				record.spawnSettled = true;
-				for (const w of record.spawnWaiters.splice(0)) w(false);
-				return;
-			}
-			// Otherwise: a cancel/shutdown kill landed after the record had
-			// already settled (e.g. cancelAll SIGTERMs a completed child).
-			// Preserve the settled terminal state and result exactly — state,
-			// endedAt, exitCode and signal stay as they were; only the kill
-			// timestamp is recorded. Mirrors retire semantics: never turn a
-			// settled outcome into cancelled, never emit a second terminal
-			// event.
-			record.processKilledAt = Date.now();
-			this.persistResult(record, record.state);
-			// Process exit of an already-terminal record: no set change, the
-			// signature dedup suppresses the frame.
-			this.notifyRecordsChanged();
-			return;
-		}
-		record.exitCode = info.code;
-		record.signal = info.signal;
-		record.endedAt = Date.now();
-		record.pendingDispatch = false;
-		// A dead child cannot be answered; drop any pending question so
-		// snapshots of terminal agents do not show a stale dialog.
-		record.pendingQuestion = undefined;
-		if (!record.spawnSettled) {
-			record.spawnSettled = true;
-			record.lastError =
-				record.lastError ??
-				`child exited before accepting the prompt (code ${info.code}, signal ${info.signal})${stderrExcerpt(record)}`;
-			for (const w of record.spawnWaiters.splice(0)) w(false);
-			this.finishWithFailure(record, record.lastError);
-			return;
-		}
-		if (record.cancelRequested) {
-			this.markTerminal(record, "cancelled");
-			this.pushEvent(record, { kind: "cancelled", agentId: record.id, label: record.label }, { background: false });
-			return;
-		}
-		if (record.retireRequested) {
-			// Terminal retire: the process is killed after a settled terminal
-			// outcome. The record keeps its terminal state and result — retire
-			// never turns a completed/failed record into cancelled. The
-			// notification is normally a no-op for the running set (already
-			// terminal; signature dedup), but a retire of a still-running
-			// record is only visible through the process death.
-			this.notifyRecordsChanged();
-			return;
-		}
-		if (record.runActive) {
-			// A run was in progress and never settled.
-			const reason = `child exited unexpectedly before completing (code ${info.code}, signal ${info.signal})`;
-			record.lastError = reason;
-			this.finishWithFailure(record, reason);
-			return;
-		}
-		// All runs settled; a self-exit with a non-zero code or a kill signal
-		// is still a process failure worth surfacing.
-		if ((info.code ?? 0) !== 0 || info.signal) {
-			record.lastError = `child exited with code ${info.code} / signal ${info.signal} after completing`;
-			this.finishWithFailure(record, record.lastError);
-			return;
-		}
-		// Clean self-exit after the last run settled: the record may still be
-		// non-terminal when the exit wins the race with the settle fetch (e.g.
-		// `agent_settled` then a clean exit before `get_last_assistant_text`
-		// answers). The state never terminalizes in that case, so the process
-		// death is the only thing that removes it from the running set —
-		// publish it. Signature dedup makes the call free when nothing changed.
-		this.notifyRecordsChanged();
-	}
-
-	// Collect settle-time fetches, then decide the run outcome.
-	private completeSettle(record: AgentRecord): void {
-		if (record.settleFetchDone) return;
-		record.settleFetchDone = true;
-		if (record.cancelRequested) return;
-		if (record.runError) {
-			this.finishWithFailure(record, record.runError);
-			return;
-		}
-		record.state = "completed";
-		record.endedAt = Date.now();
-		this.persistResult(record, "completed");
-		this.pushEvent(record, {
-			kind: "completed",
-			agentId: record.id,
-			label: record.label,
-			summary: summarizeText(record.finalText),
-		});
-		this.notifyRecordsChanged();
-		// F003 idle-exit: the settled child's process would otherwise live
-		// forever. Retirement uses retire semantics — record and event stay.
-		this.armIdleExit(record);
-	}
-
-	private finishWithFailure(record: AgentRecord, reason: string): void {
-		if (isTerminal(record.state)) return;
-		record.state = "failed";
-		record.runError = reason;
-		record.endedAt = Date.now();
-		this.persistResult(record, "failed");
-		this.pushEvent(record, { kind: "failed", agentId: record.id, label: record.label, reason });
-		this.notifyRecordsChanged();
-		// A failed-but-alive child (e.g. error stopReason at settle) is reaped
-		// by the same idle-exit path as a completed one.
-		this.armIdleExit(record);
-	}
-
-	private markTerminal(record: AgentRecord, state: "cancelled"): void {
-		if (isTerminal(record.state)) return;
-		record.state = state;
-		record.endedAt = record.endedAt ?? Date.now();
-		this.persistResult(record, state);
-		this.notifyRecordsChanged();
-	}
-
-	private persistResult(record: AgentRecord, status: AgentResult["status"]): void {
-		const result: AgentResult = {
-			id: record.id,
-			label: record.label,
-			task: record.task,
-			cwd: record.cwd,
-			status,
-			finalText: record.finalText,
-			summary: summarizeText(record.finalText),
-			failureReason: status === "failed" ? record.runError ?? record.lastError : undefined,
-			sessionFile: record.sessionFile,
-			sessionId: record.sessionId,
-			model: record.model,
-			startedAt: record.startedAt,
-			endedAt: record.endedAt,
-			tokens: statsToResultTokens(record.stats),
-			exitCode: record.exitCode,
-			signal: record.signal,
-			...(record.processKilledAt !== undefined ? { processKilledAt: record.processKilledAt } : {}),
-			...(record.lastAssistantText !== undefined
-				? { lastAssistantText: { ...record.lastAssistantText } }
-				: {}),
-			...(this.parentSession ? { parentSession: this.parentSession } : {}),
-			...(record.run ? { run: this.runHistory(record) } : {}),
-		};
-		try {
-			saveResult(result, this.resultsDir);
-		} catch {
-			// Persistence is best-effort; the in-memory record still serves results.
-		}
-	}
-
-	/** Persist workspace history without taking lifecycle ownership. */
-	setRunHistory(agentId: string, run: RunHistory): void {
-		const record = this.mustGet(agentId);
-		record.run = structuredClone(run);
-		if (isTerminal(record.state)) this.persistResult(record, record.state);
-		else this.persistSpawnMarker(record);
-	}
-
-	private runHistory(record: AgentRecord): RunHistory {
-		const progress = loadProgress(record.id, this.resultsDir) ?? record.run?.progress;
-		return { ...record.run!, ...(progress ? { progress } : {}) };
-	}
-
-	/**
-	 * Spawn-time partial marker (F003 reconciliation): a minimal "running"
-	 * record written at process creation. Superseded in place by the terminal
-	 * write at settle, or finalized as failed by startup reconciliation when
-	 * the parent died before the child settled. Best-effort: a missing
-	 * marker only weakens cross-restart reconciliation.
-	 */
-	private persistSpawnMarker(record: AgentRecord): void {
-		const marker: AgentResult = {
-			id: record.id,
-			label: record.label,
-			task: record.task,
-			cwd: record.cwd,
-			status: "running",
-			startedAt: record.startedAt,
-			...(record.conn.pid !== undefined ? { pid: record.conn.pid } : {}),
-			...(record.lastAssistantText !== undefined
-				? { lastAssistantText: { ...record.lastAssistantText } }
-				: {}),
-			...(this.parentSession ? { parentSession: this.parentSession } : {}),
-			...(record.run ? { run: this.runHistory(record) } : {}),
-		};
-		try {
-			saveResult(marker, this.resultsDir);
-		} catch {
-			// best-effort by design
-		}
-	}
-
-	/**
-	 * F003 idle-exit: a settled child whose process is still alive will never
-	 * exit on its own — schedule its termination after idleExitMs. Retirement
-	 * reuses retire() semantics: the terminal record, its state, endedAt and
-	 * event are preserved; only processKilledAt is added. Disarmed by any
-	 * dispatch (steer/follow_up reuse completed children — a queued
-	 * follow-up must not be killed), by a new run (agent_start), and by a
-	 * pending question (never kill a child waiting for user input).
-	 */
-	private armIdleExit(record: AgentRecord): void {
-		if (record.idleExitMs <= 0) return;
-		if (!isTerminal(record.state)) return;
-		if (record.pendingQuestion || record.retireRequested || record.conn.exit) return;
-		this.clearIdleExit(record);
-		const timer = setTimeout(() => {
-			record.idleTimer = undefined;
-			// Re-validate at fire time: a dispatch may have raced the timer.
-			if (!isTerminal(record.state)) return;
-			if (record.conn.exit || record.pendingQuestion || record.retireRequested) return;
-			if (record.pendingDispatch) {
-				// A dispatch preflight is in flight — the child may be about to
-				// run again. Re-arm and let the dispatch outcome decide.
-				this.armIdleExit(record);
-				return;
-			}
-			this.retire(record.id).catch(() => {
-				// idle-exit must never surface; a failed kill is retried by the
-				// next cancel/shutdown (and the process leaks no worse than before)
-			});
-		}, record.idleExitMs);
-		// Unref'd: a pending idle-exit must never keep the host (or the test
-		// suite) alive. shutdown() additionally clears every timer.
-		timer.unref?.();
-		record.idleTimer = timer;
-	}
-
-	private clearIdleExit(record: AgentRecord): void {
-		if (record.idleTimer) {
-			clearTimeout(record.idleTimer);
-			record.idleTimer = undefined;
-		}
+		return child.start(opts.signal);
 	}
 
 	// -------------------------------------------------------------- operations
 
-	private conn(record: AgentRecord): RpcChildConnection {
-		return record.conn;
-	}
-
 	async steer(agentId: string, message: string): Promise<void> {
-		const record = this.mustGet(agentId);
-		if (record.eventRoute === "workspace") {
-			if (!record.runActive || isTerminal(record.state) || record.cancelRequested || record.retireRequested) {
+		const child = this.mustGet(agentId);
+		if (child.eventRoute === "workspace") {
+			if (!child.canAcceptQueuedSteer()) {
 				throw new Error(`cannot steer workspace-owned agent ${agentId}: run is settling or terminating`);
 			}
 			// Queue-only RPC, never prompt: an idle race must not start a new run
 			// or execute an extension command. Pi delivers at the safe tool boundary.
-			await this.dispatchInput(record, "steer", message, true);
+			await child.dispatch("steer", message, true);
 			return;
 		}
-		await this.dispatchInput(record, "steer", message);
+		await child.dispatch("steer", message);
 	}
 
 	/**
@@ -1000,21 +266,21 @@ export class LocalSubagentRuntime {
 	 * work survives the reap. The caller must track the returned agent id.
 	 */
 	async followUp(agentId: string, message: string): Promise<{ agentId: string; respawned: boolean }> {
-		const record = this.mustGet(agentId);
-		if ((record.conn.exit || record.retireRequested) && isTerminal(record.state)) {
-			if (record.eventRoute === "workspace") throw new Error("workspace-owned agents cannot restart through follow_up");
+		const child = this.mustGet(agentId);
+		if ((!child.alive || child.retiring) && child.settled) {
+			if (child.eventRoute === "workspace") throw new Error("workspace-owned agents cannot restart through follow_up");
 			const fresh = await this.spawn({
 				task: message,
-				label: record.label,
-				cwd: record.cwd,
-				model: record.model,
-				thinking: record.thinking,
-				idleExitMs: record.idleExitMs,
-				eventRoute: record.eventRoute,
+				label: child.label,
+				cwd: child.cwd,
+				model: child.model,
+				thinking: child.thinking,
+				idleExitMs: child.idleExit,
+				eventRoute: child.eventRoute,
 			});
 			return { agentId: fresh.id, respawned: true };
 		}
-		await this.dispatchInput(record, "followUp", message);
+		await child.dispatch("followUp", message);
 		return { agentId, respawned: false };
 	}
 
@@ -1029,87 +295,20 @@ export class LocalSubagentRuntime {
 		const message = enabled ? "/proxy on" : "/proxy off";
 		let acked = 0;
 		let total = 0;
-		for (const record of this.records.values()) {
-			if (record.conn.exit) continue;
+		for (const child of this.children.values()) {
+			if (!child.alive) continue;
 			total++;
-			const id = `proxy-${++LocalSubagentRuntime.idCounter}`;
-			try {
-				const resp = await new Promise<Record<string, unknown>>((resolve, reject) => {
-					const timer = setTimeout(() => {
-						record.dispatchWaiters.delete(id);
-						reject(new Error("proxy push not acknowledged in time"));
-					}, this.dispatchTimeoutMs);
-					timer.unref?.();
-					record.dispatchWaiters.set(id, resolve);
-					this.conn(record).send({ id, type: "prompt", message });
-				});
-				if (resp.success === true) acked++;
-			} catch {
-				// Unacked child keeps running; it converges on its next request.
-			}
+			if (await child.pushCommand(message)) acked++;
 		}
 		return { acked, total };
-	}
-
-	/**
-	 * Deliver new input via `prompt` + `streamingBehavior`: pi atomically
-	 * picks queueing vs a fresh run from the session's real state — no stale
-	 * local copy.
-	 *
-	 * When the agent sits in a terminal state, the dispatch marks the old
-	 * result stale (`pendingDispatch`) until the child's `agent_start` proves
-	 * the new run began; wait()/result() must not hand back the previous
-	 * completion as the outcome of the pending work. A rejected preflight
-	 * clears the mark and surfaces the error to the caller.
-	 */
-	private async dispatchInput(
-		record: AgentRecord,
-		behavior: "steer" | "followUp",
-		message: string,
-		queueOnly = false,
-	): Promise<void> {
-		this.assertAlive(record, behavior === "steer" ? "steer" : "follow_up");
-		// Live input reuses the child: any armed idle-exit is stale now. If the
-		// dispatch fails below, the timer is re-armed (the child is back to an
-		// idle terminal state with a live process).
-		this.clearIdleExit(record);
-		const overTerminal = isTerminal(record.state);
-		if (overTerminal) record.pendingDispatch = true;
-		const id = `dispatch-${++LocalSubagentRuntime.idCounter}`;
-		try {
-			const resp = await new Promise<Record<string, unknown>>((resolve, reject) => {
-				const timer = setTimeout(() => {
-					record.dispatchWaiters.delete(id);
-					reject(new Error(`pi did not acknowledge the ${behavior} dispatch in time`));
-				}, this.dispatchTimeoutMs);
-				timer.unref?.();
-				record.dispatchWaiters.set(id, resolve);
-				this.conn(record).send(queueOnly
-					? { id, type: "steer", message }
-					: { id, type: "prompt", message, streamingBehavior: behavior });
-			});
-			if (resp.success !== true) {
-				throw new Error(`pi rejected the ${behavior}: ${String(resp.error ?? "unknown")}`);
-			}
-		} catch (err) {
-			if (overTerminal) record.pendingDispatch = false;
-			if (overTerminal && !record.conn.exit) this.armIdleExit(record);
-			throw err;
-		}
-	}
-
-	private assertAlive(record: AgentRecord, op: string): void {
-		if (record.conn.exit) {
-			throw new Error(`cannot ${op}: agent ${agentRef(record)} process is not running (state: ${record.state})`);
-		}
 	}
 
 	async wait(
 		agentId: string,
 		opts?: { timeoutMs?: number; signal?: AbortSignal },
 	): Promise<WaitOutcome> {
-		const record = this.mustGet(agentId);
-		if (record.eventRoute === "workspace") {
+		const child = this.mustGet(agentId);
+		if (child.eventRoute === "workspace") {
 			// Event ownership: wait() consumes the one lifecycle event; for a
 			// workspace child that event belongs to the run registry. The
 			// subagent tool routes workspace wait through its registry; direct
@@ -1121,136 +320,64 @@ export class LocalSubagentRuntime {
 		// Already meaningful: resolve from current state. A pending dispatch
 		// invalidates the terminal result — it belongs to the previous run,
 		// not to the work that was just queued.
-		if (!record.pendingDispatch) {
-			if (record.state === "waiting_input") {
-				const pending = record.pendingQuestion;
-				return {
-					status: "needs_input",
-					question: pending?.question ?? "(unknown question)",
-					...(pending ? { request: pending.request } : {}),
-				};
-			}
-			if (record.state === "completed") {
-				return { status: "completed", summary: summarizeText(record.finalText) };
-			}
-			if (record.state === "failed") {
-				return { status: "failed", reason: record.runError ?? record.lastError ?? "agent failed" };
-			}
-			if (record.state === "cancelled") {
-				return { status: "cancelled" };
-			}
-		}
+		const immediate = child.outcome();
+		if (immediate) return immediate;
+
 		const timeoutMs = opts?.timeoutMs ?? 600000;
 		return new Promise<WaitOutcome>((resolve) => {
 			let done = false;
 			// Keep the exact wrapper so cleanup removes the registered entry,
 			// not an unrelated function (a stale waiter would swallow the next
-			// event — see pushEvent).
-			let waiter: ((outcome: WaitOutcome) => void) | undefined;
+			// event — see routeEvent).
+			let waiter: Waiter | undefined;
 			const finish = (outcome: WaitOutcome) => {
 				if (done) return;
 				done = true;
 				clearTimeout(timer);
 				opts?.signal?.removeEventListener("abort", onAbort);
 				if (waiter) {
-					const idx = record.waiters.indexOf(waiter);
-					if (idx !== -1) record.waiters.splice(idx, 1);
+					const list = this.waiters.get(agentId);
+					if (list) {
+						const idx = list.indexOf(waiter);
+						if (idx !== -1) list.splice(idx, 1);
+						if (list.length === 0) this.waiters.delete(agentId);
+					}
 				}
 				resolve(outcome);
 			};
-			const timer = setTimeout(() => finish({ status: "timeout", state: record.state }), timeoutMs);
+			const timer = setTimeout(() => finish({ status: "timeout", state: child.currentState }), timeoutMs);
 			timer.unref?.();
-			const onAbort = () => finish({ status: "timeout", state: record.state });
+			const onAbort = () => finish({ status: "timeout", state: child.currentState });
 			opts?.signal?.addEventListener("abort", onAbort, { once: true });
 			waiter = (outcome) => finish(outcome);
-			record.waiters.push(waiter);
+			const list = this.waiters.get(agentId);
+			if (list) list.push(waiter);
+			else this.waiters.set(agentId, [waiter]);
 		});
 	}
 
 	async result(agentId: string): Promise<AgentResult | null> {
-		const record = this.records.get(agentId);
-		if (!record) {
+		const child = this.children.get(agentId);
+		if (!child) {
 			// Unknown in this process (e.g. after a main restart) — try the
 			// persisted file in the shared results dir. A "running" spawn marker
 			// is NOT a final result: it belongs to a live child of another
 			// session (or awaits reconciliation) and must never surface as an
 			// outcome.
 			const persisted = loadResult(agentId, this.resultsDir);
-			return persisted && isTerminal(persisted.status) ? persisted : null;
+			return persisted && isTerminalStatus(persisted.status) ? persisted : null;
 		}
-		if (!isTerminal(record.state) || record.pendingDispatch) return null; // no final result yet
-		return this.recordToResult(record);
-	}
-
-	private recordToResult(record: AgentRecord): AgentResult {
-		const status: AgentResult["status"] =
-			record.state === "completed" ? "completed"
-			: record.state === "cancelled" ? "cancelled"
-			: "failed";
-		return {
-			id: record.id,
-			label: record.label,
-			task: record.task,
-			cwd: record.cwd,
-			status,
-			finalText: record.finalText,
-			summary: summarizeText(record.finalText),
-			failureReason: status === "failed" ? record.runError ?? record.lastError : undefined,
-			sessionFile: record.sessionFile,
-			sessionId: record.sessionId,
-			model: record.model,
-			startedAt: record.startedAt,
-			endedAt: record.endedAt,
-			tokens: statsToResultTokens(record.stats),
-			exitCode: record.exitCode,
-			signal: record.signal,
-			...(record.lastAssistantText !== undefined
-				? { lastAssistantText: { ...record.lastAssistantText } }
-				: {}),
-			...(this.parentSession ? { parentSession: this.parentSession } : {}),
-			...(record.run ? { run: this.runHistory(record) } : {}),
-		};
+		if (!child.hasFinalResult()) return null; // no final result yet
+		const facts = child.terminalFacts();
+		return facts ? this.toAgentResult(facts) : null;
 	}
 
 	async respond(agentId: string, answer: string): Promise<void> {
-		const record = this.mustGet(agentId);
-		if (record.conn.exit) {
-			throw new Error(`agent ${agentId} process has exited (state: ${record.state})`);
-		}
-		const q = record.pendingQuestion;
-		if (!q) throw new Error(`agent ${agentId} has no pending question`);
-		record.pendingQuestion = undefined;
-		record.state = "running";
-		if (record.eventRoute === "workspace") {
-			this.pushEvent(record, { kind: "input_resolved", agentId: record.id, label: record.label });
-		}
-		this.notifyRecordsChanged();
-		this.conn(record).send({ type: "extension_ui_response", id: q.requestId, value: answer });
+		this.mustGet(agentId).respond(answer);
 	}
 
 	async cancel(agentId: string): Promise<void> {
-		const record = this.mustGet(agentId);
-		if (record.conn.exit) {
-			if (!isTerminal(record.state)) this.markTerminal(record, "cancelled");
-			return;
-		}
-		record.cancelRequested = true;
-		this.clearIdleExit(record); // the kill below makes any idle timer moot
-		// pi abort: ends the current run with stopReason "aborted"; the session
-		// stays valid. Harmless when the child is idle or blocked in a dialog.
-		// SIGTERM follows immediately: pi exits cleanly (exit code 143) even
-		// while blocked inside an extension UI dialog.
-		this.conn(record).send({ type: "abort" });
-		this.conn(record).kill("SIGTERM");
-		const escalated = await Promise.race([
-			record.conn.waitForExit().then(() => false),
-			new Promise<true>((resolve) => setTimeout(() => resolve(true), this.killGraceMs)),
-		]);
-		if (escalated && !record.conn.exit) {
-			this.conn(record).kill("SIGKILL");
-			await record.conn.waitForExit();
-		}
-		this.notifyRecordsChanged();
+		await this.mustGet(agentId).cancel();
 	}
 
 	/**
@@ -1261,30 +388,14 @@ export class LocalSubagentRuntime {
 	 * written and no cancelled event is emitted.
 	 */
 	async retire(agentId: string): Promise<void> {
-		const record = this.mustGet(agentId);
-		if (record.conn.exit) return;
-		record.retireRequested = true;
-		// Abort is harmless for a settled child and covers the rare case of a
-		// ladder follow-up having just started a new run.
-		this.conn(record).send({ type: "abort" });
-		this.conn(record).kill("SIGTERM");
-		const escalated = await Promise.race([
-			record.conn.waitForExit().then(() => false),
-			new Promise<true>((resolve) => setTimeout(() => resolve(true), this.killGraceMs)),
-		]);
-		if (escalated && !record.conn.exit) {
-			this.conn(record).kill("SIGKILL");
-			await record.conn.waitForExit();
-		}
-		// A retire of an already-terminal record changes no running set; the
-		// signature dedup suppresses the frame. Recorded as a mutation point
-		// because retire is the only process exit that preserves terminal state.
-		this.notifyRecordsChanged();
+		await this.mustGet(agentId).retire();
 	}
 
 	inspect(agentId?: string): AgentSnapshot[] {
-		const records = agentId ? [this.records.get(agentId)].filter(Boolean) as AgentRecord[] : [...this.records.values()];
-		return records.map((r) => this.snapshot(r));
+		const children = agentId
+			? [this.children.get(agentId)].filter(Boolean) as ChildAgentProcess[]
+			: [...this.children.values()];
+		return children.map((c) => c.snapshot());
 	}
 
 	/** Results dir used for persisted results and envelope records (shared with children via env). */
@@ -1348,18 +459,100 @@ export class LocalSubagentRuntime {
 		}
 	}
 
+	// ------------------------------------------------------------- persistence
+
 	/**
-	 * Session subagent cost total: results already on disk for this session
-	 * (resume base) plus the latest cumulative cost reported by every agent
-	 * of the live runtime. Children settled in this runtime are counted from
-	 * memory only — their results were written after the base was computed.
+	 * Persist workspace history without taking lifecycle ownership.
 	 */
-	private notifyCostChange(): void {
-		if (!this.onCostChange) return;
-		let total = this.persistedBaseCost;
-		for (const cost of this.countedCost.values()) total += cost;
-		this.onCostChange(total);
+	setRunHistory(agentId: string, run: RunHistory): void {
+		const child = this.mustGet(agentId);
+		this.runHistories.set(agentId, structuredClone(run));
+		if (child.settled) {
+			const facts = child.terminalFacts();
+			if (facts) this.writeResult(facts);
+		} else {
+			this.writeMarker(child.markerFacts());
+		}
 	}
+
+	private writeResult(facts: ChildResultFacts): void {
+		const result = this.toAgentResult(facts);
+		// Persisted results record a post-settlement kill (cancel/retire of an
+		// already-terminal record); the in-memory result() shape is unchanged.
+		if (facts.processKilledAt !== undefined) result.processKilledAt = facts.processKilledAt;
+		try {
+			saveResult(result, this.resultsDir);
+		} catch {
+			// Persistence is best-effort; the in-memory record still serves results.
+		}
+	}
+
+	/**
+	 * Spawn-time partial marker (F003 reconciliation): a minimal "running"
+	 * record written at process creation. Superseded in place by the terminal
+	 * write at settle, or finalized as failed by startup reconciliation when
+	 * the parent died before the child settled. Best-effort: a missing
+	 * marker only weakens cross-restart reconciliation.
+	 */
+	private writeMarker(facts: ChildMarkerFacts): void {
+		const run = this.persistedRun(facts.id);
+		const marker: AgentResult = {
+			id: facts.id,
+			label: facts.label,
+			task: facts.task,
+			cwd: facts.cwd,
+			status: "running",
+			startedAt: facts.startedAt,
+			...(facts.pid !== undefined ? { pid: facts.pid } : {}),
+			...(facts.lastAssistantText !== undefined
+				? { lastAssistantText: { ...facts.lastAssistantText } }
+				: {}),
+			...(this.parentSession ? { parentSession: this.parentSession } : {}),
+			...(run ? { run } : {}),
+		};
+		try {
+			saveResult(marker, this.resultsDir);
+		} catch {
+			// best-effort by design
+		}
+	}
+
+	private toAgentResult(facts: ChildResultFacts): AgentResult {
+		const run = this.persistedRun(facts.id);
+		return {
+			id: facts.id,
+			label: facts.label,
+			task: facts.task,
+			cwd: facts.cwd,
+			status: facts.status,
+			finalText: facts.finalText,
+			summary: summarizeText(facts.finalText),
+			failureReason: facts.failureReason,
+			sessionFile: facts.sessionFile,
+			sessionId: facts.sessionId,
+			model: facts.model,
+			startedAt: facts.startedAt,
+			endedAt: facts.endedAt,
+			tokens: facts.tokens,
+			exitCode: facts.exitCode,
+			signal: facts.signal,
+			...(facts.lastAssistantText !== undefined
+				? { lastAssistantText: { ...facts.lastAssistantText } }
+				: {}),
+			...(this.parentSession ? { parentSession: this.parentSession } : {}),
+			...(run ? { run } : {}),
+		};
+	}
+
+	/** Run history with freshly loaded progress overlaid (never executed here). */
+	private persistedRun(agentId: string): RunHistory | undefined {
+		const run = this.runHistories.get(agentId);
+		if (!run) return undefined;
+		const progress = loadProgress(agentId, this.resultsDir) ?? run.progress;
+		return { ...run, ...(progress ? { progress } : {}) };
+	}
+
+	// ------------------------------------------------------------------ events
 
 	onEvent(cb: (ev: SubagentModelEvent) => void): () => void {
 		this.listeners.add(cb);
@@ -1402,94 +595,26 @@ export class LocalSubagentRuntime {
 
 	/** True when this agent's lifecycle events are owned by the workspace layer. */
 	isWorkspaceRouted(agentId: string): boolean {
-		return this.records.get(agentId)?.eventRoute === "workspace";
+		return this.children.get(agentId)?.eventRoute === "workspace";
 	}
-
-	/** Kill all live children without latching the runtime shut. */
-	async cancelAll(): Promise<void> {
-		// Idle-exit timers are moot under a mass kill — and they must never
-		// outlive the runtime (an unref'd timer alone would be enough, but a
-		// deterministic clear keeps the test suite exit-clean).
-		for (const r of this.records.values()) this.clearIdleExit(r);
-		const live = [...this.records.values()].filter((r) => !r.conn.exit);
-		if (live.length === 0) return;
-		for (const r of live) {
-			r.cancelRequested = true;
-			this.conn(r).send({ type: "abort" });
-			this.conn(r).kill("SIGTERM");
-		}
-		const exits = live.map((r) => r.conn.waitForExit());
-		await Promise.race([
-			Promise.all(exits),
-			new Promise((resolve) => setTimeout(resolve, this.killGraceMs)),
-		]);
-		for (const r of live) {
-			if (!r.conn.exit) this.conn(r).kill("SIGKILL");
-		}
-		this.notifyRecordsChanged();
-	}
-
-	/** Kill all live children and latch the runtime shut (main shutdown). */
-	async shutdown(): Promise<void> {
-		this.shutDown = true;
-		await this.cancelAll();
-		this.notifyRecordsChanged();
-	}
-
-	// ---------------------------------------------------------------- internal
 
 	/**
-	 * Authoritative child activity, distilled for the live operator view.
-	 * tool_execution_start (name + conservatively summarized args) opens a
-	 * bounded active window keyed by toolCallId; tool_execution_end closes it
-	 * into the hard-capped recent list. Unmatched or id-less ends are ignored
-	 * rather than guessed.
+	 * Event router for one child. A workspace-routed child's lifecycle events
+	 * belong to the workspace run registry — waiters and generic listeners
+	 * never see them (the terminal surface is the shared [subagent completed]
+	 * event). For generic children a waiter gets the event first (consumed);
+	 * otherwise it goes to background delivery. `background: false` events
+	 * (cancel confirmations) resolve waiters only — the cancelling side already
+	 * learned the outcome synchronously, and a duplicate steer message would
+	 * just burn a turn.
 	 */
-	private trackToolStart(record: AgentRecord, ev: Record<string, unknown>): void {
-		const name = typeof ev.toolName === "string" && ev.toolName ? ev.toolName : "tool";
-		const toolCallId = typeof ev.toolCallId === "string" && ev.toolCallId
-			? ev.toolCallId
-			: `unmatched-${Date.now()}-${record.activeTools.size}`;
-		if (record.activeTools.size >= ACTIVE_TOOLS_MAX) {
-			const oldest = record.activeTools.keys().next().value;
-			if (oldest !== undefined) record.activeTools.delete(oldest);
-		}
-		record.activeTools.set(toolCallId, {
-			toolCallId,
-			name,
-			// The child's cwd (managed worktree for workspace runs) lets the
-			// summary stay workspace-relative instead of burning the cap on the
-			// absolute worktree prefix.
-			summary: summarizeToolActivity(name, ev.args, record.cwd),
-			startedAt: Date.now(),
-		});
-	}
-
-	private trackToolEnd(record: AgentRecord, ev: Record<string, unknown>): void {
-		const toolCallId = typeof ev.toolCallId === "string" ? ev.toolCallId : undefined;
-		if (toolCallId === undefined) return;
-		const ended = record.activeTools.get(toolCallId);
-		if (!ended) return;
-		record.activeTools.delete(toolCallId);
-		record.recentActivity.push({
-			name: ended.name,
-			summary: ended.summary,
-			startedAt: ended.startedAt,
-			endedAt: Date.now(),
-		});
-		if (record.recentActivity.length > RECENT_ACTIVITY_MAX) {
-			record.recentActivity.splice(0, record.recentActivity.length - RECENT_ACTIVITY_MAX);
-		}
-		// Tool-reported nested LLM usage does not produce an assistant
-		// message_end; refresh the live stats here as well (fire-and-forget).
-		connGetStats(record);
-	}
-
-	private pushEvent(record: AgentRecord, ev: SubagentModelEvent, opts?: { background?: boolean }): void {
-		// Event router: a workspace-routed child's lifecycle events belong to
-		// the workspace run registry — waiters and generic listeners never see
-		// them (the terminal surface is the shared [subagent completed] event).
-		if (record.eventRoute === "workspace") {
+	private routeEvent(
+		agentId: string,
+		eventRoute: "workspace" | undefined,
+		ev: SubagentModelEvent,
+		opts?: { background?: boolean },
+	): void {
+		if (eventRoute === "workspace") {
 			for (const cb of this.workspaceListeners) {
 				try {
 					cb(ev);
@@ -1499,15 +624,11 @@ export class LocalSubagentRuntime {
 			}
 			return;
 		}
-		// A waiter gets it first (consumed); otherwise it goes to background
-		// delivery. `background: false` events (cancel confirmations) resolve
-		// waiters only — the cancelling side already learned the outcome
-		// synchronously, and a duplicate steer message would just burn a turn.
-		if (record.waiters.length > 0) {
-			const waiter = record.waiters.shift()!;
-			waiter(eventToOutcome(ev));
-			// Other waiters (parallel tool calls) also get a copy.
-			for (const w of record.waiters.splice(0)) w(eventToOutcome(ev));
+		const outcome = eventToOutcome(ev);
+		const waiting = this.waiters.get(agentId);
+		if (waiting && waiting.length > 0) {
+			this.waiters.delete(agentId);
+			for (const waiter of waiting) waiter(outcome);
 			return;
 		}
 		if (opts?.background === false) return;
@@ -1520,114 +641,51 @@ export class LocalSubagentRuntime {
 		}
 	}
 
-	private mustGet(agentId: string): AgentRecord {
-		const record = this.records.get(agentId);
-		if (!record) throw new Error(`unknown agent id: ${agentId}`);
-		return record;
+	private mustGet(agentId: string): ChildAgentProcess {
+		const child = this.children.get(agentId);
+		if (!child) throw new Error(`unknown agent id: ${agentId}`);
+		return child;
 	}
+
+	// ------------------------------------------------------------------- cost
 
 	/**
-	 * Automatic bounded projection of the child's last PUBLIC assistant text
-	 * (plain and workspace children alike): completed `message_end` text
-	 * blocks only. Thinking, tool calls, tool results, error/aborted/deferred
-	 * messages and empty text never replace an accepted fragment; the runtime
-	 * assigns updatedAt. Acceptance is bounded to non-terminal records, so a
-	 * late event after settlement cannot mutate a terminal record. Persistence
-	 * rides the existing result path: the running marker is rewritten on every
-	 * accepted change and the terminal write keeps the fragment.
+	 * Session subagent cost total: results already on disk for this session
+	 * (resume base) plus the latest cumulative cost reported by every agent
+	 * of the live runtime. Children settled in this runtime are counted from
+	 * memory only — their results were written after the base was computed.
 	 */
-	private acceptLastAssistantText(
-		record: AgentRecord,
-		msg: { stopReason?: string; content?: unknown },
-	): void {
-		if (isTerminal(record.state)) return; // never mutate a terminal record late
-		const raw = publicAssistantText(msg);
-		if (raw === undefined) return;
-		const text = normalizeLastText(raw);
-		if (text === undefined) return;
-		record.lastAssistantText = { text, updatedAt: Date.now() };
-		this.persistSpawnMarker(record);
+	private recordCost(agentId: string, cost: number): void {
+		this.countedCost.set(agentId, cost);
+		this.notifyCostChange();
 	}
 
-	private promoteSessionFile(record: AgentRecord): void {
-		const candidate = record.pendingSessionFile;
-		if (!candidate) return;
-		try {
-			if (!fs.statSync(candidate).isFile()) return;
-		} catch {
-			return; // Pi has not persisted the file yet (or it is inaccessible).
-		}
-		record.sessionFile = candidate;
-		record.pendingSessionFile = undefined;
+	private notifyCostChange(): void {
+		if (!this.onCostChange) return;
+		let total = this.persistedBaseCost;
+		for (const cost of this.countedCost.values()) total += cost;
+		this.onCostChange(total);
 	}
 
-	private snapshot(record: AgentRecord): AgentSnapshot {
-		this.promoteSessionFile(record);
-		return {
-			id: record.id,
-			label: record.label,
-			state: record.state,
-			task: record.task,
-			cwd: record.cwd,
-			model: record.model,
-			thinking: record.thinking,
-			alive: !record.conn.exit,
-			pid: record.conn.pid,
-			startedAt: record.startedAt,
-			endedAt: record.endedAt,
-			lastActivityAt: record.lastActivityAt,
-			elapsedMs: (record.endedAt ?? Date.now()) - record.startedAt,
-			sessionFile: record.sessionFile,
-			sessionId: record.sessionId,
-			pendingQuestion: record.pendingQuestion?.question,
-			lastError: record.lastError ?? record.runError,
-			stats: record.stats,
-			exitCode: record.exitCode,
-			signal: record.signal,
-			activeTool: record.conn.exit ? undefined : newestActiveTool(record),
-			recentActivity: record.recentActivity.map((entry) => ({ ...entry })),
-			...(record.lastAssistantText !== undefined
-				? { lastAssistantText: { ...record.lastAssistantText } }
-				: {}),
-		};
+	// --------------------------------------------------------------- shutdown
+
+	/** Kill all live children without latching the runtime shut. */
+	async cancelAll(): Promise<void> {
+		const live = [...this.children.values()].filter((c) => c.alive);
+		if (live.length === 0) return;
+		await Promise.all(live.map((c) => c.cancel()));
+		this.notifyRecordsChanged();
+	}
+
+	/** Kill all live children and latch the runtime shut (main shutdown). */
+	async shutdown(): Promise<void> {
+		this.shutDown = true;
+		await this.cancelAll();
+		this.notifyRecordsChanged();
 	}
 }
 
 // -------------------------------------------------------------------- helpers
-
-function agentRef(record: AgentRecord): string {
-	return record.id;
-}
-
-/**
- * Bounded excerpt of the child stderr tail for a startup-failure reason.
- * Whitespace-trimmed; empty when the child said nothing on stderr, so
- * success paths and quiet failures are unchanged.
- */
-function stderrExcerpt(record: AgentRecord): string {
-	const tail = record.conn.stderr.trim();
-	if (!tail) return "";
-	const excerpt = tail.length > STDERR_SURFACE_MAX ? `…${tail.slice(-STDERR_SURFACE_MAX)}` : tail;
-	return `\nchild stderr (tail):\n${excerpt}`;
-}
-
-function connGetState(record: AgentRecord, id = "ctl-state"): void {
-	record.conn.send({ id, type: "get_state" });
-}
-
-function connGetStats(record: AgentRecord): void {
-	record.conn.send({ id: "ctl-stats", type: "get_session_stats" });
-}
-
-function connGetLastText(record: AgentRecord): void {
-	record.conn.send({ id: "ctl-last-text", type: "get_last_assistant_text" });
-}
-
-/** Project live stats onto the persisted result's token shape (cost rides along). */
-function statsToResultTokens(stats?: SessionStats): AgentResult["tokens"] {
-	if (!stats) return undefined;
-	return { input: stats.tokens.input, output: stats.tokens.output, total: stats.tokens.total, cost: stats.cost };
-}
 
 function eventToOutcome(ev: SubagentModelEvent): WaitOutcome {
 	switch (ev.kind) {
@@ -1654,16 +712,8 @@ function runningMarkers(dir: string): AgentResult[] {
 	return listAllResults(dir).filter((r) => typeof r.id === "string" && r.status === "running");
 }
 
-function isTerminal(state: AgentState): state is AgentResult["status"] {
-	return state === "completed" || state === "failed" || state === "cancelled";
-}
-
-/** The newest still-executing tool (Map preserves insertion order), id stripped. */
-function newestActiveTool(record: AgentRecord): ToolActivity | undefined {
-	let newest: ActiveToolEntry | undefined;
-	for (const entry of record.activeTools.values()) newest = entry;
-	if (!newest) return undefined;
-	return { name: newest.name, summary: newest.summary, startedAt: newest.startedAt };
+function isTerminalStatus(status: AgentResult["status"]): boolean {
+	return status === "completed" || status === "failed" || status === "cancelled";
 }
 
 /** Directory of this module (works under jiti and node). */

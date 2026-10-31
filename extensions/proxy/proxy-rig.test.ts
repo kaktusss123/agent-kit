@@ -4,9 +4,9 @@
  * regression behind the ~905s "Request timed out." symptom (undici's 300s
  * headers/body defaults killing buffered proxy responses).
  *
- * The dispatcher work runs in a NODE subprocess (rig-child.mjs): bun does
- * not reproduce undici's socket timer semantics, so the rig would silently
- * pass under bun's runtime even with the old broken options. The child
+ * The dispatcher work runs in a Node subprocess (rig-child.mjs), not in
+ * the test process: the rig must exercise undici's own socket timers. The
+ * child
  * hosts a delayed backend and a local loopback proxy (absolute-form
  * forwarding plus CONNECT tunneling, matching EnvHttpProxyAgent with
  * proxyTunnel), builds the dispatcher exactly like applyProxyPreference
@@ -21,16 +21,20 @@
  * Skipped when node or pi's undici copy is unavailable (README node_modules
  * recipe).
  */
-import { describe, expect, test } from "bun:test";
+import { describe, test } from "node:test";
+import { createRequire } from "node:module";
+import { expect } from "../../tests/support/expect.ts";
+
+const require = createRequire(import.meta.url);
 import { execFile } from "node:child_process";
 import * as path from "node:path";
-import { piTransportOptions } from "./proxy-lib";
+import { piTransportOptions } from "./proxy-lib.ts";
 
 function nodePath(): string | undefined {
 	if (process.env.AKIT_RIG_NODE) return process.env.AKIT_RIG_NODE;
 	const fs = require("node:fs");
-	// The runtime that hosts the test suite: bun typically lives next to node
-	// in the same installation bin dir (fnm/nvm layout).
+	// The runtime that hosts the test suite (fnm/nvm keep node in the same
+	// installation bin dir as the running interpreter).
 	const execDir = path.dirname(process.execPath);
 	const candidates = [
 		process.env.PI_NODE,
@@ -51,12 +55,12 @@ function nodePath(): string | undefined {
 }
 
 function undiciModulePath(): string | undefined {
-	// Path-based resolution (bun's require.resolve returns bare specifiers for
-	// nested deps): pi's own undici copy lives in its node_modules.
+	// Path-based resolution: pi's own undici copy lives in its node_modules
+	// and is not re-exported through the package entry point.
 	try {
 		const fs = require("node:fs");
 		const candidate = path.resolve(
-			import.meta.dir,
+			import.meta.dirname,
 			"../../node_modules/@earendil-works/pi-coding-agent/node_modules/undici/index.js",
 		);
 		return fs.existsSync(candidate) ? candidate : undefined;
@@ -67,7 +71,7 @@ function undiciModulePath(): string | undefined {
 
 const node = nodePath();
 const undiciPath = undiciModulePath();
-const rigChild = path.resolve(import.meta.dir, "rig-child.mjs");
+const rigChild = path.resolve(import.meta.dirname, "rig-child.mjs");
 
 interface RigResult {
 	ok: boolean;
@@ -95,8 +99,9 @@ function runCase(testCase: string): Promise<RigResult> {
 }
 
 describe("proxy transport rig (short timeout bounds, proxy ON and OFF)", () => {
-	test.skipIf(node === undefined || undiciPath === undefined)(
+	test(
 		"transport options are the real piTransportOptions block",
+		{ skip: node === undefined || undiciPath === undefined },
 		() => {
 			// The rig child embeds the same shape; pin it here so an option change
 			// forces a conscious rig update.
@@ -110,29 +115,30 @@ describe("proxy transport rig (short timeout bounds, proxy ON and OFF)", () => {
 		},
 	);
 
-	test.skipIf(node === undefined || undiciPath === undefined)(
+	test(
 		"proxy OFF: short configured timeout fires (undici 300s default would let it pass)",
+		{ skip: node === undefined || undiciPath === undefined },
 		async () => {
 			const result = await runCase("off-fire");
 			expect(result.ok).toBe(false);
 			expect(result.code).toContain("HEADERS_TIMEOUT");
 			expect(result.elapsedMs).toBeLessThan(2500);
 		},
-		20000,
 	);
 
-	test.skipIf(node === undefined || undiciPath === undefined)(
+	test(
 		"proxy OFF: delayed answer passes when the configured timeout allows it",
+		{ skip: node === undefined || undiciPath === undefined },
 		async () => {
 			const result = await runCase("off-pass");
 			expect(result.ok).toBe(true);
 			expect(result.status).toBe(200);
 		},
-		20000,
 	);
 
-	test.skipIf(node === undefined || undiciPath === undefined)(
+	test(
 		"proxy ON (EnvHttpProxyAgent + local forward proxy): short configured timeout fires",
+		{ skip: node === undefined || undiciPath === undefined },
 		async () => {
 			const result = await runCase("on-fire");
 			expect(result.ok).toBe(false);
@@ -142,11 +148,11 @@ describe("proxy transport rig (short timeout bounds, proxy ON and OFF)", () => {
 			expect(result.connectCount).toBeGreaterThanOrEqual(1);
 			expect(result.backendHits).toBeGreaterThanOrEqual(1);
 		},
-		20000,
 	);
 
-	test.skipIf(node === undefined || undiciPath === undefined)(
+	test(
 		"proxy ON: delayed answer passes when the configured timeout allows it",
+		{ skip: node === undefined || undiciPath === undefined },
 		async () => {
 			const result = await runCase("on-pass");
 			expect(result.ok).toBe(true);
@@ -154,6 +160,5 @@ describe("proxy transport rig (short timeout bounds, proxy ON and OFF)", () => {
 			expect(result.connectCount).toBeGreaterThanOrEqual(1);
 			expect(result.backendHits).toBeGreaterThanOrEqual(1);
 		},
-		20000,
 	);
 });

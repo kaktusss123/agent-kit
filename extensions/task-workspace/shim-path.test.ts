@@ -10,8 +10,9 @@ import {
 } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { expect, test } from "bun:test";
-import { resolveGitOnPath } from "./shim-path";
+import { test } from "node:test";
+import { expect } from "../../tests/support/expect.ts";
+import { resolveGitOnPath } from "./shim-path.ts";
 
 test("resolveGitOnPath skips the excluded dir even when it is first on PATH", async () => {
   const root = await mkdtemp(join(tmpdir(), "agent-kit-git-path-"));
@@ -68,13 +69,13 @@ test("resolveGitOnPath skips a foreign shim copy dir and resolves later real git
     const realGit = join(bin, "git");
     await mkdir(foreign);
     await mkdir(bin);
-    const shimScript = await readFile(join(import.meta.dir, "shim", "git"), "utf8");
+    const shimScript = await readFile(join(import.meta.dirname, "shim", "git"), "utf8");
     await writeFile(foreignGit, shimScript);
     await chmod(foreignGit, 0o755);
     await writeFile(realGit, "#!/bin/sh\nexit 0\n");
     await chmod(realGit, 0o755);
 
-    const resolved = resolveGitOnPath(`${foreign}:${bin}`, root, join(import.meta.dir, "shim"));
+    const resolved = resolveGitOnPath(`${foreign}:${bin}`, root, join(import.meta.dirname, "shim"));
 
     expect(resolved).toBe(realpathSync(realGit));
     // The content check alone must reject the copy even without excludeDir.

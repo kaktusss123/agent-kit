@@ -18,8 +18,8 @@
 
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { Text } from "@earendil-works/pi-tui";
-import { type TextUsageRow, formatUsageRow } from "./format";
-import { PerfTracker } from "./timing";
+import { type TextUsageRow, formatUsageRow } from "./format.ts";
+import { PerfTracker } from "./timing.ts";
 
 export default function (pi: ExtensionAPI) {
 	const tracker = new PerfTracker();

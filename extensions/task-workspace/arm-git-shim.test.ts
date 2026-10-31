@@ -3,27 +3,24 @@ import { realpathSync } from "node:fs";
 import { chmod, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join } from "node:path";
-import { expect, test } from "bun:test";
-
+import { test } from "node:test";
+import { expect } from "../../tests/support/expect.ts";
 interface HookContext {
   command: string;
   cwd: string;
   env: Record<string, string>;
 }
 
-const INDEX_PATH = join(import.meta.dir, "index.ts");
-const SHIM_DIR = join(import.meta.dir, "shim");
+const INDEX_PATH = join(import.meta.dirname, "index.ts");
+const SHIM_DIR = join(import.meta.dirname, "shim");
 
 function runHook(context: HookContext, taskRoot: string): HookContext {
   const script = `
-    import { mock } from "bun:test";
-    mock.module("@earendil-works/pi-coding-agent", () => ({ createBashTool: () => ({}) }));
-    mock.module("typebox", () => ({ Type: {} }));
     const { armGitShim } = await import(${JSON.stringify(INDEX_PATH)});
     console.log(JSON.stringify(armGitShim(${JSON.stringify(taskRoot)})(${JSON.stringify(context)})));
   `;
   return JSON.parse(
-    execFileSync(process.execPath, ["-e", script], { encoding: "utf8" }),
+    execFileSync(process.execPath, ["--input-type=module", "-e", script], { encoding: "utf8" }),
   ) as HookContext;
 }
 
@@ -89,7 +86,7 @@ test("armGitShim never selects a foreign shim copy dir when it is first on PATH"
     const git = join(bin, "git");
     await mkdir(foreign);
     await mkdir(bin);
-    await writeFile(foreignGit, await readFile(join(import.meta.dir, "shim", "git"), "utf8"));
+    await writeFile(foreignGit, await readFile(join(import.meta.dirname, "shim", "git"), "utf8"));
     await chmod(foreignGit, 0o755);
     await writeFile(git, "#!/bin/sh\nexit 0\n");
     await chmod(git, 0o755);

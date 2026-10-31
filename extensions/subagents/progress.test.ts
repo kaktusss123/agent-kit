@@ -1,8 +1,9 @@
-import { describe, expect, test } from "bun:test";
+import { describe, test } from "node:test";
+import { expect } from "../../tests/support/expect.ts";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
-import { loadProgress, progressFileName, saveProgress, validateProgress } from "./progress";
+import { loadProgress, progressFileName, saveProgress, validateProgress } from "./progress.ts";
 
 const input = { achieved: "done", currentWork: "test", nextStep: "commit" };
 

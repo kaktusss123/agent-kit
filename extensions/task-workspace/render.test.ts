@@ -1,6 +1,7 @@
-import { describe, expect, test } from "bun:test";
+import { describe, test } from "node:test";
+import { expect } from "../../tests/support/expect.ts";
 import type { Theme } from "@earendil-works/pi-coding-agent";
-import type { DirtyState } from "./types";
+import type { DirtyState } from "./types.ts";
 import {
 	renderCheckpointCommitCall,
 	renderCheckpointCommitResult,
@@ -12,7 +13,7 @@ import {
 	renderTaskStatusResult,
 	type TaskStatusResultLike,
 	type ToolResultLike,
-} from "./render";
+} from "./render.ts";
 
 /** Plain-text fake theme: assertions read like `[accent]…[/accent]`. */
 function fakeTheme(): Theme {

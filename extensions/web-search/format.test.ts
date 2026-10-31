@@ -1,6 +1,7 @@
-import { describe, expect, test } from "bun:test";
-import type { WebSearchResult } from "./codex";
-import { formatForModel } from "./format";
+import { describe, test } from "node:test";
+import { expect } from "../../tests/support/expect.ts";
+import type { WebSearchResult } from "./codex.ts";
+import { formatForModel } from "./format.ts";
 
 function result(overrides: Partial<WebSearchResult> = {}): WebSearchResult {
 	return {
