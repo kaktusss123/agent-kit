@@ -7,16 +7,17 @@
  * discovery, cancelled answers, real timeout) is covered by
  * live/status-verify.mjs.
  */
-import { describe, expect, test } from "bun:test";
+import { describe, test } from "node:test";
+import { expect } from "../../tests/support/expect.ts";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
-import registerExtension, { agentDetailView } from "./index";
-import type { AgentSnapshot } from "./types";
-import type { WorkspaceRunView } from "./workspace-runs";
-import { handleInspectionRequest } from "../inspection-channel";
-import { inspectionRegistry, setSubagentInspectionSource } from "./inspection-seam";
+import registerExtension, { agentDetailView } from "./index.ts";
+import type { AgentSnapshot } from "./types.ts";
+import type { WorkspaceRunView } from "./workspace-runs.ts";
+import { handleInspectionRequest } from "../inspection-channel/index.ts";
+import { inspectionRegistry, setSubagentInspectionSource } from "./inspection-seam.ts";
 
 interface CommandDef {
 	description?: string;
@@ -331,33 +332,35 @@ describe("agentDetailView (shared with subagent op=status)", () => {
 		});
 	});
 
-	test.each(["done", "partial", "blocked"] as const)("projects %s terminal facts without leaking full outcomes", (status) => {
-		const view: WorkspaceRunView = {
-			state: "settled",
-			workspace: "/tmp/ws",
-			deadlineMsLeft: 0,
-			terminal: {
-				status, dispatched: true, workspace: "/tmp/ws", reason: "runtime reason",
-				last_output: "private full output",
-				child_may_have_mutated_repo: true,
-				git_facts: { branch: "feat/test", headSha: "abc", dirty: { staged: [], unstaged: [] } },
-				result: {
-					status: "blocked", summary: "Product summary",
-					changed_scope: ["private path"], verification: [], gaps: ["private gap"],
-					contract_conflicts: ["private conflict"],
+	for (const status of ["done", "partial", "blocked"] as const) {
+		test(`projects ${status} terminal facts without leaking full outcomes`, () => {
+			const view: WorkspaceRunView = {
+				state: "settled",
+				workspace: "/tmp/ws",
+				deadlineMsLeft: 0,
+				terminal: {
+					status, dispatched: true, workspace: "/tmp/ws", reason: "runtime reason",
+					last_output: "private full output",
+					child_may_have_mutated_repo: true,
+					git_facts: { branch: "feat/test", headSha: "abc", dirty: { staged: [], unstaged: [] } },
+					result: {
+						status: "blocked", summary: "Product summary",
+						changed_scope: ["private path"], verification: [], gaps: ["private gap"],
+						contract_conflicts: ["private conflict"],
+					},
 				},
-			},
-		};
-		const before = structuredClone(view);
-		const snapshot = snap({ state: "completed", alive: false });
-		const detail = agentDetailView(snapshot, view);
-		expect(detail.state).toBe("completed");
-		expect(detail.run).toEqual({
-			workspace: "/tmp/ws", state: "settled", status, deadlineMsLeft: 0,
-			terminal: { status, reason: "runtime reason", result: { status: "blocked", summary: "Product summary" } },
+			};
+			const before = structuredClone(view);
+			const snapshot = snap({ state: "completed", alive: false });
+			const detail = agentDetailView(snapshot, view);
+			expect(detail.state).toBe("completed");
+			expect(detail.run).toEqual({
+				workspace: "/tmp/ws", state: "settled", status, deadlineMsLeft: 0,
+				terminal: { status, reason: "runtime reason", result: { status: "blocked", summary: "Product summary" } },
+			});
+			expect(view).toEqual(before);
 		});
-		expect(view).toEqual(before);
-	});
+	}
 
 	test("expired deadline and recovery ladder do not imply a terminal outcome", () => {
 		const detail = agentDetailView(snap(), {

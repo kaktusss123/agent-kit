@@ -4,12 +4,16 @@
  * disk blocks the next tool call, and a replacement report marks the previous
  * one stale before writing the fresh record.
  */
-import { describe, expect, test } from "bun:test";
+import { describe, test } from "node:test";
+import { createRequire } from "node:module";
+import { expect } from "../../tests/support/expect.ts";
+
+const require = createRequire(import.meta.url);
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
-import { envelopeFileName, validateEnvelopeRecord } from "./envelope";
-import { loadProgress } from "./progress";
+import { envelopeFileName, validateEnvelopeRecord } from "./envelope.ts";
+import { loadProgress } from "./progress.ts";
 
 const VALID_ENVELOPE = {
 	status: "done",

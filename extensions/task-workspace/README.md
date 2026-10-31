@@ -68,7 +68,7 @@ runs with no host context. `bootstrap.ts` is the host-independent
 dependency-provisioning core behind the ensure flow's bootstrap step.
 
 `shim/` holds the git guard: `shim/git` (a dumb POSIX PATH shim),
-`shim/policy.mjs` (the routing policy, runnable under node or bun), and
+`shim/policy.mjs` (the routing policy, plain ESM on Node.js), and
 `shim/classify.mjs` (the shared subcommand/flag classification tables,
 re-exported by `guard.ts` — the single copy in the repository). The shim is
 committed executable; installs are symlinks, so the exec bit carries over.

@@ -1,13 +1,14 @@
-import { describe, expect, test } from "bun:test";
-import { shouldCreateTerminalSink, type AgentRuntimeEvent } from "./events";
-import { toWarpEvent, WarpCliAgentSink } from "./warp-sink";
+import { describe, test } from "node:test";
+import { expect } from "../../tests/support/expect.ts";
+import { shouldCreateTerminalSink, type AgentRuntimeEvent } from "./events.ts";
+import { toWarpEvent, WarpCliAgentSink } from "./warp-sink.ts";
 import {
 	buildWarpFrame,
 	finalizeWarpFrame,
 	isInsideTmux,
 	isWarpProtocolAdvertised,
 	wrapTmuxPassthrough,
-} from "./warp";
+} from "./warp.ts";
 
 const ENVELOPE = {
 	sessionId: "session-123",

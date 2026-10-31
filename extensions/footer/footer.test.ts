@@ -1,5 +1,6 @@
-import { describe, expect, test } from "bun:test";
-import { costParts } from "./index";
+import { describe, test } from "node:test";
+import { expect } from "../../tests/support/expect.ts";
+import { costParts } from "./index.ts";
 
 describe("costParts", () => {
 	test("main-only cost below subagent threshold shows no parentheses", () => {

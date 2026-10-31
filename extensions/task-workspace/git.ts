@@ -11,8 +11,8 @@ import {
   encodeTaskWorkspaceName,
   joinTaskWorkspaceName,
   taskWorkspaceLayout,
-} from "./workspace-path";
-import { describeOwner, type OwnerView } from "./owner-lock";
+} from "./workspace-path.ts";
+import { describeOwner, type OwnerView } from "./owner-lock.ts";
 import { homedir } from "node:os";
 import { spawn, spawnSync } from "node:child_process";
 import { mkdir, readdir } from "node:fs/promises";
@@ -24,7 +24,7 @@ import type {
   LinkedWorktreeFact,
   ManagedRepoStatus,
   PathClassification,
-} from "./types";
+} from "./types.ts";
 
 function streamText(stream: Readable): Promise<string> {
   const { promise, resolve, reject } = Promise.withResolvers<string>();
@@ -35,7 +35,7 @@ function streamText(stream: Readable): Promise<string> {
   return promise;
 }
 
-// Host-neutral git runner: node child_process (works under Bun and Node),
+// Host-neutral git runner: node child_process,
 // async so long operations (fetch) never block the host event loop.
 export async function git(
   cwd: string,

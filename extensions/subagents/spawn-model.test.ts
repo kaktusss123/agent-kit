@@ -8,12 +8,13 @@
  * Every case runs against a throwaway PI_CODING_AGENT_DIR: nothing here may
  * depend on (or accidentally read) the real user bindings.
  */
-import { afterEach, describe, expect, test } from "bun:test";
+import { afterEach, describe, test } from "node:test";
+import { expect } from "../../tests/support/expect.ts";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
-import type { ModelLike } from "./model-spec";
-import { effectiveRole, resolveSpawnPair } from "./spawn-model";
+import type { ModelLike } from "./model-spec.ts";
+import { effectiveRole, resolveSpawnPair } from "./spawn-model.ts";
 
 const MAIN_MODEL: ModelLike = { provider: "prov-a", id: "model-a", reasoning: true };
 const BIG_MODEL: ModelLike = {

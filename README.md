@@ -23,8 +23,10 @@ Claude Code грузит из `~/.claude/skills/agent-kit` сам.
 
 ## Установка
 
-Нужны Node.js >= 24 и `git`; для `agent-kit task` и hooks Claude Code —
-[`bun`](https://bun.sh); для Pi-части — установленный Pi.
+Нужны Node.js >= 24 и `git`; для Pi-части — установленный Pi. `agent-kit task`
+и hooks Claude Code выполняются тем же Node.js: отдельный JavaScript-runtime,
+сборка и установка пакетов не нужны, TypeScript-исходники исполняются
+напрямую.
 
 ```sh
 git clone <url> ~/src/agent-kit
@@ -405,8 +407,9 @@ Claude Code получает:
 
 Ограничения ([ADR-0008](docs/adr/adr-0008.md)):
 
-- Без `bun` hooks молча пропускают всё (fail-open), а `agent-kit task`
-  возвращает ошибку; сессия работает по разделу «Without the guard».
+- Если плагин не загружен (нет окружения hook'ов, отсутствует CLI в
+  checkout), hooks молча пропускают всё (fail-open), а явный `agent-kit task`
+  возвращает JSON-ошибку; сессия работает по разделу «Without the guard».
 - Если управляемые настройки запрещают сторонние hooks
   (`allowManagedHooksOnly`), плагин загружается, но его hooks не вызываются и
   `AGENT_KIT_POLICY` не появляется. Это политика managed settings, а не
@@ -489,7 +492,8 @@ tests/skills/run.sh             # frontmatter, references, ссылки skill://
 tests/snapshot/run.sh           # snapshot CLI: атомарность, блокировка, retention,
                                  # строгая проверка манифеста, отказ на грязном
                                  # checkout, SIGKILL и параллельные процессы
-bun test extensions/<name>/     # расширения (bun:test)
+node --test --test-timeout=180000 'extensions/**/*.test.ts'  # расширения
+node --test --test-timeout=180000 'extensions/<name>/*.test.ts'  # одно расширение
 ```
 
 Тестам расширений нужны пакеты Pi в `node_modules/` (gitignored): симлинки

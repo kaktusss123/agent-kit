@@ -7,7 +7,7 @@
  * the same process. This script is that second (third, ...) process; it is a
  * fixture, not part of the extension surface.
  *
- * Usage: bun owner-lock-process.ts <mode> <taskRoot> <workspace> [extra]
+ * Usage: node owner-lock-process.ts <mode> <taskRoot> <workspace> [extra]
  *   hold              acquire, print the result, keep the lease while stdin
  *                     stays open, then release and print the release result
  *   owner-with-child  acquire, spawn a long-lived "child", record it in the
@@ -24,7 +24,7 @@ import {
   describeOwner,
   recordOwnerChild,
   releaseOwnerLease,
-} from "../owner-lock";
+} from "../owner-lock.ts";
 
 const [mode, taskRoot, workspace, extra] = process.argv.slice(2);
 

@@ -4,11 +4,12 @@
  * - internal retire() (terminal termination preserving the record)
  * - workspace event routing (event ownership) + runtime wait() lock
  */
-import { describe, expect, test } from "bun:test";
+import { describe, test } from "node:test";
+import { expect } from "../../tests/support/expect.ts";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
-import { LocalSubagentRuntime } from "./controller";
+import { LocalSubagentRuntime } from "./controller.ts";
 import {
 	autoAcceptPrompt,
 	confirmReadiness,
@@ -17,10 +18,10 @@ import {
 	type FakeHarness,
 	settleRun,
 	startRun,
-} from "./fake-rpc";
-import { parseReadinessPayload } from "./readiness";
-import { validateEnvelope, validateEnvelopeRecord } from "./envelope";
-import type { SubagentModelEvent } from "./types";
+} from "./fake-rpc.ts";
+import { parseReadinessPayload } from "./readiness.ts";
+import { validateEnvelope, validateEnvelopeRecord } from "./envelope.ts";
+import type { SubagentModelEvent } from "./types.ts";
 
 function makeRuntime(extra?: { readinessTimeoutMs?: number }) {
 	const harness = createFakeSpawnFactory();

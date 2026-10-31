@@ -27,8 +27,8 @@
 // `hosts` file, and the bootstrapped ~/.local/bin/agent-kit in `command.tsv`.
 //
 // Required runtime: Node.js >= 24, no package installation and no network.
-// `task` still runs extensions/task-workspace/cli.ts through Bun and is
-// delegated, never reimplemented here.
+// `task` runs extensions/task-workspace/cli.ts with this same Node.js process
+// and is delegated, never reimplemented here.
 //
 // This file is the dispatcher only: argument validation, exit-code policy and
 // the command table. Everything it calls owns one thing.

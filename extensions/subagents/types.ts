@@ -1,12 +1,12 @@
 /**
  * Shared types for the subagents extension.
  *
- * This module must stay free of pi imports so pure unit tests (bun test)
+ * This module must stay free of pi imports so pure unit tests (node --test)
  * can import it without the pi package being resolvable.
  */
-import type { AskInput } from "../ask/contract";
-import type { RunHistory } from "./progress";
-import type { LastAssistantText } from "./last-text";
+import type { AskInput } from "../ask/contract.ts";
+import type { RunHistory } from "./progress.ts";
+import type { LastAssistantText } from "./last-text.ts";
 
 /** Logical agent state. Process liveness is tracked separately (`alive`). */
 export type AgentState =

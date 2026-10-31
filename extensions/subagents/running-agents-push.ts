@@ -39,7 +39,7 @@
  *   inert: a missing ctx/ui, a throwing source, or a throwing `setStatus`
  *   must never surface into extension handlers.
  */
-import type { AgentState } from "./types";
+import type { AgentState } from "./types.ts";
 
 /** Fixed status key of the running-agents channel (wire contract v1). */
 export const RUNNING_AGENTS_STATUS_KEY = "agentkit:running-agents";

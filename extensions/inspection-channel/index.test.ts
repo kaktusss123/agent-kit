@@ -1,11 +1,15 @@
-import { describe, expect, test } from "bun:test";
+import { describe, test } from "node:test";
+import { createRequire } from "node:module";
+import { expect } from "../../tests/support/expect.ts";
+
+const require = createRequire(import.meta.url);
 import { spawn, spawnSync } from "node:child_process";
 import { EventEmitter } from "node:events";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
-import { frameJsonLines, handleInspectionRequest, startInheritedChannel, validateInheritedFd, validateInheritedFdPair, validateRequest, waitForDrain } from "./index";
-import { inspectionRegistry } from "../subagents/inspection-seam";
+import { frameJsonLines, handleInspectionRequest, startInheritedChannel, validateInheritedFd, validateInheritedFdPair, validateRequest, waitForDrain } from "./index.ts";
+import { inspectionRegistry } from "../subagents/inspection-seam.ts";
 
 const deps = { cwd: process.cwd(), inspect: () => [{ id: "sa-1", state: "running" }] };
 
@@ -97,50 +101,77 @@ describe("inherited inspection protocol", () => {
 		expect(validateInheritedFdPair("4", "1")).toBeUndefined();
 	});
 
-	// bun's child_process wraps extra stdio fds in active Sockets that consume
-	// the data into their own buffers, and destroying any stream on such an fd
-	// closes it despite autoClose:false — the inherited-descriptor path cannot
-	// be exercised through spawn stdio under bun; production host is Node 24
-	// (real-Pi probes) and the fifo test below keeps real-kernel-fd coverage
-	// on every runtime.
-	test.skipIf(process.isBun)("accepts and uses a real inherited bidirectional socket pair", async () => {
-		const child = spawn(process.execPath, ["-e", `
-			const fs = require("node:fs");
-			fs.writeSync(3, JSON.stringify({ v: 1, id: "child-pair", op: "snapshot", area: "subagents" }) + "\\n");
-			let input = "";
-			const chunk = Buffer.alloc(1024);
-			while (!input.includes("\\n")) {
-				const count = fs.readSync(4, chunk, 0, chunk.length, null);
-				if (count === 0) process.exit(2);
-				input += chunk.toString("utf8", 0, count);
-			}
-			process.stdout.write(input);
-		`], { stdio: ["ignore", "pipe", "inherit", "pipe", "pipe"] });
-		const requestFd = (child.stdio[3] as unknown as { _handle: { fd: number } })._handle.fd;
-		const responseFd = (child.stdio[4] as unknown as { _handle: { fd: number } })._handle.fd;
-		const pair = validateInheritedFdPair(String(requestFd), String(responseFd));
-		expect(pair).toEqual({ requestFd, responseFd });
-		expect(startInheritedChannel(requestFd, responseFd, () => process.cwd())).toBe(true);
+	// A child writing on fd 3 and reading on fd 4 is the shape the production
+	// host gives the agent (real inherited descriptors). Node's spawn pipes
+	// are non-blocking, so the parent-side descriptors here come from a fifo
+	// pair opened O_RDWR: a blocking descriptor keeps the fs streams from
+	// failing with EAGAIN, and the child still receives fds 3 and 4.
+	const inheritedStdioChildScript = `
+		const fs = require("node:fs");
+		fs.writeSync(3, JSON.stringify({ v: 1, id: "child-pair", op: "snapshot", area: "subagents" }) + "\\n");
+		let input = "";
+		const chunk = Buffer.alloc(1024);
+		while (!input.includes("\\n")) {
+			const count = fs.readSync(4, chunk, 0, chunk.length, null);
+			if (count === 0) process.exit(2);
+			input += chunk.toString("utf8", 0, count);
+		}
+		process.stdout.write(input);
+	`;
 
-		const output: Buffer[] = [];
-		child.stdout!.on("data", (chunk: Buffer) => output.push(chunk));
-		const exit = new Promise<number | null>((resolve, reject) => {
-			child.once("error", reject);
-			child.once("exit", (code) => resolve(code));
+	test("accepts and uses a real inherited bidirectional descriptor pair", { skip: !hasMkfifo }, async () => {
+		const dir = fs.mkdtempSync(path.join(os.tmpdir(), "inspection-pair-"));
+		const requestPath = path.join(dir, "request.fifo");
+		const responsePath = path.join(dir, "response.fifo");
+		expect(spawnSync("mkfifo", [requestPath, responsePath], { stdio: "ignore" }).status).toBe(0);
+		const requestRw = fs.openSync(requestPath, fs.constants.O_RDWR);
+		const responseRw = fs.openSync(responsePath, fs.constants.O_RDWR);
+		const child = spawn(process.execPath, ["-e", inheritedStdioChildScript], {
+			stdio: ["ignore", "pipe", "inherit", requestRw, responseRw],
 		});
-		let timeout: ReturnType<typeof setTimeout> | undefined;
-		const code = await Promise.race([
-			exit,
-			new Promise<never>((_, reject) => { timeout = setTimeout(() => { child.kill(); reject(new Error("inherited descriptor test timed out")); }, 5000); }),
-		]);
-		if (timeout) clearTimeout(timeout);
-		expect(code).toBe(0);
-		expect(JSON.parse(Buffer.concat(output).toString("utf8"))).toMatchObject({
-			v: 1, id: "child-pair", ok: true, result: { area: "subagents", data: { agents: expect.any(Array) } },
-		});
+		// The child holds the write end of `request` and the read end of
+		// `response`, so these opens return at once. Dropping the read-write
+		// descriptors leaves the parent with a read end that reaches EOF when
+		// the child exits — a read-write descriptor would keep the fifo open
+		// and park the channel's read forever.
+		const requestFd = fs.openSync(requestPath, fs.constants.O_RDONLY);
+		const responseFd = fs.openSync(responsePath, fs.constants.O_WRONLY);
+		fs.closeSync(requestRw);
+		fs.closeSync(responseRw);
+		try {
+			expect(validateInheritedFdPair(String(requestFd), String(responseFd))).toEqual({ requestFd, responseFd });
+			expect(startInheritedChannel(requestFd, responseFd, () => process.cwd())).toBe(true);
+
+			const output: Buffer[] = [];
+			child.stdout!.on("data", (chunk: Buffer) => output.push(chunk));
+			const exit = new Promise<number | null>((resolve, reject) => {
+				child.once("error", reject);
+				child.once("exit", (code) => resolve(code));
+			});
+			let timeout: ReturnType<typeof setTimeout> | undefined;
+			const code = await Promise.race([
+				exit,
+				new Promise<never>((_, reject) => { timeout = setTimeout(() => { child.kill(); reject(new Error("inherited descriptor test timed out")); }, 5000); }),
+			]);
+			if (timeout) clearTimeout(timeout);
+			expect(code).toBe(0);
+			expect(JSON.parse(Buffer.concat(output).toString("utf8"))).toMatchObject({
+				v: 1, id: "child-pair", ok: true, result: { area: "subagents", data: { agents: expect.any(Array) } },
+			});
+		} finally {
+			// The channel is process-wide state: release it so later tests bind
+			// their own descriptor pair instead of inheriting this one.
+			const registry = (globalThis as { [key: symbol]: { channel?: { input: fs.ReadStream } } | undefined })[Symbol.for("agentkit.inspection")];
+			registry?.channel?.input.emit("error", new Error("test reset"));
+			for (const fd of [requestFd, responseFd]) {
+				try { fs.closeSync(fd); } catch { /* already closed by the runtime */ }
+			}
+			if (child.exitCode === null) child.kill();
+			fs.rmSync(dir, { recursive: true, force: true });
+		}
 	});
 
-	test.skipIf(!hasMkfifo)("runs the full request/response cycle over real kernel fifo descriptors on every runtime", async () => {
+	test("runs the full request/response cycle over real kernel fifo descriptors", { skip: !hasMkfifo }, async () => {
 		const dir = fs.mkdtempSync(path.join(os.tmpdir(), "inspection-fifo-"));
 		const requestPath = path.join(dir, "request.fifo");
 		const responsePath = path.join(dir, "response.fifo");
@@ -236,7 +267,7 @@ describe("inherited inspection protocol", () => {
 	// The cross-reimport registry is keyed on globalThis, so this exercises
 	// the same object a re-evaluated extension factory would find after /reload
 	// or a session-cwd change.
-	test.skipIf(!hasMkfifo)("registers one singleton channel and stop clears the registry", () => {
+	test("registers one singleton channel and stop clears the registry", { skip: !hasMkfifo }, () => {
 		const registry = (globalThis as { [key: symbol]: { channel?: { input: fs.ReadStream }; cwd?: string } | undefined })[Symbol.for("agentkit.inspection")];
 		// Absorb any channel an earlier test in this file left registered.
 		const leftover = registry?.channel;

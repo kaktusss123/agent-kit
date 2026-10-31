@@ -38,8 +38,8 @@ import {
   resolveTaskWorkspacePath,
   taskWorkspaceIdentity,
   underTaskRoot,
-} from "./git";
-import type { LinkedWorktreeFact } from "./types";
+} from "./git.ts";
+import type { LinkedWorktreeFact } from "./types.ts";
 
 /** customType of the session-history entry recording one successful
  *  ensure_task_repo. Data shape: `{ task: string, worktree: string }`. */

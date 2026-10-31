@@ -8,7 +8,8 @@
  * (`extension_ui_request`/setStatus) is owned by pi and pinned by the frozen
  * contract in the module doc comment.
  */
-import { describe, expect, test } from "bun:test";
+import { describe, test } from "node:test";
+import { expect } from "../../tests/support/expect.ts";
 import {
 	attachRunningAgentsPush,
 	formatRunningAgentsFrame,
@@ -19,7 +20,7 @@ import {
 	runningAgentsSignature,
 	type RunningAgentRecord,
 	type RunningAgentRow,
-} from "./running-agents-push";
+} from "./running-agents-push.ts";
 
 const byteLength = (text: string) => new TextEncoder().encode(text).length;
 

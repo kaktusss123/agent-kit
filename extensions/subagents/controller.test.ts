@@ -1,9 +1,10 @@
-import { describe, expect, test } from "bun:test";
+import { describe, test } from "node:test";
+import { expect } from "../../tests/support/expect.ts";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
-import { LocalSubagentRuntime } from "./controller";
-import { ProviderExtensionError } from "./provider-extensions";
+import { LocalSubagentRuntime } from "./controller.ts";
+import { ProviderExtensionError } from "./provider-extensions.ts";
 import {
 	formatLiveSnapshot,
 	formatModelEvent,
@@ -12,16 +13,16 @@ import {
 	formatStatsBrief,
 	formatStatusList,
 	formatTokenCount,
-} from "./delivery";
+} from "./delivery.ts";
 import {
 	autoAcceptPrompt,
 	createFakeSpawnFactory,
 	type FakeRpcProcess,
 	settleRun,
 	startRun,
-} from "./fake-rpc";
-import { loadResult, sumSessionCost } from "./result-store";
-import type { SpawnOptions, SubagentModelEvent } from "./types";
+} from "./fake-rpc.ts";
+import { loadResult, sumSessionCost } from "./result-store.ts";
+import type { SpawnOptions, SubagentModelEvent } from "./types.ts";
 
 function makeRuntime(opts?: {
 	killGraceMs?: number;

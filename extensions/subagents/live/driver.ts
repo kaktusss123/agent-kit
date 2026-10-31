@@ -6,8 +6,8 @@
  * streaming). Not part of the shipped extension wiring.
  */
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
-import { LocalSubagentRuntime } from "../controller";
-import { attachDelivery } from "../wiring";
+import { LocalSubagentRuntime } from "../controller.ts";
+import { attachDelivery } from "../wiring.ts";
 
 interface LogEntry {
 	at: number;

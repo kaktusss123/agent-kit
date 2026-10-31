@@ -3,7 +3,7 @@
  *
  * Row layout and thresholds mirror oh-my-pi's usage rows:
  * timestamp · Δ turn time · input · output · cache read · TTFT · tok/s.
- * No pi imports here so `bun test` runs without the host.
+ * No pi imports here so `node --test` runs without the host.
  */
 
 /** Below this the rate is nonsense (cached/instant responses yield absurd tok/s). */

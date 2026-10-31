@@ -44,7 +44,7 @@ list for free. No external files, no mirror entries.
 ## Tests
 
 ```sh
-bun test extensions/todo/
+node --test 'extensions/todo/*.test.ts'
 ```
 
 The pure modules carry contract tests ported from the OMP suite (ops

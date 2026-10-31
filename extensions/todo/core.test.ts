@@ -1,5 +1,6 @@
-import { describe, expect, test } from "bun:test";
-import { phasesWith } from "./test-fixtures";
+import { describe, test } from "node:test";
+import { expect } from "../../tests/support/expect.ts";
+import { phasesWith } from "./test-fixtures.ts";
 import {
 	type TodoPhase,
 	applyTodoOp,
@@ -18,7 +19,7 @@ import {
 	phasesToMarkdown,
 	resolveTodoParams,
 	selectCollapsedTodos,
-} from "./core";
+} from "./core.ts";
 
 describe("todo ops", () => {
 	test("init creates pending phases and auto-promotes the earliest task", () => {

@@ -8,7 +8,7 @@
  * no fallback: an unresolvable spec is an error, never a different model or
  * a silently lowered reasoning level.
  *
- * Pure module: no pi imports, so bun tests can exercise it directly.
+ * Pure module: no pi imports, so unit tests can exercise it directly.
  */
 
 /** Pi thinking levels (mirrors pi-ai `ModelThinkingLevel`). */

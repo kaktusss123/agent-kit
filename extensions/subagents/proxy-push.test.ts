@@ -2,13 +2,14 @@
  * Tests for LiveSubagentRuntime.pushProxyPreference — the live-child proxy
  * propagation over the existing RPC prompt path.
  */
-import { describe, expect, test } from "bun:test";
+import { describe, test } from "node:test";
+import { expect } from "../../tests/support/expect.ts";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
-import { LocalSubagentRuntime } from "./controller";
-import { autoAcceptPrompt, createFakeSpawnFactory, type FakeRpcProcess } from "./fake-rpc";
-import type { SubagentModelEvent } from "./types";
+import { LocalSubagentRuntime } from "./controller.ts";
+import { autoAcceptPrompt, createFakeSpawnFactory, type FakeRpcProcess } from "./fake-rpc.ts";
+import type { SubagentModelEvent } from "./types.ts";
 
 function makeRuntime(opts?: { dispatchTimeoutMs?: number }) {
 	const harness = createFakeSpawnFactory();

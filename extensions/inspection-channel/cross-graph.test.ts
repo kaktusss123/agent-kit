@@ -6,11 +6,12 @@
  * each evaluate their own copy of the seam module. Module-level state would
  * fork per graph; only globalThis-backed state crosses this boundary.
  */
-import { afterAll, describe, expect, test } from "bun:test";
+import { after as afterAll, describe, test } from "node:test";
+import { expect } from "../../tests/support/expect.ts";
 import { createRequire } from "node:module";
 import * as path from "node:path";
 
-const repoRoot = path.resolve(import.meta.dir, "..", "..");
+const repoRoot = path.resolve(import.meta.dirname, "..", "..");
 
 // Resolve the exact jiti copy pi itself loads extensions with.
 const require = createRequire(import.meta.url);

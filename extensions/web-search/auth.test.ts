@@ -1,5 +1,6 @@
-import { describe, expect, test } from "bun:test";
-import { extractAccountIdFromToken, resolveCodexCredential, type CodexTokenSource, type StoredCredentialReader } from "./auth";
+import { describe, test } from "node:test";
+import { expect } from "../../tests/support/expect.ts";
+import { extractAccountIdFromToken, resolveCodexCredential, type CodexTokenSource, type StoredCredentialReader } from "./auth.ts";
 
 function tokenWithAccount(accountId: string | null): string {
 	const auth: Record<string, unknown> = {};

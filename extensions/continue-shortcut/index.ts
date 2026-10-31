@@ -14,7 +14,7 @@
 
 import { readFileSync } from "node:fs";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
-import { type ContinueDecision, CONTINUE_SHORTCUT_CUSTOM_TYPE, decideContinueShortcut } from "./core";
+import { type ContinueDecision, CONTINUE_SHORTCUT_CUSTOM_TYPE, decideContinueShortcut } from "./core.ts";
 
 export default function (pi: ExtensionAPI) {
 	// Prompt text lives in a .md file next to this module. pi loads extensions

@@ -22,15 +22,15 @@ import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
-import { EnvelopeSchema } from "./envelope-schema";
+import { EnvelopeSchema } from "./envelope-schema.ts";
 import { Type } from "typebox";
-import { saveProgress } from "./progress";
+import { saveProgress } from "./progress.ts";
 import {
 	envelopeFileName,
 	validateEnvelopeRecord,
 	type Envelope,
 	type EnvelopeRecord,
-} from "./envelope";
+} from "./envelope.ts";
 
 /** Entry id of this extension in the spawn readiness contract. */
 export const REPORTING_ENTRY_ID = "workspace-reporting";

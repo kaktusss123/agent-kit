@@ -1,5 +1,6 @@
-import { describe, expect, test } from "bun:test";
-import { type ContinueInputEvent, decideContinueShortcut } from "./core";
+import { describe, test } from "node:test";
+import { expect } from "../../tests/support/expect.ts";
+import { type ContinueInputEvent, decideContinueShortcut } from "./core.ts";
 
 const idle = (text: string, hasImages = false): ContinueInputEvent => ({
 	text,

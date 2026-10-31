@@ -16,7 +16,7 @@
  */
 import * as fs from "node:fs";
 import * as path from "node:path";
-import { resolveAgentDir } from "./agent-dir";
+import { resolveAgentDir } from "./agent-dir.ts";
 
 /** The closed role set, in display order. */
 export const ROLES = ["explore", "helper", "review", "owner"] as const;

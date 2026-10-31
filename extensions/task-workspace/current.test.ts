@@ -9,7 +9,8 @@ import { execFileSync } from "node:child_process";
 import { chmodSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterAll, describe, expect, test } from "bun:test";
+import { after as afterAll, describe, test } from "node:test";
+import { expect } from "../../tests/support/expect.ts";
 import {
   SESSION_SELECTION_ENTRY_TYPE,
   buildCurrentTaskProjection,
@@ -20,9 +21,9 @@ import {
   type CurrentTaskProjection,
   type OwnersFor,
   type SessionSelectionEntry,
-} from "./current";
-import { linkedWorktreeFacts, taskWorkspacePath } from "./git";
-import { ensureTaskRepo } from "./flows";
+} from "./current.ts";
+import { linkedWorktreeFacts, taskWorkspacePath } from "./git.ts";
+import { ensureTaskRepo } from "./flows.ts";
 import { SessionManager } from "@earendil-works/pi-coding-agent";
 
 let rootDir: string | null = null;

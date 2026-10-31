@@ -6,7 +6,7 @@
  * ensure_task_repo provisions automatically. AGENT_KIT_PI_ROOT overrides
  * discovery with an explicit package directory. No pi SDK imports here.
  */
-import type { BootstrapConfig } from "./bootstrap";
+import type { BootstrapConfig } from "./bootstrap.ts";
 
 export const BOOTSTRAP_CONFIG: BootstrapConfig = {
   packages: [

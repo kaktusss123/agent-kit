@@ -1,21 +1,25 @@
 /**
  * CLI binding (cli.ts) — the Claude Code surface of the shared core.
  *
- * Covers the A9/W1 acceptance scenarios through the real `bun cli.ts`
+ * Covers the A9/W1 acceptance scenarios through the real `node cli.ts`
  * process, parity with the pi binding's tool results for the same calls,
  * and the W3 hooks: PreToolUse write verdicts and the SessionStart env file
  * that arms the git PATH shim. Guard fixtures live under $HOME/.cache —
  * never /tmp, which the guard treats as scratch space.
  */
 import { execFileSync, spawnSync } from "node:child_process";
+import { createRequire } from "node:module";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
-import { afterAll, describe, expect, test } from "bun:test";
+import { after as afterAll, describe, test } from "node:test";
+import { expect } from "../../tests/support/expect.ts";
+
+const require = createRequire(import.meta.url);
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 
-const CLI = join(import.meta.dir, "cli.ts");
-const SHIM_DIR = join(import.meta.dir, "shim");
+const CLI = join(import.meta.dirname, "cli.ts");
+const SHIM_DIR = join(import.meta.dirname, "shim");
 
 const cacheDir = join(homedir(), ".cache");
 mkdirSync(cacheDir, { recursive: true });
@@ -251,7 +255,7 @@ describe("CLI and pi binding return identical statuses (shared core)", () => {
     expect(created.status).toBe("created");
     expect(reused?.status).toBe("reused");
     expect(reused?.worktree).toBe(created.worktree);
-  }, 30_000);
+  });
 });
 
 // ─── Claude Code hooks (A9 W3) ────────────────────────────────────────────
@@ -334,7 +338,7 @@ describe("SessionStart arms the git shim through CLAUDE_ENV_FILE", () => {
     expect(noVerify.stderr).toContain("--no-verify");
     const ok = run(wt, "git commit -qam 'feat: managed'");
     expect(ok.status).toBe(0);
-  }, 30_000);
+  });
 
   test("without CLAUDE_ENV_FILE nothing is written and the hook succeeds", () => {
     const { source, taskRoot } = makeRepo(fresh("session-none"));

@@ -21,8 +21,8 @@ import {
 	type AskInput,
 	findReservedOptionLabel,
 	normalizeAskArguments,
-} from "../ask/contract";
-import { AskSchema } from "../ask/ask-schema";
+} from "../ask/contract.ts";
+import { AskSchema } from "../ask/ask-schema.ts";
 
 /** Wire title of the child UI dialog; the controller keys on it. */
 export const ASK_WIRE_TITLE = "ask";

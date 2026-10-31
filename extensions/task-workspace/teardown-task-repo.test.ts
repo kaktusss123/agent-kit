@@ -17,10 +17,11 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
-import { afterAll, describe, expect, test } from "bun:test";
-import { ensureTaskRepo, teardownTaskRepo } from "./flows";
-import { taskWorkspacePath } from "./git";
-import { acquireOwnerLease, releaseOwnerLease } from "./owner-lock";
+import { after as afterAll, describe, test } from "node:test";
+import { expect } from "../../tests/support/expect.ts";
+import { ensureTaskRepo, teardownTaskRepo } from "./flows.ts";
+import { taskWorkspacePath } from "./git.ts";
+import { acquireOwnerLease, releaseOwnerLease } from "./owner-lock.ts";
 
 let rootDir: string | null = null;
 
@@ -106,7 +107,7 @@ describe("teardown_task_repo guards", () => {
 
     expect(r.status).toBe("error");
     expect(String((r as { message: string }).message)).toContain("No task workspace");
-  }, 60_000);
+  });
 
   test("refuses an identity that escapes the task root", async () => {
     const taskRoot = tempDir("escape-tasks");
@@ -118,7 +119,7 @@ describe("teardown_task_repo guards", () => {
     expect(r.status).toBe("error");
     expect(String((r as { message: string }).message)).toContain("does not resolve");
     expect(existsSync(dirname(taskRoot))).toBe(true);
-  }, 60_000);
+  });
 
   test("refuses to remove a worktree with a live owner", async () => {
     const built = await buildMultiRepoWorkspace("owned");
@@ -140,7 +141,7 @@ describe("teardown_task_repo guards", () => {
     });
     expect(after.status).toBe("torn_down");
     expect(existsSync(built.workspace)).toBe(false);
-  }, 60_000);
+  });
 
   test("refuses dirty worktrees and removes nothing", async () => {
     const built = await buildMultiRepoWorkspace("dirty");
@@ -158,7 +159,7 @@ describe("teardown_task_repo guards", () => {
     // Nothing was removed.
     expect(existsSync(built.workspace)).toBe(true);
     expect(sh(built.repos.a.source, "git", "branch", "--list", "task/multi")).not.toBe("");
-  }, 60_000);
+  });
 
   test("refuses a dirty secondary lane and removes nothing", async () => {
     const built = await buildMultiRepoWorkspace("dirty-lane");
@@ -175,7 +176,7 @@ describe("teardown_task_repo guards", () => {
     expect(dirty[0]!.name).toBe("src__backport");
     expect(dirty[0]!.staged).toEqual(["staged.txt"]);
     expect(existsSync(built.workspace)).toBe(true);
-  }, 60_000);
+  });
 
   test("refuses a task branch checked out outside the workspace (branch_in_use)", async () => {
     const built = await buildMultiRepoWorkspace("in-use");
@@ -195,7 +196,7 @@ describe("teardown_task_repo guards", () => {
     // on macOS), so the expectation is stated in the same space.
     expect(branches).toEqual([{ branch: "task/multi", worktree: realpathSync(duplicate) }]);
     expect(existsSync(built.workspace)).toBe(true);
-  }, 60_000);
+  });
 
   test("refuses unmerged branches (non-force) and removes nothing", async () => {
     const built = await buildMultiRepoWorkspace("unmerged");
@@ -215,7 +216,7 @@ describe("teardown_task_repo guards", () => {
     // Nothing was removed.
     expect(existsSync(built.workspace)).toBe(true);
     expect(existsSync(built.repos.a.canonical)).toBe(true);
-  }, 60_000);
+  });
 
   test("refuses a workspace layout ensure_task_repo does not create", async () => {
     const built = await buildMultiRepoWorkspace("layout");
@@ -232,7 +233,7 @@ describe("teardown_task_repo guards", () => {
       "someone-elses-clone",
     ]);
     expect(existsSync(built.workspace)).toBe(true);
-  }, 60_000);
+  });
 });
 
 describe("teardown_task_repo success", () => {
@@ -286,7 +287,7 @@ describe("teardown_task_repo success", () => {
 
     // The primary checkouts and their own branches are untouched.
     expect(sh(built.repos.a.source, "git", "branch", "--show-current")).toBe("main");
-  }, 60_000);
+  });
 
   test("a rerun after a partial teardown finishes the job", async () => {
     const built = await buildMultiRepoWorkspace("rerun");
@@ -308,5 +309,5 @@ describe("teardown_task_repo success", () => {
     // ...while repoB's orphaned branch is left alone (reported by the caller
     // via task_status, removable with a plain non-force branch -d).
     expect(sh(built.repos.b.source, "git", "branch", "--list", "task/multi")).not.toBe("");
-  }, 60_000);
+  });
 });

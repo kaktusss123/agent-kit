@@ -29,7 +29,7 @@ import {
 	truncateToWidth,
 	wrapTextWithAnsi,
 } from "@earendil-works/pi-tui";
-import type { AskOutcome, AskQuestion } from "./contract";
+import type { AskOutcome, AskQuestion } from "./contract.ts";
 import {
 	activateRow,
 	advance,
@@ -45,7 +45,7 @@ import {
 	submitOther,
 	submitReview,
 	toResults,
-} from "./core";
+} from "./core.ts";
 
 export type AskDialogResult = AskOutcome | undefined;
 

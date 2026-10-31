@@ -26,7 +26,7 @@
  * every required tool missing and fails the spawn (fail closed).
  */
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
-import { READINESS_PROTOCOL, type ReadinessPayload } from "./readiness";
+import { READINESS_PROTOCOL, type ReadinessPayload } from "./readiness.ts";
 
 export default function (pi: ExtensionAPI): void {
 	pi.on("session_start", (_event, ctx) => {

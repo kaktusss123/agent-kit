@@ -23,7 +23,7 @@
  */
 import { homedir } from "node:os";
 import { join } from "node:path";
-import { realpath } from "./git";
+import { realpath } from "./git.ts";
 
 type Env = Record<string, string | undefined>;
 

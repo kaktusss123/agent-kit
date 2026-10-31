@@ -18,20 +18,21 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
-import { afterAll, describe, expect, test } from "bun:test";
-import { ensureTaskRepo, taskStatus, teardownTaskRepo } from "./flows";
+import { after as afterAll, describe, test } from "node:test";
+import { expect } from "../../tests/support/expect.ts";
+import { ensureTaskRepo, taskStatus, teardownTaskRepo } from "./flows.ts";
 import {
   legacyTaskWorkspacePath,
   resolveTaskWorkspacePath,
   taskWorkspaceIdentity,
   taskWorkspacePath,
-} from "./git";
+} from "./git.ts";
 import {
   decodeTaskWorkspaceName,
   encodeTaskWorkspaceName,
   legacyTaskWorkspaceName,
   taskWorkspaceLayout,
-} from "./workspace-path";
+} from "./workspace-path.ts";
 
 let rootDir: string | null = null;
 
@@ -178,7 +179,7 @@ describe("task workspace directories for colliding branch names", () => {
       "feat/a/b",
       "feat/a_b",
     ]);
-  }, 60_000);
+  });
 
   test("a pre-encoding directory is reused when it provably holds the branch", async () => {
     const { source, taskRoot } = makeSourceRepo("legacy-reuse");
@@ -201,7 +202,7 @@ describe("task workspace directories for colliding branch names", () => {
     });
     // Nothing was renamed or duplicated.
     expect(readdirSync(taskRoot)).toEqual(["feat_legacy"]);
-  }, 60_000);
+  });
 
   test("a pre-encoding directory of another branch is never taken over", async () => {
     const { source, taskRoot } = makeSourceRepo("legacy-occupied");
@@ -226,7 +227,7 @@ describe("task workspace directories for colliding branch names", () => {
     expect(sh(join(legacyWs, "src"), "git", "rev-parse", "--abbrev-ref", "HEAD")).toBe(
       "feat/a_b",
     );
-  }, 60_000);
+  });
 
   test("an identity whose own name is squatted by another branch refuses", async () => {
     const { source, taskRoot } = makeSourceRepo("legacy-squat");
@@ -249,7 +250,7 @@ describe("task workspace directories for colliding branch names", () => {
     expect(sh(join(squat, "src"), "git", "rev-parse", "--abbrev-ref", "HEAD")).toBe(
       "feat/a/b",
     );
-  }, 60_000);
+  });
 
   test("teardown resolves a pre-encoding directory by its flat name and by identity", async () => {
     for (const task of ["feat_old", "feat/old"]) {
@@ -263,5 +264,5 @@ describe("task workspace directories for colliding branch names", () => {
       expect(result).toMatchObject({ status: "torn_down", workspace: legacyWs });
       expect(existsSync(legacyWs)).toBe(false);
     }
-  }, 60_000);
+  });
 });

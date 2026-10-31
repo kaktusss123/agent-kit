@@ -23,12 +23,12 @@ import {
   isTemporaryPath,
   managedWorktreeHint,
   realpath,
-} from "./git";
+} from "./git.ts";
 import type {
   GitInvocationClassification,
   GuardVerdict,
   PathClassification,
-} from "./types";
+} from "./types.ts";
 
 // Shared classification tables and rules live in ./shim/classify.mjs —
 // the same module the runtime policy uses. Re-exported here (with the thin

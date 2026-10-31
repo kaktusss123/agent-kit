@@ -1,5 +1,6 @@
-import { describe, expect, test } from "bun:test";
-import todoExtension from "./index";
+import { describe, test } from "node:test";
+import { expect } from "../../tests/support/expect.ts";
+import todoExtension from "./index.ts";
 
 type Handler = (event: any, ctx: any) => any;
 

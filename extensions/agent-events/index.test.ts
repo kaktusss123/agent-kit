@@ -1,5 +1,6 @@
-import { afterEach, describe, expect, test } from "bun:test";
-import agentEventsExtension from "./index";
+import { afterEach, describe, test } from "node:test";
+import { expect } from "../../tests/support/expect.ts";
+import agentEventsExtension from "./index.ts";
 
 type Handler = (event: any, ctx: any) => any;
 

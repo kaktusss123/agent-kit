@@ -5,7 +5,7 @@
  * of the task-workspace runtime: no pi SDK imports, no extension plumbing.
  */
 
-import type { OwnerView } from "./owner-lock";
+import type { OwnerView } from "./owner-lock.ts";
 
 // Path classification for a filesystem location relative to the task root.
 export type PathClassification =

@@ -12,25 +12,15 @@
 import { spawnSync } from "node:child_process";
 import { chmodSync } from "node:fs";
 import { dirname, join } from "node:path";
-import { afterAll, beforeAll, describe, expect, test } from "bun:test";
-import { resolveGitOnPath } from "../shim-path";
-import { createGuardFixture, type GuardFixture } from "./fixture";
+import { after as afterAll, before as beforeAll, describe, test } from "node:test";
+import { expect } from "../../../tests/support/expect.ts";
+import { resolveGitOnPath } from "../shim-path.ts";
+import { createGuardFixture, type GuardFixture } from "./fixture.ts";
 
-const SHIM_PATH = join(import.meta.dir, "git");
-const POLICY_PATH = join(import.meta.dir, "policy.mjs");
+const SHIM_PATH = join(import.meta.dirname, "git");
+const POLICY_PATH = join(import.meta.dirname, "policy.mjs");
 
 let fx: GuardFixture;
-
-beforeAll(async () => {
-  chmodSync(SHIM_PATH, 0o755);
-  fx = await createGuardFixture("agent-kit-matrix-");
-  // Fixture setup spawns dozens of guarded git invocations (measured
-  // ~3.5s warm); the 5s default leaves no headroom on a loaded machine.
-}, 30_000);
-
-afterAll(async () => {
-  if (fx) await fx.destroy();
-});
 
 function matrixScript(): string {
   return `set -u
@@ -112,7 +102,14 @@ fi
 
 let segments: Record<string, string> = {};
 
-beforeAll(() => {
+// The runner starts sibling hooks without ordering guarantees, so the fixture
+// and the matrix run happen in one hook: the matrix reads fx.taskRoot.
+beforeAll(async () => {
+  chmodSync(SHIM_PATH, 0o755);
+  fx = await createGuardFixture("agent-kit-matrix-");
+  // Fixture setup spawns dozens of guarded git invocations (measured
+  // ~3.5s warm); the default hook timeout leaves no headroom on a loaded
+  // machine.
   // Shim-aware real-git resolution, exactly how the extension arms the
   // guard: `command -v git` under a guarded session resolves to a shim
   // copy, and ALLOW segments would exec the shim forever.
@@ -144,9 +141,11 @@ beforeAll(() => {
   if (Object.keys(segments).length === 0) {
     throw new Error(`matrix script produced no segments; output:\n${out}`);
   }
-  // The script runs ~20 guarded git invocations through shim + policy
-  // (measured multiple seconds); the 5s default leaves no headroom.
-}, 30_000);
+});
+
+afterAll(async () => {
+  if (fx) await fx.destroy();
+});
 
 const seg = (name: string): string => {
   const s = segments[name];

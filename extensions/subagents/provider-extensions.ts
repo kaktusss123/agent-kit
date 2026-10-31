@@ -23,7 +23,7 @@
  * executing extension code, and the configured set is small and trusted.
  *
  * Pure module: no pi runtime imports (parent facts arrive as structural
- * parameters), so bun tests exercise it directly against tmp fixtures.
+ * parameters), so unit tests exercise it directly against tmp fixtures.
  */
 import * as fs from "node:fs";
 import * as path from "node:path";

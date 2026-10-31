@@ -9,7 +9,11 @@ import { execFileSync } from "node:child_process";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
-import { describe, expect, test } from "bun:test";
+import { describe, test } from "node:test";
+import { createRequire } from "node:module";
+import { expect } from "../../tests/support/expect.ts";
+
+const require = createRequire(import.meta.url);
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 const EXPECTED_TOOLS = [
   "bash",

@@ -1,6 +1,6 @@
 /**
  * Live verification of workspace-mode subagent spawns against real pi children.
- * Run: node workspace-verify.mjs   (after `bun test` — needs the repo tree)
+ * Run: node workspace-verify.mjs   (after the extension tests — needs the repo tree)
  *
  * Scenarios:
  *  L1 (A1/A5/A8/A13/L7) happy path: rooted child creates + commits via

@@ -3,7 +3,8 @@
  * entry resolution against real tmp fixtures, the extension-registered
  * provider decision, and the needed-but-missing fail-fast.
  */
-import { describe, expect, test } from "bun:test";
+import { describe, test } from "node:test";
+import { expect } from "../../tests/support/expect.ts";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
@@ -15,7 +16,7 @@ import {
 	resolveProviderExtensions,
 	ProviderExtensionError,
 	type ConfiguredPackageRef,
-} from "./provider-extensions";
+} from "./provider-extensions.ts";
 
 function makePackage(opts: {
 	manifest?: Record<string, unknown> | null;

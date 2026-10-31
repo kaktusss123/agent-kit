@@ -1,11 +1,12 @@
 /** Unit tests for the /subagent-role command logic. */
-import { afterEach, describe, expect, test } from "bun:test";
+import { afterEach, describe, test } from "node:test";
+import { expect } from "../../tests/support/expect.ts";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
-import { roleCommandCompletions, runRoleCommand } from "./role-command";
-import { loadRoleBindings } from "./roles";
-import type { ModelLike } from "./model-spec";
+import { roleCommandCompletions, runRoleCommand } from "./role-command.ts";
+import { loadRoleBindings } from "./roles.ts";
+import type { ModelLike } from "./model-spec.ts";
 
 const REGISTRY: ModelLike[] = [
 	{ provider: "zai", id: "glm-x", reasoning: true },

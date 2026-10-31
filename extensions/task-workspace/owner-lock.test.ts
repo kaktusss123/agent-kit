@@ -17,7 +17,8 @@ import { spawn, type ChildProcess } from "node:child_process";
 import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { hostname, tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterAll, describe, expect, test } from "bun:test";
+import { after as afterAll, describe, test } from "node:test";
+import { expect } from "../../tests/support/expect.ts";
 import {
   acquireOwnerLease,
   describeOwner,
@@ -27,9 +28,9 @@ import {
   releaseOwnerLease,
   type OwnerRecord,
   type OwnerView,
-} from "./owner-lock";
+} from "./owner-lock.ts";
 
-const FIXTURE = join(import.meta.dir, "fixtures", "owner-lock-process.ts");
+const FIXTURE = join(import.meta.dirname, "fixtures", "owner-lock-process.ts");
 
 let rootDir: string | null = null;
 const running = new Set<ChildProcess>();
@@ -251,7 +252,7 @@ describe("worktree ownership lease", () => {
     const recovered = await acquireOwnerLease(taskRoot, workspace);
     expect(recovered.ok).toBe(true);
     if (recovered.ok) releaseOwnerLease(recovered.lease);
-  }, 60_000);
+  });
 
   test("two racing owner processes produce exactly one owner", async () => {
     const { taskRoot, workspace } = tempRoot("race");
@@ -268,7 +269,7 @@ describe("worktree ownership lease", () => {
     a.proc.kill("SIGKILL");
     b.proc.kill("SIGKILL");
     await Promise.all([a.exited, b.exited]);
-  }, 60_000);
+  });
 
   test("repeated acquire/release cycles across processes all succeed", async () => {
     const { taskRoot, workspace } = tempRoot("cross-cycle");
@@ -279,7 +280,7 @@ describe("worktree ownership lease", () => {
       expect(await attempt.exited).toBe(0);
       expect(describeOwner(taskRoot, workspace).state).toBe("free");
     }
-  }, 60_000);
+  });
 
   test("a stale record is recovered by exactly one of two racing processes", async () => {
     const { taskRoot, workspace } = tempRoot("stale-race");
@@ -308,5 +309,5 @@ describe("worktree ownership lease", () => {
     a.proc.kill("SIGKILL");
     b.proc.kill("SIGKILL");
     await Promise.all([a.exited, b.exited]);
-  }, 60_000);
+  });
 });

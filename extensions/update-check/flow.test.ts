@@ -2,9 +2,10 @@ import { execFileSync } from "node:child_process";
 import { existsSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, expect, test } from "bun:test";
-import { readUpdateState } from "./check";
-import { findCheckout, runOffMainCheck, runUpdateCheck } from "./index";
+import { afterEach, test } from "node:test";
+import { expect } from "../../tests/support/expect.ts";
+import { readUpdateState } from "./check.ts";
+import { findCheckout, runOffMainCheck, runUpdateCheck } from "./index.ts";
 
 let dir: string;
 

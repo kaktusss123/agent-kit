@@ -36,7 +36,7 @@ import {
 	updateMessage,
 	writeUpdateState,
 	type UpdateState,
-} from "./check";
+} from "./check.ts";
 
 const pexecFile = promisify(execFile);
 

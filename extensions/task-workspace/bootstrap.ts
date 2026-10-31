@@ -51,7 +51,7 @@ import {
 import { fileURLToPath } from "node:url";
 import { basename, dirname, join } from "node:path";
 import { homedir } from "node:os";
-import type { BootstrapLink, BootstrapResult } from "./types";
+import type { BootstrapLink, BootstrapResult } from "./types.ts";
 
 /** Host configuration for worktree dependency provisioning. The binding
  *  owns the concrete names; this core module stays name-free. */
