@@ -30,6 +30,12 @@
 //   claim-restore after a takeover re-read the record it actually moved aside
 //                 and before it either discards that instance or puts a record
 //                 back under <releases>/.lock
+//   trash-probe   inside freeTrashPath(), at the probe for a free trash name:
+//                 the writer is about to make the last filesystem call it is
+//                 allowed to make before the removal's commission. In the
+//                 pre-fix order this probe sat between the commission and
+//                 rename(2), so a lock displaced here was noticed only after
+//                 the victim was already gone.
 //   release-before
 //                 before releaseLock() moves its own lock aside
 //   release-restore
@@ -46,8 +52,12 @@
 //
 // AGENT_KIT_SNAPSHOT_TEST_TRACE names a file that receives one line per
 // removal-shaped syscall the writer performs: `rmSync <path>`,
-// `unlinkSync <path>` and `renameSync <from> -> <to>`. The suite reads it to
-// assert *where* a removal happens, not just that it happened.
+// `unlinkSync <path>` and `renameSync <from> -> <to>`; plus `readlinkSync
+// <releases>/.lock` for every ownership check (the commission) and `lstatSync
+// <reserved name>` for every probe of the trash namespace. The last two let the
+// suite assert the *order* the writer keeps: the commission, then the rename,
+// with nothing of the writer's in between. The suite reads the trace to assert
+// *where* a removal happens, not just that it happened.
 //
 // Paths in the spec cannot contain ":" (the sandbox paths never do).
 
@@ -127,6 +137,15 @@ fs.symlinkSync = function pauseSymlink(target, path) {
 
 const TRASH_NAME = /\/\.trash-/;
 
+const lstatSync = fs.lstatSync;
+fs.lstatSync = function pauseLstat(path) {
+	const parts = String(path).split("/");
+	const reserved = (parts[parts.length - 1] ?? "").startsWith(".trash-");
+	if (reserved && TRACE !== "") trace(`lstatSync ${path}`);
+	if (reserved && points.has("trash-probe") && inFrame("freeTrashPath")) hold("trash-probe");
+	return lstatSync.apply(fs, arguments);
+};
+
 const rmSync = fs.rmSync;
 fs.rmSync = function traceRm(path) {
 	trace(`rmSync ${path}`);
@@ -158,7 +177,10 @@ fs.chmodSync = function pauseChmod(path) {
 const readlinkSync = fs.readlinkSync;
 fs.readlinkSync = function pauseReadlink(path) {
 	const result = readlinkSync.apply(fs, arguments);
-	if (isLock(path)) hold("lock-read");
+	if (isLock(path)) {
+		trace(`readlinkSync ${path}`);
+		hold("lock-read");
+	}
 	if (String(path).includes(".lock.stale") && inFrame("takeOverLock")) hold("claim-restore");
 	return result;
 };
