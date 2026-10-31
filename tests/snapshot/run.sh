@@ -349,6 +349,21 @@ wait_for_file() { # <path> [<iterations>] — bounded wait for a file the interp
 	return 1
 }
 
+hardlink_pkgs() { # <checkout> <dir> — hardlink the runtime packages into <dir>
+	# The pre-Node writer hardlinked node_modules against the checkout even on the
+	# first sync, so a faithful legacy artifact shares those inodes. Linking the
+	# known files one by one keeps the fixture portable (BSD cp has no -a and its
+	# -R -l combination is not what this needs to be).
+	local rel
+	for rel in "$PKG_REL" \
+		"node_modules/@earendil-works/pi-ai/index.js" \
+		"node_modules/@earendil-works/pi-tui/index.js" \
+		"node_modules/typebox/index.js"; do
+		mkdir -p "$2/$(dirname "$rel")"
+		ln "$1/$rel" "$2/$rel" 2>/dev/null || fail "test setup: this host cannot hardlink $rel"
+	done
+}
+
 lock_asides() { # leftover .lock.stale-* / .lock.release-* entries in releases
 	local p n=0
 	for p in "$RELEASES"/.lock.stale-* "$RELEASES"/.lock.release-*; do
@@ -1292,11 +1307,9 @@ make_kit "$KIT"
 SHA1="$(head_sha)"
 # Exactly what the Bash writer left: a real copy of extensions, node_modules
 # hardlinked against the checkout (cp -al / pax -rwl, first sync), schema 1.
-mkdir -p "$RELEASES/$SHA1/extensions" "$RELEASES/$SHA1/node_modules"
+mkdir -p "$RELEASES/$SHA1/extensions"
 cp_archive "$KIT/extensions/." "$RELEASES/$SHA1/extensions/"
-if ! cp -Rl "$KIT/node_modules/." "$RELEASES/$SHA1/node_modules/" 2>/dev/null; then
-	fail "test setup: this host cannot hardlink a tree"
-fi
+hardlink_pkgs "$KIT" "$RELEASES/$SHA1"
 printf '{\n  "schema": 1,\n  "sha": "%s",\n  "dirty": false,\n  "createdAt": "2020-01-01T00:00:00Z",\n  "source": "%s"\n}\n' \
 	"$SHA1" "$KIT" >"$RELEASES/$SHA1/manifest.json"
 ln -sfn "$SHA1" "$RELEASES/current"
