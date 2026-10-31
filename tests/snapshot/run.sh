@@ -15,6 +15,17 @@
 #   * a snapshot is named by HEAD and built from the committed tree only - a
 #     checkout with uncommitted or untracked changes is refused, and so is a
 #     dirty artifact written by an older version;
+#   * HEAD and the checkout state are read under the lock, so a run that waited
+#     for a busy lock refuses a tree that changed while it waited;
+#   * the extension set is the commit's file list (git ls-files --cached), not a
+#     directory walk: an ignored file in the working tree never enters a
+#     snapshot;
+#   * node_modules is hardlinked only from a snapshot this writer wrote
+#     (schema 2); an artifact of the pre-Node writer is reused as it is but is
+#     never a hardlink source;
+#   * a takeover is decided against the lock record it actually moved aside,
+#     never against an earlier measurement, so a stale measurement cannot
+#     displace a live lock;
 #   * publication is atomic: a final name only ever holds a verified snapshot,
 #     current only ever names one, and a failure leaves the old current alone;
 #   * a repeated snapshot of the same commit is verified and reused, never
@@ -26,6 +37,10 @@
 #   * retention keeps current plus the five newest snapshots, and a directory
 #     that cannot be removed is a warning, not a failure;
 #   * no userland tool (cp, mv, stat, flock, pax, perl, tr, rm) is spawned.
+#
+# The race tests (F1, F3) load tests/snapshot/pause-rename.cjs through
+# NODE_OPTIONS=--require to freeze the writer at one named step; the harness is
+# test-only and the CLI never loads it.
 #
 # Usage: tests/snapshot/run.sh [-v]
 #   -v  print snapshot output for each test
@@ -324,6 +339,31 @@ wait_for_releases_entry() { # <prefix> — bounded wait for a top-level releases
 	return 1
 }
 
+wait_for_file() { # <path> [<iterations>] — bounded wait for a file the interposer creates
+	local i=0 limit="${2:-4000}"
+	while [ "$i" -lt "$limit" ]; do
+		[ -e "$1" ] && return 0
+		sleep 0.005
+		i=$((i + 1))
+	done
+	return 1
+}
+
+lock_asides() { # leftover .lock.stale-* / .lock.release-* entries in releases
+	local p n=0
+	for p in "$RELEASES"/.lock.stale-* "$RELEASES"/.lock.release-*; do
+		if [ -e "$p" ] || [ -L "$p" ]; then
+			n=$((n + 1))
+		fi
+	done
+	printf '%s' "$n"
+}
+
+# The lock interposer (pause-rename.cjs) is how the race tests fix one
+# interleaving instead of winning it on timing: it freezes the writer right
+# after its read of the lock record, or right after its claim rename.
+PAUSE_PATCH="$SELF_DIR/snapshot/pause-rename.cjs"
+
 # ==============================================================================
 # T1: a fresh snapshot materializes extensions, node_modules and the manifest,
 # then flips current at the full HEAD sha
@@ -335,7 +375,7 @@ run_snapshot
 	assert_eq "$RC" 0 "exit code"
 MANIFEST="$RELEASES/$SHA/manifest.json"
 	assert_file "$MANIFEST" "manifest"
-	assert_grep "$MANIFEST" '"schema": 1' "manifest schema"
+	assert_grep "$MANIFEST" '"schema": 2' "manifest schema"
 	assert_grep "$MANIFEST" "\"sha\": \"$SHA\"" "manifest sha"
 	assert_grep "$MANIFEST" '"dirty": false' "manifest dirty flag"
 	assert_grep "$MANIFEST" '"createdAt": "' "manifest createdAt"
@@ -1153,6 +1193,195 @@ wait "$INTERRUPTED" 2>/dev/null || TERM_STATUS=$?
 run_snapshot
 	assert_eq "$RC" 0 "the next run succeeds"
 	assert_link "$RELEASES/current" "$SHA2" "current advanced"
+pass
+
+# ==============================================================================
+# F1: a takeover must not displace a live lock because its measurement went
+# stale. A waiter reads a dead owner's record; a second process takes that lock
+# over and starts working; only then does the waiter act. Whatever the waiter
+# does next must be decided against the lock that exists now, not against the
+# record it read before, and the live owner must finish normally.
+#
+# The interposer fixes the interleaving: the waiter is frozen right after its
+# read of the lock record, so the owner can install its lock in between with no
+# timing assumption.
+
+new_test "F1 a stale takeover measurement does not displace a live lock"
+make_kit "$KIT"
+SHA1="$(head_sha)"
+run_snapshot
+	assert_eq "$RC" 0 "first snapshot"
+printf '\n// next\n' >>"$KIT/extensions/alpha/index.ts"
+git_commit_all "$KIT" "next"
+SHA2="$(head_sha)"
+HOST="$(host_name)"
+ln -s "$(lock_record "$(dead_pid)" "$HOST")" "$RELEASES/.lock"
+# The waiter reads the dead owner's record and is frozen before it can act on
+# it; a second claim-after point exists so a writer that claims without looking
+# again is observed exactly then.
+(
+	if AGENT_KIT_SNAPSHOT_LOCK_TIMEOUT=2 NODE_OPTIONS="--require $PAUSE_PATCH" \
+		AGENT_KIT_SNAPSHOT_TEST_PAUSE="lock-read:$SANDBOX/ready1:$SANDBOX/go1;claim-after:$SANDBOX/ready2:$SANDBOX/go2" \
+		AGENT_KIT_ROOT="$KIT" "$INSTALLER" snapshot "$RELEASES" >"$SANDBOX/out-waiter" 2>&1; then
+		printf 0 >"$SANDBOX/rc-waiter"
+	else
+		printf '%s' "$?" >"$SANDBOX/rc-waiter"
+	fi
+) &
+WAITER=$!
+if ! wait_for_file "$SANDBOX/ready1"; then
+	fail "test setup: the waiter never read the lock record"
+fi
+# The live owner takes the abandoned lock over and is frozen inside its own
+# ownership, so the waiter's claim window is as wide as the test needs.
+(
+	if NODE_OPTIONS="--require $PAUSE_PATCH" \
+		AGENT_KIT_SNAPSHOT_TEST_PAUSE="lock-create:$SANDBOX/ready-owner:$SANDBOX/go-owner" \
+		AGENT_KIT_ROOT="$KIT" "$INSTALLER" snapshot "$RELEASES" >"$SANDBOX/out-owner" 2>&1; then
+		printf 0 >"$SANDBOX/rc-owner"
+	else
+		printf '%s' "$?" >"$SANDBOX/rc-owner"
+	fi
+) &
+OWNER=$!
+if ! wait_for_file "$SANDBOX/ready-owner"; then
+	fail "test setup: the live owner never acquired the lock"
+fi
+# The owner record this process should see is the one the owner just published.
+OWNER_PID="$(printf '%s' "$(readlink "$RELEASES/.lock" 2>/dev/null || true)" | sed 's/.*"pid":\([0-9]*\).*/\1/')"
+case "$OWNER_PID" in
+""|*[!0-9]*) fail "test setup: the owner lock has no readable pid" ;;
+esac
+: >"$SANDBOX/go1"
+if wait_for_file "$SANDBOX/ready2" 200; then
+	# Only a takeover that claims without re-reading the lock gets here: it has
+	# just displaced the live owner's lock, so the name is free for a third
+	# process. Plant one; a displaced lock must not simply be returned.
+	sleep 20 &
+	PLANTED=$!
+	ln -s "$(lock_record "$PLANTED" "$HOST")" "$RELEASES/.lock"
+	: >"$SANDBOX/go2"
+fi
+wait "$WAITER" || true
+: >"$SANDBOX/go-owner"
+wait "$OWNER" || true
+	assert_eq "$(cat "$SANDBOX/rc-waiter")" 2 "the waiter refuses instead of displacing the lock"
+	assert_contains "$(cat "$SANDBOX/out-waiter")" "pid $OWNER_PID" "the waiter sees the owner that holds the lock now"
+	assert_bounded "$(cat "$SANDBOX/out-waiter")" 2 "waiter diagnostics"
+	assert_eq "$(cat "$SANDBOX/rc-owner")" 0 "the live owner completed its snapshot"
+	assert_link "$RELEASES/current" "$SHA2" "current names the snapshot the live owner published"
+	assert_file "$RELEASES/$SHA2/manifest.json" "the live owner's snapshot is complete"
+	assert_grep "$RELEASES/$SHA2/extensions/alpha/index.ts" '// next' "the live owner's snapshot has its content"
+if [ -n "${PLANTED:-}" ]; then
+	kill -9 "$PLANTED" 2>/dev/null || true
+	wait "$PLANTED" 2>/dev/null || true
+	rm -f "$RELEASES/.lock"
+fi
+	assert_eq "$(lock_asides)" 0 "no displaced lock is left aside"
+	assert_no_file "$RELEASES/.lock" "the lock is released"
+pass
+
+# ==============================================================================
+# F2: a snapshot written by the pre-Node writer is not proof that its
+# node_modules inodes are independent of the checkout - the Bash writer
+# hardlinked them. A new snapshot must never inherit those inodes, so such an
+# artifact is reusable but never a hardlink source.
+
+new_test "F2 a legacy snapshot is not a hardlink source"
+make_kit "$KIT"
+SHA1="$(head_sha)"
+# Exactly what the Bash writer left: a real copy of extensions, node_modules
+# hardlinked against the checkout (cp -al / pax -rwl, first sync), schema 1.
+mkdir -p "$RELEASES/$SHA1/extensions" "$RELEASES/$SHA1/node_modules"
+cp_archive "$KIT/extensions/." "$RELEASES/$SHA1/extensions/"
+if ! cp -Rl "$KIT/node_modules/." "$RELEASES/$SHA1/node_modules/" 2>/dev/null; then
+	fail "test setup: this host cannot hardlink a tree"
+fi
+printf '{\n  "schema": 1,\n  "sha": "%s",\n  "dirty": false,\n  "createdAt": "2020-01-01T00:00:00Z",\n  "source": "%s"\n}\n' \
+	"$SHA1" "$KIT" >"$RELEASES/$SHA1/manifest.json"
+ln -sfn "$SHA1" "$RELEASES/current"
+	assert_eq "$(file_inode "$RELEASES/$SHA1/$PKG_REL")" "$(file_inode "$KIT/$PKG_REL")" \
+		"test setup: the legacy snapshot shares the checkout's inode"
+printf '\n// next\n' >>"$KIT/extensions/alpha/index.ts"
+git_commit_all "$KIT" "next"
+SHA2="$(head_sha)"
+run_snapshot
+	assert_eq "$RC" 0 "the new snapshot is built"
+	assert_contains "$OUT" "older agent-kit" "the legacy artifact is reported as a copy-once source"
+	assert_file "$RELEASES/$SHA2/$PKG_REL" "node_modules materialized"
+if [ "$(file_inode "$RELEASES/$SHA2/$PKG_REL")" = "$(file_inode "$KIT/$PKG_REL")" ]; then
+	fail "the new snapshot inherited the checkout's inode through a legacy snapshot"
+fi
+# The published snapshot is immutable: a later checkout change must not reach
+# it through a shared inode.
+printf 'export const pkg = "mutated"\n' >"$KIT/$PKG_REL"
+	assert_grep "$RELEASES/$SHA2/$PKG_REL" '"pi-coding-agent"' "the published snapshot keeps its content"
+	assert_grep "$RELEASES/$SHA1/$PKG_REL" 'mutated' "test setup: the legacy snapshot really shared the checkout's inode"
+	assert_link "$RELEASES/current" "$SHA2" "current flipped"
+pass
+
+# ==============================================================================
+# F3: HEAD and the cleanliness of the checkout belong to the part of the run
+# that owns the lock. A command that waited for a busy lock must not publish a
+# working tree it has not looked at since it started waiting.
+
+new_test "F3 HEAD and cleanliness are read under the lock"
+make_kit "$KIT"
+SHA1="$(head_sha)"
+run_snapshot
+	assert_eq "$RC" 0 "first snapshot"
+printf '\n// next\n' >>"$KIT/extensions/alpha/index.ts"
+git_commit_all "$KIT" "next"
+SHA2="$(head_sha)"
+sleep 20 &
+HOLDER=$!
+ln -s "$(lock_record "$HOLDER" "$(host_name)")" "$RELEASES/.lock"
+(
+	if NODE_OPTIONS="--require $PAUSE_PATCH" \
+		AGENT_KIT_SNAPSHOT_TEST_PAUSE="lock-read:$SANDBOX/ready:$SANDBOX/go" \
+		AGENT_KIT_SNAPSHOT_LOCK_TIMEOUT=20 \
+		AGENT_KIT_ROOT="$KIT" "$INSTALLER" snapshot "$RELEASES" >"$SANDBOX/out" 2>&1; then
+		printf 0 >"$SANDBOX/rc"
+	else
+		printf '%s' "$?" >"$SANDBOX/rc"
+	fi
+) &
+PID=$!
+if ! wait_for_file "$SANDBOX/ready"; then
+	fail "test setup: the command never reached the lock"
+fi
+# The tree changes while the command waits; the lock then becomes available.
+printf '\n// edited while the command waited\n' >>"$KIT/extensions/alpha/index.ts"
+kill -9 "$HOLDER" 2>/dev/null || true
+wait "$HOLDER" 2>/dev/null || true
+: >"$SANDBOX/go"
+wait "$PID" || true
+	assert_eq "$(cat "$SANDBOX/rc")" 2 "a tree that changed while the command waited is refused"
+	assert_contains "$(cat "$SANDBOX/out")" "uncommitted" "the refusal states the contract"
+	assert_contains "$(cat "$SANDBOX/out")" "extensions/alpha/index.ts" "the refusal names the path"
+	assert_no_file "$RELEASES/$SHA2" "nothing is published under the sha read before the wait"
+	assert_link "$RELEASES/current" "$SHA1" "current is untouched"
+	assert_no_file "$RELEASES/.lock" "the lock is released"
+pass
+
+# ==============================================================================
+# F4: the snapshot's extension set is the commit's file set. An ignored file
+# that exists in the working tree is not part of the commit, so it must not
+# enter the snapshot even though the checkout is clean by git's own rules.
+
+new_test "F4 the extension set is the committed file set"
+make_kit "$KIT"
+printf 'extensions/local.ts\n' >>"$KIT/.gitignore"
+git_commit_all "$KIT" "ignore a local extension"
+printf 'export const local = 1\n' >"$KIT/extensions/local.ts"
+	assert_eq "$(git -C "$KIT" status --porcelain --untracked-files=normal)" "" "test setup: the ignored file leaves the tree clean"
+SHA="$(head_sha)"
+run_snapshot
+	assert_eq "$RC" 0 "a clean tree with an ignored extension snapshots"
+	assert_no_file "$RELEASES/$SHA/extensions/local.ts" "an ignored file is not part of the snapshot"
+	assert_file "$RELEASES/$SHA/extensions/alpha/index.ts" "the committed extensions are copied"
+	assert_file "$RELEASES/$SHA/$EXT_MARKER" "the committed marker is copied"
+	assert_link "$RELEASES/current" "$SHA" "current flipped"
 pass
 
 # ==============================================================================

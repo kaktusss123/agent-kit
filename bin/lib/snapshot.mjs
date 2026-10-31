@@ -12,7 +12,9 @@
 // there is no content identifier to publish it under, and reusing the sha would
 // let two different file sets share one name. Dirty snapshots written by older
 // versions are detected in the manifest and refused instead of being reused or
-// relabelled.
+// relabelled. HEAD and the working-tree state are read under the releases lock
+// and re-read immediately before the copy, so a command that waited for a busy
+// lock cannot publish a tree it has not looked at again.
 //
 // Publication is atomic on a local filesystem:
 //   * the snapshot is built in <releases>/.tmp-<sha>-<pid>-<rand> and renamed
@@ -30,12 +32,19 @@
 // disposition ends the process at once) leaves its temporary tree and the lock
 // of a dead owner behind; the next run that owns the releases dir sweeps both.
 //
-// Content: extensions/ is a real copy (symlinks preserved, modes preserved).
-// node_modules/ is hardlinked from the previous complete snapshot - a published
-// snapshot is never rewritten in place, so sharing those inodes is safe - or
-// really copied from the checkout on the first sync. A checkout's node_modules
-// is never hardlinked: the checkout keeps changing, and a shared inode would
-// change a published snapshot with it.
+// Content: extensions/ is the committed file set of that directory (git
+// ls-files --cached), copied for real (symlinks preserved, git modes applied to
+// files, directory modes taken from the checkout). Walking the directory instead
+// would publish ignored or untracked files that the commit does not contain, so
+// composition - not just cleanliness - comes from git. node_modules/ is not part
+// of the commit; it is hardlinked from the previous complete snapshot - a
+// published snapshot is never rewritten in place, so sharing those inodes is
+// safe - or really copied from the checkout on the first sync. A checkout's
+// node_modules is never hardlinked: the checkout keeps changing, and a shared
+// inode would change a published snapshot with it. Only a manifest written by
+// this writer (schema 2) proves that its node_modules is independent of the
+// checkout; a schema-1 artifact of the pre-Node writer hardlinked node_modules
+// against the checkout, so it is never used as a hardlink source.
 //
 // Locking: every operation on one releases dir runs under one exclusive lock,
 // <releases>/.lock, created as a symlink whose target is the owner record
@@ -47,18 +56,27 @@
 // exists. Age is not evidence - a slow but live snapshot keeps its lock, and a
 // lock that cannot be attributed is a bounded error naming its owner instead of
 // a stolen lock. A recycled pid makes a dead owner look alive, which fails in
-// the safe direction (bounded error, no takeover). Waiters poll boundedly
-// (60 s default, AGENT_KIT_SNAPSHOT_LOCK_TIMEOUT overrides it).
+// the safe direction (bounded error, no takeover). The measurement that
+// justifies a takeover can itself go stale, so the takeover re-reads the record
+// .lock names at that moment and decides on the instance it actually moved
+// aside: a lock whose owner is not provably gone is put back by an atomic
+// symlink create, which fails instead of replacing a lock a third process took
+// in the meantime, and the claimer waits or fails boundedly. Waiters poll
+// boundedly (60 s default, AGENT_KIT_SNAPSHOT_LOCK_TIMEOUT overrides it). There
+// is no compare-and-swap for a symlink, so the remaining window between the
+// re-read and the claim is a syscall wide; a live owner that ever loses its
+// lock that way stops at its next ownership check instead of writing to a
+// releases dir it does not own.
 //
 // Retention keeps current's target, the snapshot just published, and the 5
 // newest snapshots. A directory that cannot be removed is exactly one bounded
 // warning and never fails the publication: current already points at a complete
 // snapshot by then.
 //
-// External processes: git (the checkout identity is git's to decide) and
-// nothing else. No cp, stat, flock, pax, perl, tr or mv is spawned; every
-// filesystem operation is a Node call, so the behaviour is the same on Linux
-// and macOS.
+// External processes: git (the checkout identity and the committed file set are
+// git's to decide) and nothing else. No cp, stat, flock, pax, perl, tr or mv is
+// spawned; every filesystem operation is a Node call, so the behaviour is the
+// same on Linux and macOS.
 
 import { execFileSync } from "node:child_process";
 import {
@@ -103,21 +121,35 @@ const TMP_PREFIX = ".tmp-";
 const CURRENT_TMP_PREFIX = ".current.tmp-";
 const SHA_NAME = /^[0-9a-f]{40}$/;
 
-// The manifest shape every version of this writer emits: exactly five fields,
-// one per line, in this order. Reading is strict on purpose - a directory that
-// merely contains the right sha somewhere is not a snapshot of that commit.
+// The manifest shapes this writer reads: schema 2 is what it writes, schema 1 is
+// what the pre-Node writer left behind. Reading is strict on purpose - a
+// directory that merely contains the right sha somewhere is not a snapshot of
+// that commit. The schema doubles as the writer's identity marker: only schema 2
+// proves that node_modules inodes are independent of the checkout, because the
+// Bash writer hardlinked them against the checkout even on the first sync.
 // The source field is a JSON string: our escapes, or a \uXXXX escape, but no
 // raw control character (a checkout path with a newline is escaped, not lost).
+const SNAPSHOT_SCHEMA = 2;
 const JSON_STRING_BODY = String.raw`(?:[^"\\\u0000-\u001f]|\\["\\/bfnrt]|\\u[0-9a-fA-F]{4})*`;
-const MANIFEST_PATTERN = new RegExp(
-	"^\\{\\n" +
-		' {2}"schema": 1,\\n' +
-		' {2}"sha": "([0-9a-f]{40})",\\n' +
-		' {2}"dirty": (true|false),\\n' +
-		' {2}"createdAt": "(\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(?:\\.\\d{3})?Z)",\\n' +
-		` {2}"source": "(${JSON_STRING_BODY})"\\n` +
-		"\\}\\n$",
-);
+
+function manifestPattern(schema) {
+	return new RegExp(
+		"^\\{\\n" +
+			` {2}"schema": ${schema},\\n` +
+			' {2}"sha": "([0-9a-f]{40})",\\n' +
+			' {2}"dirty": (true|false),\\n' +
+			' {2}"createdAt": "(\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(?:\\.\\d{3})?Z)",\\n' +
+			` {2}"source": "(${JSON_STRING_BODY})"\\n` +
+			"\\}\\n$",
+	);
+}
+
+// Newest shape first: a complete artifact is trusted according to the writer
+// named by its schema.
+const MANIFEST_SHAPES = [
+	{ schema: 2, hardlinkSafe: true, pattern: manifestPattern(2) },
+	{ schema: 1, hardlinkSafe: false, pattern: manifestPattern(1) },
+];
 
 // --- small primitives -------------------------------------------------------
 
@@ -185,15 +217,21 @@ function makeWritable(path) {
 
 // --- the checkout identity --------------------------------------------------
 
-function git(repo, args) {
+function gitOutput(repo, args) {
 	try {
 		return execFileSync("git", ["-C", repo, ...args], {
 			encoding: "utf8",
 			stdio: ["ignore", "pipe", "ignore"],
-		}).trim();
+			maxBuffer: 64 * 1024 * 1024,
+		});
 	} catch {
 		return null;
 	}
+}
+
+function git(repo, args) {
+	const output = gitOutput(repo, args);
+	return output === null ? null : output.trim();
 }
 
 // The committed tree is the snapshot's identity, so the checkout must be clean:
@@ -246,14 +284,19 @@ function readManifest(path) {
 	} catch {
 		return null;
 	}
-	const match = MANIFEST_PATTERN.exec(text);
-	if (!match) return null;
-	return {
-		sha: match[1],
-		dirty: match[2] === "true",
-		createdAt: match[3],
-		source: match[4],
-	};
+	for (const shape of MANIFEST_SHAPES) {
+		const match = shape.pattern.exec(text);
+		if (!match) continue;
+		return {
+			schema: shape.schema,
+			hardlinkSafe: shape.hardlinkSafe,
+			sha: match[1],
+			dirty: match[2] === "true",
+			createdAt: match[3],
+			source: match[4],
+		};
+	}
+	return null;
 }
 
 // A directory under a final name is trusted only after this check. Every
@@ -271,7 +314,9 @@ function inspectSnapshot(dir, sha) {
 		};
 	}
 	const manifest = readManifest(join(dir, "manifest.json"));
-	if (!manifest) return { ok: false, reason: "its manifest.json is not the expected five-field record" };
+	if (!manifest) {
+		return { ok: false, reason: "its manifest.json is not a snapshot record this writer writes" };
+	}
 	if (manifest.sha !== sha) return { ok: false, reason: `its manifest describes ${manifest.sha}` };
 	// Older versions snapshotted the working tree and recorded that in the
 	// manifest. Such an artifact may contain anything, so it is neither reused
@@ -282,7 +327,10 @@ function inspectSnapshot(dir, sha) {
 			reason: "it was written from a dirty working tree by an older agent-kit and is not the committed tree",
 		};
 	}
-	return { ok: true };
+	// An artifact of the pre-Node writer is complete, but its node_modules can
+	// still share inodes with a checkout. It may be reused as it is; it is never
+	// the source of hardlinks for a new snapshot.
+	return { ok: true, hardlinkSafe: manifest.hardlinkSafe, schema: manifest.schema };
 }
 
 // --- publishing -------------------------------------------------------------
@@ -345,9 +393,21 @@ function currentTarget(releases) {
 
 function nodeModulesSource(repo, releases) {
 	const previous = currentTarget(releases);
-	if (previous && inspectSnapshot(previous, basename(previous)).ok) {
-		const nodeModules = join(previous, "node_modules");
-		if (hasPackages(nodeModules)) return { path: nodeModules, hardlink: true };
+	if (previous) {
+		const check = inspectSnapshot(previous, basename(previous));
+		if (check.ok && check.hardlinkSafe) {
+			const nodeModules = join(previous, "node_modules");
+			if (hasPackages(nodeModules)) return { path: nodeModules, hardlink: true };
+		} else if (check.ok) {
+			// A schema-1 snapshot was written by the pre-Node writer, which
+			// hardlinked node_modules against the checkout. Hardlinking from it
+			// would publish a snapshot that changes with the checkout, so the
+			// runtime tree is copied from the checkout instead.
+			warn(
+				`snapshot: ${bounded(previous, 120)} was written by an older agent-kit, whose node_modules ` +
+				`can share inodes with a checkout; copying node_modules from the checkout instead of hardlinking it`,
+			);
+		}
 	}
 	const nodeModules = join(repo, "node_modules");
 	if (hasPackages(nodeModules)) return { path: nodeModules, hardlink: false };
@@ -357,15 +417,82 @@ function nodeModulesSource(repo, releases) {
 	);
 }
 
+// The committed file set of extensions/, as "<mode> <path>" records. git owns
+// the composition: a file that the working tree holds but the commit does not
+// (an ignored local extension, an untracked draft) is not part of the snapshot.
+function committedExtensions(repo) {
+	const raw = gitOutput(repo, ["ls-files", "--cached", "-z", "-s", "--", "extensions"]);
+	if (raw === null) die(`snapshot: could not list the committed files of ${repo} under extensions`);
+	const files = [];
+	for (const record of raw.split("\0")) {
+		if (record === "") continue;
+		const split = record.indexOf("\t");
+		const fields = split < 0 ? [] : record.slice(0, split).split(" ");
+		if (fields.length !== 3) die("snapshot: could not parse the committed file list of extensions");
+		const [mode, , stage] = fields;
+		const path = record.slice(split + 1);
+		if (stage !== "0") {
+			die(`snapshot: ${bounded(path, 100)} has an unmerged index entry; resolve the merge first`);
+		}
+		files.push({ mode, path });
+	}
+	return files;
+}
+
+// Copy exactly that file set. Directory modes are taken from the checkout (git
+// records no directory modes), file modes come from the commit's mode bits, and
+// a symlink keeps the target the commit has because the tree is clean.
+function copyCommittedExtensions(repo, dest, files) {
+	const source = join(repo, "extensions");
+	mkdirSync(dest, { mode: 0o700 });
+	const directories = new Map();
+	const ensureDirectory = (relative) => {
+		let current = "";
+		for (const segment of relative === "" ? [] : relative.split("/")) {
+			current = current === "" ? segment : `${current}/${segment}`;
+			if (directories.has(current)) continue;
+			mkdirSync(join(dest, current), { mode: 0o700 });
+			const stat = lstatOrNull(join(source, current));
+			directories.set(current, stat?.isDirectory() ? stat.mode & 0o7777 : 0o777);
+		}
+	};
+	for (const file of files) {
+		if (!file.path.startsWith("extensions/")) {
+			die(`snapshot: the committed path ${bounded(file.path, 100)} is not a file inside extensions/`);
+		}
+		const relative = file.path.slice("extensions/".length);
+		const slash = relative.lastIndexOf("/");
+		ensureDirectory(slash < 0 ? "" : relative.slice(0, slash));
+		const from = join(repo, file.path);
+		const to = join(dest, relative);
+		if (file.mode === "160000") {
+			die(`snapshot: ${bounded(file.path, 100)} is a git submodule; a snapshot cannot hold it`);
+		}
+		if (file.mode === "120000") {
+			symlinkSync(readlinkSync(from), to);
+			continue;
+		}
+		if (file.mode !== "100644" && file.mode !== "100755") {
+			die(`snapshot: ${bounded(file.path, 100)} has git mode ${file.mode}, which a snapshot cannot copy`);
+		}
+		copyFileSync(from, to);
+		chmodSync(to, file.mode === "100755" ? 0o755 : 0o644);
+	}
+	for (const [relative, mode] of directories) chmodSync(join(dest, relative), mode);
+	const root = lstatOrNull(source);
+	if (root?.isDirectory()) chmodSync(dest, root.mode & 0o7777);
+}
+
 function buildSnapshot(repo, releases, sha, tmp) {
-	if (!isFile(join(repo, EXT_MARKER))) {
+	const extensions = committedExtensions(repo);
+	if (!extensions.some((file) => file.path === EXT_MARKER)) {
 		die(
-			`snapshot: ${join(repo, EXT_MARKER)} is missing; ${join(repo, "extensions")} ` +
-				`is not an agent-kit extension set`,
+			`snapshot: ${EXT_MARKER} is not committed at ${sha}; ` +
+				`${join(repo, "extensions")} is not an agent-kit extension set`,
 		);
 	}
 	mkdirSync(tmp);
-	copyTree(join(repo, "extensions"), join(tmp, "extensions"));
+	copyCommittedExtensions(repo, join(tmp, "extensions"), extensions);
 
 	const source = nodeModulesSource(repo, releases);
 	if (source.hardlink) linkTree(source.path, join(tmp, "node_modules"));
@@ -374,7 +501,7 @@ function buildSnapshot(repo, releases, sha, tmp) {
 	const createdAt = new Date().toISOString().replace(/\.\d{3}Z$/, "Z");
 	const manifest =
 		`{\n` +
-		`  "schema": 1,\n` +
+		`  "schema": ${SNAPSHOT_SCHEMA},\n` +
 		`  "sha": "${sha}",\n` +
 		`  "dirty": false,\n` +
 		`  "createdAt": "${createdAt}",\n` +
@@ -541,44 +668,69 @@ function freeAsidePath(base) {
 	die(`snapshot: cannot find a free aside name next to ${base}`);
 }
 
-// Move the lock aside and hand it back when what landed there is not the lock
-// this process measured as abandoned. rename(2) is the arbiter: exactly one
-// waiter can move one lock instance away.
+// Move one lock instance aside and decide from what actually landed there.
+// rename(2) is the arbiter: exactly one waiter can move one instance away, so the
+// record in the unique aside path is the lock this process really claimed, and a
+// record read before the move proves nothing about it. Taking over is only
+// allowed when the claimed owner is provably gone.
 function takeOverLock(lock, measured) {
+	// The measurement that justified this takeover can be stale by now: re-read
+	// the record .lock names right now and act only on that instance.
+	if (readlinkOrNull(lock) !== measured) return false;
 	const aside = freeAsidePath(`${lock}.stale`);
 	try {
 		renameSync(lock, aside);
 	} catch (err) {
 		if (err?.code === "ENOENT") return false;
-		die(`snapshot: could not take over the stale lock ${lock}: ${err?.code ?? err?.message}`);
+		die(`snapshot: could not take over the abandoned lock ${lock}: ${err?.code ?? err?.message}`);
 	}
 	const landed = readlinkOrNull(aside);
-	if (landed !== measured) {
-		// Not the lock this process measured: put it back. A third acquirer that
-		// took the freed name meanwhile is a loud, bounded failure, never a
-		// silent second holder.
-		if (!lstatOrNull(lock)) {
-			try {
-				renameSync(aside, lock);
-				return false;
-			} catch {
-				// Fall through to the bounded error below.
-			}
+	const owner = decodeOwner(landed);
+	if (owner && ownerIsGone(owner)) {
+		try {
+			unlinkSync(aside);
+		} catch {
+			// An aside of a provably abandoned lock is a leftover; the sweep
+			// under the next lock removes it.
 		}
-		const owner = decodeOwner(landed);
-		const ownerText = owner ? `pid ${owner.pid} on ${owner.host}` : bounded(landed ?? "unknown", 60);
-		die(
-			`snapshot: could not put the displaced lock back under ${lock}: another process acquired that name meanwhile; ` +
-				`the displaced live lock is at ${aside} (owner: ${ownerText}); stop it or remove whichever lock is stale, then retry`,
-		);
+		return true;
 	}
-	try {
-		unlinkSync(aside);
-	} catch {
-		// An aside symlink that cannot be removed is a leftover of a lock that
-		// was provably abandoned; the next sweep reports it.
+	restoreDisplacedLock(lock, aside, landed);
+	return false;
+}
+
+// Put back a lock this process moved aside although its owner is not provably
+// gone. The freed name is restored by creating the symlink again: symlink(2)
+// fails with EEXIST instead of replacing a lock that a third process acquired in
+// that window, so undoing the move can never destroy someone else's lock. When
+// that third process has the name, the displaced lock is named in a bounded
+// failure instead of being deleted.
+function restoreDisplacedLock(lock, aside, landed) {
+	const owner = decodeOwner(landed);
+	const ownerText = owner ? `pid ${owner.pid} on ${owner.host}` : bounded(landed ?? "unreadable", 60);
+	if (landed !== null) {
+		try {
+			symlinkSync(landed, lock);
+		} catch (err) {
+			if (err?.code !== "EEXIST") {
+				die(`snapshot: could not put the displaced lock ${aside} back under ${lock}: ${err?.code ?? err?.message}`);
+			}
+			die(
+				`snapshot: ${lock} changed hands while this process was taking it over; the displaced lock is at ${aside} ` +
+					`(owner: ${ownerText}); stop that process or remove whichever lock is stale, then retry`,
+			);
+		}
+		try {
+			unlinkSync(aside);
+		} catch {
+			// The sweep under the next lock removes the duplicate.
+		}
+		return;
 	}
-	return true;
+	die(
+		`snapshot: ${lock} was not a lock symlink when this process claimed it; the displaced entry is at ${aside} ` +
+			`(${ownerText}); move it back or remove it, then retry`,
+	);
 }
 
 function acquireLock(releases, timeoutMs) {
@@ -727,13 +879,22 @@ function resolveReleasesDir(argument) {
 	}
 }
 
+// `<releases-dir>` is the only argument, so the releases dir is resolved before
+// anything decides the snapshot's content: the lock lives there and has to be
+// taken first. Everything that decides that content - HEAD, the cleanliness of
+// the checkout and the committed file set - is read after the lock is held,
+// never before a wait, so a waiter cannot publish a tree it has not looked at
+// again. The one probe that runs earlier answers a setup error rather than a
+// content question: a directory that is not a git checkout at all is refused
+// before an empty releases dir is created for it.
 export function snapshot(repo, args) {
 	if (args.length !== 1 || args[0] === "") {
 		die("snapshot takes exactly one argument: <releases-dir> (see: agent-kit help)");
 	}
-	const { sha } = resolveHead(repo);
+	if (git(repo, ["rev-parse", "--git-dir"]) === null) {
+		die(`snapshot: ${repo} is not a git checkout; there is no HEAD to snapshot`);
+	}
 	const releases = resolveReleasesDir(args[0]);
-	const final = join(releases, sha);
 
 	// The cleanup and the lock release are installed before the lock is taken: a
 	// death inside lock acquisition must not leave the temporary tree behind.
@@ -760,31 +921,45 @@ export function snapshot(repo, args) {
 		lock = acquireLock(releases, lockTimeoutMs());
 		sweepLeftovers(releases);
 
+		// HEAD and the working-tree state belong to this critical section: whoever
+		// waited for the lock may have waited through a commit or an edit.
+		const head = resolveHead(repo);
+		const final = join(releases, head.sha);
 		const existing = lstatOrNull(final);
 		if (existing) {
-			const check = inspectSnapshot(final, sha);
+			const check = inspectSnapshot(final, head.sha);
 			if (!check.ok) {
-				die(`snapshot: ${final} exists but is not a complete snapshot of ${sha} (${check.reason}); remove it manually`);
+				die(
+					`snapshot: ${final} exists but is not a complete snapshot of ${head.sha} (${check.reason}); remove it manually`,
+				);
 			}
 			verifyLock(lock, "repairing current");
-			if (currentTarget(releases) !== final) flipCurrent(releases, sha);
-			pruneSnapshots(releases, sha, (section) => verifyLock(lock, section));
-			msg(`Snapshot ${sha} is already present (${final}); current points at it`);
+			if (currentTarget(releases) !== final) flipCurrent(releases, head.sha);
+			pruneSnapshots(releases, head.sha, (section) => verifyLock(lock, section));
+			msg(`Snapshot ${head.sha} is already present (${final}); current points at it`);
 			return 0;
 		}
 
-		tmp = join(releases, `${TMP_PREFIX}${sha}-${process.pid}-${token()}`);
-		buildSnapshot(repo, releases, sha, tmp);
+		// Read again immediately before the copy: the identity and the clean state
+		// this snapshot is published under must be the ones the copy sees.
+		const copyHead = resolveHead(repo);
+		if (copyHead.sha !== head.sha) {
+			die(
+				`snapshot: HEAD moved from ${head.sha} to ${copyHead.sha} while the snapshot was prepared; retry`,
+			);
+		}
+		tmp = join(releases, `${TMP_PREFIX}${copyHead.sha}-${process.pid}-${token()}`);
+		buildSnapshot(repo, releases, copyHead.sha, tmp);
 		verifyLock(lock, "the publish rename");
-		publishSnapshot(releases, sha, tmp);
+		publishSnapshot(releases, copyHead.sha, tmp);
 		tmp = "";
 		verifyLock(lock, "the current flip");
-		flipCurrent(releases, sha);
+		flipCurrent(releases, copyHead.sha);
 		// The flip comes first on purpose: retention must never leave current
 		// pointing at what it is about to delete, and a prune failure is only a
 		// warning.
-		pruneSnapshots(releases, sha, (section) => verifyLock(lock, section));
-		msg(`Snapshot ${sha} -> ${final} (current)`);
+		pruneSnapshots(releases, copyHead.sha, (section) => verifyLock(lock, section));
+		msg(`Snapshot ${copyHead.sha} -> ${final} (current)`);
 		return 0;
 	} catch (err) {
 		// Anything that is not an intended refusal still has to leave the CLI with
