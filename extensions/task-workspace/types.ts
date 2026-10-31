@@ -5,6 +5,8 @@
  * of the task-workspace runtime: no pi SDK imports, no extension plumbing.
  */
 
+import type { OwnerView } from "./owner-lock";
+
 // Path classification for a filesystem location relative to the task root.
 export type PathClassification =
   | "OUTSIDE_GIT"
@@ -38,6 +40,8 @@ export type ManagedRepoStatus = {
   headSha: string;
   upstream: string | null;
   dirty: DirtyState;
+  /** Cross-process ownership of this worktree (diagnostics). */
+  owner?: OwnerView;
 };
 
 export type GitOperationClass =

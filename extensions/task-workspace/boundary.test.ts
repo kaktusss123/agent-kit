@@ -19,6 +19,8 @@ const ACTIVE_SOURCES = [
   "flows.ts",
   "git.ts",
   "guard.ts",
+  "owner-lock.ts",
+  "workspace-path.ts",
   "shim-path.ts",
   "task-root.ts",
   "types.ts",

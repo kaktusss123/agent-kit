@@ -16,6 +16,8 @@
     "flows.ts",
     "git.ts",
     "guard.ts",
+    "owner-lock.ts",
+    "workspace-path.ts",
     "index.ts",
     "render.ts",
     "shim-path.ts",

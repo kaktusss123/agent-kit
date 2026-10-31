@@ -99,9 +99,10 @@ describe("task-workspace core host independence", () => {
       execFileSync("git", ["-C", sourceRepo, "commit", "-qm", "init"]);
       execFileSync("git", ["-C", sourceRepo, "branch", "feat/host2"]);
 
-      // Workspace path math follows the injected root, not any default.
+      // Workspace path math follows the injected root, not any default, and
+      // encodes the identity reversibly (distinct identities, distinct dirs).
       expect(gitCore.taskWorkspacePath("some/task", hostRoot)).toBe(
-        join(hostRoot, "some_task"),
+        join(hostRoot, "some%2Ftask"),
       );
 
       // A real flow materializes the workspace under the injected root.
@@ -124,9 +125,10 @@ describe("task-workspace core host independence", () => {
       );
       const scan = await gitCore.scanTaskWorkspaces(hostRoot);
       // scanTaskWorkspaces lists one entry per workspace directory (the
-      // flattened branch) inside the injected root.
+      // encoded identity) inside the injected root.
       expect(scan.length).toBe(1);
-      expect(scan[0]!.workspace).toBe(join(hostRoot, "feat_host2"));
+      expect(scan[0]!.workspace).toBe(join(hostRoot, "feat%2Fhost2"));
+      expect(scan[0]!.identity).toBe("feat/host2");
       expect(scan[0]!.repos.map((r) => r.path)).toContain(worktree);
     } finally {
       await rm(hostRoot, { recursive: true, force: true });
