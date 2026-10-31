@@ -38,6 +38,13 @@ export class FakeRpcProcess implements ChildProcessLike {
 	ignoreSigterm = false;
 
 	/**
+	 * When true, even SIGKILL produces no `close` event: simulates a
+	 * grandchild that inherited stdio and holds the pipes open after the
+	 * child's death. cancel()/retire() must still return.
+	 */
+	neverClose = false;
+
+	/**
 	 * Respond success to any `prompt` command carrying a `streamingBehavior`
 	 * (steer/follow_up dispatches), like a real pi preflight.
 	 */
@@ -107,6 +114,7 @@ export class FakeRpcProcess implements ChildProcessLike {
 	kill(signal: string): boolean {
 		if (this.closed) return false;
 		this.signalsReceived.push(signal);
+		if (this.neverClose) return true;
 		if (signal === "SIGKILL" || (signal === "SIGTERM" && !this.ignoreSigterm)) {
 			this.close(signal === "SIGKILL" ? null : 143, signal === "SIGKILL" ? "SIGKILL" : null);
 		}
