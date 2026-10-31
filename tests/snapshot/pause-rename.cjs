@@ -1,9 +1,9 @@
 // Test-only interposer for the snapshot suite's lock and identity races.
 //
 // NODE_OPTIONS="--require <this file>" installs a wrapper around the CLI's
-// `fs.renameSync`, `fs.readlinkSync` and `fs.symlinkSync` bindings, so a test
-// can freeze the writer at a named point for exactly as long as it needs and
-// then drive the next step from the test. It is a harness for
+// `fs.renameSync`, `fs.readlinkSync`, `fs.symlinkSync` and `fs.chmodSync`
+// bindings, so a test can freeze the writer at a named point for exactly as long
+// as it needs and then drive the next step from the test. It is a harness for
 // tests/snapshot/run.sh: the CLI never loads it on its own, and nothing here is
 // part of the command contract.
 //
@@ -21,6 +21,17 @@
 //                 claimed, and the claimer has not looked at it yet
 //   lock-create   after symlink("<releases>/.lock") returned: the process has
 //                 published its own owner record, nothing else happened yet
+//   prune-remove  at the first chmod of a snapshot directory
+//                 (<releases>/<40-hex>) performed by removeTree()'s permission
+//                 walk: every ownership and current check the writer made for
+//                 that retention candidate has returned, the removal has not
+//                 started, and the walk is the last thing the writer does to the
+//                 tree before the unlink
+//
+// Points that are about a writer's own step ("prune-remove") are selected by the
+// caller frames named in the point, not by the ordinal of a syscall, so a
+// refactor that adds or drops an unrelated call does not move them. A point that
+// never fires is a failed test, never a silent pass.
 //
 // Paths in the spec cannot contain ":" (the sandbox paths never do).
 
@@ -50,6 +61,23 @@ function hold(point) {
 }
 
 const isLock = (path) => String(path).endsWith("/.lock");
+
+const SNAPSHOT_NAME = /^[0-9a-f]{40}$/;
+
+// A snapshot directory, the only thing retention removes as a unit.
+function isSnapshotEntry(path) {
+	const parts = String(path).split("/");
+	return SNAPSHOT_NAME.test(parts[parts.length - 1] ?? "");
+}
+
+// True when every named function is on the current call chain. The writer's
+// functions are named, so this ties a point to the step it describes instead of
+// to a syscall count.
+function inFrame(...names) {
+	const stack = new Error().stack ?? "";
+	return names.every((name) => stack.includes(`at ${name} `));
+}
+
 const renameSync = fs.renameSync;
 fs.renameSync = function pauseRename(oldPath, newPath) {
 	const claim = isLock(oldPath) && String(newPath).includes(".lock.stale");
@@ -64,6 +92,21 @@ fs.symlinkSync = function pauseSymlink(target, path) {
 	const result = symlinkSync.apply(fs, arguments);
 	if (isLock(path)) hold("lock-create");
 	return result;
+};
+
+const chmodSync = fs.chmodSync;
+fs.chmodSync = function pauseChmod(path) {
+	// A retention removal is a walk over the tree followed by the unlink; the
+	// walk's first chmod is the last moment before the unlink that can still be
+	// interrupted from outside.
+	if (
+		points.has("prune-remove") &&
+		isSnapshotEntry(path) &&
+		inFrame("removeTree", "makeWritable")
+	) {
+		hold("prune-remove");
+	}
+	return chmodSync.apply(fs, arguments);
 };
 
 const readlinkSync = fs.readlinkSync;

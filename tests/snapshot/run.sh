@@ -36,9 +36,12 @@
 #     requires a provably dead owner, never age;
 #   * retention keeps current plus the five newest snapshots, and a directory
 #     that cannot be removed is a warning, not a failure;
+#   * retention re-checks ownership as its last step before an unlink, so a
+#     writer that loses its lock stops instead of removing a snapshot another
+#     process made current;
 #   * no userland tool (cp, mv, stat, flock, pax, perl, tr, rm) is spawned.
 #
-# The race tests (F1, F3) load tests/snapshot/pause-rename.cjs through
+# The race tests (F1, F1b, F3) load tests/snapshot/pause-rename.cjs through
 # NODE_OPTIONS=--require to freeze the writer at one named step; the harness is
 # test-only and the CLI never loads it.
 #
@@ -1294,6 +1297,80 @@ if [ -n "${PLANTED:-}" ]; then
 fi
 	assert_eq "$(lock_asides)" 0 "no displaced lock is left aside"
 	assert_no_file "$RELEASES/.lock" "the lock is released"
+pass
+
+# ==============================================================================
+# F1b: the second half of F1, the half a check taken early cannot cover. A live
+# owner is in retention: it has already decided that a stale candidate P is not
+# current and is walking the tree it is about to remove. In exactly that window
+# its lock is displaced and a third process, whose HEAD is P, acquires the freed
+# name and flips current to P. The owner must re-check its ownership as the last
+# step before the unlink and stop; removing P after that flip leaves current
+# dangling, and no later run can repair a current that names nothing.
+#
+# The interposer freezes the live owner inside that walk - after every check it
+# made for P and before the unlink - so the takeover and the third process run
+# inside the window itself instead of being won by timing.
+
+new_test "F1b a lost lock stops retention before the unlink"
+make_kit "$KIT"
+P="$(head_sha)"
+run_snapshot
+	assert_eq "$RC" 0 "the stale candidate P is published"
+	assert_link "$RELEASES/current" "$P" "test setup: current names P"
+# The third process is a second checkout of the same commit: its HEAD is P, so
+# its fast path repairs current to P instead of building anything.
+git -C "$KIT" worktree add -q -b f1b-third "$SANDBOX/third" "$P"
+printf '\n// next\n' >>"$KIT/extensions/alpha/index.ts"
+git_commit_all "$KIT" "next"
+SHA="$(head_sha)"
+# Six candidates besides current's target P: retention keeps the five newest, so
+# P is the only stale one and the frozen removal is P's.
+i=1
+while [ "$i" -le 5 ]; do
+	fake_snapshot "$i" "2025030${i}0000.00"
+	i=$((i + 1))
+done
+touch -t 202001010000.00 "$RELEASES/$P"
+(
+	if NODE_OPTIONS="--require $PAUSE_PATCH" \
+		AGENT_KIT_SNAPSHOT_TEST_PAUSE="prune-remove:$SANDBOX/ready-owner:$SANDBOX/go-owner" \
+		AGENT_KIT_ROOT="$KIT" "$INSTALLER" snapshot "$RELEASES" >"$SANDBOX/out-owner" 2>&1; then
+		printf 0 >"$SANDBOX/rc-owner"
+	else
+		printf '%s' "$?" >"$SANDBOX/rc-owner"
+	fi
+) &
+OWNER=$!
+if ! wait_for_file "$SANDBOX/ready-owner"; then
+	fail "test setup: the live owner never reached the removal of P"
+fi
+	assert_link "$RELEASES/current" "$SHA" "test setup: the live owner published and flipped first"
+	assert_dir "$RELEASES/$P" "test setup: P is still on disk when the owner walks it"
+# A takeover that raced the owner's measurement moves the lock instance aside;
+# the freed name is what lets the third process in.
+mv "$RELEASES/.lock" "$RELEASES/.lock.stale-f1b"
+(
+	if AGENT_KIT_ROOT="$SANDBOX/third" "$INSTALLER" snapshot "$RELEASES" >"$SANDBOX/out-third" 2>&1; then
+		printf 0 >"$SANDBOX/rc-third"
+	else
+		printf '%s' "$?" >"$SANDBOX/rc-third"
+	fi
+) &
+THIRD=$!
+wait "$THIRD" || true
+	assert_eq "$(cat "$SANDBOX/rc-third")" 0 "the third process takes the freed lock and repairs current"
+	assert_link "$RELEASES/current" "$P" "test setup: current now names the candidate the owner is removing"
+: >"$SANDBOX/go-owner"
+wait "$OWNER" || true
+	assert_eq "$(cat "$SANDBOX/rc-owner")" 2 "the live owner refuses instead of removing current"
+	assert_bounded "$(cat "$SANDBOX/out-owner")" 3 "the live owner's refusal is bounded"
+	assert_dir "$RELEASES/$P" "the snapshot current names is still on disk"
+	assert_file "$RELEASES/$P/manifest.json" "and it is still complete"
+	assert_link "$RELEASES/current" "$P" "current still names a snapshot"
+	assert_file "$RELEASES/current/manifest.json" "current is not dangling"
+	assert_no_file "$RELEASES/.lock" "the lock is released"
+	assert_eq "$(lock_asides)" 0 "no displaced lock is left aside"
 pass
 
 # ==============================================================================

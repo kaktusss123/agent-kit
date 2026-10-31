@@ -66,12 +66,17 @@
 // is no compare-and-swap for a symlink, so the remaining window between the
 // re-read and the claim is a syscall wide; a live owner that ever loses its
 // lock that way stops at its next ownership check instead of writing to a
-// releases dir it does not own.
+// releases dir it does not own. Every step another process can observe - the
+// publish rename, the current flip, the removal of a retained snapshot - is
+// commissioned as the last thing before it: the permission walk that makes a
+// copied 0555 tree removable is unbounded in time, so it runs before that check
+// and never between the check and the unlink.
 //
 // Retention keeps current's target, the snapshot just published, and the 5
-// newest snapshots. A directory that cannot be removed is exactly one bounded
-// warning and never fails the publication: current already points at a complete
-// snapshot by then.
+// newest snapshots. A candidate is re-resolved against current and then removed
+// under one ownership check with nothing but the unlink behind it. A directory
+// that cannot be removed is exactly one bounded warning and never fails the
+// publication: current already points at a complete snapshot by then.
 //
 // External processes: git (the checkout identity and the committed file set are
 // git's to decide) and nothing else. No cp, stat, flock, pax, perl, tr or mv is
@@ -177,6 +182,11 @@ function token() {
 // directory cannot be descended into, so permissions are relaxed before the
 // unlink. Returns false when something is still there afterwards.
 //
+// The permission walk is as deep as the tree and can be arbitrarily long, so it
+// runs before `commission`, never between it and the unlink: a caller that must
+// not remove on a lock it may have lost passes the ownership check as
+// `commission` and has nothing but the unlink behind it.
+//
 // AGENT_KIT_SNAPSHOT_FAIL_REMOVE is a test seam and nothing else: it names a
 // path fragment whose removal always reports failure, so the suite can observe
 // the warning path on hosts where an unprivileged removal cannot be made to
@@ -184,11 +194,12 @@ function token() {
 // the outcome of a removal, never the publication contract.
 const FAIL_REMOVE = process.env.AGENT_KIT_SNAPSHOT_FAIL_REMOVE ?? "";
 
-function removeTree(path) {
+function removeTree(path, commission) {
 	const stat = lstatOrNull(path);
 	if (!stat) return true;
 	if (FAIL_REMOVE !== "" && path.includes(FAIL_REMOVE)) return false;
 	makeWritable(path);
+	if (commission) commission();
 	try {
 		rmSync(path, { recursive: true, force: true });
 	} catch {
@@ -510,7 +521,7 @@ function buildSnapshot(repo, releases, sha, tmp) {
 	writeFileSync(join(tmp, "manifest.json"), manifest);
 }
 
-function publishSnapshot(releases, sha, tmp) {
+function publishSnapshot(releases, sha, tmp, commission) {
 	const final = join(releases, sha);
 	// rename(2) replaces a file or a symlink at the target silently; only a
 	// non-empty directory is refused by the kernel. The type check makes that
@@ -520,6 +531,9 @@ function publishSnapshot(releases, sha, tmp) {
 		const kind = existing.isDirectory() ? "directory" : existing.isSymbolicLink() ? "symlink" : "file";
 		die(`snapshot: ${final} exists as a ${kind}; move it out of the way and retry`);
 	}
+	// Everything the publication itself decides is settled above; the ownership
+	// check is the last thing before the rename, so only the rename follows it.
+	commission();
 	try {
 		renameSync(tmp, final);
 	} catch (err) {
@@ -534,7 +548,7 @@ function publishSnapshot(releases, sha, tmp) {
 	}
 }
 
-function flipCurrent(releases, sha) {
+function flipCurrent(releases, sha, commission) {
 	const link = join(releases, CURRENT_NAME);
 	const existing = lstatOrNull(link);
 	if (existing && existing.isSymbolicLink() !== true) {
@@ -551,6 +565,9 @@ function flipCurrent(releases, sha) {
 		}
 	}
 	if (tmp === null) die(`snapshot: cannot create a temporary symlink next to ${link}`);
+	// The temporary link is a name of this process's own; the flip itself is a
+	// step another process can observe, so it is commissioned right before it.
+	commission();
 	try {
 		renameSync(tmp, link);
 	} catch (err) {
@@ -590,17 +607,16 @@ function pruneSnapshots(releases, published, verifyLock) {
 	let protectedPath = "";
 	let failedPath = "";
 	for (const path of stale) {
-		// The permission walk runs before the ownership re-check, so only the
-		// comparison and one unlink run after it.
-		makeWritable(path);
-		verifyLock(`the retention prune of ${basename(path)}`);
 		// current is re-resolved per directory: a snapshot retained as current's
-		// target is never a candidate, and the check is cheap.
-		if (path === currentTarget(releases) || path === keep) {
+		// target is never a candidate, and the check is cheap. The decision holds
+		// until the unlink because current can only move while another process
+		// holds the lock, and the removal re-checks this process's ownership with
+		// nothing but the unlink behind it.
+		if (path === keep || path === currentTarget(releases)) {
 			if (protectedPath === "") protectedPath = path;
 			continue;
 		}
-		if (removeTree(path)) continue;
+		if (removeTree(path, () => verifyLock(`the retention prune of ${basename(path)}`))) continue;
 		if (failedPath === "") failedPath = path;
 	}
 	verifyLock("the end of the retention prune");
@@ -933,8 +949,9 @@ export function snapshot(repo, args) {
 					`snapshot: ${final} exists but is not a complete snapshot of ${head.sha} (${check.reason}); remove it manually`,
 				);
 			}
-			verifyLock(lock, "repairing current");
-			if (currentTarget(releases) !== final) flipCurrent(releases, head.sha);
+			if (currentTarget(releases) !== final) {
+				flipCurrent(releases, head.sha, () => verifyLock(lock, "repairing current"));
+			}
 			pruneSnapshots(releases, head.sha, (section) => verifyLock(lock, section));
 			msg(`Snapshot ${head.sha} is already present (${final}); current points at it`);
 			return 0;
@@ -950,11 +967,9 @@ export function snapshot(repo, args) {
 		}
 		tmp = join(releases, `${TMP_PREFIX}${copyHead.sha}-${process.pid}-${token()}`);
 		buildSnapshot(repo, releases, copyHead.sha, tmp);
-		verifyLock(lock, "the publish rename");
-		publishSnapshot(releases, copyHead.sha, tmp);
+		publishSnapshot(releases, copyHead.sha, tmp, () => verifyLock(lock, "the publish rename"));
 		tmp = "";
-		verifyLock(lock, "the current flip");
-		flipCurrent(releases, copyHead.sha);
+		flipCurrent(releases, copyHead.sha, () => verifyLock(lock, "the current flip"));
 		// The flip comes first on purpose: retention must never leave current
 		// pointing at what it is about to delete, and a prune failure is only a
 		// warning.
