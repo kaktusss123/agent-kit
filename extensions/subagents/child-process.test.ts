@@ -261,6 +261,26 @@ describe("ChildAgentProcess independence", () => {
 		expect(b.events.filter((e) => e.kind === "completed")).toHaveLength(0);
 	});
 
+	test("cancel returns after SIGKILL even when close never arrives", async () => {
+		// A grandchild that inherited stdio can hold the pipes open after
+		// the child's death, so 'close' never fires. cancel() must still
+		// return (bounded by killGraceMs), or shutdown hangs and the
+		// worktree lease held past it is never released.
+		const { child, harness } = makeChild({ timeouts: { killGraceMs: 50 } });
+		const pending = child.start();
+		await tick(5);
+		autoAcceptPrompt(harness.spawned[0]);
+		await pending;
+		const proc = harness.spawned[0];
+		proc.ignoreSigterm = true;
+		proc.neverClose = true;
+		const t0 = Date.now();
+		await child.cancel();
+		const dt = Date.now() - t0;
+		expect(proc.signalsReceived).toEqual(["SIGTERM", "SIGKILL"]);
+		expect(dt).toBeLessThan(5000);
+	});
+
 	test("a re-dispatch over a terminal state hides the stale result until the new run starts", async () => {
 		const { child, harness } = makeChild();
 		const pending = child.start();

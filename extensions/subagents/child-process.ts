@@ -1031,7 +1031,11 @@ export class ChildAgentProcess {
 		]);
 		if (escalated && !this.conn.exit) {
 			this.conn.kill("SIGKILL");
-			await this.conn.waitForExit();
+			// Do NOT wait for the exit after SIGKILL: 'close' requires the
+			// child's stdio pipes to drain, which a grandchild that inherited
+			// them can hold open indefinitely. The process itself is dead;
+			// waiting here unboundedly hangs shutdown (and with it the
+			// worktree-lease release that follows it).
 		}
 		this.host.changed();
 	}
@@ -1055,7 +1059,8 @@ export class ChildAgentProcess {
 		]);
 		if (escalated && !this.conn.exit) {
 			this.conn.kill("SIGKILL");
-			await this.conn.waitForExit();
+			// Same as cancel(): no post-SIGKILL wait — 'close' may never
+			// arrive when a grandchild holds inherited stdio open.
 		}
 		// A retire of an already-terminal record changes no running set; the
 		// signature dedup suppresses the frame. Recorded as a mutation point
