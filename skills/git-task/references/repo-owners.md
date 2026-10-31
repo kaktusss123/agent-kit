@@ -2,6 +2,14 @@
 
 Deterministic contract of workspace-mode `subagent` spawns (subagents extension, workspace run layer). There is one child-agent surface: `subagent`. A spawn that passes `workspace` becomes the owner (RepoOwner) of that managed worktree and gains readiness validation, an enforced deadline, and the structured terminal envelope; the model never simulates them.
 
+## One owner per worktree
+
+A managed worktree has at most one live RepoOwner on the host, independent of how many Pi processes exist. The right to write is a local lease next to the task workspace:
+
+- it is acquired before the child process exists and released only after the child has exited and the final Git read finished — cancellation, the run deadline, a hung stop, and a Main crash do not release it early;
+- the lease names the recording processes (Main and the dispatched child, each by pid and process start time), so a dead Main with a still-running child keeps the worktree locked, and a dead owner is recovered only when every recorded process is provably gone;
+- a second dispatch is refused as `blocked` with `dispatched: false`, a `reason` naming the holder and the worktree, and an `owner` field with the record's state. Report that, do not retry in a loop: a retry can succeed only after the holding owner settles. `task_status` shows the same ownership per worktree. A refusal because the record is unreadable or written on another host is not retryable — it needs inspection.
+
 ## Dispatching an owner
 
 `subagent op=spawn workspace=<worktree> task=<assignment> deadlineSec=<seconds>` runs a RepoOwner: an independent agent process rooted in a managed task worktree. The child's model: an explicit `model` (`provider/id[:thinking]`) always wins; omitted, the `owner` role binding (`/subagent-role owner ...` — the user's explicit choice), else the current session model decides. Workspace spawns always run as role `owner`; `role` and `model` are mutually exclusive, and resolution fails closed before dispatch when a named model or the binding cannot be resolved. Do not pass `model` or `role` on owner dispatches unless the user asked for a specific model — do not override the binding merely because the work looks complex.

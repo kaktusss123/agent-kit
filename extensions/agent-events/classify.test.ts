@@ -1,5 +1,6 @@
-import { describe, expect, test } from "bun:test";
-import { classifyRunOutcome, truncateCodePoints } from "./classify";
+import { describe, test } from "node:test";
+import { expect } from "../../tests/support/expect.ts";
+import { classifyRunOutcome, truncateCodePoints } from "./classify.ts";
 
 function assistant(overrides: Partial<{ stopReason: string; errorMessage: string; text: string }> = {}) {
 	return {

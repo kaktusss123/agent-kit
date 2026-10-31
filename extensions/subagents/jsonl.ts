@@ -9,8 +9,11 @@
  */
 export class JsonlReader {
 	private buf = Buffer.alloc(0);
+	private readonly onLine: (line: string) => void;
 
-	constructor(private readonly onLine: (line: string) => void) {}
+	constructor(onLine: (line: string) => void) {
+		this.onLine = onLine;
+	}
 
 	push(chunk: Buffer | string): void {
 		const next = typeof chunk === "string" ? Buffer.from(chunk, "utf8") : chunk;

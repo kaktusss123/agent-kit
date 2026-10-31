@@ -22,9 +22,9 @@
  * this module stays hard-capped by its producer (controller/workspace layer).
  */
 import { homedir } from "node:os";
-import type { SessionStats, ToolActivity } from "./types";
-import { formatDuration, formatStatsBrief, formatProgress } from "./delivery";
-import type { Progress } from "./progress";
+import type { SessionStats, ToolActivity } from "./types.ts";
+import { formatDuration, formatStatsBrief, formatProgress } from "./delivery.ts";
+import type { Progress } from "./progress.ts";
 
 /**
  * Tool-aware argument exposure policy: tool name -> the argument keys that

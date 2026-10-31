@@ -13,9 +13,9 @@
  * the agent's status/result remain queryable via the subagent tool.
  */
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
-import { formatModelEvent } from "./delivery";
-import { markOwnDelivery } from "./steering-wake";
-import type { LocalSubagentRuntime } from "./controller";
+import { formatModelEvent } from "./delivery.ts";
+import { markOwnDelivery } from "./steering-wake.ts";
+import type { LocalSubagentRuntime } from "./controller.ts";
 
 export function attachDelivery(pi: ExtensionAPI, runtime: LocalSubagentRuntime): void {
 	runtime.onEvent((ev) => {

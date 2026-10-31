@@ -9,12 +9,13 @@ import { spawnSync } from "node:child_process";
 import { chmodSync, copyFileSync, readFileSync } from "node:fs";
 import { mkdir } from "node:fs/promises";
 import { dirname, join } from "node:path";
-import { afterAll, beforeAll, describe, expect, test } from "bun:test";
-import { resolveGitOnPath } from "../shim-path";
-import { createGuardFixture, type GuardFixture } from "./fixture";
+import { after as afterAll, before as beforeAll, describe, test } from "node:test";
+import { expect } from "../../../tests/support/expect.ts";
+import { resolveGitOnPath } from "../shim-path.ts";
+import { createGuardFixture, type GuardFixture } from "./fixture.ts";
 
-const SHIM_PATH = join(import.meta.dir, "git");
-const POLICY_PATH = join(import.meta.dir, "policy.mjs");
+const SHIM_PATH = join(import.meta.dirname, "git");
+const POLICY_PATH = join(import.meta.dirname, "policy.mjs");
 
 /** Guard environment armed like the extension's spawnHook, with the shim
  *  dir FIRST on PATH (proving the fail-open path skips the shim itself). */
@@ -68,7 +69,7 @@ describe("shim subprocess: block", () => {
     shimEnv = buildEnv(fx, realGit, true);
     // Fixture setup spawns dozens of guarded git invocations (measured
     // ~3.5s warm); the 5s default leaves no headroom on a loaded machine.
-  }, 30_000);
+  });
 
   afterAll(async () => {
     if (fx) await fx.destroy();
@@ -103,7 +104,7 @@ describe("shim subprocess: transparent passthrough on allow", () => {
     fx = await createGuardFixture("agent-kit-shim-pass-");
     shimEnv = buildEnv(fx, realGit, true);
     // Same budget rationale as the block fixture above.
-  }, 30_000);
+  });
 
   afterAll(async () => {
     if (fx) await fx.destroy();
@@ -172,7 +173,7 @@ describe("shim subprocess: fail open without the guard environment", () => {
     chmodSync(join(secondShimDir, "git"), 0o755);
     shimEnv.PATH = `${secondShimDir}:${shimEnv.PATH}`;
     // Same budget rationale as the block fixture above.
-  }, 30_000);
+  });
 
   afterAll(async () => {
     if (fx) await fx.destroy();
@@ -198,7 +199,7 @@ describe("shim script hygiene", () => {
     chmodSync(SHIM_PATH, 0o755);
     fx = await createGuardFixture("agent-kit-shim-hygiene-");
     // Same budget rationale as the block fixture above.
-  }, 30_000);
+  });
 
   afterAll(async () => {
     if (fx) await fx.destroy();
@@ -212,7 +213,7 @@ describe("shim script hygiene", () => {
   });
 
   test("policy module is runnable under the node runtime too", () => {
-    // pi may run under bun, but the policy must not depend on bun APIs.
+    // The policy must not depend on host-specific APIs beyond node stdlib.
     // Run plain node against the fixture primary with NO AGENT_TASK_ROOT:
     // an unconfigured task root fails mutations closed.
     const r = spawnSync("node", [POLICY_PATH, fx.primary, "commit", "-m", "x"], {

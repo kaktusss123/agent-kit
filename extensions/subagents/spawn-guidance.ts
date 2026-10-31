@@ -11,7 +11,7 @@
  *
  * Pure module: no pi imports, no fs — callers supply the fresh state.
  */
-import { ROLES, ROLE_DESCRIPTIONS, type RoleBindings } from "./roles";
+import { ROLES, ROLE_DESCRIPTIONS, type RoleBindings } from "./roles.ts";
 
 /** System-prompt section tag carrying this guidance. */
 export const SPAWN_MODEL_SECTION = "subagent_model_defaults";

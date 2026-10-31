@@ -25,7 +25,7 @@ The agent-kit plugin applies the same policy as Pi through Claude Code hooks:
 
 - A `SessionStart` hook arms the git PATH shim for every Bash command of the session and its subagents (via `CLAUDE_ENV_FILE`): mutating git on the primary checkout of a repository that has managed worktrees is blocked with the worktree paths, `--no-verify` is blocked everywhere, `--git-dir`/`--work-tree` redirection blocks local mutations; read-only git and `push` pass. Same documented bypasses as in Pi (absolute git path, `sudo`, inline `PATH=`); it is routing protection, not a sandbox.
 - A `PreToolUse` hook denies `Edit`/`Write`/`MultiEdit`/`NotebookEdit` of tracked primary-checkout files of such a repository (ignored untracked files stay writable) and of `.git` metadata, naming the managed worktrees. This guard covers only those edit tools: writes performed through Bash (`sed -i`, `cp`, redirection, scripts) are not intercepted and are covered only by the RepoOwner contract and the routing rules below.
-- Without its environment (plugin not loaded, managed `allowManagedHooksOnly`, `bun` missing) the guard fails open and Bash behaves stock.
+- Without its environment (plugin not loaded, managed `allowManagedHooksOnly`, checkout without the task-workspace CLI) the guard fails open and Bash behaves stock.
 
 A guard denial is a routing failure: address the managed worktree instead; never repeat the mutation through another tool, `cp`, `sed`, Python, or another agent.
 

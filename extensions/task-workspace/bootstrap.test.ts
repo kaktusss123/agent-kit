@@ -13,8 +13,9 @@
 import { existsSync, lstatSync, mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterAll, describe, expect, test } from "bun:test";
-import { bootstrapWorktreeDependencies, discoverDependencySource, type BootstrapConfig } from "./bootstrap";
+import { after as afterAll, describe, test } from "node:test";
+import { expect } from "../../tests/support/expect.ts";
+import { bootstrapWorktreeDependencies, discoverDependencySource, type BootstrapConfig } from "./bootstrap.ts";
 
 const ANCHOR = "test-anchor";
 const CONFIG: BootstrapConfig = {

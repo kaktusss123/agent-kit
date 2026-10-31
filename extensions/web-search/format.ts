@@ -4,7 +4,7 @@
  * layer; the full result travels in tool-result `details` for the TUI only.
  */
 
-import type { SearchSource, WebSearchResult } from "./codex";
+import type { SearchSource, WebSearchResult } from "./codex.ts";
 
 export type SearchContextSize = "low" | "medium" | "high";
 

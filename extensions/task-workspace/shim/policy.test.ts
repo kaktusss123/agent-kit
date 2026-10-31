@@ -7,8 +7,9 @@
  */
 import { mkdir } from "node:fs/promises";
 import { join } from "node:path";
-import { afterAll, beforeAll, describe, expect, test } from "bun:test";
-import { createGuardFixture, type GuardFixture } from "./fixture";
+import { after as afterAll, before as beforeAll, describe, test } from "node:test";
+import { expect } from "../../../tests/support/expect.ts";
+import { createGuardFixture, type GuardFixture } from "./fixture.ts";
 import * as policy from "./policy.mjs";
 import { splitGitGlobalArgs } from "./classify.mjs";
 
@@ -17,9 +18,8 @@ let fx: GuardFixture;
 beforeAll(async () => {
   fx = await createGuardFixture("agent-kit-policy-");
   // Fixture builds two managed worktrees plus ~25 git spawns; on a loaded
-  // machine that exceeds bun's default 5s hook timeout, so bound it
-  // explicitly.
-}, 60_000);
+  // machine that exceeds the default hook timeout, so bound it explicitly.
+});
 
 afterAll(async () => {
   if (fx) await fx.destroy();

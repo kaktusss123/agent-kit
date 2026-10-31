@@ -17,9 +17,9 @@ import type { ExtensionAPI, Theme } from "@earendil-works/pi-coding-agent";
 import { Text, truncateToWidth } from "@earendil-works/pi-tui";
 import type { Component } from "@earendil-works/pi-tui";
 import { Type } from "typebox";
-import { loadStoredCredentialReader, resolveCodexCredential } from "./auth";
-import { runWebSearch, WebSearchError, type SearchSource, type WebSearchResult } from "./codex";
-import { formatErrorForModel, formatForModel, type SearchContextSize } from "./format";
+import { loadStoredCredentialReader, resolveCodexCredential } from "./auth.ts";
+import { runWebSearch, WebSearchError, type SearchSource, type WebSearchResult } from "./codex.ts";
+import { formatErrorForModel, formatForModel, type SearchContextSize } from "./format.ts";
 
 // =============================================================================
 // Configuration (edit here — no settings registry by design)

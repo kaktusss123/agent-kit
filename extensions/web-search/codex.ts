@@ -17,7 +17,7 @@
  * MIT License, Copyright (c) 2025.
  */
 
-import type { SearchContextSize } from "./format";
+import type { SearchContextSize } from "./format.ts";
 
 // ============================================================================
 // Errors

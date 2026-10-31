@@ -1,9 +1,10 @@
-import { describe, expect, test } from "bun:test";
+import { describe, test } from "node:test";
+import { expect } from "../../tests/support/expect.ts";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
-import { defaultResultsDir, listAllResults, loadResult, saveResult, sessionKey, sumSessionCost } from "./result-store";
-import type { AgentResult } from "./types";
+import { defaultResultsDir, listAllResults, loadResult, saveResult, sessionKey, sumSessionCost } from "./result-store.ts";
+import type { AgentResult } from "./types.ts";
 
 function makeDir(): string {
 	return fs.mkdtempSync(path.join(os.tmpdir(), "result-store-test-"));
@@ -176,7 +177,7 @@ describe("extension start", () => {
 			writeLegacy((fs.mkdirSync(resultsDir, { recursive: true }), resultsDir), result({ id: "a" }));
 			const snapshot = (): string[] => fs.readdirSync(resultsDir, { recursive: true }).map(String).sort();
 			const before = snapshot();
-			const mod = await import("./index");
+			const mod = await import("./index.ts");
 			const handlers: unknown[] = [];
 			const pi = new Proxy({}, { get: () => (...args: unknown[]) => handlers.push(args) });
 			try {

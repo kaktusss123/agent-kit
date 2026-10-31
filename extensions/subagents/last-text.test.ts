@@ -7,7 +7,8 @@
  * children alike. Separate channel from report_progress/RunHistory; no
  * thinking, tool calls, tool results, delta streams or transcripts.
  */
-import { describe, expect, test } from "bun:test";
+import { describe, test } from "node:test";
+import { expect } from "../../tests/support/expect.ts";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
@@ -16,17 +17,17 @@ import {
 	normalizeLastText,
 	publicAssistantText,
 	validateLastAssistantText,
-} from "./last-text";
-import { LocalSubagentRuntime } from "./controller";
+} from "./last-text.ts";
+import { LocalSubagentRuntime } from "./controller.ts";
 import {
 	autoAcceptPrompt,
 	createFakeSpawnFactory,
 	type FakeRpcProcess,
 	settleRun,
-} from "./fake-rpc";
-import { loadResult } from "./result-store";
-import { agentDetailView } from "./index";
-import type { AgentSnapshot } from "./types";
+} from "./fake-rpc.ts";
+import { loadResult } from "./result-store.ts";
+import { agentDetailView } from "./index.ts";
+import type { AgentSnapshot } from "./types.ts";
 
 // ---------------------------------------------------------- pure extraction
 
@@ -49,12 +50,14 @@ describe("publicAssistantText (pure)", () => {
 		expect(raw).toBe("Reading the spec and environment.\nNow the tests.");
 	});
 
-	test.each(["error", "aborted", "deferred", "pending"] as const)(
-		"%s stopReason is not completed public speech",
-		(stopReason) => {
-			expect(publicAssistantText({ role: "assistant", stopReason, content: [textBlock("never shown")] })).toBeUndefined();
-		},
-	);
+	for (const stopReason of ["error", "aborted", "deferred", "pending"] as const) {
+		test(
+			`${stopReason} stopReason is not completed public speech`,
+			() => {
+				expect(publicAssistantText({ role: "assistant", stopReason, content: [textBlock("never shown")] })).toBeUndefined();
+			},
+		);
+	}
 
 	test("absent/invalid shapes return undefined", () => {
 		expect(publicAssistantText(undefined)).toBeUndefined();

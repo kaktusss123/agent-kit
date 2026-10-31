@@ -13,10 +13,10 @@ import { Text, stripTerminalSequences, truncateToWidth } from "@earendil-works/p
 import type { Component } from "@earendil-works/pi-tui";
 import { keyHint } from "@earendil-works/pi-coding-agent";
 import type { Theme } from "@earendil-works/pi-coding-agent";
-import type { DirtyState } from "../task-workspace/types";
-import type { WorkspaceRunOutcome } from "./workspace-runs";
-import { validateProgress } from "./progress";
-import { formatProgress } from "./delivery";
+import type { DirtyState } from "../task-workspace/types.ts";
+import type { WorkspaceRunOutcome } from "./workspace-runs.ts";
+import { validateProgress } from "./progress.ts";
+import { formatProgress } from "./delivery.ts";
 
 /** Collapsed summary cap (chars, like the model-visible blob budget). */
 const SUMMARY_CAP = 280;

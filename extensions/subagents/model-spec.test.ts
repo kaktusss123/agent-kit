@@ -3,14 +3,15 @@
  * thinking validation against the model's capabilities, the current-level
  * default, and fail-closed errors with no fallback.
  */
-import { describe, expect, test } from "bun:test";
+import { describe, test } from "node:test";
+import { expect } from "../../tests/support/expect.ts";
 import {
 	createExactModelMatcher,
 	resolveModelSpec,
 	splitModelSpec,
 	supportedThinkingLevels,
 	type ModelLike,
-} from "./model-spec";
+} from "./model-spec.ts";
 
 const PLAIN: ModelLike = { provider: "prov-a", id: "model-a" }; // non-reasoning
 const REASONING: ModelLike = { provider: "prov-a", id: "model-r", reasoning: true };

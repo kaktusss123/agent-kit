@@ -4,7 +4,8 @@
  * exercised by the proxy harness instead; factories are tested against
  * EventEmitter fakes).
  */
-import { describe, expect, test } from "bun:test";
+import { describe, test } from "node:test";
+import { expect } from "../../tests/support/expect.ts";
 import * as fs from "node:fs";
 import { EventEmitter } from "node:events";
 import * as os from "node:os";
@@ -24,7 +25,7 @@ import {
 	undiciFactories,
 	withUndiciErrorListener,
 	writeProxyState,
-} from "./proxy-lib";
+} from "./proxy-lib.ts";
 
 function withAgentDir(fn: (dir: string) => void): void {
 	const dir = fs.mkdtempSync(path.join(os.tmpdir(), "proxy-lib-test-"));

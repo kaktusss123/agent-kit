@@ -1,5 +1,6 @@
-import { describe, expect, test } from "bun:test";
-import { runWebSearch, WebSearchError, type RunWebSearchOptions } from "./codex";
+import { describe, test } from "node:test";
+import { expect } from "../../tests/support/expect.ts";
+import { runWebSearch, WebSearchError, type RunWebSearchOptions } from "./codex.ts";
 
 // ---------------------------------------------------------------------------
 // Fixtures
@@ -169,14 +170,16 @@ describe("runWebSearch — search not executed", () => {
 // ---------------------------------------------------------------------------
 
 describe("runWebSearch — HTTP failures", () => {
-	test.each([401, 403])("HTTP %i is classified as auth", async status => {
-		const error = await runWebSearch(
-			baseOptions({ fetchImpl: async () => new Response("denied", { status }) }),
-		).catch((e: unknown) => e);
-		expect(error).toBeInstanceOf(WebSearchError);
-		expect((error as WebSearchError).kind).toBe("auth");
-		expect((error as WebSearchError).status).toBe(status);
-	});
+	for (const status of [401, 403]) {
+		test(`HTTP ${status} is classified as auth`, async () => {
+			const error = await runWebSearch(
+				baseOptions({ fetchImpl: async () => new Response("denied", { status }) }),
+			).catch((e: unknown) => e);
+			expect(error).toBeInstanceOf(WebSearchError);
+			expect((error as WebSearchError).kind).toBe("auth");
+			expect((error as WebSearchError).status).toBe(status);
+		});
+	}
 
 	test("HTTP 429 is classified as rate_limit", async () => {
 		const error = await runWebSearch(

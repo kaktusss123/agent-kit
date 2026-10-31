@@ -19,7 +19,7 @@
  * target and there is no fallback.
  *
  * Pure module: no runtime imports (pi types only appear as structural
- * parameters), so bun tests can exercise the boundary directly.
+ * parameters), so unit tests can exercise the boundary directly.
  */
 import {
 	createExactModelMatcher,
@@ -28,8 +28,8 @@ import {
 	type ModelPair,
 	type ModelSpecEnv,
 	type ThinkingLevel,
-} from "./model-spec";
-import { isRole, loadRoleBindings, rolesPath, ROLES, type Role } from "./roles";
+} from "./model-spec.ts";
+import { isRole, loadRoleBindings, rolesPath, ROLES, type Role } from "./roles.ts";
 
 /** Spawn modes: `plain` (cwd) and `workspace` (RepoOwner). */
 export type SpawnMode = "plain" | "workspace";

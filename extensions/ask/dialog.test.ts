@@ -4,11 +4,12 @@
  * core state machine -> outcome) can be exercised without a terminal using a
  * stub theme and real pi-tui key encodings.
  */
-import { describe, expect, test } from "bun:test";
+import { describe, test } from "node:test";
+import { expect } from "../../tests/support/expect.ts";
 import { matchesKey, type MarkdownTheme } from "@earendil-works/pi-tui";
 import type { Theme } from "@earendil-works/pi-coding-agent";
-import { AskDialog } from "./dialog";
-import type { AskOutcome, AskQuestion } from "./contract";
+import { AskDialog } from "./dialog.ts";
+import type { AskOutcome, AskQuestion } from "./contract.ts";
 
 // Raw terminal byte sequences (what handleInput receives in production).
 const RAW = {

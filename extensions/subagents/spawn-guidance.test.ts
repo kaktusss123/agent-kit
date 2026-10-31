@@ -4,8 +4,9 @@
  * "session") and states the model/role usage rule. The builder is pure, so
  * "fresh" is exercised by building twice from different states.
  */
-import { describe, expect, test } from "bun:test";
-import { buildSpawnModelSection, buildSpawnModelSectionError, SPAWN_MODEL_SECTION } from "./spawn-guidance";
+import { describe, test } from "node:test";
+import { expect } from "../../tests/support/expect.ts";
+import { buildSpawnModelSection, buildSpawnModelSectionError, SPAWN_MODEL_SECTION } from "./spawn-guidance.ts";
 
 describe("buildSpawnModelSection", () => {
 	test("lists all roles; unbound roles say they use the session model", () => {

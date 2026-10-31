@@ -37,12 +37,12 @@ import {
 	RpcChildConnection,
 	resolvePiInvocation,
 	type SpawnFn,
-} from "./rpc-child";
-import { ProviderExtensionError } from "./provider-extensions";
-import { defaultResultsDir, listAllResults, loadResult, saveResult, sumSessionCost, summarizeText } from "./result-store";
-import { parseReadinessPayload, type ReadinessPayload } from "./readiness";
-import { ASK_WIRE_TITLE } from "./bridge-ask";
-import { formatAskRequestFlat, parseAskRequest, type AskInput } from "../ask/contract";
+} from "./rpc-child.ts";
+import { ProviderExtensionError } from "./provider-extensions.ts";
+import { defaultResultsDir, listAllResults, loadResult, saveResult, sumSessionCost, summarizeText } from "./result-store.ts";
+import { parseReadinessPayload, type ReadinessPayload } from "./readiness.ts";
+import { ASK_WIRE_TITLE } from "./bridge-ask.ts";
+import { formatAskRequestFlat, parseAskRequest, type AskInput } from "../ask/contract.ts";
 import type {
 	AgentResult,
 	AgentSnapshot,
@@ -53,15 +53,15 @@ import type {
 	SubagentModelEvent,
 	ToolActivity,
 	WaitOutcome,
-} from "./types";
-import { summarizeToolActivity } from "./activity";
-import { loadProgress, type RunHistory } from "./progress";
+} from "./types.ts";
+import { summarizeToolActivity } from "./activity.ts";
+import { loadProgress, type RunHistory } from "./progress.ts";
 import {
 	normalizeLastText,
 	publicAssistantText,
 	validateLastAssistantText,
 	type LastAssistantText,
-} from "./last-text";
+} from "./last-text.ts";
 
 /** Live tool-activity bounds: status telemetry, never a log buffer. */
 const ACTIVE_TOOLS_MAX = 8;

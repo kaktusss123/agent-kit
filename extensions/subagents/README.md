@@ -473,5 +473,5 @@ op=status`, `subagent op=result` (`details.result` root for plain agents) and
 persisted history. Absence is meaningful: the child has produced no public
 speech yet — it is never inferred from silence about blockers or activity.
 
-Dev note: `bun test` needs `typebox` resolvable from the repo tree —
+Dev note: `node --test` needs `typebox` resolvable from the repo tree —
 `ln -s <pi-package>/node_modules/typebox node_modules/typebox` (gitignored).

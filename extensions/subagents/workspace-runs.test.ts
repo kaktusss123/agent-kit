@@ -5,36 +5,37 @@
  * the FakeRpcProcess; the envelope file is written directly, simulating the
  * child's report_result persistence.
  */
-import { describe, expect, test } from "bun:test";
+import { describe, test } from "node:test";
+import { expect } from "../../tests/support/expect.ts";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { execFileSync } from "node:child_process";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
-import type { ModelLike } from "./model-spec";
-import { LocalSubagentRuntime } from "./controller";
+import type { ModelLike } from "./model-spec.ts";
+import { LocalSubagentRuntime } from "./controller.ts";
 import {
 	autoAcceptPrompt,
 	confirmReadiness,
 	createFakeSpawnFactory,
 	type FakeRpcProcess,
 	settleRun,
-} from "./fake-rpc";
-import { envelopeFileName, type Envelope } from "./envelope";
-import { saveProgress } from "./progress";
-import { loadResult } from "./result-store";
-import { agentDetailView } from "./index";
-import { handleInspectionRequest } from "../inspection-channel";
-import { inspectionRegistry, setSubagentInspectionSource } from "./inspection-seam";
-import { resetOwnDeliveryMark, setOwnDeliveryWindowMs } from "./steering-wake";
-import { attachDelivery } from "./wiring";
+} from "./fake-rpc.ts";
+import { envelopeFileName, type Envelope } from "./envelope.ts";
+import { saveProgress } from "./progress.ts";
+import { loadResult } from "./result-store.ts";
+import { agentDetailView } from "./index.ts";
+import { handleInspectionRequest } from "../inspection-channel/index.ts";
+import { inspectionRegistry, setSubagentInspectionSource } from "./inspection-seam.ts";
+import { resetOwnDeliveryMark, setOwnDeliveryWindowMs } from "./steering-wake.ts";
+import { attachDelivery } from "./wiring.ts";
 import {
 	createWorkspaceRuns,
 	defaultProfileEntries,
 	managedAgentOpPolicy,
 	type WorkspaceRuns,
 	type GitState,
-} from "./workspace-runs";
+} from "./workspace-runs.ts";
 
 const tick = (ms = 30) => new Promise((r) => setTimeout(r, ms));
 
@@ -311,37 +312,39 @@ describe("pre-dispatch gates (fail closed)", () => {
 });
 
 describe("RepoOwner dispatch budget", () => {
-	test.each([
+	for (const { timeoutMs, reserveSeconds, finalizationStartsAt } of [
 		{ timeoutMs: 600000, reserveSeconds: 120, finalizationStartsAt: 480 },
 		{ timeoutMs: 100000, reserveSeconds: 30, finalizationStartsAt: 70 },
 		{ timeoutMs: 1000, reserveSeconds: 1, finalizationStartsAt: 0 },
-	])(
-		"augments only the initial child prompt for a $timeoutMs ms deadline",
-		async ({ timeoutMs, reserveSeconds, finalizationStartsAt }) => {
-			const h = makeLayer();
-			try {
-				const ws = makeWorktree(h.taskRoot, `budget-${timeoutMs}-ws`);
-				const task = "Implement the requested slice.";
-				const { proc } = await driveToRunning(h, { workspace: ws, task, timeout_ms: timeoutMs });
-				const prompt = proc.commands.find((c) => c.type === "prompt" && c.id === "spawn-prompt");
+	]) {
+		test(
+			`augments only the initial child prompt for a ${timeoutMs} ms deadline`,
+			async () => {
+				const h = makeLayer();
+				try {
+					const ws = makeWorktree(h.taskRoot, `budget-${timeoutMs}-ws`);
+					const task = "Implement the requested slice.";
+					const { proc } = await driveToRunning(h, { workspace: ws, task, timeout_ms: timeoutMs });
+					const prompt = proc.commands.find((c) => c.type === "prompt" && c.id === "spawn-prompt");
 
-				expect(prompt?.message).toBe(
-					`${task}\n\n` +
-						`Required owner skills: before the first edit read \`skill://implementation\`; ` +
-						`before the first commit read \`skill://git-commit\` and its \`references/checkpoint.md\`; ` +
-						`read \`skill://verification-design\` when changing observable behavior.\n\n` +
-						`Runtime budget (enforced):\n` +
-						`- Hard deadline: ${timeoutMs / 1000} seconds.\n` +
-						`- Finalization reserve: ${reserveSeconds} seconds (starts ${finalizationStartsAt} seconds after dispatch).\n` +
-						`At the reserve boundary, stop starting new scope, commit coherent work, run only checks that fit, and call report_result with status partial rather than letting the deadline kill a mid-change worktree.`,
-				);
-				expect(h.runtime.inspect(h.agentId())[0]!.task).toBe(task);
-			} finally {
-				await h.runtime.shutdown();
-				h.cleanup();
-			}
-		},
-	);
+					expect(prompt?.message).toBe(
+						`${task}\n\n` +
+							`Required owner skills: before the first edit read \`skill://implementation\`; ` +
+							`before the first commit read \`skill://git-commit\` and its \`references/checkpoint.md\`; ` +
+							`read \`skill://verification-design\` when changing observable behavior.\n\n` +
+							`Runtime budget (enforced):\n` +
+							`- Hard deadline: ${timeoutMs / 1000} seconds.\n` +
+							`- Finalization reserve: ${reserveSeconds} seconds (starts ${finalizationStartsAt} seconds after dispatch).\n` +
+							`At the reserve boundary, stop starting new scope, commit coherent work, run only checks that fit, and call report_result with status partial rather than letting the deadline kill a mid-change worktree.`,
+					);
+					expect(h.runtime.inspect(h.agentId())[0]!.task).toBe(task);
+				} finally {
+					await h.runtime.shutdown();
+					h.cleanup();
+				}
+			},
+		);
+	}
 });
 
 describe("happy path", () => {
@@ -939,7 +942,7 @@ describe("steering wake (pending-message detach)", () => {
 			await h.runtime.shutdown();
 			h.cleanup();
 		}
-	}, 10000);
+	});
 
 	test("own delivery (generic child completing during the wait) does not detach the workspace wait", async () => {
 		setOwnDeliveryWindowMs(150); // keep the suppression window short for the test
@@ -995,7 +998,7 @@ describe("steering wake (pending-message detach)", () => {
 			await h.runtime.shutdown();
 			h.cleanup();
 		}
-	}, 10000);
+	});
 });
 
 describe("startup failure classification (A2c)", () => {
@@ -1023,8 +1026,8 @@ describe("provider propagation fail-fast (R2)", () => {
 		// Rebind the layer's runtime resolution: construct an isolated layer
 		// whose runtime fails spawn with the provider error (as index.ts wires
 		// it when no installed package provides the child model's provider).
-		const { LocalSubagentRuntime: RT } = await import("./controller");
-		const { ProviderExtensionError } = await import("./provider-extensions");
+		const { LocalSubagentRuntime: RT } = await import("./controller.ts");
+		const { ProviderExtensionError } = await import("./provider-extensions.ts");
 		const runtime2 = new RT({
 			defaultCwd: h.tmp,
 			resultsDir: h.tmp,
@@ -1054,7 +1057,7 @@ describe("provider propagation fail-fast (R2)", () => {
 		} finally {
 			h.cleanup();
 		}
-	}, 20000);
+	});
 });
 
 describe("workspace model selection", () => {
@@ -1097,7 +1100,7 @@ describe("workspace model selection", () => {
 			await h.runtime.shutdown();
 			h.cleanup();
 		}
-	}, 20000);
+	});
 
 	test("no owner binding: owner runs the session pair", async () => {
 		const h = makeLayer();
@@ -1115,7 +1118,7 @@ describe("workspace model selection", () => {
 			await h.runtime.shutdown();
 			h.cleanup();
 		}
-	}, 20000);
+	});
 
 	test("explicit model overrides the owner binding; omitted thinking is the session level", async () => {
 		const h = makeLayer();
@@ -1138,7 +1141,7 @@ describe("workspace model selection", () => {
 			await h.runtime.shutdown();
 			h.cleanup();
 		}
-	}, 20000);
+	});
 
 	test("dead bound model → blocked, dispatched:false, no process, file and fix named", async () => {
 		const h = makeLayer();
@@ -1455,43 +1458,45 @@ describe("ZAVOD-39 continuous wait and progress", () => {
 		} finally { await h.runtime.shutdown(); h.cleanup(); }
 	});
 
-	test.each(["cancel", "deadline"] as const)("%s stops child before facts, preserves progress and returns one terminal", async (cause) => {
-		let release!: (state: GitState) => void;
-		let reading = false;
-		const factsGate = new Promise<GitState>((r) => { release = r; });
-		const h = makeLayer({ killGraceMs: 30, readGitState: async () => {
-			expect(h.lastProc().closed).toBe(true);
-			reading = true;
-			return factsGate;
-		} });
-		try {
-			const ws = makeWorktree(h.taskRoot, `facts-${cause}`);
-			const { pending, proc } = await driveToRunning(h, { workspace: ws, task: "work", waitTimeoutSec: 0.01, timeout_ms: cause === "deadline" ? 1000 : 10000 });
-			const id = h.agentId();
-			const progress = saveProgress(id, reportedProgress, h.tmp);
-			await pending;
-			proc.ignoreSigterm = true;
-			const cancellation = cause === "cancel" ? h.runs.cancelRun(id) : undefined;
-			for (let i = 0; !reading && i < 200; i++) await tick(10);
-			expect(reading).toBe(true);
-			const view = h.runs.runView(id)!;
-			expect(view.terminal).toBeUndefined();
-			expect(view.state).toBe("terminating");
-			expect(view.progress).toEqual(progress);
-			expect((await h.runs.waitRun(id, { timeoutSec: 0.01 })).details).toMatchObject({ status: "running" });
-			expect((await dispatchCall(h, { workspace: ws, task: "duplicate during facts" })).details).toMatchObject({ status: "blocked", dispatched: false });
-			await expect(h.runs.steerRun(id, "explain")).rejects.toThrow("terminating");
-			release({ ok: true, facts: testFacts });
-			await cancellation;
-			const terminal = await h.runs.waitRun(id, { timeoutSec: 1 });
-			expect(terminal.details).toMatchObject({ status: cause === "cancel" ? "blocked" : "partial", reason: cause === "cancel" ? "cancelled_by_main" : "deadline", progress, git_facts: testFacts });
-			expect(h.messages.filter((m) => String(m.message.content).includes("[subagent completed]"))).toHaveLength(1);
-			expect(loadResult(id, h.tmp)?.run?.progress).toEqual(progress);
-			const age = h.runs.runView(id)!.progressAgeMs!;
-			await tick(5);
-			expect(h.runs.runView(id)!.progressAgeMs).toBeGreaterThan(age);
-		} finally { release({ ok: true, facts: testFacts }); await h.runtime.shutdown(); h.cleanup(); }
-	});
+	for (const cause of ["cancel", "deadline"] as const) {
+		test(`${cause} stops child before facts, preserves progress and returns one terminal`, async () => {
+			let release!: (state: GitState) => void;
+			let reading = false;
+			const factsGate = new Promise<GitState>((r) => { release = r; });
+			const h = makeLayer({ killGraceMs: 30, readGitState: async () => {
+				expect(h.lastProc().closed).toBe(true);
+				reading = true;
+				return factsGate;
+			} });
+			try {
+				const ws = makeWorktree(h.taskRoot, `facts-${cause}`);
+				const { pending, proc } = await driveToRunning(h, { workspace: ws, task: "work", waitTimeoutSec: 0.01, timeout_ms: cause === "deadline" ? 1000 : 10000 });
+				const id = h.agentId();
+				const progress = saveProgress(id, reportedProgress, h.tmp);
+				await pending;
+				proc.ignoreSigterm = true;
+				const cancellation = cause === "cancel" ? h.runs.cancelRun(id) : undefined;
+				for (let i = 0; !reading && i < 200; i++) await tick(10);
+				expect(reading).toBe(true);
+				const view = h.runs.runView(id)!;
+				expect(view.terminal).toBeUndefined();
+				expect(view.state).toBe("terminating");
+				expect(view.progress).toEqual(progress);
+				expect((await h.runs.waitRun(id, { timeoutSec: 0.01 })).details).toMatchObject({ status: "running" });
+				expect((await dispatchCall(h, { workspace: ws, task: "duplicate during facts" })).details).toMatchObject({ status: "blocked", dispatched: false });
+				await expect(h.runs.steerRun(id, "explain")).rejects.toThrow("terminating");
+				release({ ok: true, facts: testFacts });
+				await cancellation;
+				const terminal = await h.runs.waitRun(id, { timeoutSec: 1 });
+				expect(terminal.details).toMatchObject({ status: cause === "cancel" ? "blocked" : "partial", reason: cause === "cancel" ? "cancelled_by_main" : "deadline", progress, git_facts: testFacts });
+				expect(h.messages.filter((m) => String(m.message.content).includes("[subagent completed]"))).toHaveLength(1);
+				expect(loadResult(id, h.tmp)?.run?.progress).toEqual(progress);
+				const age = h.runs.runView(id)!.progressAgeMs!;
+				await tick(5);
+				expect(h.runs.runView(id)!.progressAgeMs).toBeGreaterThan(age);
+			} finally { release({ ok: true, facts: testFacts }); await h.runtime.shutdown(); h.cleanup(); }
+		});
+	}
 });
 
 describe("ZAVOD-39 ownership races", () => {
@@ -1553,22 +1558,24 @@ describe("ZAVOD-39 ownership races", () => {
 		} finally { release({ ok: true, facts: testFacts }); await h.runtime.shutdown(); h.cleanup(); }
 	});
 
-	test.each(["before", "after"] as const)("needs_input %s acceptance in the same stdout turn cannot be lost", async (order) => {
-		const h = makeLayer();
-		try {
-			const ws = makeWorktree(h.taskRoot, "immediate-ask");
-			h.harness.onSpawn((proc) => {
-				confirmReadiness(proc, { tools: ["web_search", "task_status", "ensure_task_repo", "checkpoint_commit", "remove_task_lane", "report_result", "report_progress", "subagent"] });
-				proc.writeToStdout({ type: "agent_start" });
-				if (order === "before") askNow(proc);
-				proc.writeToStdout({ id: "spawn-prompt", type: "response", command: "prompt", success: true });
-				if (order === "after") askNow(proc);
-			});
-			const result = await dispatchCall(h, { workspace: ws, task: "ask", waitTimeoutSec: 0.03 });
-			expect(result.details).toMatchObject({ status: "needs_input", question: "q: Which? (yes)" });
-			await h.runs.cancelRun(h.agentId());
-		} finally { await h.runtime.shutdown(); h.cleanup(); }
-	});
+	for (const order of ["before", "after"] as const) {
+		test(`needs_input ${order} acceptance in the same stdout turn cannot be lost`, async () => {
+			const h = makeLayer();
+			try {
+				const ws = makeWorktree(h.taskRoot, "immediate-ask");
+				h.harness.onSpawn((proc) => {
+					confirmReadiness(proc, { tools: ["web_search", "task_status", "ensure_task_repo", "checkpoint_commit", "remove_task_lane", "report_result", "report_progress", "subagent"] });
+					proc.writeToStdout({ type: "agent_start" });
+					if (order === "before") askNow(proc);
+					proc.writeToStdout({ id: "spawn-prompt", type: "response", command: "prompt", success: true });
+					if (order === "after") askNow(proc);
+				});
+				const result = await dispatchCall(h, { workspace: ws, task: "ask", waitTimeoutSec: 0.03 });
+				expect(result.details).toMatchObject({ status: "needs_input", question: "q: Which? (yes)" });
+				await h.runs.cancelRun(h.agentId());
+			} finally { await h.runtime.shutdown(); h.cleanup(); }
+		});
+	}
 
 	test("completion before acceptance is replayed once without resetting the controller terminal record", async () => {
 		const h = makeLayer();
@@ -1635,6 +1642,131 @@ describe("ZAVOD-39 ownership races", () => {
 			expect(proc.signalsReceived).toContain("SIGKILL");
 			expect(reads).toBe(1);
 			expect(h.messages).toHaveLength(1);
+		} finally { await h.runtime.shutdown(); h.cleanup(); }
+	});
+});
+
+/**
+ * Cross-process ownership of the owned worktree. The lease itself is covered
+ * by extensions/task-workspace/owner-lock.test.ts with real OS processes;
+ * here the workspace run layer must (a) hold it for the whole run, (b) keep
+ * holding it through the settlement Git read after the child is gone, and
+ * (c) release it so another process can take the worktree afterwards.
+ */
+const OWNER_FIXTURE = path.join(
+	import.meta.dirname,
+	"..",
+	"task-workspace",
+	"fixtures",
+	"owner-lock-process.ts",
+);
+
+/** One attempt to acquire the worktree from a real second OS process. */
+function foreignAcquireAttempt(taskRoot: string, workspace: string): Record<string, unknown> {
+	const out = execFileSync(
+		process.execPath,
+		[OWNER_FIXTURE, "attempt", taskRoot, workspace],
+		{ encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] },
+	);
+	return JSON.parse(out.trim().split("\n").pop()!) as Record<string, unknown>;
+}
+
+describe("cross-process worktree ownership", () => {
+	test("a second OS process is refused while the run owns the worktree, admitted after settlement", async () => {
+		const h = makeLayer();
+		try {
+			const ws = makeWorktree(h.taskRoot, "xproc-ws");
+			const { pending, proc } = await driveToRunning(h, { workspace: ws, task: "work", waitTimeoutSec: 0.01 });
+			await pending;
+			const id = h.agentId();
+
+			const refused = foreignAcquireAttempt(h.taskRoot, ws);
+			expect(refused.ok).toBe(false);
+			// The refusal names the live holder (this Main process) and its record.
+			expect(JSON.stringify(refused)).toContain(String(process.pid));
+			expect(refused.reason).toBe("owned");
+
+			// The refusal is a refusal, not a takeover: the run keeps its right to write.
+			expect(h.runs.runView(id)!.terminal).toBeUndefined();
+			writeEnvelope(h, id);
+			settleRun(proc, "done");
+			const terminal = await h.runs.waitRun(id, { timeoutSec: 5 });
+			expect(terminal.details).toMatchObject({ status: "done" });
+
+			// Released only after the child stopped and the Git read finished.
+			const admitted = foreignAcquireAttempt(h.taskRoot, ws);
+			expect(admitted.ok).toBe(true);
+		} finally { await h.runtime.shutdown(); h.cleanup(); }
+	});
+
+	test("ownership is held through the settlement Git read, not released at child stop", async () => {
+		let release!: (state: GitState) => void;
+		let reading = false;
+		const gate = new Promise<GitState>((r) => {
+			release = (state) => { reading = true; r(state); };
+		});
+		const h = makeLayer({
+			readGitState: async () => {
+				const state = await gate;
+				reading = true;
+				return state;
+			},
+		});
+		try {
+			const ws = makeWorktree(h.taskRoot, "xproc-git-gate");
+			const { pending, proc } = await driveToRunning(h, { workspace: ws, task: "work", waitTimeoutSec: 0.01 });
+			await pending;
+			const id = h.agentId();
+			writeEnvelope(h, id);
+			settleRun(proc, "done");
+			// The child is gone, the final Git read is still pending.
+			for (let i = 0; i < 100 && !proc.closed; i++) await tick(10);
+			expect(proc.closed).toBe(true);
+
+			const during = foreignAcquireAttempt(h.taskRoot, ws);
+			expect(during.ok).toBe(false);
+			expect(h.runs.runView(id)!.terminal).toBeUndefined();
+
+			release({ ok: true, facts: testFacts });
+			for (let i = 0; i < 100 && !reading; i++) await tick(10);
+			const terminal = await h.runs.waitRun(id, { timeoutSec: 5 });
+			expect(terminal.details).toMatchObject({ status: "done" });
+			expect((foreignAcquireAttempt(h.taskRoot, ws)).ok).toBe(true);
+		} finally { release({ ok: true, facts: testFacts }); await h.runtime.shutdown(); h.cleanup(); }
+	});
+
+	test("a cancelled run keeps ownership until the child is really gone", async () => {
+		const h = makeLayer({ killGraceMs: 60 });
+		try {
+			const ws = makeWorktree(h.taskRoot, "xproc-cancel");
+			const { pending, proc } = await driveToRunning(h, { workspace: ws, task: "work", waitTimeoutSec: 0.01 });
+			await pending;
+			const id = h.agentId();
+			proc.ignoreSigterm = true;
+			const cancel = h.runs.cancelRun(id);
+			await tick(20);
+			// Cancellation is still escalating to SIGKILL: no second owner yet.
+			expect(proc.closed).toBe(false);
+			const during = foreignAcquireAttempt(h.taskRoot, ws);
+			expect(during.ok).toBe(false);
+			await cancel;
+			expect(proc.signalsReceived).toContain("SIGKILL");
+			expect((foreignAcquireAttempt(h.taskRoot, ws)).ok).toBe(true);
+		} finally { await h.runtime.shutdown(); h.cleanup(); }
+	});
+});
+
+describe("ownership across Main shutdown", () => {
+	test("a shut-down runtime leaves no lease behind", async () => {
+		const h = makeLayer();
+		try {
+			const ws = makeWorktree(h.taskRoot, "xproc-shutdown");
+			const { pending } = await driveToRunning(h, { workspace: ws, task: "work", waitTimeoutSec: 0.01 });
+			await pending;
+			expect((foreignAcquireAttempt(h.taskRoot, ws)).ok).toBe(false);
+			await h.runtime.shutdown();
+			h.runs.releaseAll();
+			expect((foreignAcquireAttempt(h.taskRoot, ws)).ok).toBe(true);
 		} finally { await h.runtime.shutdown(); h.cleanup(); }
 	});
 });

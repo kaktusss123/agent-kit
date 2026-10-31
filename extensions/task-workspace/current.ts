@@ -35,10 +35,11 @@ import {
   linkedWorktreeFacts,
   parseDirtyStatus,
   realpath,
-  taskWorkspacePath,
+  resolveTaskWorkspacePath,
+  taskWorkspaceIdentity,
   underTaskRoot,
-} from "./git";
-import type { LinkedWorktreeFact } from "./types";
+} from "./git.ts";
+import type { LinkedWorktreeFact } from "./types.ts";
 
 /** customType of the session-history entry recording one successful
  *  ensure_task_repo. Data shape: `{ task: string, worktree: string }`. */
@@ -141,9 +142,12 @@ export interface CurrentTaskProjection {
 }
 
 /** Most recent selection entry on the branch (entries arrive root → leaf,
- *  so the last match is the latest successful ensure). */
+ *  so the last match is the latest successful ensure). A task identity keeps
+ *  its path separators: the directory name is derived from it by the
+ *  reversible encoding in ./workspace-path, so `feat/a_b` and `feat/a/b`
+ *  never collapse into one workspace. */
 function normalizeIdentity(task: string): string {
-  return task.replace(/\\/g, "/").split("/").filter(Boolean).join("_");
+  return task.replace(/\\/g, "/").split("/").filter(Boolean).join("/");
 }
 
 function selectionFromBranch(entries: SessionSelectionEntry[]): string | null {
@@ -185,8 +189,8 @@ function selectionFromCwd(cwd: string, taskRoot: string): string | null {
   const root = findGitRoot(abs);
   if (!root || !underTaskRoot(root, taskRoot)) return null;
   const rel = relative(taskRoot, root);
-  const identity = rel.split("/")[0];
-  return identity ? identity : null;
+  const directory = rel.split("/")[0];
+  return directory ? taskWorkspaceIdentity(directory) : null;
 }
 
 /** Build the session-scoped current-task projection. Never throws: missing
@@ -204,7 +208,7 @@ export async function buildCurrentTaskProjection(opts: {
     return { state: "none", identity: null, workspace: null, source: null, repos: [] };
   }
   const source: CurrentTaskSource = cwdIdentity ? "cwd" : "session";
-  const workspace = taskWorkspacePath(identity, opts.taskRoot);
+  const workspace = resolveTaskWorkspacePath(identity, opts.taskRoot);
   const repos = await readWorkspaceRepos(workspace, opts.owners);
   return {
     state: repos.length > 0 ? "ok" : "missing",

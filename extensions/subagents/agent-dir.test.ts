@@ -1,5 +1,6 @@
-import { describe, expect, test } from "bun:test";
-import { resolveAgentDir } from "./agent-dir";
+import { describe, test } from "node:test";
+import { expect } from "../../tests/support/expect.ts";
+import { resolveAgentDir } from "./agent-dir.ts";
 
 describe("resolveAgentDir", () => {
 	test("empty or missing env falls back to ~/.pi/agent", () => {

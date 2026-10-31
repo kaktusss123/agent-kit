@@ -19,7 +19,7 @@ import {
 	nextActionableTask,
 	phaseRomanNumeral,
 	selectCollapsedTodos,
-} from "./core";
+} from "./core.ts";
 
 /** Fixed budgets keep the HUD bounded regardless of plan size. */
 const ACTIVE_TASK_CAP = 5;

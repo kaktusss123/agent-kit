@@ -4,13 +4,14 @@
  * pending-check, every mark refreshes it, and it expires (or is force-reset)
  * so later genuine user pending messages wake again.
  */
-import { describe, expect, test } from "bun:test";
+import { describe, test } from "node:test";
+import { expect } from "../../tests/support/expect.ts";
 import {
 	markOwnDelivery,
 	ownDeliveryInFlight,
 	resetOwnDeliveryMark,
 	setOwnDeliveryWindowMs,
-} from "./steering-wake";
+} from "./steering-wake.ts";
 
 const tick = (ms = 10) => new Promise((r) => setTimeout(r, ms));
 

@@ -8,13 +8,14 @@
  *
  * The child is the FakeRpcProcess; no real pi process is involved.
  */
-import { describe, expect, test } from "bun:test";
+import { describe, test } from "node:test";
+import { expect } from "../../tests/support/expect.ts";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { execFileSync } from "node:child_process";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
-import { LocalSubagentRuntime } from "./controller";
+import { LocalSubagentRuntime } from "./controller.ts";
 import {
 	autoAcceptPrompt,
 	confirmReadiness,
@@ -22,10 +23,10 @@ import {
 	type FakeRpcProcess,
 	settleRun,
 	startRun,
-} from "./fake-rpc";
-import { envelopeFileName, type Envelope } from "./envelope";
-import { createWorkspaceRuns, type WorkspaceRuns } from "./workspace-runs";
-import { loadResult } from "./result-store";
+} from "./fake-rpc.ts";
+import { envelopeFileName, type Envelope } from "./envelope.ts";
+import { createWorkspaceRuns, type WorkspaceRuns } from "./workspace-runs.ts";
+import { loadResult } from "./result-store.ts";
 
 const tick = (ms = 20) => new Promise((r) => setTimeout(r, ms));
 
@@ -548,7 +549,7 @@ describe("workspace run live updates", () => {
 			await h.runtime.shutdown();
 			h.cleanup();
 		}
-	}, 15000); // ~5.9s of mandatory wall time (driveToRunning + 2500ms two-boundary tick) exceeds bun's 5s default
+	}); // ~5.9s of mandatory wall time (driveToRunning + 2500ms two-boundary tick) exceeds bun's 5s default
 
 	test("T8: update loop stops after terminal done — no leaked timers", async () => {
 		const h = makeLayer();

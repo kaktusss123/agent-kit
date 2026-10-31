@@ -21,8 +21,8 @@
  * preference (the file, not the argument, is the truth).
  */
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
-import { buildChildAskTool } from "./bridge-ask";
-import { applyProxyPreference, reapplyIfDrifted } from "../proxy/proxy-lib";
+import { buildChildAskTool } from "./bridge-ask.ts";
+import { applyProxyPreference, reapplyIfDrifted } from "../proxy/proxy-lib.ts";
 
 export default function (pi: ExtensionAPI) {
 	pi.registerTool(buildChildAskTool());

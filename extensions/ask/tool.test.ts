@@ -1,12 +1,13 @@
-import { describe, expect, test } from "bun:test";
+import { describe, test } from "node:test";
+import { expect } from "../../tests/support/expect.ts";
 import {
 	ASK_WIRE_VERSION,
 	buildAskTool,
 	rpcFallbackAsk,
 	tryParseWireItem,
 	type AskWireItem,
-} from "./tool";
-import { buildChildAskTool } from "../subagents/bridge-ask";
+} from "./tool.ts";
+import { buildChildAskTool } from "../subagents/bridge-ask.ts";
 
 // ===========================================================================
 // Schema/name parity (SPEC I1, I2): Main tool and child tool are the SAME

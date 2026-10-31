@@ -4,7 +4,7 @@
  * Single source of truth for the subcommand/flag classification tables and
  * rules. Consumers:
  *   - shim/policy.mjs — the runtime policy consulted by the PATH shim
- *     (runs under node or bun, whatever pi's process.execPath is);
+ *     (runs under whatever pi's process.execPath is);
  *   - guard.ts — thin typed re-exports for TypeScript consumers.
  *
  * The input is REAL ARGV (post-shell, unquoted) plus the resolved working

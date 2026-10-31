@@ -3,10 +3,11 @@
  * activity summaries and the workspace run status view. Pure module — no pi,
  * no child processes, deterministic clocks.
  */
-import { describe, expect, test } from "bun:test";
+import { describe, test } from "node:test";
+import { expect } from "../../tests/support/expect.ts";
 import * as os from "node:os";
-import { formatRunStatus, summarizeToolActivity, type RunStatusView } from "./activity";
-import type { ToolActivity } from "./types";
+import { formatRunStatus, summarizeToolActivity, type RunStatusView } from "./activity.ts";
+import type { ToolActivity } from "./types.ts";
 
 describe("summarizeToolActivity", () => {
 	test("bash command extracted, single-line, bounded", () => {

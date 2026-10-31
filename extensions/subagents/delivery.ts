@@ -5,9 +5,9 @@
  * main context. Deliveries are a few compact lines; the full result lives in
  * the persisted result file, reachable via `subagent result`.
  */
-import type { AgentResult, AgentSnapshot, ForeignRunningMarker, SessionStats, SubagentModelEvent } from "./types";
-import { formatAskRequestJson, type AskInput } from "../ask/contract";
-import type { Progress } from "./progress";
+import type { AgentResult, AgentSnapshot, ForeignRunningMarker, SessionStats, SubagentModelEvent } from "./types.ts";
+import { formatAskRequestJson, type AskInput } from "../ask/contract.ts";
+import type { Progress } from "./progress.ts";
 
 /**
  * Structured workspace-run facts for the status view. Structural twin of the
