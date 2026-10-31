@@ -27,20 +27,19 @@
 // `hosts` file, and the bootstrapped ~/.local/bin/agent-kit in `command.tsv`.
 //
 // Required runtime: Node.js >= 24, no package installation and no network.
-// `task` still runs extensions/task-workspace/cli.ts through Bun, and `snapshot`
-// is still the Bash writer in bin/agent-kit-snapshot until it is ported; both
-// are delegated, never reimplemented here.
+// `task` still runs extensions/task-workspace/cli.ts through Bun and is
+// delegated, never reimplemented here.
 //
 // This file is the dispatcher only: argument validation, exit-code policy and
 // the command table. Everything it calls owns one thing.
 
-import { dirname, join } from "node:path";
-import { FatalError, runChild, statOrNull, writeStderr, writeStdout } from "./lib/io.mjs";
+import { FatalError, writeStderr, writeStdout } from "./lib/io.mjs";
 import { resolvePaths, validateHosts } from "./lib/paths.mjs";
 import { installHosts, statusAll, uninstallHosts } from "./lib/reconcile.mjs";
 import { migrateLegacyState } from "./lib/legacy-state.mjs";
 import { update } from "./lib/update.mjs";
 import { task } from "./lib/task.mjs";
+import { snapshot } from "./lib/snapshot.mjs";
 
 function usage() {
 	writeStdout(`agent-kit — install the personal agent framework into Pi and Claude Code
@@ -56,19 +55,21 @@ Usage:
   agent-kit update      git pull --ff-only in this checkout, then reconcile
                         the selected hosts
   agent-kit snapshot <releases-dir>
-                        write an immutable, content-addressed snapshot of
+                        write an immutable snapshot of the committed tree at
                         HEAD (extensions + node_modules) to
                         <releases-dir>/<sha>/ and point <releases-dir>/current
                         at it; keeps current plus the 5 newest snapshots.
-                        Operations on one releases dir are serialized with
-                        an exclusive lock (flock on <releases-dir>/.lock
-                        where flock(1) exists, otherwise an atomic mkdir of
-                        <releases-dir>/.lock.d; bounded wait of 60 s,
-                        AGENT_KIT_SNAPSHOT_LOCK_TIMEOUT overrides it, and a
-                        mkdir lock older than AGENT_KIT_SNAPSHOT_LOCK_STALE
-                        seconds is taken over;
-                        AGENT_KIT_SNAPSHOT_LOCK=auto|flock|mkdir forces
-                        the mechanism, auto being the default). An old
+                        A checkout with uncommitted or untracked changes is
+                        refused: a snapshot is named by its commit, so it is
+                        built from that commit only. Operations on one
+                        releases dir are serialized by an exclusive lock
+                        (<releases-dir>/.lock, a symlink that records its
+                        owner; bounded wait of 60 s,
+                        AGENT_KIT_SNAPSHOT_LOCK_TIMEOUT overrides it). A lock
+                        whose owner process is gone is taken over; one that
+                        belongs to a live process, or to another host, is a
+                        bounded error. A snapshot of an already published
+                        commit is verified and reused, never rewritten. An old
                         snapshot that cannot be removed is a warning, not a
                         failure.
   agent-kit uninstall [<host>...]
@@ -93,17 +94,8 @@ released.
 `);
 }
 
-// snapshot keeps its current Bash writer for now; the delegation is explicit so
-// that porting it later deletes exactly this function and its file.
-async function snapshot(paths, args) {
-	const bridge = join(dirname(paths.entry), "agent-kit-snapshot");
-	if (statOrNull(bridge)?.isFile() !== true) {
-		throw new FatalError(`snapshot implementation missing: ${bridge}`);
-	}
-	return runChild(bridge, args, {
-		env: { ...process.env, AGENT_KIT_ROOT: paths.repo },
-	});
-}
+// snapshot keeps its own lock, build, manifest, publication and retention
+// zones in lib/snapshot.mjs; this dispatcher only hands it the releases dir.
 
 async function main(argv) {
 	const paths = resolvePaths(argv.entry);
@@ -125,7 +117,7 @@ async function main(argv) {
 			if (rest.length > 0) throw new FatalError("update takes no arguments (see: agent-kit help)");
 			return await update(paths.repo);
 		case "snapshot":
-			return await snapshot(paths, rest);
+			return snapshot(paths.repo, rest);
 		case "status":
 			if (rest.length > 0) throw new FatalError("status takes no arguments (see: agent-kit help)");
 			statusAll(paths);

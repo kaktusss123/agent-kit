@@ -31,7 +31,7 @@ function findExecutable(name) {
 }
 
 function taskError(message) {
-	writeStdout(`{"status":"error","message":"${message}"}\n`);
+	writeStdout(`${JSON.stringify({ status: "error", message })}\n`);
 }
 
 export function task(repo, args) {
