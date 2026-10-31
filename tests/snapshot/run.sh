@@ -483,20 +483,22 @@ pass
 new_test "T3 dirty tree is refused"
 make_kit "$KIT"
 SHA="$(head_sha)"
+# Untracked files outside extensions/ can never enter the artifact (the file
+# list comes from `git ls-files --cached`), so they must not refuse it.
+printf 'notes\n' >"$KIT/notes.txt"
+run_snapshot
+	assert_eq "$RC" 0 "an untracked file outside extensions/ does not refuse the snapshot"
+	assert_grep "$RELEASES/$SHA/manifest.json" '"dirty": false' "untracked file keeps the clean flag"
+	assert_no_file "$RELEASES/$SHA/notes.txt" "untracked content is not published"
+	assert_link "$RELEASES/current" "$SHA" "current points at the snapshot"
+rm -f "$KIT/notes.txt"
 printf '\n// dirty change\n' >>"$KIT/extensions/alpha/index.ts"
 run_snapshot
 	assert_eq "$RC" 2 "a modified tracked file is refused"
 	assert_contains "$OUT" "uncommitted" "diagnostic names the contract"
 	assert_contains "$OUT" "commit or stash" "diagnostic says what to do"
 	assert_contains "$OUT" "extensions/alpha/index.ts" "diagnostic names the path"
-	assert_no_file "$RELEASES/$SHA" "nothing published for a dirty tree"
-	assert_no_file "$RELEASES/current" "current is not created for a dirty tree"
 	assert_eq "$(tmp_dirs)" 0 "no temp dir left behind"
-printf 'notes\n' >"$KIT/notes.txt"
-run_snapshot
-	assert_eq "$RC" 2 "an untracked file is refused"
-	assert_contains "$OUT" "notes.txt" "diagnostic names the untracked file"
-rm -f "$KIT/notes.txt"
 git_commit_all "$KIT" "dirty change"
 SHA="$(head_sha)"
 run_snapshot

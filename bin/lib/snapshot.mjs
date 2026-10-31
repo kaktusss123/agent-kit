@@ -129,7 +129,7 @@ import {
 } from "node:fs";
 import { hostname } from "node:os";
 import { basename, dirname, join, resolve } from "node:path";
-import { FatalError, die, lstatOrNull, msg, readlinkOrNull, warn } from "./io.mjs";
+import { FatalError, die, lstatOrNull, msg, readlinkOrNull, statOrNull, warn } from "./io.mjs";
 
 // Latest snapshots kept beyond current's target, as documented in the help text
 // and the README; the number is a contract, not a tuning knob.
@@ -336,8 +336,11 @@ function git(repo, args) {
 	return output === null ? null : output.trim();
 }
 
-// The committed tree is the snapshot's identity, so the checkout must be clean:
-// uncommitted or untracked content has no commit sha to be published under.
+// The committed tree is the snapshot's identity. Only tracked paths under
+// extensions/ can enter the artifact (the file list comes from
+// `git ls-files --cached`), so the gate covers exactly those: untracked
+// files elsewhere (drafts, .env, downloads) can never be published under
+// the sha and must not refuse the snapshot.
 function resolveHead(repo) {
 	if (git(repo, ["rev-parse", "--git-dir"]) === null) {
 		die(`snapshot: ${repo} is not a git checkout; there is no HEAD to snapshot`);
@@ -350,7 +353,7 @@ function resolveHead(repo) {
 	if (!sha || !SHA_NAME.test(sha)) {
 		die(`snapshot: could not resolve a full 40-character HEAD sha in ${repo}`);
 	}
-	const status = git(repo, ["status", "--porcelain", "--untracked-files=normal"]);
+	const status = git(repo, ["status", "--porcelain", "--untracked-files=normal", "--", "extensions"]);
 	if (status === null) {
 		die(`snapshot: could not read the working tree state of ${repo}`);
 	}
@@ -373,7 +376,10 @@ function resolveHead(repo) {
 
 function hasPackages(nodeModules) {
 	return RUNTIME_PACKAGES.every((name) => {
-		const stat = lstatOrNull(join(nodeModules, name));
+		// stat (not lstat): pnpm layouts and the documented provisioning
+		// recipe keep these packages as symlinks, and the copy below
+		// dereferences them anyway.
+		const stat = statOrNull(join(nodeModules, name));
 		return stat?.isDirectory() === true;
 	});
 }
@@ -915,7 +921,7 @@ function acquireLock(releases, timeoutMs) {
 							`remove it manually if no older agent-kit is running`,
 					);
 				}
-				warn(`snapshot: removed the legacy lock file ${lock} (written before snapshots ran on Node.js)`);
+				warn(`snapshot: removed the legacy lock file ${lock} (written before snapshots ran on Node.js); a parallel pre-Node writer holding flock on it is not serialized with this run`);
 				continue;
 			}
 			die(
@@ -1107,6 +1113,15 @@ export function snapshot(repo, args) {
 			if (!check.ok) {
 				die(
 					`snapshot: ${final} exists but is not a complete snapshot of ${head.sha} (${check.reason}); remove it manually`,
+				);
+			}
+			// A schema-1 artifact of the pre-Node writer is complete, but the
+			// installed toolchain (ZAVOD agent-toolchain) requires schema 2.
+			// Reusing it as `current` would wedge every start with a repair
+			// loop the CLI itself answers with success, so refuse instead.
+			if (check.schema !== 2) {
+				die(
+					`snapshot: ${final} is a schema-${check.schema} snapshot of the pre-Node writer; remove it manually (or move it aside) and retry so it is rebuilt as schema 2`,
 				);
 			}
 			if (currentTarget(releases) !== final) {

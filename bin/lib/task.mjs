@@ -19,7 +19,7 @@ import { join } from "node:path";
 import { runChild, statOrNull, writeStdout } from "./io.mjs";
 
 function taskError(message) {
-	writeStdout(`{"status":"error","message":"${message}"}\n`);
+	writeStdout(`${JSON.stringify({ status: "error", message })}\n`);
 }
 
 export function task(repo, args) {
