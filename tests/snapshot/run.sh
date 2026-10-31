@@ -25,7 +25,11 @@ VERBOSE=0
 
 SELF_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
 REAL_REPO="$(cd "$SELF_DIR/.." && pwd -P)"
+# The CLI under test (Node) and the temporary Bash implementation it delegates
+# `snapshot` to. CLI-level tests exercise the delegation; the tests that extract
+# and parse Bash functions read the writer itself.
 INSTALLER="$REAL_REPO/bin/agent-kit"
+SNAPSHOT_SH="$REAL_REPO/bin/agent-kit-snapshot"
 
 PKG_REL="node_modules/@earendil-works/pi-coding-agent/dist/index.js"
 EXT_MARKER="extensions/subagents/index.ts"
@@ -191,7 +195,7 @@ make_kit() { # <checkout-dir>
 		"$d/node_modules/@earendil-works/pi-ai" \
 		"$d/node_modules/@earendil-works/pi-tui" \
 		"$d/node_modules/typebox"
-	cp "$INSTALLER" "$d/bin/agent-kit"
+	cp -R "$REAL_REPO/bin/." "$d/bin/"
 	printf 'export const alpha = 1\n' > "$d/extensions/alpha/index.ts"
 	printf 'export const subagents = 1\n' > "$d/$EXT_MARKER"
 	printf 'export const pkg = "pi-coding-agent"\n' > "$d/$PKG_REL"
@@ -477,7 +481,7 @@ make_lock_harness() { # <out> — harness script with the CLI's mkdir-lock code
 			snapshot_lock_restore snapshot_lock_claim_release \
 			snapshot_lock_mkdir snapshot_lock_held snapshot_lock_verify \
 			snapshot_unlock; do
-			extract_function "$INSTALLER" "$fn" || return 1
+			extract_function "$SNAPSHOT_SH" "$fn" || return 1
 		done
 		cat <<'EOSH'
 
@@ -1206,7 +1210,7 @@ run_snapshot
 	assert_contains "$OUT" "detached HEAD" "detached HEAD message"
 	assert_link "$RELEASES/current" "$SHA" "current untouched"
 	mkdir -p "$SANDBOX/plain/bin"
-	cp "$INSTALLER" "$SANDBOX/plain/bin/agent-kit"
+	cp -R "$REAL_REPO/bin/." "$SANDBOX/plain/bin/"
 	run_snapshot_at "$SANDBOX/plain" "$RELEASES"
 	assert_eq "$RC" 2 "non-git checkout refused"
 	assert_contains "$OUT" "not a git checkout" "non-git message"
@@ -1626,9 +1630,9 @@ pass
 # so a single such construct breaks every agent-kit command on macOS.
 
 new_test "T18 bash 3.2 parse compatibility and no inline case in snapshot_prune"
-PRUNE_BODY="$(extract_function "$INSTALLER" snapshot_prune)"
-HELPER_BODY="$(extract_function "$INSTALLER" snapshot_is_sha_name)"
-	[ -n "$PRUNE_BODY" ] || fail "could not extract snapshot_prune from $INSTALLER"
+PRUNE_BODY="$(extract_function "$SNAPSHOT_SH" snapshot_prune)"
+HELPER_BODY="$(extract_function "$SNAPSHOT_SH" snapshot_is_sha_name)"
+	[ -n "$PRUNE_BODY" ] || fail "could not extract snapshot_prune from $SNAPSHOT_SH"
 	[ -n "$HELPER_BODY" ] || fail "missing top-level helper snapshot_is_sha_name"
 assert_contains "$HELPER_BODY" 'case "$1" in *[!0-9a-f]*) return 1 ;; esac' \
 	"sha-name pattern match lives in the helper"
@@ -1641,7 +1645,7 @@ esac
 # The same rule applies to every helper the prune substitution calls: a
 # top-level function is parsed on its own, an inline compound command is not.
 for helper in snapshot_is_sha_name snapshot_mtime snapshot_stat_style snapshot_bounded; do
-	BODY="$(extract_function "$INSTALLER" "$helper")"
+	BODY="$(extract_function "$SNAPSHOT_SH" "$helper")"
 	[ -n "$BODY" ] || fail "missing top-level helper $helper"
 	case "$BODY" in
 	*"<<<"*) fail "$helper must not use a bash 3.2-incompatible here-string" ;;
@@ -1662,8 +1666,8 @@ fi
 if [ -n "$BASH32" ]; then
 	assert_contains "$("$BASH32" -c 'printf %s "$BASH_VERSION"' 2>/dev/null || true)" 3.2 \
 		"$BASH32 reports a bash 3.2 version"
-	if OUT="$("$BASH32" -n "$INSTALLER" 2>&1)"; then RC=0; else RC=$?; fi
-	assert_eq "$RC" 0 "bash 3.2 parses $INSTALLER"
+	if OUT="$("$BASH32" -n "$SNAPSHOT_SH" 2>&1)"; then RC=0; else RC=$?; fi
+	assert_eq "$RC" 0 "bash 3.2 parses $SNAPSHOT_SH"
 	[ "$RC" -eq 0 ] || printf '%s\n' "$OUT" >&2
 else
 	[ -n "${AGENT_KIT_BASH32:-}" ] || printf 'SKIP %s: no bash 3.2 binary found (set AGENT_KIT_BASH32 to one)\n' "$CURRENT"
@@ -2762,7 +2766,7 @@ for LOCKFN in snapshot_lock_age snapshot_lock_mkdir snapshot_lock_free_aside \
 	snapshot_lock_claim_release snapshot_lock_restore snapshot_lock_held \
 	snapshot_lock_verify snapshot_unlock snapshot_remove_tree_now \
 	snapshot_make_writable; do
-	FN_BARE="$(extract_function "$INSTALLER" "$LOCKFN" | awk -f "$SANDBOX/bare-local.awk")"
+	FN_BARE="$(extract_function "$SNAPSHOT_SH" "$LOCKFN" | awk -f "$SANDBOX/bare-local.awk")"
 	if [ -n "$FN_BARE" ]; then
 		BARE="$BARE $LOCKFN:$(printf '%s' "$FN_BARE" | tr '\n' ',')"
 	fi
