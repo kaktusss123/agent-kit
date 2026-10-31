@@ -32,6 +32,18 @@
 // disposition ends the process at once) leaves its temporary tree and the lock
 // of a dead owner behind; the next run that owns the releases dir sweeps both.
 //
+// Removal: nothing is removed under the name it is reachable by. An entry is
+// first renamed in one syscall to a reserved name (`.trash-<token>-<name>`), and
+// only that trash name is walked and deleted afterwards. The publication steps
+// never write a reserved name - a snapshot is published as a 40-hex commit sha
+// and current is a symlink to that sha - so the unbounded part of a removal can
+// never reach what current points at: the published name disappeared in the
+// syscall that started the removal. The rename is the only step that needs an
+// ownership check, and the check is the last thing before it; the permission
+// walk that makes a copied 0555 tree removable is unbounded in time, so it runs
+// before the check. The window that remains is the one syscall between the check
+// and the rename.
+//
 // Content: extensions/ is the committed file set of that directory (git
 // ls-files --cached), copied for real (symlinks preserved, git modes applied to
 // files, directory modes taken from the checkout). Walking the directory instead
@@ -51,32 +63,38 @@
 // (pid, host, token, start time). Creating a symlink publishes the lock and its
 // owner in one atomic syscall, so a lock never exists without an owner record.
 // The lock is released by moving it aside and re-reading what landed there, so
-// a lock this process does not own is never deleted. A lock is taken over only
-// when its recorded owner is provably gone: same host and a pid that no longer
-// exists. Age is not evidence - a slow but live snapshot keeps its lock, and a
-// lock that cannot be attributed is a bounded error naming its owner instead of
-// a stolen lock. A recycled pid makes a dead owner look alive, which fails in
-// the safe direction (bounded error, no takeover). The measurement that
-// justifies a takeover can itself go stale, so the takeover re-reads the record
-// .lock names at that moment and decides on the instance it actually moved
-// aside: a lock whose owner is not provably gone is put back by an atomic
-// symlink create, which fails instead of replacing a lock a third process took
-// in the meantime, and the claimer waits or fails boundedly. Waiters poll
-// boundedly (60 s default, AGENT_KIT_SNAPSHOT_LOCK_TIMEOUT overrides it). There
-// is no compare-and-swap for a symlink, so the remaining window between the
-// re-read and the claim is a syscall wide; a live owner that ever loses its
-// lock that way stops at its next ownership check instead of writing to a
-// releases dir it does not own. Every step another process can observe - the
-// publish rename, the current flip, the removal of a retained snapshot - is
-// commissioned as the last thing before it: the permission walk that makes a
-// copied 0555 tree removable is unbounded in time, so it runs before that check
-// and never between the check and the unlink.
+// a lock this process does not own is never deleted; a recovered record goes
+// back by symlink(2), which fails with EEXIST instead of replacing a lock that
+// took the name in the meantime. A lock is taken over only when its recorded
+// owner is provably gone: same host and a pid that no longer exists. Age is not
+// evidence - a slow but live snapshot keeps its lock, and a lock that cannot be
+// attributed is a bounded error naming its owner instead of a stolen lock. A
+// recycled pid makes a dead owner look alive, which fails in the safe direction
+// (bounded error, no takeover). The measurement that justifies a takeover can
+// itself go stale, so the takeover re-reads the record .lock names at that
+// moment and decides on the instance it actually moved aside: a lock whose owner
+// is not provably gone is put back, and the record that goes back carries a
+// fresh token instead of the one the displaced owner lost. The displaced owner
+// therefore fails its next ownership check instead of commissioning a step
+// against a releases dir another process has changed in the window it did not
+// hold the lock. Waiters poll boundedly (60 s default,
+// AGENT_KIT_SNAPSHOT_LOCK_TIMEOUT overrides it). There is no compare-and-swap
+// for a symlink, so the remaining window between the re-read and the claim is a
+// syscall wide; a live owner that ever loses its lock that way stops at its next
+// ownership check instead of writing to a releases dir it does not own. Every
+// step another process can observe - the publish rename, the current flip, the
+// rename of a removed entry into a trash name - is commissioned as the last
+// thing before it: the permission walk that makes a copied 0555 tree removable
+// is unbounded in time, so it runs before that check and never between the check
+// and the rename.
 //
 // Retention keeps current's target, the snapshot just published, and the 5
-// newest snapshots. A candidate is re-resolved against current and then removed
-// under one ownership check with nothing but the unlink behind it. A directory
-// that cannot be removed is exactly one bounded warning and never fails the
-// publication: current already points at a complete snapshot by then.
+// newest snapshots. A candidate is re-resolved against current and then renamed
+// into a trash name under one ownership check with nothing but the rename behind
+// it; the trash name is deleted afterwards, when the published name is already
+// gone and current cannot name it any more. A directory that cannot be removed is
+// exactly one bounded warning and never fails the publication: current already
+// points at a complete snapshot by then.
 //
 // External processes: git (the checkout identity and the committed file set are
 // git's to decide) and nothing else. No cp, stat, flock, pax, perl, tr or mv is
@@ -102,7 +120,7 @@ import {
 	writeFileSync,
 } from "node:fs";
 import { hostname } from "node:os";
-import { basename, join, resolve } from "node:path";
+import { basename, dirname, join, resolve } from "node:path";
 import { FatalError, die, lstatOrNull, msg, readlinkOrNull, warn } from "./io.mjs";
 
 // Latest snapshots kept beyond current's target, as documented in the help text
@@ -123,6 +141,7 @@ const DEFAULT_LOCK_TIMEOUT_SECONDS = 60;
 const LOCK_NAME = ".lock";
 const CURRENT_NAME = "current";
 const TMP_PREFIX = ".tmp-";
+const TRASH_PREFIX = ".trash-";
 const CURRENT_TMP_PREFIX = ".current.tmp-";
 const SHA_NAME = /^[0-9a-f]{40}$/;
 
@@ -178,14 +197,22 @@ function token() {
 	return Math.random().toString(36).slice(2, 10) + Date.now().toString(36);
 }
 
-// A rewrite-free removal that starts from a writable tree: a copied 0555
-// directory cannot be descended into, so permissions are relaxed before the
-// unlink. Returns false when something is still there afterwards.
+// A removal that starts from a writable tree: a copied 0555 directory cannot be
+// descended into, so permissions are relaxed before the unlink. Returns false
+// when something is still there afterwards.
+//
+// Nothing is removed under the name it is reachable by. The victim is first
+// renamed in one syscall to a reserved trash name, and only that trash name is
+// walked and deleted: a recursive removal is one syscall per entry, and while it
+// runs another process can make the tree it walks current, so the name that
+// current could name has to be gone before the walk starts. Publication never
+// writes a reserved name (a snapshot is a 40-hex commit sha, current is a symlink
+// to one), so the walk can only ever delete names current cannot use.
 //
 // The permission walk is as deep as the tree and can be arbitrarily long, so it
-// runs before `commission`, never between it and the unlink: a caller that must
+// runs before `commission`, never between it and the rename: a caller that must
 // not remove on a lock it may have lost passes the ownership check as
-// `commission` and has nothing but the unlink behind it.
+// `commission` and has nothing but the one rename behind it.
 //
 // AGENT_KIT_SNAPSHOT_FAIL_REMOVE is a test seam and nothing else: it names a
 // path fragment whose removal always reports failure, so the suite can observe
@@ -194,19 +221,51 @@ function token() {
 // the outcome of a removal, never the publication contract.
 const FAIL_REMOVE = process.env.AGENT_KIT_SNAPSHOT_FAIL_REMOVE ?? "";
 
+// A free reserved name next to the victim. The token makes a collision with
+// another process practically impossible; the existence probe makes it
+// impossible to reuse a leftover of a killed run. Null when the namespace around
+// the victim is exhausted - a warning, never a publication failure.
+function freeTrashPath(dir, name) {
+	for (let attempt = 0; attempt < 16; attempt += 1) {
+		const candidate = join(dir, `${TRASH_PREFIX}${token()}-${attempt}-${name}`);
+		if (!lstatOrNull(candidate)) return candidate;
+	}
+	return null;
+}
+
 function removeTree(path, commission) {
 	const stat = lstatOrNull(path);
 	if (!stat) return true;
 	if (FAIL_REMOVE !== "" && path.includes(FAIL_REMOVE)) return false;
 	makeWritable(path);
 	if (commission) commission();
-	try {
-		rmSync(path, { recursive: true, force: true });
-	} catch {
-		// Reported by the existence re-check: the caller decides whether an
-		// undeletable tree is a warning or a failure.
+	const trash = freeTrashPath(dirname(path), basename(path));
+	if (trash === null) {
+		warn(`snapshot: cannot find a free trash name next to ${bounded(path, 120)}; it stays on disk`);
+		return false;
 	}
-	return !lstatOrNull(path);
+	try {
+		renameSync(path, trash);
+	} catch (err) {
+		// A name that vanished under this process is already removed; anything
+		// else is a tree that stays on disk and is reported by the caller.
+		if (err?.code === "ENOENT") return true;
+		warn(
+			`snapshot: could not move ${bounded(path, 120)} to ${bounded(trash, 120)}: ` +
+				`${err?.code ?? err?.message}`,
+		);
+		return !lstatOrNull(path);
+	}
+	try {
+		rmSync(trash, { recursive: true, force: true });
+	} catch {
+		// Reported by the existence re-check below. The published name is gone
+		// either way, and a trash name that stays behind is swept by the next run.
+	}
+	if (lstatOrNull(trash)) {
+		warn(`snapshot: could not remove the trash entry ${bounded(trash, 120)}; the next run sweeps it`);
+	}
+	return true;
 }
 
 function makeWritable(path) {
@@ -609,9 +668,11 @@ function pruneSnapshots(releases, published, verifyLock) {
 	for (const path of stale) {
 		// current is re-resolved per directory: a snapshot retained as current's
 		// target is never a candidate, and the check is cheap. The decision holds
-		// until the unlink because current can only move while another process
-		// holds the lock, and the removal re-checks this process's ownership with
-		// nothing but the unlink behind it.
+		// up to the rename into a trash name - one syscall - because current can
+		// only move while another process holds the lock, and the rename is
+		// commissioned with this process's ownership as the last thing before it.
+		// What follows the rename is the removal of the trash name, which current
+		// can never name; that part needs neither a check nor a lock.
 		if (path === keep || path === currentTarget(releases)) {
 			if (protectedPath === "") protectedPath = path;
 			continue;
@@ -715,25 +776,52 @@ function takeOverLock(lock, measured) {
 	return false;
 }
 
+// Put a lock record back under a name this process does not hold, without
+// replacing whatever took the name in the meantime. symlink(2) is the only claim
+// that cannot destroy a lock: it fails with EEXIST, where rename(2) silently
+// replaces. The caller decides what a collision means; this helper only reports
+// it.
+function putLockBack(lock, record) {
+	if (record === null) return "unreadable";
+	try {
+		symlinkSync(record, lock);
+	} catch (err) {
+		if (err?.code === "EEXIST") return "taken";
+		return `failed: ${err?.code ?? err?.message}`;
+	}
+	return "restored";
+}
+
 // Put back a lock this process moved aside although its owner is not provably
-// gone. The freed name is restored by creating the symlink again: symlink(2)
-// fails with EEXIST instead of replacing a lock that a third process acquired in
-// that window, so undoing the move can never destroy someone else's lock. When
-// that third process has the name, the displaced lock is named in a bounded
-// failure instead of being deleted.
+// gone. The freed name is restored by creating the symlink again, which fails
+// with EEXIST instead of replacing a lock that a third process acquired in that
+// window, so undoing the move can never destroy someone else's lock. When that
+// third process has the name, the displaced lock is named in a bounded failure
+// instead of being deleted.
+//
+// The record that goes back is NOT the displaced instance. Its owner lost the
+// name for at least one syscall, so another process may have run a whole
+// mutation in that window - flipped current, pruned the snapshot the owner is
+// working on - and a record the owner still matches would let it commission a
+// step against a releases dir whose state it never saw. The restored lock
+// therefore names the same owner with a fresh token: the displaced owner fails
+// its next ownership check and stops with a bounded refusal, which is the
+// correct outcome - its world changed, so the operation restarts.
 function restoreDisplacedLock(lock, aside, landed) {
 	const owner = decodeOwner(landed);
 	const ownerText = owner ? `pid ${owner.pid} on ${owner.host}` : bounded(landed ?? "unreadable", 60);
 	if (landed !== null) {
-		try {
-			symlinkSync(landed, lock);
-		} catch (err) {
-			if (err?.code !== "EEXIST") {
-				die(`snapshot: could not put the displaced lock ${aside} back under ${lock}: ${err?.code ?? err?.message}`);
-			}
+		const outcome = putLockBack(lock, owner ? encodeOwner({ ...owner, token: token() }) : landed);
+		if (outcome === "taken") {
 			die(
 				`snapshot: ${lock} changed hands while this process was taking it over; the displaced lock is at ${aside} ` +
 					`(owner: ${ownerText}); stop that process or remove whichever lock is stale, then retry`,
+			);
+		}
+		if (outcome !== "restored") {
+			die(
+				`snapshot: could not put the displaced lock ${aside} back under ${lock} (owner: ${ownerText}, ` +
+					`${outcome}); move it back or remove it, then retry`,
 			);
 		}
 		try {
@@ -822,6 +910,15 @@ function verifyLock(handle, section) {
 	);
 }
 
+// Release order, in this order for a reason: re-read the name (never act on a
+// lock this process does not own) -> move the instance aside in one syscall that
+// no other process can split -> decide from the record that actually landed in
+// the aside -> delete only the instance whose record is this process's own. A
+// record that is not ours belongs to whoever holds the name now: it is put back
+// by creating the symlink, never by a rename, because the name may already
+// belong to a third owner and a rename would replace that lock silently. The
+// aside is unlinked only after the name is restored, so the displaced instance is
+// never lost.
 function releaseLock(handle) {
 	if (!handle) return;
 	if (readlinkOrNull(handle.path) !== handle.target) {
@@ -835,17 +932,25 @@ function releaseLock(handle) {
 		warn(`snapshot: could not release the lock ${handle.path}: ${err?.code ?? err?.message}`);
 		return;
 	}
-	if (readlinkOrNull(aside) !== handle.target) {
-		// A lock this process did not create landed aside: put it back.
-		if (!lstatOrNull(handle.path)) {
-			try {
-				renameSync(aside, handle.path);
-				return;
-			} catch {
-				// Reported below.
-			}
+	const landed = readlinkOrNull(aside);
+	if (landed !== handle.target) {
+		// A lock this process did not create landed aside: put it back without
+		// replacing a lock that took the name in the meantime.
+		const outcome = putLockBack(handle.path, landed);
+		if (outcome === "taken") {
+			warn(
+				`snapshot: ${handle.path} changed hands while this process released it; ` +
+					`the displaced lock is at ${aside}`,
+			);
+			return;
 		}
-		warn(`snapshot: ${handle.path} was replaced while this process released it; the replacement is at ${aside}`);
+		if (outcome !== "restored") {
+			warn(
+				`snapshot: ${handle.path} was replaced while this process released it and cannot be put back ` +
+					`(${outcome}); the replacement is at ${aside}`,
+			);
+			return;
+		}
 		return;
 	}
 	try {
@@ -856,8 +961,9 @@ function releaseLock(handle) {
 }
 
 // Leftovers a killed run cannot clean up itself: a temporary build tree, a
-// temporary current link, a lock or lock aside of a process that is gone. This
-// runs under the lock, so nothing here can belong to a live operation.
+// temporary current link, a trash name whose removal was interrupted, a lock or
+// lock aside of a process that is gone. This runs under the lock, so nothing here
+// can belong to a live operation.
 function sweepLeftovers(releases) {
 	let entries;
 	try {
@@ -867,6 +973,7 @@ function sweepLeftovers(releases) {
 	}
 	const leftovers = entries.filter(
 		(name) =>
+			name.startsWith(TRASH_PREFIX) ||
 			name.startsWith(TMP_PREFIX) ||
 			name.startsWith(CURRENT_TMP_PREFIX) ||
 			name.startsWith(`${LOCK_NAME}.stale-`) ||
