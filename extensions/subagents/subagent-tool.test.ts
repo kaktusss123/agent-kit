@@ -4,12 +4,13 @@
  * allow-list, and generic-spawn isolation. Process spawning itself is covered
  * by the controller/run-layer suites; these tests pin the glue.
  */
-import { describe, expect, test } from "bun:test";
+import { describe, test } from "node:test";
+import { expect } from "../../tests/support/expect.ts";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
-import registerExtension from "./index";
+import registerExtension from "./index.ts";
 
 interface ToolDef {
 	name: string;
@@ -427,7 +428,7 @@ describe("subagent tool surface", () => {
 			else process.env.PI_CODING_AGENT_DIR = prevAgentDir;
 			fs.rmSync(base, { recursive: true, force: true });
 		}
-	}, 10000);
+	});
 
 	test("registers the /subagent-role command", () => {
 		const commands = new Map<string, unknown>();
@@ -547,7 +548,7 @@ describe("nested spawn from a workspace worker", () => {
 			process.argv[1] = prevArgv1;
 			fs.rmSync(base, { recursive: true, force: true });
 		}
-	}, 30000);
+	});
 
 	test("a bound role resolves to the BOUND pair (not the inherited session model) and starts the grandchild with it", async () => {
 		const base = fs.mkdtempSync(path.join(os.tmpdir(), "subagent-nested-test-"));
@@ -638,7 +639,7 @@ describe("nested spawn from a workspace worker", () => {
 			process.argv[1] = prevArgv1;
 			fs.rmSync(base, { recursive: true, force: true });
 		}
-	}, 15000);
+	});
 
 	test("omitting model and role inherits the worker's session model and starts the grandchild with it", async () => {
 		const base = fs.mkdtempSync(path.join(os.tmpdir(), "subagent-nested-test-"));
@@ -711,7 +712,7 @@ describe("nested spawn from a workspace worker", () => {
 			process.argv[1] = prevArgv1;
 			fs.rmSync(base, { recursive: true, force: true });
 		}
-	}, 15000);
+	});
 });
 
 	describe("plain wait steering wake", () => {
@@ -782,7 +783,7 @@ describe("nested spawn from a workspace worker", () => {
 			else process.env.PI_CODING_AGENT_DIR = prevAgentDir;
 			fs.rmSync(base, { recursive: true, force: true });
 		}
-	}, 15000);
+	});
 });
 
 describe("workspace spawn nesting is flat (fail closed)", () => {
@@ -856,5 +857,5 @@ describe("workspace spawn nesting is flat (fail closed)", () => {
 			process.argv[1] = prevArgv1;
 			fs.rmSync(base, { recursive: true, force: true });
 		}
-	}, 20000);
+	});
 });

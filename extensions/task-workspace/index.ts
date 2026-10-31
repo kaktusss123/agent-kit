@@ -51,21 +51,21 @@ import { createBashTool } from "@earendil-works/pi-coding-agent";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { Type as tb } from "typebox";
-import { resolveTaskRoot } from "./task-root";
+import { resolveTaskRoot } from "./task-root.ts";
 import {
   SESSION_SELECTION_ENTRY_TYPE,
   isRecordableEnsureStatus,
-} from "./current";
+} from "./current.ts";
 import {
   checkpointCommit,
   ensureTaskRepo,
   removeTaskLane,
   taskStatus,
   teardownTaskRepo,
-} from "./flows";
-import { BOOTSTRAP_CONFIG } from "./bootstrap-config";
-export { BOOTSTRAP_CONFIG } from "./bootstrap-config";
-import { guardManagedWriteTarget } from "./guard";
+} from "./flows.ts";
+import { BOOTSTRAP_CONFIG } from "./bootstrap-config.ts";
+export { BOOTSTRAP_CONFIG } from "./bootstrap-config.ts";
+import { guardManagedWriteTarget } from "./guard.ts";
 import {
   renderCheckpointCommitCall,
   renderCheckpointCommitResult,
@@ -80,9 +80,9 @@ import {
   type RenderOptions,
   type TaskStatusResultLike,
   type ToolResultLike,
-} from "./render";
-import { resolveGitOnPath } from "./shim-path";
-export { resolveGitOnPath } from "./shim-path";
+} from "./render.ts";
+import { resolveGitOnPath } from "./shim-path.ts";
+export { resolveGitOnPath } from "./shim-path.ts";
 
 function respond(result: Record<string, unknown>, details?: unknown): {
   content: { type: "text"; text: string }[];

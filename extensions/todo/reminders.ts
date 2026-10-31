@@ -8,7 +8,7 @@
  * constantly regardless of whether a structured "ask" tool exists.
  */
 
-import { type IncompletePhase, type TodoPhase, incompleteByPhase, isClosedTodo } from "./core";
+import { type IncompletePhase, type TodoPhase, incompleteByPhase, isClosedTodo } from "./core.ts";
 
 export interface ReminderEngineConfig {
 	reminders: boolean;

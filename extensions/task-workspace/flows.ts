@@ -33,12 +33,12 @@ import {
   resolveTaskWorkspacePath,
   scanTaskWorkspaces,
   taskWorkspacePath,
-} from "./git";
-import { describeOwner, removeDeadOwnerRecord, type OwnerView } from "./owner-lock";
-import { bootstrapWorktreeDependencies } from "./bootstrap";
-import type { BootstrapConfig } from "./bootstrap";
-import { isSecretPath } from "./guard";
-import type { BootstrapResult, DirtyState, LinkedWorktreeFact } from "./types";
+} from "./git.ts";
+import { describeOwner, removeDeadOwnerRecord, type OwnerView } from "./owner-lock.ts";
+import { bootstrapWorktreeDependencies } from "./bootstrap.ts";
+import type { BootstrapConfig } from "./bootstrap.ts";
+import { isSecretPath } from "./guard.ts";
+import type { BootstrapResult, DirtyState, LinkedWorktreeFact } from "./types.ts";
 
 const DEFERRED_PASS_RESULTS: Record<string, true> = {
   pass: true,

@@ -21,7 +21,7 @@
  *   surfacing a duration-shaped fake value.
  */
 
-import type { TextUsageRow } from "./format";
+import type { TextUsageRow } from "./format.ts";
 
 /** Streaming events that mark the first provider-produced content block. */
 export const FIRST_CONTENT_EVENTS = new Set([

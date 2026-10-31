@@ -1,7 +1,7 @@
 /**
  * Pure todo domain model, ported from oh-my-pi's `tools/todo.ts`.
  *
- * No imports from pi or pi-tui: this module is unit-testable with `bun test`
+ * No imports from pi or pi-tui: this module is unit-testable with `node --test`
  * in isolation. Wiring lives in `index.ts`, rendering in `render.ts`.
  *
  * Core invariants (all preserved from the OMP original):

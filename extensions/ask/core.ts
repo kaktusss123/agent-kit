@@ -10,7 +10,7 @@ import {
 	type AskOutcome,
 	type AskQuestion,
 	type AskQuestionResult,
-} from "./contract";
+} from "./contract.ts";
 
 // ==================================================================== rows
 

@@ -1,5 +1,6 @@
-import { describe, expect, test } from "bun:test";
-import { phasesWith } from "./test-fixtures";
+import { describe, test } from "node:test";
+import { expect } from "../../tests/support/expect.ts";
+import { phasesWith } from "./test-fixtures.ts";
 import {
 	DEFAULT_REMINDER_CONFIG,
 	type ReminderEngineConfig,
@@ -7,7 +8,7 @@ import {
 	allTodosClosed,
 	buildStopReminderText,
 	isAwaitingUserAnswer,
-} from "./reminders";
+} from "./reminders.ts";
 
 function makeConfig(overrides: Partial<ReminderEngineConfig> = {}): ReminderEngineConfig {
 	return {

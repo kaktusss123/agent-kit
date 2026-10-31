@@ -8,7 +8,7 @@
  * guaranteed resolvable inside pi's extension loading context.
  */
 import { Type } from "typebox";
-import { ASK_TOOL_DESCRIPTION } from "./contract";
+import { ASK_TOOL_DESCRIPTION } from "./contract.ts";
 
 export const AskOptionSchema = Type.Object({
 	label: Type.String({ description: "Short display label for the option" }),

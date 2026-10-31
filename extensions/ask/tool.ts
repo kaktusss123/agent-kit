@@ -23,13 +23,13 @@ import {
 	findReservedOptionLabel,
 	formatAskOutcomeText,
 	normalizeAskArguments,
-} from "./contract";
-import { AskSchema } from "./ask-schema";
+} from "./contract.ts";
+import { AskSchema } from "./ask-schema.ts";
 import {
 	reviewLines,
 	type QuestionAnswer,
 	toResults,
-} from "./core";
+} from "./core.ts";
 
 /** Minimal UI the RPC fallback needs (a subset of pi's ExtensionUIContext). */
 export interface FallbackUi {

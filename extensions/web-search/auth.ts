@@ -14,7 +14,7 @@
  * (https://github.com/Leechael/pi-codex-search), MIT License, Copyright (c) 2025.
  */
 
-import { WebSearchError } from "./codex";
+import { WebSearchError } from "./codex.ts";
 
 const OPENAI_CODEX_PROVIDER = "openai-codex";
 const JWT_CLAIM_PATH = "https://api.openai.com/auth";

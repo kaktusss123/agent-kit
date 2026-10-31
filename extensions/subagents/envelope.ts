@@ -6,7 +6,7 @@
  * schema (envelope-schema.ts) and atomically writes an EnvelopeRecord under
  * its agentId. The main-side workspace layer re-reads and re-validates the
  * same file at settlement — this module is the single shared contract and
- * stays free of typebox/pi imports so bun unit tests can use it directly.
+ * stays free of typebox/pi imports so unit tests can use it directly.
  *
  * Staleness ("finish by reporting" as a mechanical property): the bridge
  * invalidates the record as soon as any other tool call follows a successful

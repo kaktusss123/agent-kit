@@ -13,8 +13,8 @@ import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
-import { LocalSubagentRuntime } from "../controller";
-import { createWorkspaceRuns, defaultProfileEntries } from "../workspace-runs";
+import { LocalSubagentRuntime } from "../controller.ts";
+import { createWorkspaceRuns, defaultProfileEntries } from "../workspace-runs.ts";
 
 const LIVE_DIR = process.env.PI_WDRV_LIVE_DIR ?? "/tmp/pi-workspace-live";
 const LOG = path.join(LIVE_DIR, "driver-log.json");

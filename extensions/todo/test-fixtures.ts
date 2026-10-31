@@ -1,4 +1,4 @@
-import type { TodoPhase, TodoStatus } from "./core";
+import type { TodoPhase, TodoStatus } from "./core.ts";
 
 /** Fixture builder: `phasesWith({ name, tasks: [["content", "status"]] })`. */
 export function phasesWith(

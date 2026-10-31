@@ -4,8 +4,8 @@
  * commands from its "stdin").
  */
 import { EventEmitter } from "node:events";
-import { JsonlReader } from "./jsonl";
-import type { ChildProcessLike, SpawnFn } from "./rpc-child";
+import { JsonlReader } from "./jsonl.ts";
+import type { ChildProcessLike, SpawnFn } from "./rpc-child.ts";
 
 export type SpawnSpec = { command: string; args: string[]; cwd: string; env?: NodeJS.ProcessEnv };
 
@@ -45,8 +45,10 @@ export class FakeRpcProcess implements ChildProcessLike {
 
 	private readonly events = new EventEmitter();
 	private reader!: JsonlReader;
+	readonly spec: SpawnSpec;
 
-	constructor(public readonly spec: SpawnSpec) {
+	constructor(spec: SpawnSpec) {
+		this.spec = spec;
 		this.reader = new JsonlReader((line) => {
 			if (!line.trim()) return;
 			const cmd = JSON.parse(line) as Record<string, unknown>;

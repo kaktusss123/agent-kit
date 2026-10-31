@@ -39,16 +39,16 @@ import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
-import type { ModelLike, ModelPair, ThinkingLevel } from "./model-spec";
-import { resolveSpawnPair } from "./spawn-model";
+import type { ModelLike, ModelPair, ThinkingLevel } from "./model-spec.ts";
+import { resolveSpawnPair } from "./spawn-model.ts";
 import {
 	envelopeFileName,
 	validateEnvelopeRecord,
 	type Envelope,
 	type EnvelopeRecord,
-} from "./envelope";
-import { PROFILE_READINESS } from "./readiness";
-import { ProviderExtensionError } from "./provider-extensions";
+} from "./envelope.ts";
+import { PROFILE_READINESS } from "./readiness.ts";
+import { ProviderExtensionError } from "./provider-extensions.ts";
 import {
 	expandPath,
 	getRepoBranch,
@@ -56,9 +56,9 @@ import {
 	isLinkedWorktree,
 	parseDirtyStatus,
 	realpath,
-} from "../task-workspace/git";
-import type { DirtyState } from "../task-workspace/types";
-import { resolveTaskRoot } from "../task-workspace/task-root";
+} from "../task-workspace/git.ts";
+import type { DirtyState } from "../task-workspace/types.ts";
+import { resolveTaskRoot } from "../task-workspace/task-root.ts";
 import {
 	acquireOwnerLease,
 	describeOwnerRefusal,
@@ -66,14 +66,14 @@ import {
 	releaseOwnerLease,
 	type OwnerLease,
 	type OwnerView,
-} from "../task-workspace/owner-lock";
-import { formatRunStatus, type RunStatusView } from "./activity";
-import { formatNeedsInputBody } from "./delivery";
-import { markOwnDelivery, ownDeliveryInFlight } from "./steering-wake";
-import type { AgentSnapshot, SubagentModelEvent } from "./types";
-import type { LocalSubagentRuntime } from "./controller";
-import type { AskInput } from "../ask/contract";
-import { loadProgress, type Progress, type RunHistory } from "./progress";
+} from "../task-workspace/owner-lock.ts";
+import { formatRunStatus, type RunStatusView } from "./activity.ts";
+import { formatNeedsInputBody } from "./delivery.ts";
+import { markOwnDelivery, ownDeliveryInFlight } from "./steering-wake.ts";
+import type { AgentSnapshot, SubagentModelEvent } from "./types.ts";
+import type { LocalSubagentRuntime } from "./controller.ts";
+import type { AskInput } from "../ask/contract.ts";
+import { loadProgress, type Progress, type RunHistory } from "./progress.ts";
 
 // ============================================================ configuration
 
@@ -793,11 +793,11 @@ export function createWorkspaceRuns(
 	// ------------------------------------------------------------ validation
 
 	class WorkspaceValidationError extends Error {
-		constructor(
-			public readonly kind: "unsupported" | "blocked",
-			message: string,
-		) {
+		readonly kind: "unsupported" | "blocked";
+
+		constructor(kind: "unsupported" | "blocked", message: string) {
 			super(message);
+			this.kind = kind;
 		}
 	}
 

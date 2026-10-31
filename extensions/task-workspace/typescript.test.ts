@@ -10,8 +10,8 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, isAbsolute, join, resolve } from "node:path";
-import { expect, test } from "bun:test";
-
+import { test } from "node:test";
+import { expect } from "../../tests/support/expect.ts";
 const TSC_OVERRIDE = "AGENT_KIT_TSC";
 
 function tscFromPath(input: string): string | null {
@@ -76,13 +76,14 @@ function locateTsc(): { tsc: string; piRoot: string | null } | null {
 const installation = locateTsc();
 
 if (!installation) {
-  test.skip(
+  test(
     `task-workspace TypeScript static check unavailable; set ${TSC_OVERRIDE} to tsc.js or a TypeScript directory`,
+    { skip: true },
     () => {},
   );
 } else {
   test("task-workspace passes the optional strict TypeScript static check", () => {
-    let project = join(import.meta.dir, "tsconfig.json");
+    let project = join(import.meta.dirname, "tsconfig.json");
     let generatedConfigDir: string | null = null;
     if (installation.piRoot) {
       generatedConfigDir = mkdtempSync(join(tmpdir(), "agent-kit-tsc-config-"));
@@ -90,7 +91,7 @@ if (!installation) {
       writeFileSync(
         project,
         JSON.stringify({
-          extends: join(import.meta.dir, "tsconfig.json"),
+          extends: join(import.meta.dirname, "tsconfig.json"),
           compilerOptions: {
             baseUrl: "/",
             paths: {
@@ -108,7 +109,7 @@ if (!installation) {
         process.execPath,
         [installation.tsc, "--project", project, "--pretty", "false"],
         {
-          cwd: import.meta.dir,
+          cwd: import.meta.dirname,
           encoding: "utf8",
           stdio: ["ignore", "pipe", "pipe"],
         },
@@ -121,5 +122,5 @@ if (!installation) {
         rmSync(generatedConfigDir, { recursive: true, force: true });
       }
     }
-  }, 30_000);
+  });
 }

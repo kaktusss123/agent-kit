@@ -1,7 +1,8 @@
-import { describe, expect, test } from "bun:test";
+import { describe, test } from "node:test";
+import { expect } from "../../tests/support/expect.ts";
 import { Value } from "typebox/value";
-import { AskSchema } from "./ask-schema";
-import { findReservedOptionLabel } from "./contract";
+import { AskSchema } from "./ask-schema.ts";
+import { findReservedOptionLabel } from "./contract.ts";
 import {
 	ASK_TOOL_DESCRIPTION,
 	ASK_TOOL_GUIDELINES,
@@ -12,7 +13,7 @@ import {
 	parseAskRequest,
 	validateAskInput,
 	type AskInput,
-} from "./contract";
+} from "./contract.ts";
 
 const sample: AskInput = {
 	questions: [

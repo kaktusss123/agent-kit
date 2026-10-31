@@ -25,7 +25,7 @@
  * (the tool set), and the controller judges it against the per-spawn
  * contract. Requirement maps never travel to the child.
  *
- * This module stays free of runtime pi imports so both sides (and bun unit
+ * This module stays free of runtime pi imports so both sides (and unit
  * tests) can use it.
  *
  * Module cycle note: the only reason this file imports from
@@ -34,7 +34,7 @@
  * keeps exactly one source of truth.
  */
 
-import { REPORTING_ENTRY_ID } from "./reporting-bridge";
+import { REPORTING_ENTRY_ID } from "./reporting-bridge.ts";
 
 /** Marker embedded in every readiness notify payload. */
 export const READINESS_PROTOCOL = "pi-subagents-readiness";

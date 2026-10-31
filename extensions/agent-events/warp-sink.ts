@@ -7,14 +7,14 @@
  */
 
 import { basename } from "node:path";
-import type { AgentRuntimeEvent, AgentRuntimeEventSink } from "./events";
+import type { AgentRuntimeEvent, AgentRuntimeEventSink } from "./events.ts";
 import {
 	buildWarpFrame,
 	finalizeWarpFrame,
 	isInsideTmux,
 	type WarpEnvelope,
 	type WarpEventPayload,
-} from "./warp";
+} from "./warp.ts";
 
 /**
  * Semantic event -> Warp payload + attention flag.

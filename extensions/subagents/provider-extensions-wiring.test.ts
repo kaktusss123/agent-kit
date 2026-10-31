@@ -7,11 +7,12 @@
  * settings.json `packages` must never flow into a child `-e` (that would be
  * local code execution of untrusted content).
  */
-import { describe, expect, test } from "bun:test";
+import { describe, test } from "node:test";
+import { expect } from "../../tests/support/expect.ts";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
-import { makeParentPackageLister, type PackageManagerWiring } from "./index";
+import { makeParentPackageLister, type PackageManagerWiring } from "./index.ts";
 
 function recordingWiring() {
 	const settingsCalls: Array<{ cwd: string; agentDir: string; projectTrusted: boolean }> = [];

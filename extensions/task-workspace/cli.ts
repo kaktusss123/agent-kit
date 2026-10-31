@@ -32,18 +32,18 @@
 import { appendFileSync, readFileSync, realpathSync } from "node:fs";
 import { dirname, isAbsolute, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { BOOTSTRAP_CONFIG } from "./bootstrap-config";
+import { BOOTSTRAP_CONFIG } from "./bootstrap-config.ts";
 import {
   checkpointCommit,
   ensureTaskRepo,
   removeTaskLane,
   taskStatus,
   teardownTaskRepo,
-} from "./flows";
-import { buildCurrentTaskProjection, SESSION_SELECTION_ENTRY_TYPE } from "./current";
-import { guardManagedWriteTarget } from "./guard";
-import { isShimScript, resolveGitOnPath } from "./shim-path";
-import { resolveTaskRoot } from "./task-root";
+} from "./flows.ts";
+import { buildCurrentTaskProjection, SESSION_SELECTION_ENTRY_TYPE } from "./current.ts";
+import { guardManagedWriteTarget } from "./guard.ts";
+import { isShimScript, resolveGitOnPath } from "./shim-path.ts";
+import { resolveTaskRoot } from "./task-root.ts";
 
 const SHIM_DIR = join(dirname(fileURLToPath(import.meta.url)), "shim");
 const POLICY_PATH = join(SHIM_DIR, "policy.mjs");

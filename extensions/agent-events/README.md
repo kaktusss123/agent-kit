@@ -97,6 +97,6 @@ widening the sink.
 
 ## Tests
 
-`bun test` in this directory covers capability gating, the exact wire format,
+`node --test` in this directory covers capability gating, the exact wire format,
 tmux framing, semantic→Warp mapping, run classification, and the extension
 lifecycle (including headless/non-TTY silence and sink error swallowing).

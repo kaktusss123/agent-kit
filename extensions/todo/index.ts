@@ -30,14 +30,14 @@ import {
 	latestPhasesFromEntries,
 	phasesToMarkdown,
 	resolveTodoParams,
-} from "./core";
-import { buildHudLines, renderTodoCall, renderTodoResult } from "./render";
+} from "./core.ts";
+import { buildHudLines, renderTodoCall, renderTodoResult } from "./render.ts";
 import {
 	type ReminderEngineConfig,
 	TodoReminderEngine,
 	allTodosClosed,
 	buildStopReminderText,
-} from "./reminders";
+} from "./reminders.ts";
 
 // =============================================================================
 // Configuration (OMP defaults; edit here — no settings registry by design)

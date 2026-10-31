@@ -1,5 +1,6 @@
-import { describe, expect, test } from "bun:test";
-import type { AskQuestion } from "./contract";
+import { describe, test } from "node:test";
+import { expect } from "../../tests/support/expect.ts";
+import type { AskQuestion } from "./contract.ts";
 import {
 	activateRow,
 	advance,
@@ -16,7 +17,7 @@ import {
 	submitReview,
 	toResults,
 	buildRows,
-} from "./core";
+} from "./core.ts";
 
 const single: AskQuestion = {
 	id: "base",

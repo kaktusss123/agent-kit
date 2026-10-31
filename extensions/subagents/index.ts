@@ -49,19 +49,19 @@ import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { DefaultPackageManager, SettingsManager } from "@earendil-works/pi-coding-agent";
 import { StringEnum } from "@earendil-works/pi-ai";
 import { Type, type Static } from "typebox";
-import { LocalSubagentRuntime } from "./controller";
-import { resolveSpawnPair } from "./spawn-model";
-import { loadRoleBindings, rolesPath } from "./roles";
-import { roleCommandCompletions, runRoleCommand } from "./role-command";
+import { LocalSubagentRuntime } from "./controller.ts";
+import { resolveSpawnPair } from "./spawn-model.ts";
+import { loadRoleBindings, rolesPath } from "./roles.ts";
+import { roleCommandCompletions, runRoleCommand } from "./role-command.ts";
 import {
 	requireProviderExtensions,
 	type ConfiguredPackageRef,
 	type ParentRuntimeFacts,
-} from "./provider-extensions";
-import { resolveAgentDir } from "../proxy/proxy-lib";
-import { defaultResultsDir, sumSessionCost } from "./result-store";
-import { ownDeliveryInFlight } from "./steering-wake";
-import type { WaitOutcome } from "./types";
+} from "./provider-extensions.ts";
+import { resolveAgentDir } from "../proxy/proxy-lib.ts";
+import { defaultResultsDir, sumSessionCost } from "./result-store.ts";
+import { ownDeliveryInFlight } from "./steering-wake.ts";
+import type { WaitOutcome } from "./types.ts";
 import {
 	formatAskRequestBlock,
 	formatLiveSnapshot,
@@ -69,31 +69,31 @@ import {
 	formatResult,
 	formatStatusList,
 	RESOLVE_INSTRUCTION,
-} from "./delivery";
+} from "./delivery.ts";
 import {
 	createWorkspaceRuns,
 	managedAgentOpPolicy,
 	compactRunView,
 	type WorkspaceRunView,
 	type WorkspaceRuns,
-} from "./workspace-runs";
-import { renderSubagentCall, renderSubagentResult } from "./render";
-import { attachDelivery } from "./wiring";
+} from "./workspace-runs.ts";
+import { renderSubagentCall, renderSubagentResult } from "./render.ts";
+import { attachDelivery } from "./wiring.ts";
 import {
 	buildSpawnModelSection,
 	buildSpawnModelSectionError,
 	SPAWN_MODEL_RULE,
 	SPAWN_MODEL_SECTION,
-} from "./spawn-guidance";
-import { taskStatus } from "../task-workspace/flows";
-import { resolveTaskRoot } from "../task-workspace/task-root";
-import type { AgentResult, AgentSnapshot } from "./types";
-import { setSubagentInspectionSource } from "./inspection-seam";
+} from "./spawn-guidance.ts";
+import { taskStatus } from "../task-workspace/flows.ts";
+import { resolveTaskRoot } from "../task-workspace/task-root.ts";
+import type { AgentResult, AgentSnapshot } from "./types.ts";
+import { setSubagentInspectionSource } from "./inspection-seam.ts";
 import {
 	attachRunningAgentsPush,
 	type RunningAgentsPush,
 	type RunningAgentsPushContext,
-} from "./running-agents-push";
+} from "./running-agents-push.ts";
 
 // =============================================================================
 // Configuration

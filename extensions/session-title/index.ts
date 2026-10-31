@@ -20,7 +20,7 @@ import {
 	rolesFile,
 	sanitizeTitle,
 	TITLE_SYSTEM_PROMPT,
-} from "./title";
+} from "./title.ts";
 
 /** One attempt per session: no retry loop, no re-naming on later messages. */
 // Thinking models (cloudru Qwen3.5) ignore reasoning_effort and always emit a

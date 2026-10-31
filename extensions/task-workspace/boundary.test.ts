@@ -9,9 +9,9 @@
  */
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
-import { describe, expect, test } from "bun:test";
-
-const DIR = import.meta.dir;
+import { describe, test } from "node:test";
+import { expect } from "../../tests/support/expect.ts";
+const DIR = import.meta.dirname;
 
 /** Implementation sources plus the README — everything a consumer reads. */
 const ACTIVE_SOURCES = [

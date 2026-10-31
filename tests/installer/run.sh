@@ -1104,18 +1104,18 @@ pass
 
 # ==============================================================================
 # T37: the task wrapper hands its arguments to the task-workspace CLI verbatim,
-# keeps stdout to one JSON object and propagates the runtime's exit code; the
-# bun-less hook stays fail-open while an explicit operation reports the error
+# keeps stdout to one JSON object and propagates the CLI's exit code, using the
+# same Node.js process that runs the dispatcher; a missing CLI keeps the hook
+# fail-open while an explicit operation reports the error
 
 new_test "T37 task wrapper"
 use_path_empty
 make_kit "$SANDBOX/kit"
 	mkdir -p "$SANDBOX/kit/extensions/task-workspace" "$SANDBOX/bin"
-	printf 'export const x = 1\n' > "$SANDBOX/kit/extensions/task-workspace/cli.ts"
-	# A stand-in for Bun that reports exactly what it was given: argv boundaries,
-	# its own stdin and the exit code the wrapper must propagate.
-	cat > "$SANDBOX/bin/bun" <<'EOB'
-#!/usr/bin/env node
+	# A stand-in for the task-workspace CLI that reports exactly what it was
+	# given: argv boundaries, its own stdin and the exit code the wrapper must
+	# propagate. Node runs it from source, like the real .ts entry point.
+	cat > "$SANDBOX/kit/extensions/task-workspace/cli.ts" <<'EOC'
 import { readFileSync } from "node:fs";
 let stdin = "";
 try {
@@ -1123,8 +1123,14 @@ try {
 } catch {
 	stdin = "";
 }
-process.stdout.write(`${JSON.stringify({ argv: process.argv.slice(2), stdin })}\n`);
-process.exit(Number(process.env.FAKE_BUN_EXIT ?? 0));
+process.stdout.write(`${JSON.stringify({ argv: process.argv.slice(1), stdin })}\n`);
+process.exit(Number(process.env.FAKE_TASK_EXIT ?? 0));
+EOC
+	# A decoy bun on PATH: the wrapper must never consult it.
+	cat > "$SANDBOX/bin/bun" <<'EOB'
+#!/bin/sh
+echo "bun must not run" >&2
+exit 99
 EOB
 	chmod +x "$SANDBOX/bin/bun"
 	NODE_DIR="$(dirname "$(command -v node)")"
@@ -1148,32 +1154,33 @@ EOB
 	assert_eq "$(task_field argv)" "$(node -e 'process.stdout.write(JSON.stringify(process.argv.slice(1)))' "$CLI" status '{"path":"/tmp/x"}')" "task argv and stdout"
 	assert_eq "$(task_field stdin)" '""' "task leaves stdin to the runtime"
 	assert_eq "$(printf '%s\n' "$OUT" | grep -c .)" 1 "task stdout is a single line"
+	case "$OUT" in
+	*bun*) fail "task consulted bun: $OUT" ;;
+	*) : ;;
+	esac
 	# stdin is the caller's: `-` reads the JSON request from it
 	if OUT="$(printf '{"path":"/tmp/y"}' | PATH="$TASK_PATH" AGENT_KIT_ROOT="$SANDBOX/kit" "$SANDBOX/kit/bin/agent-kit" task status - 2>&1)"; then RC=0; else RC=$?; fi
 	assert_eq "$RC" 0 "task reads stdin"
 	assert_eq "$(task_field stdin)" '"{\"path\":\"/tmp/y\"}"' "stdin request is passed through unchanged"
 	assert_eq "$(task_field argv)" "$(node -e 'process.stdout.write(JSON.stringify(process.argv.slice(1)))' "$CLI" status -)" "argv after a stdin request"
-	FAKE_BUN_EXIT=3 run_task "$TASK_PATH" status -
-	assert_eq "$RC" 3 "runtime exit code is propagated"
-	# an empty PATH component means the current directory, as in a shell
-	if OUT="$(cd "$SANDBOX/bin" && PATH=":$NODE_DIR:/usr/bin:/bin" AGENT_KIT_ROOT="$SANDBOX/kit" "$SANDBOX/kit/bin/agent-kit" task status '{}' 2>&1)"; then RC=0; else RC=$?; fi
-	assert_eq "$RC" 0 "empty PATH component finds ./bun"
-	assert_eq "$(task_field argv)" "$(node -e 'process.stdout.write(JSON.stringify(process.argv.slice(1)))' "$CLI" status '{}')" "argv through a cwd lookup"
-	# without bun: a hook fails open, an explicit operation fails as JSON
-	if OUT="$(PATH="$NODE_DIR:/usr/bin:/bin" AGENT_KIT_ROOT="$SANDBOX/kit" "$SANDBOX/kit/bin/agent-kit" task hook session-start 2>&1)"; then RC=0; else RC=$?; fi
-	assert_eq "$RC" 0 "hook without bun fails open"
-	assert_eq "$OUT" "" "hook without bun prints nothing"
-	if OUT="$(PATH="$NODE_DIR:/usr/bin:/bin" AGENT_KIT_ROOT="$SANDBOX/kit" "$SANDBOX/kit/bin/agent-kit" task status '{}' 2>&1)"; then RC=0; else RC=$?; fi
-	assert_eq "$RC" 1 "task without bun fails"
-	assert_eq "$OUT" '{"status":"error","message":"agent-kit task requires bun on PATH"}' "task error JSON"
-	assert_eq "$(printf '%s' "$OUT" | node -e 'let t="";process.stdin.on("data",(c)=>(t+=c)).on("end",()=>{JSON.parse(t);process.stdout.write("one object")})')" "one object" "error output is one JSON object"
+	FAKE_TASK_EXIT=3 run_task "$TASK_PATH" status -
+	assert_eq "$RC" 3 "CLI exit code is propagated"
+	# the wrapper runs without any JSON request at all
+	run_task "$TASK_PATH" current
+	assert_eq "$RC" 0 "task without params"
+	assert_eq "$(task_field argv)" "$(node -e 'process.stdout.write(JSON.stringify(process.argv.slice(1)))' "$CLI" current)" "argv without params"
+	# a missing CLI: a hook fails open, an explicit operation fails as JSON
 	rm -rf "$SANDBOX/kit/extensions/task-workspace"
+	if OUT="$(PATH="$TASK_PATH" AGENT_KIT_ROOT="$SANDBOX/kit" "$SANDBOX/kit/bin/agent-kit" task hook session-start 2>&1)"; then RC=0; else RC=$?; fi
+	assert_eq "$RC" 0 "hook without a CLI fails open"
+	assert_eq "$OUT" "" "hook without a CLI prints nothing"
 	if OUT="$(PATH="$TASK_PATH" AGENT_KIT_ROOT="$SANDBOX/kit" "$SANDBOX/kit/bin/agent-kit" task status '{}' 2>&1)"; then RC=0; else RC=$?; fi
-	assert_eq "$RC" 1 "missing CLI fails"
+	assert_eq "$RC" 1 "task without a CLI fails"
 	case "$OUT" in
 	'{"status":"error","message":"task-workspace CLI missing: '*'"}') : ;;
 	*) fail "missing CLI must be one JSON object, got: $OUT" ;;
 	esac
+	assert_eq "$(printf '%s' "$OUT" | node -e 'let t="";process.stdin.on("data",(c)=>(t+=c)).on("end",()=>{JSON.parse(t);process.stdout.write("one object")})')" "one object" "error output is one JSON object"
 pass
 
 # ==============================================================================

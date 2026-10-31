@@ -14,7 +14,7 @@
 import { Text, stripTerminalSequences, truncateToWidth } from "@earendil-works/pi-tui";
 import type { Component } from "@earendil-works/pi-tui";
 import type { Theme } from "@earendil-works/pi-coding-agent";
-import type { DirtyState } from "./types";
+import type { DirtyState } from "./types.ts";
 
 /** Task-key cap in the task_status rows (chars). */
 const KEY_CAP = 34;

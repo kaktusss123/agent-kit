@@ -3,7 +3,8 @@
  * extension (no-runtime branch; the runtime branch is covered by the
  * controller push tests and the proxy harness).
  */
-import { describe, expect, test } from "bun:test";
+import { describe, test } from "node:test";
+import { expect } from "../../tests/support/expect.ts";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 
 type Handler = (data: unknown) => void;
@@ -38,7 +39,7 @@ function makePi() {
 
 describe("proxy-changed wiring", () => {
 	test("reports an empty push when the runtime was never started", async () => {
-		const { default: extension } = await import("./index");
+		const { default: extension } = await import("./index.ts");
 		const { pi, emitted } = makePi();
 		extension(pi);
 		pi.events.emit("proxy-changed", { enabled: true });
@@ -49,7 +50,7 @@ describe("proxy-changed wiring", () => {
 	});
 
 	test("disabled preference is propagated as-is", async () => {
-		const { default: extension } = await import("./index");
+		const { default: extension } = await import("./index.ts");
 		const { pi, emitted } = makePi();
 		extension(pi);
 		pi.events.emit("proxy-changed", { enabled: false });

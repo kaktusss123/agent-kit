@@ -9,7 +9,7 @@
  * in-memory streams without real processes.
  */
 import { spawn as nodeSpawn, type ChildProcess } from "node:child_process";
-import { JsonlReader } from "./jsonl";
+import { JsonlReader } from "./jsonl.ts";
 
 export interface ChildProcessLike {
 	stdin: {
@@ -65,7 +65,10 @@ export class RpcChildConnection {
 	onError: (err: Error) => void = () => {};
 	onExit: (info: ExitInfo) => void = () => {};
 
-	constructor(private readonly opts: RpcChildOptions) {
+	private readonly opts: RpcChildOptions;
+
+	constructor(opts: RpcChildOptions) {
+		this.opts = opts;
 		const spawnFn: SpawnFn = opts.spawnFn ?? defaultSpawn;
 		this.proc = spawnFn(opts.command, opts.args, {
 			cwd: opts.cwd,

@@ -1,5 +1,6 @@
-import { describe, expect, test } from "bun:test";
-import { PerfTracker, STREAM_REPLAY_EPSILON_MS } from "./timing";
+import { describe, test } from "node:test";
+import { expect } from "../../tests/support/expect.ts";
+import { PerfTracker, STREAM_REPLAY_EPSILON_MS } from "./timing.ts";
 
 /** Fake clock: deterministic `now()`, advanced explicitly by the test. */
 function makeTracker() {

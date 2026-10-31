@@ -8,7 +8,7 @@
 
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
-import { resolveAgentDir } from "../subagents/agent-dir";
+import { resolveAgentDir } from "../subagents/agent-dir.ts";
 
 /** Hard cap for a generated title, in code points (tab titles must stay short). */
 export const TITLE_MAX_CODE_POINTS = 30;

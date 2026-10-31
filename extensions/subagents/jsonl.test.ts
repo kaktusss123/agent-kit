@@ -1,5 +1,6 @@
-import { describe, expect, test } from "bun:test";
-import { JsonlReader } from "./jsonl";
+import { describe, test } from "node:test";
+import { expect } from "../../tests/support/expect.ts";
+import { JsonlReader } from "./jsonl.ts";
 
 function collect(): { reader: JsonlReader; lines: string[] } {
 	const lines: string[] = [];

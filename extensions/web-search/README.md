@@ -51,7 +51,7 @@ fallback model list, default `search_context_size` (`high`), timeout (120s).
 
 ## Tests
 
-`bun test` — mocked SSE streams (success, missing search, HTTP/stream errors,
+`node --test` — mocked SSE streams (success, missing search, HTTP/stream errors,
 cancellation, timeout), source deduplication, compact model-facing output.
 
 ## Credits

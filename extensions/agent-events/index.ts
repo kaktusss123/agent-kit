@@ -32,10 +32,10 @@
  */
 
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
-import { classifyRunOutcome, truncateCodePoints, type RunOutcome } from "./classify";
-import { shouldCreateTerminalSink, type AgentRuntimeEvent, type AgentRuntimeEventSink } from "./events";
-import { isWarpProtocolAdvertised } from "./warp";
-import { WarpCliAgentSink } from "./warp-sink";
+import { classifyRunOutcome, truncateCodePoints, type RunOutcome } from "./classify.ts";
+import { shouldCreateTerminalSink, type AgentRuntimeEvent, type AgentRuntimeEventSink } from "./events.ts";
+import { isWarpProtocolAdvertised } from "./warp.ts";
+import { WarpCliAgentSink } from "./warp-sink.ts";
 
 /** Version of this integration, reported to Warp via session_start. */
 const PLUGIN_VERSION = "0.1.0";

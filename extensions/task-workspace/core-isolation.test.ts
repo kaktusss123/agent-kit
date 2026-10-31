@@ -3,19 +3,19 @@ import { readdirSync, readFileSync, realpathSync } from "node:fs";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { describe, expect, test } from "bun:test";
-
-const CORE_DIR = import.meta.dir;
+import { describe, test } from "node:test";
+import { expect } from "../../tests/support/expect.ts";
+const CORE_DIR = import.meta.dirname;
 
 describe("task-workspace core host independence", () => {
   test("core modules import and run without any host context", async () => {
     // Dynamic import is intentional (module-loading boundary exception): the
     // subject under test IS the bare-context load of the core — each module
     // must import and run with no fake pi, no SDK, no extension plumbing.
-    const gitCore = await import("./git");
-    const guardCore = await import("./guard");
-    const flowsCore = await import("./flows");
-    const taskRootCore = await import("./task-root");
+    const gitCore = await import("./git.ts");
+    const guardCore = await import("./guard.ts");
+    const flowsCore = await import("./flows.ts");
+    const taskRootCore = await import("./task-root.ts");
     const classify = await import("./shim/classify.mjs");
 
     expect(typeof gitCore.classifyPath).toBe("function");
@@ -80,8 +80,8 @@ describe("task-workspace core host independence", () => {
   });
 
   test("core follows an injected task root — binding shape, no default root", async () => {
-    const gitCore = await import("./git");
-    const flowsCore = await import("./flows");
+    const gitCore = await import("./git.ts");
+    const flowsCore = await import("./flows.ts");
 
     // realpathSync mirrors the host binding's own task-root resolution
     // contract (macOS /var -> /private/var must not create prefix drift).

@@ -6,9 +6,13 @@
  * validates that report against its own per-spawn readiness contract and
  * fails the spawn closed on anything unsatisfiable.
  */
-import { describe, expect, test } from "bun:test";
+import { describe, test } from "node:test";
+import { createRequire } from "node:module";
+import { expect } from "../../tests/support/expect.ts";
+
+const require = createRequire(import.meta.url);
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
-import { READINESS_PROTOCOL, parseReadinessPayload, type ReadinessPayload } from "./readiness";
+import { READINESS_PROTOCOL, parseReadinessPayload, type ReadinessPayload } from "./readiness.ts";
 
 interface ProbeHarness {
 	sessionStartHandler: ((event: unknown, ctx: {

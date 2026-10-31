@@ -1,15 +1,16 @@
 import { join } from "node:path";
-import { afterAll, beforeAll, describe, expect, test } from "bun:test";
-import { guardManagedWriteTarget } from "./guard";
-import { createGuardFixture, type GuardFixture } from "./shim/fixture";
+import { after as afterAll, before as beforeAll, describe, test } from "node:test";
+import { expect } from "../../tests/support/expect.ts";
+import { guardManagedWriteTarget } from "./guard.ts";
+import { createGuardFixture, type GuardFixture } from "./shim/fixture.ts";
 
 let fx: GuardFixture;
 
 beforeAll(async () => {
   fx = await createGuardFixture("agent-kit-write-guard-");
   // Fixture builds managed worktrees plus a burst of git spawns; on a
-  // loaded machine that exceeds bun's default 5s hook timeout.
-}, 60_000);
+  // loaded machine that exceeds the default hook timeout.
+});
 
 afterAll(async () => {
   if (fx) await fx.destroy();

@@ -1,4 +1,5 @@
-import { describe, expect, test } from "bun:test";
+import { describe, test } from "node:test";
+import { expect } from "../../tests/support/expect.ts";
 import {
 	type TextUsageRow,
 	CACHE_READ_ICON,
@@ -8,7 +9,7 @@ import {
 	formatUsageTimestamp,
 	tokensPerSecond,
 	TTFT_ICON,
-} from "./format";
+} from "./format.ts";
 
 /** Local-time fixture so the timestamp contract is TZ-independent. */
 const ts = new Date(2026, 8, 10, 22, 30, 15).getTime();
