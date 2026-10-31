@@ -206,10 +206,8 @@ describe("inherited inspection protocol", () => {
 				v: 1, id: "fifo-pair", ok: true, result: { v: 1, area: "subagents", data: { agents: [] } },
 			});
 		} finally {
-			// Under bun, stream destroy() closes the descriptor despite
-			// autoClose:false (the same defect as the spawn-stdio wrapping
-			// skipped above); under Node the descriptors survive destroy and
-			// must be closed here.
+			// The channel streams are created with autoClose:false, so the
+			// descriptors survive their destroy() and are closed here.
 			for (const fd of [requestFd, responseFd]) {
 				try { fs.closeSync(fd); } catch { /* already closed by the runtime */ }
 			}

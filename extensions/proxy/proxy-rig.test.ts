@@ -33,8 +33,8 @@ import { piTransportOptions } from "./proxy-lib.ts";
 function nodePath(): string | undefined {
 	if (process.env.AKIT_RIG_NODE) return process.env.AKIT_RIG_NODE;
 	const fs = require("node:fs");
-	// The runtime that hosts the test suite: bun typically lives next to node
-	// in the same installation bin dir (fnm/nvm layout).
+	// The runtime that hosts the test suite (fnm/nvm keep node in the same
+	// installation bin dir as the running interpreter).
 	const execDir = path.dirname(process.execPath);
 	const candidates = [
 		process.env.PI_NODE,
@@ -55,8 +55,8 @@ function nodePath(): string | undefined {
 }
 
 function undiciModulePath(): string | undefined {
-	// Path-based resolution (bun's require.resolve returns bare specifiers for
-	// nested deps): pi's own undici copy lives in its node_modules.
+	// Path-based resolution: pi's own undici copy lives in its node_modules
+	// and is not re-exported through the package entry point.
 	try {
 		const fs = require("node:fs");
 		const candidate = path.resolve(
