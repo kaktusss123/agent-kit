@@ -666,6 +666,21 @@ export async function removeTaskLane(
     };
   }
 
+  // Ownership guard (mirrors the teardown guard): a lane whose worktree is
+  // held by a live (or unverifiable) cross-process owner is never removed
+  // from under that owner. A provably-dead record is not a blocker.
+  const laneOwner = describeOwner(opts.taskRoot, target);
+  if (laneOwner.state === "owned" || laneOwner.state === "unknown" || laneOwner.state === "foreign_host") {
+    return {
+      status: "owner_active",
+      task: params.task,
+      path: target,
+      owner: laneOwner,
+      reason:
+        "Refusing to remove a lane whose worktree is held by a RepoOwner that is alive or cannot be proven gone. Wait for that owner to settle (its record is released after the child exits and the final Git check finishes); nothing was removed.",
+    };
+  }
+
   const worktrees = await git(target, "worktree", "list", "--porcelain");
   const controlPath = worktrees.ok
     ? parseWorktreePaths(worktrees.stdout).find(

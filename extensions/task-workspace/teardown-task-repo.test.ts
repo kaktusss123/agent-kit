@@ -18,7 +18,7 @@ import {
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { afterAll, describe, expect, test } from "bun:test";
-import { ensureTaskRepo, teardownTaskRepo } from "./flows";
+import { ensureTaskRepo, removeTaskLane, teardownTaskRepo } from "./flows";
 import { taskWorkspacePath } from "./git";
 import { acquireOwnerLease, releaseOwnerLease } from "./owner-lock";
 
@@ -308,5 +308,46 @@ describe("teardown_task_repo success", () => {
     // ...while repoB's orphaned branch is left alone (reported by the caller
     // via task_status, removable with a plain non-force branch -d).
     expect(sh(built.repos.b.source, "git", "branch", "--list", "task/multi")).not.toBe("");
+  }, 60_000);
+});
+
+describe("remove_task_lane ownership guard", () => {
+  test("refuses a lane with a live owner, removes it after release", async () => {
+    const taskRoot = tempDir("lane-owned-tasks");
+    const source = makeSourceRepo("lane-owned", ["task/multi", "feat/lane"]);
+    const canonical = await ensureTaskRepo(
+      { branch: "task/multi", source_path: source },
+      source,
+      { taskRoot },
+    );
+    expect(canonical.status).toBe("attached");
+    const lane = await ensureTaskRepo(
+      { branch: "feat/lane", source_path: source, task: "task/multi", slot: "backport" },
+      source,
+      { taskRoot },
+    );
+    expect(lane.status).toBe("attached");
+    const lanePath = (lane as { worktree: string }).worktree;
+
+    const lease = await acquireOwnerLease(taskRoot, realpathSync(lanePath));
+    expect(lease.ok).toBe(true);
+    try {
+      const blocked = await removeTaskLane(
+        { task: "task/multi", path: lanePath },
+        source,
+        { taskRoot },
+      );
+      expect(blocked.status).toBe("owner_active");
+      expect(existsSync(lanePath)).toBe(true);
+    } finally {
+      if (lease.ok) releaseOwnerLease(lease.lease);
+    }
+    const removed = await removeTaskLane(
+      { task: "task/multi", path: lanePath },
+      source,
+      { taskRoot },
+    );
+    expect(removed.status).toBe("removed");
+    expect(existsSync(lanePath)).toBe(false);
   }, 60_000);
 });
