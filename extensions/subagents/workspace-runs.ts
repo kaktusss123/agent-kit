@@ -11,6 +11,12 @@
  * and generic subagent surfaces stay untouched.
  *
  * Contract:
+ * - one live RepoOwner per managed worktree per host: the right to write is
+ *   taken as a cross-process lease (./owner-lock in the task subsystem)
+ *   BEFORE dispatch, the dispatched child is recorded in it immediately, and
+ *   it is released only by the settlement path after the child is gone and
+ *   the final Git read finished — so a second Pi process, a crashed Main, a
+ *   hung cancel or a cancelled run cannot hand the worktree to two writers;
  * - fail closed before dispatch (model resolution through the shared spawn
  *   boundary, workspace validation, static preflight, readiness handshake —
  *   the task prompt never reaches a model before the child proves
@@ -53,6 +59,14 @@ import {
 } from "../task-workspace/git";
 import type { DirtyState } from "../task-workspace/types";
 import { resolveTaskRoot } from "../task-workspace/task-root";
+import {
+	acquireOwnerLease,
+	describeOwnerRefusal,
+	recordOwnerChild,
+	releaseOwnerLease,
+	type OwnerLease,
+	type OwnerView,
+} from "../task-workspace/owner-lock";
 import { formatRunStatus, type RunStatusView } from "./activity";
 import { formatNeedsInputBody } from "./delivery";
 import { markOwnDelivery, ownDeliveryInFlight } from "./steering-wake";
@@ -160,6 +174,12 @@ export interface WorkspaceRunOutcome {
 	child_may_have_mutated_repo?: boolean;
 	/** Runtime-read Git facts of the workspace at settlement (undefined when Git could not be read at all). */
 	git_facts?: GitFacts;
+	/**
+	 * Ownership of the worktree when the run was refused (or could not be
+	 * verified): who holds it, whether that is provable, and where the record
+	 * lives. Never contains secrets.
+	 */
+	owner?: OwnerView;
 }
 
 /** Point-in-time view of a workspace run for op=status / op=result. */
@@ -275,6 +295,12 @@ export interface WorkspaceRuns {
 	runView(agentId: string): WorkspaceRunView | undefined;
 	/** True when the agent id belongs to a workspace-routed RepoOwner. */
 	isManaged(agentId: string): boolean;
+	/**
+	 * Drop every held worktree lease after Main shut the runtime down, i.e.
+	 * after the owned children are provably gone. A failed shutdown must NOT
+	 * call this: the lease then stays behind for crash recovery to verify.
+	 */
+	releaseAll(): void;
 }
 
 export interface WorkspaceWaitArgs {
@@ -290,8 +316,10 @@ export function createWorkspaceRuns(
 	opts?: WorkspaceRunsOptions,
 ): WorkspaceRuns {
 	const runsByAgentId = new Map<string, WorkspaceAgentRun>();
-	// Reserved synchronously before dispatch, retained through stop and Git reads.
-	const reservations = new Map<string, symbol>();
+	// Reserved synchronously before dispatch, retained through stop and Git
+	// reads. The map is the in-process fast path; the lease inside it is the
+	// authority that also covers other OS processes.
+	const reservations = new Map<string, { reservation: symbol; lease: OwnerLease }>();
 	// A fast child may emit lifecycle before prompt acceptance is acknowledged.
 	// Buffer only known dispatching identities, bounded and discarded on refusal.
 	const dispatchEvents = new Map<string, SubagentModelEvent[]>();
@@ -529,11 +557,23 @@ export function createWorkspaceRuns(
 			outcome.gitFacts = outcome.gitFacts ?? (await gitState(run.workspace)).facts;
 			run.terminal = outcome;
 			persistHistory(run);
-			if (reservations.get(run.workspace) === run.reservation) reservations.delete(run.workspace);
+			releaseOwnership(run.workspace, run.reservation);
 			resolveWaiters(run);
 			notifyCompleted(run);
 		})();
 		return run.finishing;
+	}
+
+	/**
+	 * Drop the in-process reservation and its cross-process lease. Called only
+	 * after the child is stopped AND the settlement Git read finished; the
+	 * lease is not released by any other path.
+	 */
+	function releaseOwnership(workspace: string, reservation: symbol): void {
+		const entry = reservations.get(workspace);
+		if (entry?.reservation !== reservation) return;
+		reservations.delete(workspace);
+		releaseOwnerLease(entry.lease);
 	}
 
 	/**
@@ -865,10 +905,19 @@ export function createWorkspaceRuns(
 		// startup failure. This is the dispatch point: everything before is
 		// dispatched:false, everything after is dispatched:true forever.
 		if (reservations.has(realWorkspace)) return fail("blocked", realWorkspace, "workspace already has an active or dispatching RepoOwner");
+		// Cross-process right to write: taken here, before any child exists.
+		// A refusal names the holder and how to inspect it; a retry only helps
+		// after that owner's child exits and its final Git check finished.
+		const acquired = await acquireOwnerLease(taskRoot, realWorkspace);
+		if (!acquired.ok) {
+			return fail("blocked", realWorkspace, describeOwnerRefusal(acquired.view), acquired.view);
+		}
+		const lease = acquired.lease;
 		const reservation = Symbol(realWorkspace);
-		reservations.set(realWorkspace, reservation);
+		reservations.set(realWorkspace, { reservation, lease });
 		const base = path.basename(realWorkspace);
 		let createdId: string | undefined;
+		let childRecorded = false;
 		let snap: AgentSnapshot;
 		try {
 			snap = await R(args.cwd).spawn({
@@ -884,7 +933,14 @@ export function createWorkspaceRuns(
 				readinessEntries: PROFILE_READINESS,
 				eventRoute: "workspace",
 				signal,
-				onCreated: (s) => { createdId = s.id; dispatchEvents.set(s.id, []); },
+				onCreated: (s) => {
+					createdId = s.id;
+					dispatchEvents.set(s.id, []);
+					// The dispatched child joins the lease immediately: if this Main
+					// process dies now, the still-live child keeps the worktree
+					// locked instead of looking like a dead owner.
+					childRecorded = recordOwnerChild(lease, s.pid, { agentId: s.id });
+				},
 				onAccepted: (s) => {
 					// Synchronous publication BEFORE the next child line: an ask or
 					// completion in the same stdout chunk cannot escape the registry.
@@ -910,7 +966,7 @@ export function createWorkspaceRuns(
 				await rt().retire(createdId);
 				dispatchEvents.delete(createdId);
 			}
-			if (reservations.get(realWorkspace) === reservation) reservations.delete(realWorkspace);
+			releaseOwnership(realWorkspace, reservation);
 			const message = e instanceof Error ? e.message : String(e);
 			// Missing provider extension: fail fast BEFORE any process existed.
 			// blocked, not unsupported — the profile itself is fine; the requested
@@ -939,6 +995,30 @@ export function createWorkspaceRuns(
 				message.includes("initial prompt rejected") ||
 				message.includes("child failed to start");
 			return fail(startupFailure ? "unsupported" : "error", workspace, message);
+		}
+
+		if (!childRecorded) {
+			// The ownership record could not be updated with this child: stop it
+			// and fail closed rather than leave a writer outside the record.
+			await rt().retire(snap.id);
+			dispatchEvents.delete(snap.id);
+			const run = runsByAgentId.get(snap.id);
+			if (run && claimTermination(run)) {
+				await finish(run, {
+					status: "blocked",
+					reason: "owner_record_update_failed",
+					childMayHaveMutatedRepo: false,
+				});
+				return ok(runOutcome(run));
+			}
+			releaseOwnership(realWorkspace, reservation);
+			return ok({
+				status: "blocked",
+				dispatched: true,
+				workspace: realWorkspace,
+				agentId: snap.id,
+				reason: "owner_record_update_failed",
+			});
 		}
 
 		return waitRun(snap.id, { timeoutSec: args.waitTimeoutSec, signal, onUpdate, hasPendingMessages });
@@ -1085,8 +1165,13 @@ export function createWorkspaceRuns(
 
 	// --------------------------------------------------------------- helpers
 
-	function fail(status: "blocked" | "unsupported" | "error", workspace: string, reason: string): WorkspaceToolResult {
-		return ok({ status, dispatched: false, workspace, reason });
+	function fail(
+		status: "blocked" | "unsupported" | "error",
+		workspace: string,
+		reason: string,
+		owner?: OwnerView,
+	): WorkspaceToolResult {
+		return ok({ status, dispatched: false, workspace, reason, ...(owner ? { owner } : {}) });
 	}
 
 	function ok(result: WorkspaceRunOutcome): WorkspaceToolResult {
@@ -1103,6 +1188,12 @@ export function createWorkspaceRuns(
 		cancelRun,
 		runView,
 		isManaged: (agentId: string) => runsByAgentId.has(agentId),
+		releaseAll: () => {
+			for (const [workspace, entry] of [...reservations]) {
+				reservations.delete(workspace);
+				releaseOwnerLease(entry.lease);
+			}
+		},
 	};
 }
 

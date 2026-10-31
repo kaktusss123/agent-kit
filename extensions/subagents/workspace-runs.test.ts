@@ -1638,3 +1638,128 @@ describe("ZAVOD-39 ownership races", () => {
 		} finally { await h.runtime.shutdown(); h.cleanup(); }
 	});
 });
+
+/**
+ * Cross-process ownership of the owned worktree. The lease itself is covered
+ * by extensions/task-workspace/owner-lock.test.ts with real OS processes;
+ * here the workspace run layer must (a) hold it for the whole run, (b) keep
+ * holding it through the settlement Git read after the child is gone, and
+ * (c) release it so another process can take the worktree afterwards.
+ */
+const OWNER_FIXTURE = path.join(
+	import.meta.dir,
+	"..",
+	"task-workspace",
+	"fixtures",
+	"owner-lock-process.ts",
+);
+
+/** One attempt to acquire the worktree from a real second OS process. */
+function foreignAcquireAttempt(taskRoot: string, workspace: string): Record<string, unknown> {
+	const out = execFileSync(
+		process.execPath,
+		[OWNER_FIXTURE, "attempt", taskRoot, workspace],
+		{ encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] },
+	);
+	return JSON.parse(out.trim().split("\n").pop()!) as Record<string, unknown>;
+}
+
+describe("cross-process worktree ownership", () => {
+	test("a second OS process is refused while the run owns the worktree, admitted after settlement", async () => {
+		const h = makeLayer();
+		try {
+			const ws = makeWorktree(h.taskRoot, "xproc-ws");
+			const { pending, proc } = await driveToRunning(h, { workspace: ws, task: "work", waitTimeoutSec: 0.01 });
+			await pending;
+			const id = h.agentId();
+
+			const refused = foreignAcquireAttempt(h.taskRoot, ws);
+			expect(refused.ok).toBe(false);
+			// The refusal names the live holder (this Main process) and its record.
+			expect(JSON.stringify(refused)).toContain(String(process.pid));
+			expect(refused.reason).toBe("owned");
+
+			// The refusal is a refusal, not a takeover: the run keeps its right to write.
+			expect(h.runs.runView(id)!.terminal).toBeUndefined();
+			writeEnvelope(h, id);
+			settleRun(proc, "done");
+			const terminal = await h.runs.waitRun(id, { timeoutSec: 5 });
+			expect(terminal.details).toMatchObject({ status: "done" });
+
+			// Released only after the child stopped and the Git read finished.
+			const admitted = foreignAcquireAttempt(h.taskRoot, ws);
+			expect(admitted.ok).toBe(true);
+		} finally { await h.runtime.shutdown(); h.cleanup(); }
+	});
+
+	test("ownership is held through the settlement Git read, not released at child stop", async () => {
+		let release!: (state: GitState) => void;
+		let reading = false;
+		const gate = new Promise<GitState>((r) => {
+			release = (state) => { reading = true; r(state); };
+		});
+		const h = makeLayer({
+			readGitState: async () => {
+				const state = await gate;
+				reading = true;
+				return state;
+			},
+		});
+		try {
+			const ws = makeWorktree(h.taskRoot, "xproc-git-gate");
+			const { pending, proc } = await driveToRunning(h, { workspace: ws, task: "work", waitTimeoutSec: 0.01 });
+			await pending;
+			const id = h.agentId();
+			writeEnvelope(h, id);
+			settleRun(proc, "done");
+			// The child is gone, the final Git read is still pending.
+			for (let i = 0; i < 100 && !proc.closed; i++) await tick(10);
+			expect(proc.closed).toBe(true);
+
+			const during = foreignAcquireAttempt(h.taskRoot, ws);
+			expect(during.ok).toBe(false);
+			expect(h.runs.runView(id)!.terminal).toBeUndefined();
+
+			release({ ok: true, facts: testFacts });
+			for (let i = 0; i < 100 && !reading; i++) await tick(10);
+			const terminal = await h.runs.waitRun(id, { timeoutSec: 5 });
+			expect(terminal.details).toMatchObject({ status: "done" });
+			expect((foreignAcquireAttempt(h.taskRoot, ws)).ok).toBe(true);
+		} finally { release({ ok: true, facts: testFacts }); await h.runtime.shutdown(); h.cleanup(); }
+	});
+
+	test("a cancelled run keeps ownership until the child is really gone", async () => {
+		const h = makeLayer({ killGraceMs: 60 });
+		try {
+			const ws = makeWorktree(h.taskRoot, "xproc-cancel");
+			const { pending, proc } = await driveToRunning(h, { workspace: ws, task: "work", waitTimeoutSec: 0.01 });
+			await pending;
+			const id = h.agentId();
+			proc.ignoreSigterm = true;
+			const cancel = h.runs.cancelRun(id);
+			await tick(20);
+			// Cancellation is still escalating to SIGKILL: no second owner yet.
+			expect(proc.closed).toBe(false);
+			const during = foreignAcquireAttempt(h.taskRoot, ws);
+			expect(during.ok).toBe(false);
+			await cancel;
+			expect(proc.signalsReceived).toContain("SIGKILL");
+			expect((foreignAcquireAttempt(h.taskRoot, ws)).ok).toBe(true);
+		} finally { await h.runtime.shutdown(); h.cleanup(); }
+	});
+});
+
+describe("ownership across Main shutdown", () => {
+	test("a shut-down runtime leaves no lease behind", async () => {
+		const h = makeLayer();
+		try {
+			const ws = makeWorktree(h.taskRoot, "xproc-shutdown");
+			const { pending } = await driveToRunning(h, { workspace: ws, task: "work", waitTimeoutSec: 0.01 });
+			await pending;
+			expect((foreignAcquireAttempt(h.taskRoot, ws)).ok).toBe(false);
+			await h.runtime.shutdown();
+			h.runs.releaseAll();
+			expect((foreignAcquireAttempt(h.taskRoot, ws)).ok).toBe(true);
+		} finally { await h.runtime.shutdown(); h.cleanup(); }
+	});
+});

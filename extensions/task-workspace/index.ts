@@ -7,10 +7,18 @@
  * default) + /<branch_flat>/.
  * All state lives in git (branches + worktrees); no manifest files.
  *
- * Residual limitation (accepted by design): flattening a branch name into the
- * workspace directory name is not injective — distinct branch identities can
- * produce the same directory. No manifest or naming migration exists; resolve
- * a real collision manually if one ever materializes.
+ * Identity → directory is the reversible encoding of ./workspace-path, not a
+ * lossy flattening: distinct identities always get distinct directories
+ * (`feat/a_b` and `feat/a/b` never share one), and an identity without path
+ * separators keeps its historical directory name. Directories written by the
+ * old flattening are recognized and reused only for the branch they provably
+ * hold; otherwise they are left untouched and refused, never renamed.
+ *
+ * One managed worktree has at most one live RepoOwner on the host: the right
+ * to write is the cross-process lease of ./owner-lock, named next to the task
+ * and checkable after a crash. This extension reports ownership per worktree
+ * in `task_status`; it does not decide who may own (the RepoOwner dispatch
+ * layer acquires and releases the lease around a dispatched child).
  *
  * Git mutation policy is enforced where git actually executes: the
  * built-in bash tool is overridden with createBashTool + a spawnHook that
@@ -28,7 +36,7 @@
  * The task root itself is not host-owned: it is resolved once per
  * registration by the task-root resolver in ./task-root.
  * The deterministic mechanics live in the sibling modules (flows.ts,
- * git.ts, guard.ts, shim-path.ts, types.ts) — a host-independent core that
+ * git.ts, guard.ts, shim-path.ts, workspace-path.ts, owner-lock.ts, types.ts) — a host-independent core that
  * receives its task root explicitly and returns plain domain results.
  *
  * This directory is loaded as an additional extension entry by other

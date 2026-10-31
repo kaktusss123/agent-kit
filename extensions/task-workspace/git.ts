@@ -6,6 +6,13 @@
  * or environment lookup lives here.
  */
 import { join, relative, resolve } from "node:path";
+import {
+  decodeTaskWorkspaceName,
+  encodeTaskWorkspaceName,
+  joinTaskWorkspaceName,
+  taskWorkspaceLayout,
+} from "./workspace-path";
+import { describeOwner, type OwnerView } from "./owner-lock";
 import { homedir } from "node:os";
 import { spawn, spawnSync } from "node:child_process";
 import { mkdir, readdir } from "node:fs/promises";
@@ -299,8 +306,43 @@ export async function getInputRepoFacts(
 }
 
 
+/**
+ * Directory of one task identity under the task root. The mapping is the
+ * reversible encoding of ./workspace-path: distinct identities always get
+ * distinct directories (`feat/a_b` and `feat/a/b` no longer share one), and
+ * an identity without path separators keeps its historical name.
+ */
 export function taskWorkspacePath(task: string, taskRoot: string): string {
-  return join(taskRoot, task.replace(/\//g, "_"));
+  return joinTaskWorkspaceName(taskRoot, encodeTaskWorkspaceName(task));
+}
+
+/**
+ * Path a pre-encoding installation used for the same identity (`/` → `_`).
+ * Present only while such a directory can exist; callers must prove the Git
+ * branch before reusing it.
+ */
+export function legacyTaskWorkspacePath(task: string, taskRoot: string): string | null {
+  const legacy = taskWorkspaceLayout(task).legacyDirectory;
+  return legacy === null ? null : joinTaskWorkspaceName(taskRoot, legacy);
+}
+
+/**
+ * Existing workspace directory for a task identity: the identity's own
+ * directory when it exists, else a recognizably pre-encoding directory for
+ * the same identity (so an unchanged old workspace stays reachable), else the
+ * identity's directory (creation target). Never renames anything.
+ */
+export function resolveTaskWorkspacePath(task: string, taskRoot: string): string {
+  const current = taskWorkspacePath(task, taskRoot);
+  if (existsSync(current)) return current;
+  const legacy = legacyTaskWorkspacePath(task, taskRoot);
+  if (legacy && existsSync(legacy)) return legacy;
+  return current;
+}
+
+/** Identity behind a workspace directory name (see ./workspace-path). */
+export function taskWorkspaceIdentity(directoryName: string): string {
+  return decodeTaskWorkspaceName(directoryName);
 }
 
 export function parseWorktreePaths(output: string): string[] {
@@ -446,22 +488,37 @@ export async function linkedWorktreeFacts(
   return facts;
 }
 
-export async function scanTaskWorkspaces(taskRoot: string): Promise<
-  {
-    workspace: string;
-    key: string;
-    task: string;
-    repos: ManagedRepoStatus[];
-    artifacts: string[];
-  }[]
-> {
-  const workspaces: {
-    workspace: string;
-    key: string;
-    task: string;
-    repos: ManagedRepoStatus[];
-    artifacts: string[];
-  }[] = [];
+/** Ownership view of one worktree; an unreadable record never hides the rest
+ *  of the scan (it degrades to `unknown`). */
+function scanOwner(taskRoot: string, workspace: string): OwnerView {
+  try {
+    return describeOwner(taskRoot, workspace);
+  } catch (error) {
+    return {
+      state: "unknown",
+      workspace,
+      recordPath: "",
+      problem: error instanceof Error ? error.message : String(error),
+    };
+  }
+}
+
+export interface ScannedTaskWorkspace {
+  workspace: string;
+  /** Workspace directory name (as task_status has always reported it). */
+  key: string;
+  /** Directory name; the pre-encoding identity for old workspaces. */
+  task: string;
+  /** Task identity decoded from the directory name when the encoding owns it. */
+  identity: string;
+  repos: ManagedRepoStatus[];
+  artifacts: string[];
+}
+
+export async function scanTaskWorkspaces(
+  taskRoot: string,
+): Promise<ScannedTaskWorkspace[]> {
+  const workspaces: ScannedTaskWorkspace[] = [];
 
   let entries: string[];
   try {
@@ -492,6 +549,7 @@ export async function scanTaskWorkspaces(taskRoot: string): Promise<
         headSha: await getRepoSha(worktree.path),
         upstream: await getUpstream(worktree.path, branch),
         dirty: await getSourceDirty(worktree.path),
+        owner: scanOwner(taskRoot, worktree.path),
       });
     }
 
@@ -513,6 +571,7 @@ export async function scanTaskWorkspaces(taskRoot: string): Promise<
       workspace: wsPath,
       key: entry,
       task: entry,
+      identity: decodeTaskWorkspaceName(entry),
       repos,
       artifacts,
     });

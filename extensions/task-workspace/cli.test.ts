@@ -157,7 +157,7 @@ describe("task current (read-only projection)", () => {
     const e = ensureTask(source, taskRoot, "feat/cur_ok");
     const r = current(source, taskRoot, { cwd: source, selections: [{ task: e.task, worktree: e.worktree }] });
     expect(r.code).toBe(0);
-    expect(r.json).toMatchObject({ state: "ok", identity: "feat_cur_ok", source: "session" });
+    expect(r.json).toMatchObject({ state: "ok", identity: "feat/cur_ok", source: "session" });
     const repos = r.json!.repos as { owners: unknown[] }[];
     expect(repos).toHaveLength(1);
     expect(repos[0]!.owners).toEqual([]);
@@ -178,9 +178,9 @@ describe("task current (read-only projection)", () => {
       { task: a.task, worktree: a.worktree },
       { task: b.task, worktree: b.worktree },
     ];
-    expect(current(source, taskRoot, { cwd: a.worktree, selections: [sels[1]] }).json).toMatchObject({ identity: "feat_cur_a", source: "cwd" });
-    expect(current(source, taskRoot, { cwd: source, selections: sels }).json).toMatchObject({ identity: "feat_cur_b", source: "session" });
-    expect(current(source, taskRoot, { cwd: source, selections: [...sels].reverse() }).json).toMatchObject({ identity: "feat_cur_a" });
+    expect(current(source, taskRoot, { cwd: a.worktree, selections: [sels[1]] }).json).toMatchObject({ identity: "feat/cur_a", source: "cwd" });
+    expect(current(source, taskRoot, { cwd: source, selections: sels }).json).toMatchObject({ identity: "feat/cur_b", source: "session" });
+    expect(current(source, taskRoot, { cwd: source, selections: [...sels].reverse() }).json).toMatchObject({ identity: "feat/cur_a" });
   });
 
   test("malformed params → exit 2", () => {
