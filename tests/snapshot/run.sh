@@ -2085,5 +2085,34 @@ pass
 # ==============================================================================
 
 [ -n "$SANDBOX" ] && [ -d "$SANDBOX" ] && chmod -R u+w "$SANDBOX" 2>/dev/null || true
+# ==============================================================================
+# T25: the extension set is not a name list. The inspection provider committed
+# in this repository is snapshotted like every other extension directory, and
+# the artifact passes the writer's own schema-2 verification (the second run
+# only reuses an artifact whose manifest and completeness check pass).
+
+new_test "T25 the inspection provider enters the snapshot"
+make_kit "$KIT"
+# The real committed extension tree replaces the fixture one: a snapshot is
+# built from the commit's file list, so every extension of this repository must
+# be in it.
+rm -rf "$KIT/extensions"
+git -C "$REAL_REPO" archive --format=tar HEAD extensions | tar -x -C "$KIT"
+	assert_file "$KIT/extensions/inspection-provider/index.ts" "test setup: the provider is in the checkout"
+git_commit_all "$KIT" "real extensions"
+	assert_eq "$(git -C "$KIT" status --porcelain --untracked-files=normal -- extensions)" "" "test setup: the copied tree is committed"
+SHA="$(head_sha)"
+run_snapshot
+	assert_eq "$RC" 0 "exit code"
+	assert_file "$RELEASES/$SHA/extensions/inspection-provider/index.ts" "the provider is copied into the snapshot"
+	assert_file "$RELEASES/$SHA/extensions/inspection-provider/README.md" "the provider contract is copied"
+	assert_grep "$RELEASES/$SHA/extensions/inspection-provider/index.ts" "agent-kit-inspection" "provider content"
+	assert_grep "$RELEASES/$SHA/manifest.json" '"schema": 2' "manifest schema"
+	assert_link "$RELEASES/current" "$SHA" "current flipped"
+run_snapshot
+	assert_eq "$RC" 0 "second snapshot"
+	assert_contains "$OUT" "already present" "the artifact passes the schema-2 verification and is reused"
+pass
+
 printf '\n%d passed, %d failed\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]

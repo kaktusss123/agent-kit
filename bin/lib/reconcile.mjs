@@ -11,7 +11,7 @@
 
 import { mkdirSync, rmSync, symlinkSync } from "node:fs";
 import { dirname, join } from "node:path";
-import { desiredEntities, validateEntity } from "./entities.mjs";
+import { desiredEntities, installedWorkSkills, validateEntity } from "./entities.mjs";
 import { lstatOrNull, msg, readlinkOrNull, replaceSymlink, statOrNull, warn } from "./io.mjs";
 import { HOSTS, hostList } from "./paths.mjs";
 import {
@@ -27,11 +27,26 @@ function mentions(entries, rel) {
 	return entries.some((entry) => entry.rel === rel);
 }
 
+// The profile an install request applies to this host: the explicit `core` /
+// `full` of the command line, or `preserve` when the user named none — an
+// install without --profile never drops a work skill an earlier full install
+// owns, it only refrains from adding new ones.
+function profileNote(profile, owned) {
+	if (profile === "full") return "full (work skills included)";
+	if (profile !== "preserve") return "core (work skills not installed)";
+	const kept = installedWorkSkills(owned);
+	return kept.length === 0
+		? "core (default; work skills not installed)"
+		: `core (default; keeping work skills installed earlier: ${kept.join(", ")})`;
+}
+
 export function reconcile(context) {
-	const desired = desiredEntities(context.host, context.repo);
+	const owned = loadLinkState(context.stateFile);
+	const profile = context.profile ?? "preserve";
+	const desired = desiredEntities(context.host, context.repo, { profile, owned });
 	for (const entity of desired) validateEntity(context.repo, entity);
 
-	const owned = loadLinkState(context.stateFile);
+	msg(`  profile: ${profileNote(profile, owned)}`);
 
 	if (desired.length === 0 && owned.length === 0) {
 		msg("  nothing to install (no installable content in this repository)");
@@ -57,10 +72,10 @@ export function reconcile(context) {
 			msg(`  prune   ${entry.rel} (target already gone)`);
 		} else if (link.isSymbolicLink() && readlinkOrNull(dst) === entry.src) {
 			rmSync(dst);
-			msg(`  remove  ${entry.rel} (no longer in agent-kit)`);
+			msg(`  remove  ${entry.rel} (not in the desired set: left the repository or the profile)`);
 		} else {
 			msg(
-				`  forget  ${entry.rel} (no longer in agent-kit; target was changed externally, left untouched)`,
+				`  forget  ${entry.rel} (not in the desired set: left the repository or the profile; target was changed externally, left untouched)`,
 			);
 		}
 		pruned += 1;
@@ -165,8 +180,11 @@ export function uninstall(context) {
 }
 
 export function status(context, note = "") {
-	const desired = desiredEntities(context.host, context.repo);
 	const owned = loadLinkState(context.stateFile);
+	// Status describes what is installed, so it always resolves the desired set
+	// with `preserve`: a work skill an earlier full install linked is up to date,
+	// not something a default install wants to remove.
+	const desired = desiredEntities(context.host, context.repo, { profile: "preserve", owned });
 
 	let uptodate = 0;
 	let stale = 0;
@@ -190,7 +208,15 @@ export function status(context, note = "") {
 	}
 
 	const suffix = note ? ` (${note})` : "";
+	const workSkills = installedWorkSkills(owned);
 	msg(`  ${context.host} root: ${context.root}${suffix}`);
+	msg(
+		`    profile: ${
+			workSkills.length > 0
+				? `full (work skills: ${workSkills.join(", ")})`
+				: "core (work skills not installed)"
+		}`,
+	);
 	msg(`    repository wants ${desired.length} entity(ies)`);
 	msg(
 		`    state: ${owned.length} managed — ${uptodate} up to date, ${stale} relink needed, ${missing} missing, ${foreign} redirected`,
@@ -269,7 +295,7 @@ export function bootstrapSelf(paths) {
 	msg(`  command ${paths.launcher} -> ${target}`);
 }
 
-export function installHosts(paths, namedHosts) {
+export function installHosts(paths, namedHosts, profile = "preserve") {
 	const selection = loadSelection(paths);
 	let selected = hostList([...selection.hosts, ...namedHosts]);
 	// Nothing selected — a fresh machine, or one whose hosts were all removed
@@ -282,7 +308,7 @@ export function installHosts(paths, namedHosts) {
 			msg(`Skipping ${host} (not selected; 'agent-kit install ${host}' adds it)`);
 			continue;
 		}
-		const context = paths.hostContext(host);
+		const context = { ...paths.hostContext(host), profile };
 		msg(`Installing (${host} root: ${context.root}):`);
 		if (reconcile(context) !== 0) rc = 1;
 	}
