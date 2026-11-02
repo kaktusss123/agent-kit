@@ -245,7 +245,7 @@ Consumers must still re-check the path when they read it.
   "repos": [
     {
       "name": "agent-kit",
-      "path": "/home/user/.agent-kit/tasks/feat%2Fwork/agent-kit",
+      "path": "/home/user/.agent-kit/tasks/feat~2Fwork/agent-kit",
       "branch": "feat/work",
       "classification": "MANAGED_TASK_WORKTREE",
       "slot": null,

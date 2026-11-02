@@ -29,6 +29,7 @@ import {
   legacyTaskWorkspacePath,
   parseLaneName,
   parseWorktreePaths,
+  percentTaskWorkspacePath,
   realpath,
   resolveTaskWorkspacePath,
   scanTaskWorkspaces,
@@ -188,24 +189,31 @@ export async function ensureTaskRepo(
     : basename(sourceRoot);
   let workspaceDir = taskWorkspacePath(identity, opts.taskRoot);
   let target = join(workspaceDir, targetName);
-  // Workspaces created before the reversible path encoding stored a
-  // slash-bearing identity as `a_b`. Reuse such a directory only when its Git
-  // worktree provably carries the requested branch of this source repository;
-  // a mismatch falls through to the identity's own directory (whose existing
-  // checks then create it or refuse), never to a takeover of the old one.
-  let legacyLayout = false;
+  // Workspaces created under an older directory spelling are reused in place,
+  // in the order the layouts shipped: previous (`%2F` escapes), then the
+  // original flattening (`/` → `_`). Reuse requires the Git worktree to carry
+  // provably the requested branch of this source repository; a mismatch falls
+  // through to the identity's own directory (whose existing checks then
+  // create it or refuse), never to a takeover of the old one. Nothing is
+  // renamed or moved.
+  let olderLayout: "percent" | "legacy" | null = null;
   if (!existsSync(target)) {
-    const legacyDir = legacyTaskWorkspacePath(identity, opts.taskRoot);
-    const legacyTarget = legacyDir === null ? null : join(legacyDir, targetName);
-    if (
-      legacyDir !== null &&
-      legacyTarget !== null &&
-      existsSync(legacyTarget) &&
-      (await legacyWorkspaceMatches(legacyTarget, sourceRoot, params.branch))
-    ) {
-      workspaceDir = legacyDir;
-      target = legacyTarget;
-      legacyLayout = true;
+    const candidates: ["percent" | "legacy", string | null][] = [
+      ["percent", percentTaskWorkspacePath(identity, opts.taskRoot)],
+      ["legacy", legacyTaskWorkspacePath(identity, opts.taskRoot)],
+    ];
+    for (const [layout, olderDir] of candidates) {
+      if (olderDir === null || olderDir === workspaceDir) continue;
+      const olderTarget = join(olderDir, targetName);
+      if (
+        existsSync(olderTarget) &&
+        (await legacyWorkspaceMatches(olderTarget, sourceRoot, params.branch))
+      ) {
+        workspaceDir = olderDir;
+        target = olderTarget;
+        olderLayout = layout;
+        break;
+      }
     }
   }
 
@@ -268,7 +276,7 @@ export async function ensureTaskRepo(
           base: null,
           inputRepo,
           headSha,
-          ...(legacyLayout ? { layout: "legacy" as const } : {}),
+          ...(olderLayout ? { layout: olderLayout } : {}),
         }, target, opts.bootstrap);
       }
       return {
