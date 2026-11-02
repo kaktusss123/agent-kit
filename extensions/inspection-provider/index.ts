@@ -9,7 +9,7 @@
  *
  * Guarantees (the contract is `./README.md`):
  * - it registers NO model tool, NO slash command, NO prompt section, NO status
- *   line: an inspection-only extension cannot add an LLM token (A24);
+ *   line: an inspection-only extension cannot add an LLM token;
  * - it is completely inert when the bridge registry is absent or reports an
  *   incompatible version — a terminal Pi session without ZAVOD, or a node
  *   without the bridge, sees no error, no output, and no registration;
@@ -19,16 +19,16 @@
  * - Core is read only through the versioned read-only seam
  *   (`extensions/subagents/inspection-seam.ts`) and the task-workspace
  *   projection module; no subagent mechanism is reimplemented or replaced;
- * - the provider never spawns a process and never calls the `agent-kit` CLI:
- *   it lives inside the Pi process and reads in-memory state.
+ * - the provider's own code never spawns a process and never calls the
+ *   `agent-kit` CLI: it lives inside the Pi process and reads in-memory state.
+ *   The task-workspace projection it serves is Core's, so the Git reads behind
+ *   `taskWorkspace.current` are Core's own `git` calls (see README).
+ * - the Core seam module is imported only after a compatible bridge registry
+ *   is found: a Pi session without a bridge must not get a Core seam registry
+ *   created on its behalf.
  */
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import * as fs from "node:fs";
-import {
-	INSPECTION_ABI_VERSION,
-	inspectSubagents,
-	inspectionRegistry,
-} from "../subagents/inspection-seam.ts";
 import {
 	buildCurrentTaskProjection,
 	type CurrentTaskProjection,
@@ -133,7 +133,29 @@ export function findBridgeRegistry(scope: BridgeScope = globalThis): BridgeRegis
 	return registry as BridgeRegistry;
 }
 
+/** The Core seam module, loaded lazily: see `loadCoreSeam`. */
+type CoreSeam = typeof import("../subagents/inspection-seam.ts");
+
 const EMPTY_PROJECTION: CurrentTaskProjection = { state: "none", identity: null, workspace: null, source: null, repos: [] };
+
+let coreSeam: CoreSeam | undefined;
+let coreSeamLoad: Promise<CoreSeam | undefined> | undefined;
+
+/**
+ * Import the Core seam module, but only when a compatible bridge registry is
+ * already attached. `inspection-seam.ts` publishes its process-wide registry
+ * at import time, so importing it from a session that has no inspection
+ * consumer would create state nobody reads. The load is cached per module
+ * copy; a failed load is a missing Core, not an error in the session.
+ */
+export function loadCoreSeam(scope: BridgeScope = globalThis): Promise<CoreSeam | undefined> {
+	if (!findBridgeRegistry(scope)) return Promise.resolve(undefined);
+	coreSeamLoad ??= import("../subagents/inspection-seam.ts").then(
+		(module) => (coreSeam = module as CoreSeam),
+		() => undefined,
+	);
+	return coreSeamLoad;
+}
 
 /** The current session's branch reader, bound on `session_start` in this graph. */
 let boundSession: { cwd: string; manager: { getBranch: () => unknown[] } } | undefined;
@@ -146,10 +168,13 @@ export function clearInspectionSession(): void {
 	boundSession = undefined;
 }
 
-/** Production Core subagent source: the seam, gated by its ABI version. */
+/** Production Core subagent source: the lazily loaded seam, gated by its ABI version. */
 const coreSubagents: SubagentSource = {
-	loaded: () => inspectionRegistry.abiVersion === INSPECTION_ABI_VERSION && inspectionRegistry.subagents !== undefined,
-	agents: () => inspectSubagents(),
+	loaded: () => {
+		const seam = coreSeam;
+		return seam !== undefined && seam.inspectionRegistry.abiVersion === seam.INSPECTION_ABI_VERSION && seam.inspectionRegistry.subagents !== undefined;
+	},
+	agents: () => coreSeam?.inspectSubagents() ?? [],
 };
 
 /** Production task-workspace source: the session-scoped projection. */
@@ -306,26 +331,32 @@ function sourceLoaded(source: { loaded: () => boolean }): boolean {
  * entries from the previous generation, so `session_start` (fired after ALL
  * factories ran) is the authoritative re-registration.
  *
+ * The Core seam is imported here, after a compatible registry is known to
+ * exist, and never at module scope: loading this extension in a session
+ * without a bridge must not create Core state.
+ *
  * `session_shutdown` deliberately does NOT unregister: the registration
  * belongs to the generation, not to a session, and a stale `unregister` from
  * an old graph could only ever remove its own record.
  */
-export default function registerInspectionProviderExtension(pi: ExtensionAPI): void {
-	const register = () => {
+export default async function registerInspectionProviderExtension(pi: ExtensionAPI): Promise<void> {
+	const register = async () => {
 		try {
+			// No compatible registry → no import: `loadCoreSeam` returns early.
+			await loadCoreSeam();
 			registerInspectionProvider();
 		} catch {
 			// Inspection is optional: never surface a provider problem in the session.
 		}
 	};
-	pi.on("session_start", (_event, ctx) => {
+	pi.on("session_start", async (_event, ctx) => {
 		bindSessionFromContext(ctx);
-		register();
+		await register();
 	});
 	pi.on("session_shutdown", () => {
 		clearInspectionSession();
 	});
-	register();
+	await register();
 }
 
 function bindSessionFromContext(ctx: unknown): void {

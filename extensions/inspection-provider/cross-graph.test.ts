@@ -99,6 +99,8 @@ describe("cross-graph inspection provider", () => {
 		seam.setSubagentInspectionSource({ inspect: () => [fakeSnapshot("marker-A")], view: (snapshot) => ({ ...snapshot }) });
 
 		const first = (await graph2.import(providerPath)) as typeof import("./index.ts");
+		// The seam is imported on demand, only because a bridge registry exists.
+		await first.loadCoreSeam();
 		const registration = first.registerInspectionProvider({
 			identity: { adapterVersion: "agent-kit@test", buildRevision: null },
 			taskWorkspace: { loaded: () => false, current: async () => neverProjection() },
@@ -121,6 +123,7 @@ describe("cross-graph inspection provider", () => {
 		// A reload evaluates the provider again in a third graph: one entry, new owner.
 		const graph3 = freshGraph();
 		const reloaded = (await graph3.import(providerPath)) as typeof import("./index.ts");
+		await reloaded.loadCoreSeam();
 		const second = reloaded.registerInspectionProvider({
 			identity: { adapterVersion: "agent-kit@test", buildRevision: null },
 			taskWorkspace: { loaded: () => false, current: async () => neverProjection() },

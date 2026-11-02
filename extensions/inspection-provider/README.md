@@ -13,9 +13,12 @@ socket, read environment descriptor variables, or know any wire framing.
 
 This extension registers **no** model tool, **no** slash command, **no**
 prompt section, and **no** status line. An inspection-only extension cannot
-add an LLM token or change the model's instruction set (A24). It also never
-spawns a process and never runs the `agent-kit` CLI: it lives inside the Pi
-process and reads in-memory state.
+add an LLM token or change the model's instruction set. It also never calls a
+model, and its own code never spawns a process, starts a daemon, or runs the
+`agent-kit` CLI: it lives inside the Pi process and reads Core state. The
+`taskWorkspace.current` projection is Core's (`extensions/task-workspace`), so
+the Git reads behind it are Core's own `git` calls, with Core's behavior and
+limits; the provider adds no subprocess of its own on top of them.
 
 ## Inertness
 
@@ -28,6 +31,12 @@ inspection channel must never break the Pi session.
 
 Nothing here enables, disables, or reconfigures other extensions. Every
 `/reload`, session switch, and resume re-evaluates this factory.
+
+The Core seam module (`extensions/subagents/inspection-seam.ts`) is imported
+dynamically, and only once a compatible registry is found: that module
+publishes a process-wide registry at import time, and a bridge-less session
+must not get Core state created on its behalf. Loading this extension without
+a bridge therefore touches no `globalThis` slot at all.
 
 ## Registration lifecycle
 
@@ -294,7 +303,8 @@ node --test 'extensions/inspection-provider/*.test.ts'
 - `index.test.ts` — hello body, every capability payload, capability
   availability, inertness (no registry, wrong version, wrong shape, throwing
   registry, refused registration), re-registration/token ownership, the
-  factory's lack of model surface, and the no-CLI/no-subprocess guarantee;
+  factory's lack of model surface, the no-CLI/no-own-subprocess guarantee, and
+  the lazy Core seam import in a fresh bridge-less process;
 - `identity.test.ts` — identity resolution on real fixture layouts
   (repository, linked worktree, packed ref, detached HEAD, snapshot release,
   symlinked install pointing at a checkout or at a pinned release, declared

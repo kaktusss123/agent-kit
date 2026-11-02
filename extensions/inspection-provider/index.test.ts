@@ -10,6 +10,7 @@
  * symbol), which is exactly the surface the provider is allowed to use.
  */
 import { after, describe, test } from "node:test";
+import { execFileSync } from "node:child_process";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
@@ -29,6 +30,7 @@ import {
 	bindInspectionSession,
 	clearInspectionSession,
 	findBridgeRegistry,
+	loadCoreSeam,
 	registerInspectionProvider,
 	type BridgeProvider,
 	type BridgeRegistry,
@@ -512,7 +514,7 @@ describe("registration lifecycle", () => {
 		expect(registry.entries.size).toBe(0);
 	});
 
-	test("the factory registers without any model surface and re-registers per session_start", () => {
+	test("the factory registers without any model surface and re-registers per session_start", async () => {
 		const registry = new FakeBridgeRegistry();
 		(globalThis as Record<symbol, unknown>)[BRIDGE_REGISTRY_KEY] = registry;
 		const { pi, fire, refused } = fakePi();
@@ -522,21 +524,21 @@ describe("registration lifecycle", () => {
 		};
 		markTaskWorkspaceInspectionSurface();
 		try {
-			registerExtension(pi);
-			// A24: no tool, command, shortcut, flag, or provider registration.
+			await registerExtension(pi);
+			// No tool, command, shortcut, flag, or provider registration.
 			expect(refused).toEqual([]);
 			expect(registry.entries.size).toBe(1);
 			const firstEntry = registry.entries.get(PROVIDER_ID)!;
 			expect(firstEntry.provider.capabilities).toHaveLength(5);
 
-			fire("session_start", { type: "session_start", reason: "reload" }, { cwd: os.tmpdir(), sessionManager: { getBranch: () => [] } });
+			await fire("session_start", { type: "session_start", reason: "reload" }, { cwd: os.tmpdir(), sessionManager: { getBranch: () => [] } });
 			const secondEntry = registry.entries.get(PROVIDER_ID)!;
 			expect(secondEntry).not.toBe(firstEntry);
 			expect(registry.unregister({ id: PROVIDER_ID, owner: firstEntry.owner })).toBe(false);
 
 			// The registration belongs to the generation, not to a session:
 			// shutdown must not withdraw it.
-			fire("session_shutdown", { type: "session_shutdown" });
+			await fire("session_shutdown", { type: "session_shutdown" });
 			expect(registry.entries.has(PROVIDER_ID)).toBe(true);
 			expect(registry.unregister({ id: PROVIDER_ID, owner: secondEntry.owner })).toBe(true);
 		} finally {
@@ -547,19 +549,21 @@ describe("registration lifecycle", () => {
 		}
 	});
 
-	test("the factory stays silent without a bridge", () => {
+	test("the factory stays silent without a bridge", async () => {
 		delete (globalThis as Record<symbol, unknown>)[BRIDGE_REGISTRY_KEY];
 		const { pi, fire, refused } = fakePi();
-		registerExtension(pi);
-		fire("session_start", { type: "session_start", reason: "startup" }, { cwd: os.tmpdir(), sessionManager: { getBranch: () => [] } });
-		fire("session_shutdown", { type: "session_shutdown" });
+		await registerExtension(pi);
+		await fire("session_start", { type: "session_start", reason: "startup" }, { cwd: os.tmpdir(), sessionManager: { getBranch: () => [] } });
+		await fire("session_shutdown", { type: "session_shutdown" });
 		expect(refused).toEqual([]);
 	});
 });
 
 describe("Core seam usage", () => {
-	test("the provider reads the Core seam only when its ABI version matches", () => {
+	test("the provider reads the Core seam only when its ABI version matches", async () => {
 		const registry = new FakeBridgeRegistry();
+		// The seam is imported on demand, once a bridge is attached.
+		await loadCoreSeam(scopeWith(registry));
 		inspectionRegistry.subagents = {
 			owner: {},
 			source: { inspect: () => [], view: (snapshot) => ({ ...snapshot }) },
@@ -570,6 +574,16 @@ describe("Core seam usage", () => {
 			// observable": no children capability, no guessed reads.
 			const provider = registeredProvider(registry, { subagents: undefined });
 			expect(provider.capabilities.map((capability) => capability.name)).toEqual(["taskWorkspace.current"]);
+
+			(inspectionRegistry as { abiVersion: number }).abiVersion = INSPECTION_ABI_VERSION;
+			const matching = registeredProvider(new FakeBridgeRegistry(), { subagents: undefined });
+			expect(matching.capabilities.map((capability) => capability.name)).toEqual([
+				"children.snapshot",
+				"children.historyRef",
+				"usage.children",
+				"background.status",
+				"taskWorkspace.current",
+			]);
 		} finally {
 			(inspectionRegistry as { abiVersion: number }).abiVersion = INSPECTION_ABI_VERSION;
 			inspectionRegistry.subagents = priorSubagents;
@@ -614,20 +628,54 @@ describe("Core seam usage", () => {
 });
 
 describe("process boundaries", () => {
-	test("the provider never shells out to the agent-kit CLI or any subprocess", () => {
+	test("the provider's own files never spawn a process or reach for the agent-kit CLI", () => {
+		// Only the provider's own sources: `taskWorkspace.current` serves Core's
+		// projection, whose Git reads are Core's own `git` calls. The provider
+		// adds no subprocess of its own on top of them.
 		for (const file of ["index.ts", "features.ts", "identity.ts"]) {
 			const source = fs.readFileSync(path.join(import.meta.dirname, file), "utf8");
-			for (const forbidden of ["node:child_process", "execFile", "execSync", "spawn(", "agent-kit task"]) {
+			for (const forbidden of ["node:child_process", "child_process", "execa", "execFile", "execSync", "spawn(", "agent-kit task"]) {
 				expect(source.includes(forbidden)).toBe(false);
 			}
 		}
 	});
+
+	test("loading the provider without a bridge creates no Core seam registry", () => {
+		// A fresh process is the only honest proof: this suite already imported
+		// the seam for its own fixtures.
+		expect(importWithoutBridge()).toEqual({ afterImport: false, afterFactory: false, refused: [] });
+	});
 });
 
-/** A Pi API stand-in: it records the registration calls A24 forbids. */
+/** Load the provider in a pristine process with no bridge, then run its factory. */
+function importWithoutBridge(): { afterImport: boolean; afterFactory: boolean; refused: string[] } {
+	const providerPath = path.join(import.meta.dirname, "index.ts");
+	const script = `
+const SEAM = Symbol.for("agentkit.inspection");
+const mod = await import(${JSON.stringify(providerPath)});
+const afterImport = globalThis[SEAM] !== undefined;
+const refused = [];
+const refuse = (name) => () => refused.push(name);
+await mod.default({
+  on() { return () => {}; },
+  registerTool: refuse("registerTool"),
+  registerCommand: refuse("registerCommand"),
+  registerShortcut: refuse("registerShortcut"),
+  registerFlag: refuse("registerFlag"),
+  registerProvider: refuse("registerProvider"),
+});
+// Registration is async now: give a pending seam import a chance to happen.
+await new Promise((resolve) => setTimeout(resolve, 200));
+console.log(JSON.stringify({ afterImport, afterFactory: globalThis[SEAM] !== undefined, refused }));
+`;
+	const output = execFileSync(process.execPath, ["--input-type=module", "-e", script], { encoding: "utf8" });
+	return JSON.parse(output.trim().split("\n").at(-1)!) as { afterImport: boolean; afterFactory: boolean; refused: string[] };
+}
+
+/** A Pi API stand-in: it records the registration calls the contract forbids. */
 function fakePi(): {
 	pi: never;
-	fire: (event: string, ...args: unknown[]) => void;
+	fire: (event: string, ...args: unknown[]) => Promise<void>;
 	refused: string[];
 } {
 	const handlers = new Map<string, ((...args: unknown[]) => unknown)[]>();
@@ -652,8 +700,8 @@ function fakePi(): {
 	return {
 		pi: api as never,
 		refused,
-		fire: (event: string, ...args: unknown[]) => {
-			for (const handler of handlers.get(event) ?? []) handler(...args);
+		fire: async (event: string, ...args: unknown[]) => {
+			for (const handler of handlers.get(event) ?? []) await handler(...args);
 		},
 	};
 }
