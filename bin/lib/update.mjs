@@ -23,7 +23,7 @@ function git(repo, args) {
 	};
 }
 
-export async function update(repo) {
+export async function update(repo, profile) {
 	if (!git(repo, ["rev-parse", "--git-dir"]).ok) {
 		die(`update: ${repo} is not a git checkout; there is nothing to pull`);
 	}
@@ -46,7 +46,10 @@ export async function update(repo) {
 	}
 
 	const installer = join(repo, "bin", "agent-kit");
-	return await runChild(installer, ["install"], {
+	// The profile is only forwarded when the command named one: a bare update
+	// reconciles the set that is already linked instead of quietly switching it.
+	const args = profile ? ["install", "--profile", profile] : ["install"];
+	return await runChild(installer, args, {
 		env: { ...process.env, AGENT_KIT_ROOT: repo },
 	});
 }

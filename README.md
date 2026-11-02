@@ -57,14 +57,15 @@ git clone <url> ~/src/agent-kit
 второй позже.
 
 ```sh
-agent-kit install claude-code   # только Claude Code
-agent-kit install pi            # добавить Pi к выбранным host'ам
-agent-kit install               # обновить ссылки выбранных host'ов
-agent-kit update                # git pull --ff-only в checkout'е, затем install
-agent-kit snapshot <dir>        # неизменяемый снимок HEAD для headless-хостов
-agent-kit status                # выбор host'ов, состояние ссылок, владелец лаунчера
-agent-kit uninstall pi          # удалить ссылки одного host'а и убрать его из выбора
-agent-kit uninstall             # удалить ссылки всех host'ов и забыть выбор
+agent-kit install --profile core|full  # профиль: core (default) или full
+agent-kit install claude-code          # только Claude Code
+agent-kit install pi                   # добавить Pi к выбранным host'ам
+agent-kit install                      # обновить ссылки выбранных host'ов
+agent-kit update                       # git pull --ff-only в checkout'е, затем install
+agent-kit snapshot <dir>               # неизменяемый снимок HEAD для headless-хостов
+agent-kit status                       # выбор host'ов, профиль, состояние ссылок, лаунчер
+agent-kit uninstall pi                 # удалить ссылки одного host'а и убрать его из выбора
+agent-kit uninstall                    # удалить ссылки всех host'ов и забыть выбор
 ```
 
 Выбор host'ов запоминается: `install` и `update` без аргументов работают только
@@ -73,7 +74,38 @@ agent-kit uninstall             # удалить ссылки всех host'ов
 сделанные до появления выбора, сохраняют оба host'а. Подробности —
 [ADR-0009](docs/adr/adr-0009.md).
 
+### Профили установки
+
+Рабочие навыки — узкоспециализированные навыки под конкретное рабочее
+окружение (сейчас `kuber-nagibator`), в отличие от общих инженерных. Их список
+задан явно в `bin/lib/entities.mjs` (`WORK_SKILLS`) и относится к будущему
+компоненту `agent-kit-cloudru`: на личной машине они раздувают список навыков,
+поэтому по умолчанию не ставятся.
+
+| Профиль | Что ставит |
+| --- | --- |
+| `core` (по умолчанию) | всё, кроме `WORK_SKILLS` |
+| `full` | то же плюс рабочие навыки |
+
+`uninstall` профиль не учитывает: удаляется всё, что записано в
+ownership-таблице, включая рабочие навыки, поставленные с `full`. `update` без
+флага профиль не меняет — он пересобирает тот же набор ссылок; `update
+--profile core|full` передаёт профиль свежему установщику. `status` показывает
+фактический профиль каждого host'а по ownership-записи.
+
+Установка без флага на машине, где рабочий навык уже стоит (например, поставлен
+прежней версией), его не удаляет: профиль `core` только не добавляет рабочие
+навыки, а удаление решает ownership-таблица — и только для ссылки, которую
+agent-kit создал сам. Убрать рабочий навык можно явно:
+`agent-kit install --profile core`.
+
 Корни host'ов переопределяются через `PI_AGENT_DIR` и `CLAUDE_CONFIG_DIR`.
+
+Snapshot для headless-хостов от профиля не зависит: в снимок входит весь
+`extensions/` из коммита, включая провайдер инспекции; рабочие навыки не входили
+в него и раньше. План разделения репозитория на `agent-kit-core`,
+`agent-kit-inspection` и `agent-kit-cloudru` —
+[docs/split-plan.md](docs/split-plan.md).
 
 Модель владения. Инсталлер записывает, какие ссылки создал он сам
 (`~/.local/state/agent-kit/links*.tsv`; рядом лежит выбор host'ов `hosts`,
@@ -341,7 +373,8 @@ trash-имя (длина которого больше не растёт) убе
 | [`continue-shortcut`](extensions/continue-shortcut/README.md) | Ввод `.` или `c` — скрытая команда «продолжай незаконченное» вместо сообщения |
 | [`update-check`](extensions/update-check/index.ts) | Тост при старте, если checkout отстал от upstream или стоит не на основной ветке |
 | `proxy-toggle.ts`, [`proxy`](extensions/proxy/proxy-lib.ts) | `/proxy on\|off\|status`, адрес из `PI_PROXY`; настройка доходит и до живых субагентов |
-| [`inspection-channel`](extensions/inspection-channel/README.md) | Read-only канал инспекции субагентов и задач по унаследованным fd ([ADR-0006](docs/adr/adr-0006.md)) |
+| [`inspection-provider`](extensions/inspection-provider/README.md) | Read-only поставщик ZIP v1 (`children.snapshot`, `children.historyRef`, `usage.children`, `background.status`, `taskWorkspace.current`) в реестр моста ZAVOD; без реестра полностью инертен, без Core не объявляет Core-capabilities |
+| [`inspection-channel`](extensions/inspection-channel/README.md) | DEPRECATED: legacy area-канал инспекции субагентов и задач по унаследованным fd ([ADR-0006](docs/adr/adr-0006.md)); заменён `inspection-provider` для ZAVOD-узлов, для остальных не менялся |
 | [`agent-events`](extensions/agent-events/README.md) | Телеметрия жизненного цикла в Warp (OSC 777) |
 
 Субагенты запускаются как `pi --mode rpc --no-extensions` со своим
@@ -503,6 +536,7 @@ node --test --test-timeout=180000 'extensions/<name>/*.test.ts'  # одно ра
 
 ## Документация
 
+- [`docs/split-plan.md`](docs/split-plan.md) — план разделения на core / inspection / cloudru (профили установки, миграция ссылок, критерии выделения)
 - [`docs/design-progress.md`](docs/design-progress.md) — индекс архитектурных этапов A1–A9 и их статус
 - [`docs/adr/`](docs/adr/) — решения:
   - [0001](docs/adr/adr-0001.md) — agent-kit как самостоятельный Pi-first фреймворк

@@ -34,6 +34,7 @@
 // the command table. Everything it calls owns one thing.
 
 import { FatalError, writeStderr, writeStdout } from "./lib/io.mjs";
+import { PROFILES, validateProfile } from "./lib/entities.mjs";
 import { resolvePaths, validateHosts } from "./lib/paths.mjs";
 import { installHosts, statusAll, uninstallHosts } from "./lib/reconcile.mjs";
 import { migrateLegacyState } from "./lib/legacy-state.mjs";
@@ -45,15 +46,23 @@ function usage() {
 	writeStdout(`agent-kit — install the personal agent framework into Pi and Claude Code
 
 Usage:
-  agent-kit install [<host>...]
+  agent-kit install [--profile core|full] [<host>...]
                         link the checkout into the selected hosts; named
                         hosts are added to the selection (default: all):
                         pi          -> ~/.pi/agent (skills, extensions,
                                        prompts, AGENTS.md)
                         claude-code -> ~/.claude (skills, rules/, the
                                        agent-kit plugin, commands/, agents/)
-  agent-kit update      git pull --ff-only in this checkout, then reconcile
-                        the selected hosts
+                        --profile core (default) skips the work skills
+                        (WORK_SKILLS in bin/lib/entities.mjs, today
+                        kuber-nagibator); --profile full installs them too.
+                        Without --profile, work skills an earlier full
+                        install linked stay linked: an install adds what it
+                        owns and never removes one silently.
+  agent-kit update [--profile core|full]
+                        git pull --ff-only in this checkout, then reconcile
+                        the selected hosts; without --profile the update keeps
+                        the currently linked set, work skills included
   agent-kit snapshot <releases-dir>
                         write an immutable snapshot of the committed tree at
                         HEAD (extensions + node_modules) to
@@ -76,8 +85,8 @@ Usage:
                         remove owned links of the named hosts and drop them
                         from the selection; without hosts: every host, and
                         the selection is cleared
-  agent-kit status      show the host selection, link state and launcher
-                        ownership
+  agent-kit status      show the host selection, the installed profile, link
+                        state and launcher ownership
   agent-kit task <op>   task-workspace CLI (status, ensure, remove-lane,
                         teardown, commit, hook); JSON in, JSON out
   agent-kit help        this text
@@ -97,6 +106,33 @@ released.
 // snapshot keeps its own lock, build, manifest, publication and retention
 // zones in lib/snapshot.mjs; this dispatcher only hands it the releases dir.
 
+const PROFILE_FLAG = "--profile";
+
+// --profile is a command-line flag, not a positional argument: it is spliced
+// out of `args` in place, so the command validates exactly the hosts left over.
+function takeProfile(args) {
+	let profile;
+	for (let i = 0; i < args.length; ) {
+		const arg = args[i];
+		if (arg === PROFILE_FLAG) {
+			if (i + 1 >= args.length) {
+				throw new FatalError(`--profile needs a value (profiles: ${PROFILES.join(" ")})`);
+			}
+			profile = args[i + 1];
+			args.splice(i, 2);
+			continue;
+		}
+		if (arg.startsWith(`${PROFILE_FLAG}=`)) {
+			profile = arg.slice(PROFILE_FLAG.length + 1);
+			args.splice(i, 1);
+			continue;
+		}
+		i += 1;
+	}
+	if (profile !== undefined) validateProfile(profile);
+	return profile;
+}
+
 async function main(argv) {
 	const paths = resolvePaths(argv.entry);
 	const args = argv.args;
@@ -104,18 +140,24 @@ async function main(argv) {
 	const rest = args.slice(1);
 
 	switch (command) {
-		case "install":
+		case "install": {
+			const profile = takeProfile(rest);
 			validateHosts(rest);
 			migrateLegacyState(paths.linkStateFile("pi"), paths.home);
-			return installHosts(paths, rest);
+			// No --profile keeps the recorded work skills: the default core set
+			// for new entities, never a silent removal of an earlier full install.
+			return installHosts(paths, rest, profile ?? "preserve");
+		}
 		case "uninstall":
 			validateHosts(rest);
 			migrateLegacyState(paths.linkStateFile("pi"), paths.home);
 			uninstallHosts(paths, rest);
 			return 0;
-		case "update":
+		case "update": {
+			const profile = takeProfile(rest);
 			if (rest.length > 0) throw new FatalError("update takes no arguments (see: agent-kit help)");
-			return await update(paths.repo);
+			return await update(paths.repo, profile);
+		}
 		case "snapshot":
 			return snapshot(paths.repo, rest);
 		case "status":
