@@ -39,7 +39,7 @@ function tempRoot(prefix: string): { taskRoot: string; workspace: string } {
   rootDir ??= mkdtempSync(join(tmpdir(), "owner-lock-"));
   const base = join(rootDir, `${prefix}-${Math.random().toString(36).slice(2, 8)}`);
   const taskRoot = join(base, "tasks");
-  const workspace = join(taskRoot, "feat%2Ftask", "repo");
+  const workspace = join(taskRoot, "feat~2Ftask", "repo");
   mkdirSync(workspace, { recursive: true });
   return { taskRoot, workspace };
 }
@@ -157,7 +157,7 @@ describe("worktree ownership lease", () => {
     const first = await acquireOwnerLease(a.taskRoot, a.workspace);
     const second = await acquireOwnerLease(b.taskRoot, b.workspace);
     // Same task root as well: two worktrees of one task never block each other.
-    const c = join(a.taskRoot, "feat%2Ftask", "repo__lane");
+    const c = join(a.taskRoot, "feat~2Ftask", "repo__lane");
     mkdirSync(c, { recursive: true });
     const third = await acquireOwnerLease(a.taskRoot, c);
     expect(first.ok && second.ok && third.ok).toBe(true);

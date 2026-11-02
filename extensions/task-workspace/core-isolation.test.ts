@@ -102,7 +102,7 @@ describe("task-workspace core host independence", () => {
       // Workspace path math follows the injected root, not any default, and
       // encodes the identity reversibly (distinct identities, distinct dirs).
       expect(gitCore.taskWorkspacePath("some/task", hostRoot)).toBe(
-        join(hostRoot, "some%2Ftask"),
+        join(hostRoot, "some~2Ftask"),
       );
 
       // A real flow materializes the workspace under the injected root.
@@ -127,7 +127,7 @@ describe("task-workspace core host independence", () => {
       // scanTaskWorkspaces lists one entry per workspace directory (the
       // encoded identity) inside the injected root.
       expect(scan.length).toBe(1);
-      expect(scan[0]!.workspace).toBe(join(hostRoot, "feat%2Fhost2"));
+      expect(scan[0]!.workspace).toBe(join(hostRoot, "feat~2Fhost2"));
       expect(scan[0]!.identity).toBe("feat/host2");
       expect(scan[0]!.repos.map((r) => r.path)).toContain(worktree);
     } finally {

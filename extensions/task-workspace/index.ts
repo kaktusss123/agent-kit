@@ -9,10 +9,13 @@
  *
  * Identity → directory is the reversible encoding of ./workspace-path, not a
  * lossy flattening: distinct identities always get distinct directories
- * (`feat/a_b` and `feat/a/b` never share one), and an identity without path
- * separators keeps its historical directory name. Directories written by the
- * old flattening are recognized and reused only for the branch they provably
- * hold; otherwise they are left untouched and refused, never renamed.
+ * (`feat/a_b` and `feat/a/b` never share one), and an identity without escaped
+ * characters keeps its historical directory name. The escape marker is `~`
+ * (`feat/work` → `feat~2Fwork`) because `~` is invalid in a Git ref and, unlike
+ * the previous `%2F` spelling, a `~2F` path component is a valid Node ESM
+ * module path. Directories written by an older spelling (`%2F`, then `/` → `_`)
+ * are recognized and reused only for the branch they provably hold; otherwise
+ * they are left untouched and refused, never renamed.
  *
  * One managed worktree has at most one live RepoOwner on the host: the right
  * to write is the cross-process lease of ./owner-lock, named next to the task

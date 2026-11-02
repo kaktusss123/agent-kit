@@ -10,6 +10,7 @@ import {
   decodeTaskWorkspaceName,
   encodeTaskWorkspaceName,
   joinTaskWorkspaceName,
+  percentTaskWorkspaceName,
   taskWorkspaceLayout,
 } from "./workspace-path.ts";
 import { describeOwner, type OwnerView } from "./owner-lock.ts";
@@ -310,16 +311,29 @@ export async function getInputRepoFacts(
  * Directory of one task identity under the task root. The mapping is the
  * reversible encoding of ./workspace-path: distinct identities always get
  * distinct directories (`feat/a_b` and `feat/a/b` no longer share one), and
- * an identity without path separators keeps its historical name.
+ * an identity without escaped characters keeps its historical name.
+ *
+ * This is the creation target; existing workspaces in an older spelling are
+ * found by {@link resolveTaskWorkspacePath}, never migrated into this one.
  */
 export function taskWorkspacePath(task: string, taskRoot: string): string {
   return joinTaskWorkspaceName(taskRoot, encodeTaskWorkspaceName(task));
 }
 
 /**
- * Path a pre-encoding installation used for the same identity (`/` → `_`).
- * Present only while such a directory can exist; callers must prove the Git
- * branch before reusing it.
+ * Path the previous (`%`-escape) encoding used for the same identity. Present
+ * only while such a directory can exist, so never a creation target; callers
+ * must prove the Git branch before reusing it.
+ */
+export function percentTaskWorkspacePath(task: string, taskRoot: string): string | null {
+  const percent = taskWorkspaceLayout(task).percentDirectory;
+  return percent === null ? null : joinTaskWorkspaceName(taskRoot, percent);
+}
+
+/**
+ * Path the oldest layout used for the same identity (`/` → `_`). Present only
+ * while such a directory can exist, so never a creation target; callers must
+ * prove the Git branch before reusing it.
  */
 export function legacyTaskWorkspacePath(task: string, taskRoot: string): string | null {
   const legacy = taskWorkspaceLayout(task).legacyDirectory;
@@ -327,16 +341,19 @@ export function legacyTaskWorkspacePath(task: string, taskRoot: string): string 
 }
 
 /**
- * Existing workspace directory for a task identity: the identity's own
- * directory when it exists, else a recognizably pre-encoding directory for
- * the same identity (so an unchanged old workspace stays reachable), else the
- * identity's directory (creation target). Never renames anything.
+ * Existing workspace directory for a task identity, searched in the order the
+ * layouts were deployed: current (`~`), previous (`%`), oldest (`_`), else the
+ * current directory as the creation target. Never renames or moves anything.
  */
 export function resolveTaskWorkspacePath(task: string, taskRoot: string): string {
   const current = taskWorkspacePath(task, taskRoot);
   if (existsSync(current)) return current;
-  const legacy = legacyTaskWorkspacePath(task, taskRoot);
-  if (legacy && existsSync(legacy)) return legacy;
+  for (const older of [
+    percentTaskWorkspacePath(task, taskRoot),
+    legacyTaskWorkspacePath(task, taskRoot),
+  ]) {
+    if (older && existsSync(older)) return older;
+  }
   return current;
 }
 
@@ -509,7 +526,12 @@ export interface ScannedTaskWorkspace {
   key: string;
   /** Directory name; the pre-encoding identity for old workspaces. */
   task: string;
-  /** Task identity decoded from the directory name when the encoding owns it. */
+  /**
+   * Task identity decoded from the directory name. Both escape spellings
+   * (`~2F`, then `%2F`) are inverted here; a directory written by the oldest
+   * flattening is reported as its own name, which is the only identity that
+   * name can honestly claim.
+   */
   identity: string;
   repos: ManagedRepoStatus[];
   artifacts: string[];
