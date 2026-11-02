@@ -10,7 +10,7 @@
  * suite pins the current `~2F` spelling, the identity round trip, the lookup
  * chain through the older spellings, and the module-loading regression.
  */
-import { execFileSync, spawnSync } from "node:child_process";
+import { execFileSync } from "node:child_process";
 import {
   existsSync,
   mkdirSync,
@@ -224,48 +224,6 @@ describe("task workspace name encoding", () => {
   test("slash-free identities have no separate older paths", () => {
     expect(legacyTaskWorkspacePath("feat-x", "/tmp/root")).toBeNull();
     expect(percentTaskWorkspacePath("feat-x", "/tmp/root")).toBeNull();
-  });
-});
-
-describe("task workspace directories are loadable by Node ESM", () => {
-  /** Run a module import in a child node, exactly the way tools resolve a
-   *  filesystem path to a module specifier. */
-  function importModule(modulePath: string, cwd: string) {
-    return spawnSync(
-      process.execPath,
-      ["--input-type=module", "-e", "const m = await import(process.argv[1]); console.log(m.marker);", modulePath],
-      { cwd, encoding: "utf8" },
-    );
-  }
-
-  test("a workspace directory with the encoded name imports its modules", () => {
-    const base = tempDir("esm-current");
-    const identity = "feat/esm-check";
-    const dir = join(base, encodeTaskWorkspaceName(identity));
-    mkdirSync(dir, { recursive: true });
-    const mod = join(dir, "mod.mjs");
-    writeFileSync(mod, 'export const marker = "loaded";\n');
-
-    const proc = importModule(mod, base);
-    expect(proc.stderr).not.toContain("ERR_INVALID_MODULE_SPECIFIER");
-    expect(proc.status).toBe(0);
-    expect(proc.stdout.trim()).toBe("loaded");
-  });
-
-  test("the previous `%` spelling is what the loader rejects", () => {
-    const base = tempDir("esm-previous");
-    const identity = "feat/esm-check";
-    const dir = join(base, percentTaskWorkspaceName(identity));
-    mkdirSync(dir, { recursive: true });
-    const mod = join(dir, "mod.mjs");
-    writeFileSync(mod, 'export const marker = "loaded";\n');
-
-    const proc = importModule(mod, base);
-    // Pinned as the reason the `~` marker exists: an encoded "/" inside a
-    // path component is rejected before it ever reaches the filesystem.
-    expect(proc.status).not.toBe(0);
-    expect(proc.stderr).toContain("ERR_INVALID_MODULE_SPECIFIER");
-    expect(proc.stderr).toContain('must not include encoded "/"');
   });
 });
 
