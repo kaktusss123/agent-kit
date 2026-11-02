@@ -21,6 +21,13 @@
  *
  * The first hit wins. Nothing found (for example a copied tree) yields
  * `agent-kit@unknown` and a null revision rather than a guess.
+ *
+ * A normal Pi install loads the extension through symlinks
+ * (`<agent-dir>/extensions/<name>` pointing into a checkout or a pinned
+ * release), so the walk starts from the real path of the module directory: the
+ * identity describes the code that is actually loaded, not the link that
+ * names it. The link path is still walked as a fallback, so a manifest written
+ * next to the links keeps working too.
  */
 import * as fs from "node:fs";
 import * as path from "node:path";
@@ -43,7 +50,27 @@ export interface ProviderIdentity {
 
 /** Resolve the identity of the code that lives in `moduleDir` (an extension directory). */
 export function resolveProviderIdentity(moduleDir: string): ProviderIdentity {
-	let dir = path.resolve(moduleDir);
+	for (const root of identityRoots(moduleDir)) {
+		const identity = walkUpForIdentity(root);
+		if (identity) return identity;
+	}
+	return { adapterVersion: "agent-kit@unknown", buildRevision: null };
+}
+
+/**
+ * Candidate starting points, most truthful first: the real path of the loaded
+ * module (symlinked installs) and then the path as it was given (a manifest
+ * may live beside the links). Duplicates collapse, so a plain directory is a
+ * single walk.
+ */
+function identityRoots(moduleDir: string): string[] {
+	const resolved = path.resolve(moduleDir);
+	const real = realpathOrUndefined(resolved);
+	return real && real !== resolved ? [real, resolved] : [resolved];
+}
+
+function walkUpForIdentity(root: string): ProviderIdentity | undefined {
+	let dir = root;
 	for (let depth = 0; depth <= MAX_WALK_UP; depth += 1) {
 		const version = readPackageVersion(dir);
 		const revision = readGitRevision(dir) ?? readSnapshotRevision(dir);
@@ -57,7 +84,7 @@ export function resolveProviderIdentity(moduleDir: string): ProviderIdentity {
 		if (parent === dir) break;
 		dir = parent;
 	}
-	return { adapterVersion: "agent-kit@unknown", buildRevision: null };
+	return undefined;
 }
 
 function readPackageVersion(dir: string): string | undefined {
@@ -112,6 +139,14 @@ function readPackedRef(commonDir: string, ref: string): string | null {
 		if (name === ref && REVISION_PATTERN.test(sha)) return sha;
 	}
 	return null;
+}
+
+function realpathOrUndefined(target: string): string | undefined {
+	try {
+		return fs.realpathSync(target);
+	} catch {
+		return undefined;
+	}
 }
 
 function statOrUndefined(target: string): fs.Stats | undefined {

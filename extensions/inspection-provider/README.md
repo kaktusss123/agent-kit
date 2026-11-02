@@ -78,7 +78,11 @@ and the `snapshot` envelope are the bridge's.
 is supported from the exact capability versions, never from a version
 comparison or a package name. Both values are read from files that describe
 the code actually loaded (`./identity.ts`), walking up from the extension
-directory at most four levels:
+directory at most four levels. The walk starts from the **real path** of the
+extension directory (`fs.realpathSync`), because a normal Pi install loads it
+through per-extension symlinks (`<agent-dir>/extensions/<name>` pointing into a
+checkout or a pinned release); the link path itself is walked afterwards as a
+fallback. Order:
 
 1. `package.json` with a string `version` → `adapterVersion` is
    `agent-kit@<version>`;
@@ -141,7 +145,6 @@ fails as `provider_not_ready`.
       "startedAt": 1767225600000,
       "finishedAt": null,
       "sessionId": "01JD…",
-      "sessionFile": "/home/user/.pi/agent/sessions/….jsonl",
       "model": "anthropic/claude-sonnet",
       "alive": true,
       "summary": "inspect the repository"
@@ -158,8 +161,6 @@ fails as `provider_not_ready`.
 - `startedAt`, `finishedAt` — epoch **milliseconds**, `null` when unknown;
   `finishedAt` stays `null` while the child has not finished.
 - `sessionId` — string or `null`.
-- `sessionFile` — local transcript path, present only when Core knows it.
-  This is a local-process contract: the value may be an absolute path.
 - `model` — string or `null`.
 - `alive` — boolean; `true` only when the child process is still running.
 - `summary` — the child's task prompt, clipped to 200 characters plus `…`
@@ -170,6 +171,11 @@ activity log, active tool, pending question, exit code/signal, raw tool
 arguments. None of those are needed to render or correlate a child, and
 several would leak local process detail.
 
+No filesystem path is part of this payload either — not even a verified one.
+A child is identified by `id`/`sessionId` only; the transcript binding lives
+in `children.historyRef` and nowhere else, so a consumer cannot reach an
+unverified path through the snapshot.
+
 ### `children.historyRef` v1
 
 ```json
@@ -179,8 +185,9 @@ several would leak local process detail.
 Only bindings that were verified to exist **at snapshot time**
 (`fs.existsSync` on the Core-reported path). A child without a `sessionFile`,
 or whose file is gone, or whose probe raised, is omitted — an unverified path
-is never offered as readable history. Consumers must still re-check the path
-when they read it.
+is never offered as readable history. This capability is the only place a
+transcript path appears on the wire; `children.snapshot` carries none.
+Consumers must still re-check the path when they read it.
 
 ### `usage.children` v1
 
@@ -290,7 +297,8 @@ node --test 'extensions/inspection-provider/*.test.ts'
   factory's lack of model surface, and the no-CLI/no-subprocess guarantee;
 - `identity.test.ts` — identity resolution on real fixture layouts
   (repository, linked worktree, packed ref, detached HEAD, snapshot release,
-  declared package version, nothing at all, escaping ref);
+  symlinked install pointing at a checkout or at a pinned release, declared
+  package version, nothing at all, escaping ref);
 - `cross-graph.test.ts` — two real jiti module graphs share one bridge
   registry, a provider evaluated in one graph is served from it, and a reload
   in a third graph re-registers without duplicating the entry.

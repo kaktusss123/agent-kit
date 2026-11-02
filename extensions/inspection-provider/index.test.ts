@@ -252,23 +252,38 @@ describe("capability payloads", () => {
 			startedAt: 1_700_000_000_000,
 			finishedAt: null,
 			sessionId: "child-session",
-			sessionFile: "/home/user/.pi/agent/sessions/child.jsonl",
 			model: "openai-codex/gpt-6.1-sol",
 			alive: true,
 			summary: `${"x".repeat(200)}…`,
 		});
 		// The local process details of the Core view never reach the wire.
-		for (const leaked of ["cwd", "pid", "task", "thinking", "stats", "lastActivityAt", "elapsedMs"]) {
+		for (const leaked of ["cwd", "pid", "task", "thinking", "stats", "lastActivityAt", "elapsedMs", "sessionFile"]) {
 			expect(Object.hasOwn(data.agents[0], leaked)).toBe(false);
 		}
 	});
 
-	test("children.snapshot omits sessionFile when Core has none", async () => {
+	test("children.snapshot carries no filesystem path even when Core reports a transcript", async () => {
 		const registry = new FakeBridgeRegistry();
-		const provider = registeredProvider(registry, { subagents: fakeSubagents([agentView({ sessionFile: undefined, endedAt: 1_700_000_009_000 })]) });
+		const provider = registeredProvider(registry, {
+			subagents: fakeSubagents([agentView({ sessionFile: "/private/nonexistent-child.jsonl", endedAt: 1_700_000_009_000 })]),
+		});
 		const data = (await provider.snapshot("children.snapshot", 1, "gen-1")) as { agents: Record<string, unknown>[] };
-		expect(Object.hasOwn(data.agents[0], "sessionFile")).toBe(false);
 		expect(data.agents[0].finishedAt).toBe(1_700_000_009_000);
+		// Identity is id/sessionId only: neither a key nor a value names a file.
+		expect(Object.keys(data.agents[0]).sort()).toEqual([
+			"alive",
+			"finishedAt",
+			"id",
+			"label",
+			"model",
+			"sessionId",
+			"startedAt",
+			"state",
+			"summary",
+		]);
+		for (const value of Object.values(data.agents[0])) {
+			if (typeof value === "string") expect(value.startsWith("/")).toBe(false);
+		}
 	});
 
 	test("children.historyRef lists only bindings verified to exist right now", async () => {
@@ -302,13 +317,26 @@ describe("capability payloads", () => {
 			fs.writeFileSync(present, "{}\n");
 			const registry = new FakeBridgeRegistry();
 			const provider = registeredProvider(registry, {
-				subagents: fakeSubagents([agentView({ id: "a1", sessionFile: present }), agentView({ id: "a2", sessionFile: path.join(dir, "gone.jsonl") })]),
+				subagents: fakeSubagents([
+					agentView({ id: "a1", sessionFile: present }),
+					agentView({ id: "a2", sessionFile: path.join(dir, "gone.jsonl") }),
+					agentView({ id: "a3", sessionFile: "/private/nonexistent-child.jsonl" }),
+				]),
 			});
 			const data = (await provider.snapshot("children.historyRef", 1, "gen-1")) as { agents: unknown[] };
 			expect(data.agents).toEqual([{ id: "a1", sessionFile: present }]);
 		} finally {
 			fs.rmSync(dir, { recursive: true, force: true });
 		}
+	});
+
+	test("a child whose transcript is gone has no history binding at all", async () => {
+		const registry = new FakeBridgeRegistry();
+		const provider = registeredProvider(registry, {
+			subagents: fakeSubagents([agentView({ sessionFile: "/private/nonexistent-child.jsonl" })]),
+		});
+		const data = (await provider.snapshot("children.historyRef", 1, "gen-1")) as { agents: unknown[] };
+		expect(data.agents).toEqual([]);
 	});
 
 	test("usage.children reports per-child numbers and explicit unknowns, never a fake zero", async () => {

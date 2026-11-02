@@ -79,6 +79,48 @@ describe("provider identity", () => {
 		}
 	});
 
+	test("a symlinked install resolves identity from the real checkout", () => {
+		// The normal Pi layout: the agent extensions directory holds one symlink
+		// per extension, so the loaded module path is not inside the repository.
+		const tree = fixtureTree((root) => {
+			writeFile(path.join(root, "repo", ".git", "HEAD"), `${REVISION}\n`);
+			fs.mkdirSync(path.join(root, "repo", "extensions", "inspection-provider"), { recursive: true });
+			const install = path.join(root, "agent", "extensions", "inspection-provider");
+			fs.mkdirSync(path.dirname(install), { recursive: true });
+			fs.symlinkSync(path.join(root, "repo", "extensions", "inspection-provider"), install, "dir");
+			return install;
+		});
+		try {
+			expect(resolveProviderIdentity(tree.moduleDir)).toEqual(resolveProviderIdentity(path.join(tree.root, "repo", "extensions", "inspection-provider")));
+			expect(resolveProviderIdentity(tree.moduleDir)).toEqual({
+				adapterVersion: `agent-kit@${REVISION.slice(0, 12)}`,
+				buildRevision: REVISION,
+			});
+		} finally {
+			tree.cleanup();
+		}
+	});
+
+	test("a symlinked install pointing at a pinned release reads its manifest", () => {
+		const tree = fixtureTree((root) => {
+			const release = path.join(root, "releases", REVISION);
+			writeFile(path.join(release, "manifest.json"), JSON.stringify({ schema: 2, sha: REVISION, dirty: false }));
+			fs.mkdirSync(path.join(release, "extensions", "inspection-provider"), { recursive: true });
+			const install = path.join(root, "agent", "extensions", "inspection-provider");
+			fs.mkdirSync(path.dirname(install), { recursive: true });
+			fs.symlinkSync(path.join(release, "extensions", "inspection-provider"), install, "dir");
+			return install;
+		});
+		try {
+			expect(resolveProviderIdentity(tree.moduleDir)).toEqual({
+				adapterVersion: `agent-kit@${REVISION.slice(0, 12)}`,
+				buildRevision: REVISION,
+			});
+		} finally {
+			tree.cleanup();
+		}
+	});
+
 	test("a packed ref and a detached HEAD both resolve", () => {
 		const packed = fixtureTree((root) => {
 			writeFile(path.join(root, ".git", "HEAD"), "ref: refs/heads/main\n");

@@ -46,8 +46,6 @@ export interface ChildSnapshotEntry {
 	/** Epoch milliseconds, or null while the child has not finished. */
 	finishedAt: number | null;
 	sessionId: string | null;
-	/** Local session transcript path; present only when Core knows it. */
-	sessionFile?: string;
 	model: string | null;
 	alive: boolean;
 	/** The child's task prompt, clipped to `SUMMARY_LIMIT` characters. */
@@ -58,14 +56,18 @@ export interface ChildSnapshotEntry {
  * `children.snapshot` v1: identity, lifecycle state, timestamps, model, and a
  * clipped prompt. Records without a usable `id` are dropped: an unnamed child
  * cannot be correlated with anything, and inventing one would be worse.
+ *
+ * No filesystem path is part of this payload, not even a verified one: a
+ * transcript is reachable only through `children.historyRef`, which checks
+ * existence itself. A path here would duplicate that binding while bypassing
+ * its verification.
  */
 export function childrenSnapshot(agents: AgentView[]): { agents: ChildSnapshotEntry[] } {
 	const entries: ChildSnapshotEntry[] = [];
 	for (const agent of agents) {
 		const id = asString(agent.id);
 		if (!id) continue;
-		const sessionFile = asString(agent.sessionFile);
-		const entry: ChildSnapshotEntry = {
+		entries.push({
 			id,
 			label: asString(agent.label) ?? id,
 			state: asString(agent.state) ?? "unknown",
@@ -75,9 +77,7 @@ export function childrenSnapshot(agents: AgentView[]): { agents: ChildSnapshotEn
 			model: asString(agent.model),
 			alive: agent.alive === true,
 			summary: clipSummary(agent.task),
-		};
-		if (sessionFile) entry.sessionFile = sessionFile;
-		entries.push(entry);
+		});
 	}
 	return { agents: entries };
 }
