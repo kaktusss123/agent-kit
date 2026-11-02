@@ -63,6 +63,10 @@ import {
   taskStatus,
   teardownTaskRepo,
 } from "./flows.ts";
+import {
+  clearTaskWorkspaceInspectionSurface,
+  markTaskWorkspaceInspectionSurface,
+} from "./inspection-surface.ts";
 import { BOOTSTRAP_CONFIG } from "./bootstrap-config.ts";
 export { BOOTSTRAP_CONFIG } from "./bootstrap-config.ts";
 import { guardManagedWriteTarget } from "./guard.ts";
@@ -213,6 +217,16 @@ export default function (pi: ExtensionAPI): void {
   // behavior equals module-load resolution); the core receives it explicitly
   // and never reads the environment itself.
   const TASK_ROOT = resolveTaskRoot();
+
+  // Read-only inspection presence (./inspection-surface): consumers announce
+  // the session-scoped `current` projection to another process only when this
+  // extension really ran in THIS process. Presence is process-wide state, so
+  // it is published at registration (every extension factory runs before Pi's
+  // first session_start) and withdrawn on shutdown by the owning graph only.
+  markTaskWorkspaceInspectionSurface();
+  pi.on("session_shutdown", () => {
+    clearTaskWorkspaceInspectionSurface();
+  });
 
   // ─── bash tool override (git PATH shim) ──────────────────────────────
   // Same contract and schema as the built-in bash tool (spread + execute

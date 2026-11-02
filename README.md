@@ -341,7 +341,8 @@ trash-имя (длина которого больше не растёт) убе
 | [`continue-shortcut`](extensions/continue-shortcut/README.md) | Ввод `.` или `c` — скрытая команда «продолжай незаконченное» вместо сообщения |
 | [`update-check`](extensions/update-check/index.ts) | Тост при старте, если checkout отстал от upstream или стоит не на основной ветке |
 | `proxy-toggle.ts`, [`proxy`](extensions/proxy/proxy-lib.ts) | `/proxy on\|off\|status`, адрес из `PI_PROXY`; настройка доходит и до живых субагентов |
-| [`inspection-channel`](extensions/inspection-channel/README.md) | Read-only канал инспекции субагентов и задач по унаследованным fd ([ADR-0006](docs/adr/adr-0006.md)) |
+| [`inspection-provider`](extensions/inspection-provider/README.md) | Read-only поставщик ZIP v1 (`children.snapshot`, `children.historyRef`, `usage.children`, `background.status`, `taskWorkspace.current`) в реестр моста ZAVOD; без реестра полностью инертен, без Core не объявляет Core-capabilities |
+| [`inspection-channel`](extensions/inspection-channel/README.md) | DEPRECATED: legacy area-канал инспекции субагентов и задач по унаследованным fd ([ADR-0006](docs/adr/adr-0006.md)); заменён `inspection-provider` для ZAVOD-узлов, для остальных не менялся |
 | [`agent-events`](extensions/agent-events/README.md) | Телеметрия жизненного цикла в Warp (OSC 777) |
 
 Субагенты запускаются как `pi --mode rpc --no-extensions` со своим

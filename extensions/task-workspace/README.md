@@ -17,6 +17,10 @@ Selection uses a managed session cwd first, otherwise the most recent successful
 
 `task_current` is a version-1 inherited read-only snapshot area: `{v:1, area:"task_current", data:{task:{current}}}`. Its projection is session-scoped; while no session is bound (including after shutdown), cwd-derived snapshots are disabled. Selected workspace read failures return `snapshot_failed` rather than being mislabeled `missing`; `ENOENT` remains a truthful missing workspace. `task` and `all` retain their legacy catalog fields and add `data.task.current`.
 
+### Presence marker for external inspection
+
+The projection is also exposed, reduced to a narrower versioned contract, by the optional ZIP v1 provider (`../inspection-provider/README.md`). An importable projection module is not a loaded extension — Pi can run with `--no-extensions` and only explicit `-e` entries — so the provider announces its `taskWorkspace.current` capability only on a positive presence signal from this extension. That signal is `inspection-surface.ts`: a `globalThis[Symbol.for("agentkit.task-workspace.inspection")]` marker published at registration (`{version: 1, owner}`) and withdrawn on `session_shutdown` by the owning graph only. The marker says nothing about the data; it only proves that this extension really ran in this process.
+
 ## Surfaces
 
 - **`task_status`** — classify the current path and report current Git facts;

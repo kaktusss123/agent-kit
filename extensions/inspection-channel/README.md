@@ -1,3 +1,11 @@
+DEPRECATED — replaced by `extensions/inspection-provider` for ZAVOD nodes;
+terminal/non-ZAVOD usage unchanged.
+
+This area-based channel (`{op:"snapshot", area}` over inherited descriptors) is
+kept as-is for nodes and sessions that still speak it. New node code uses the
+ZIP v1 provider instead: `../inspection-provider/README.md`. The extension
+below is unchanged and still fully inert without a valid descriptor pair.
+
 # inherited inspection channel
 
 Optional machine-facing read channel for a live agent-kit Pi process. It is inert unless Pi inherits valid pipe descriptors in both:

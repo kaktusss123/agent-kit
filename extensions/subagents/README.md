@@ -114,6 +114,25 @@ Live wire verification: `node live/status-verify.mjs` (real `pi --mode rpc`
 with this worktree loaded explicitly; discovery, model-free reads, live
 plain/workspace child state, `op=status` cross-check, no-controller timeout).
 
+## Read-only inspection seam (ABI 1)
+
+The live runtime is published for read-only inspection consumers through one
+process-wide registry on `globalThis[Symbol.for("agentkit.inspection")]`, owned
+by `extensions/subagents/inspection-seam.ts`. The extension registers a source
+(`inspect()` → live snapshots, `view(snapshot)` → the shared `agentDetailView`
+record) at factory time; a newer module graph takes over, and only the owning
+graph can withdraw its entry. The entry point consumers use is
+`inspectSubagents()`, which returns the view records (empty when nothing is
+registered).
+
+The registry carries `abiVersion: 1`. Consumers outside Core (for example the
+optional ZIP v1 provider, `../inspection-provider/README.md`) must treat the
+registry as opaque unless `abiVersion` matches exactly and treat any other
+value as “Core not observable”: announcing a capability requires a positive,
+version-compatible seam, never a tool name or package identity. This is a
+read-only projection: it never exposes execution, cancellation, or spawn
+through the seam.
+
 ## Running-agents push (`agentkit:running-agents`)
 
 Honest running-set telemetry for an external RPC controller: the extension
