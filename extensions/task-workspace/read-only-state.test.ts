@@ -114,13 +114,36 @@ describe("task-workspace read-only source: session binding", () => {
 		// Session switch while the projection is in flight.
 		source.bindTaskWorkspaceSession({ cwd: "/tmp/two", branchEntries: () => [] });
 		settle?.();
-		const result = await pending;
-		expect(result.status).toBe("ok");
-		if (result.status !== "ok") return;
-		// The result belongs to the binding captured at read start, so a consumer
-		// comparing it with sessionGeneration() can discard it as stale.
-		expect(result.generation).toBe(before);
+		// The source itself refuses the stale completion: the session changed
+		// while its projection was computed, so this is never presented as current.
+		expect(await pending).toEqual({ status: "unavailable", reason: "session_changed" });
 		expect(slot().sessionGeneration()).toBe(before + 1);
+	});
+
+	test("a pending read after session end is rejected, and generations never repeat across graphs", async () => {
+		const first = (await import(`${modulePath}?copy=race-a`)) as typeof source;
+		const second = (await import(`${modulePath}?copy=race-b`)) as typeof source;
+		let settle: (() => void) | undefined;
+		const gate = new Promise<void>((resolve) => (settle = resolve));
+		first.publishTaskWorkspaceStateSource({
+			taskRoot: "/tmp/race",
+			project: async () => {
+				await gate;
+				return { state: "none", identity: null, workspace: null, source: null, repos: [] } as never;
+			},
+		});
+		const generationA = first.bindTaskWorkspaceSession({ cwd: "/tmp/a", branchEntries: () => [] });
+		const pending = (globalThis as Record<symbol, unknown>)[KEY] && (first as typeof source);
+		const record = ((globalThis as Record<symbol, unknown>)[KEY] as { taskWorkspace: { read: () => Promise<unknown> } }).taskWorkspace;
+		const inFlight = record.read();
+		// A reloaded graph publishes and binds while the old read is in flight.
+		second.publishTaskWorkspaceStateSource({ taskRoot: "/tmp/race" });
+		const generationB = second.bindTaskWorkspaceSession({ cwd: "/tmp/b", branchEntries: () => [] });
+		// Process-wide counter: the reloaded graph cannot mint the old number.
+		expect(generationB).toBeGreaterThan(generationA);
+		expect(pending).toBeTruthy();
+		settle?.();
+		expect(await inFlight).toEqual({ status: "unavailable", reason: "session_changed" });
 	});
 
 	test("clearing the session makes the source unavailable again", async () => {

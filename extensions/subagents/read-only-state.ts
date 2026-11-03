@@ -27,6 +27,7 @@
  * forks per graph. The registry therefore lives on `globalThis` under a
  * registered symbol that every module copy shares.
  */
+import { isRunningAgentState } from "./running-agents-push.ts";
 
 /** Registry symbol. The version suffix is part of the registry's identity: a
  *  shape change publishes under a new symbol instead of reinterpreting v1. */
@@ -45,11 +46,14 @@ export const SUBAGENTS_SOURCE_VERSION = 1 as const;
  */
 export type SubagentObservation = Record<string, unknown>;
 
+
 /** Result of one source read. `status` is the only discriminator. */
 export type SubagentReadResult =
 	| {
 			status: "ok";
-			/** `active` while at least one observed child reports `alive: true`. */
+			/** `active` while at least one observed child is confirmed working: a live
+			 *  process (`alive: true`) in a non-terminal state. A settled child whose
+			 *  process is still kept alive for idle exit is NOT confirmed activity. */
 			activity: "active" | "idle";
 			/** Empty means "loaded source, no children"; never "could not look". */
 			agents: SubagentObservation[];
@@ -137,9 +141,15 @@ function readSnapshot(read: () => SubagentObservation[]): SubagentReadResult {
 	const observations = agents as SubagentObservation[];
 	return {
 		status: "ok",
-		activity: observations.some((agent) => agent?.alive === true) ? "active" : "idle",
+		activity: observations.some(isConfirmedActive) ? "active" : "idle",
 		agents: observations,
 	};
+}
+
+/** Confirmed activity: the runtime's own running set, not process liveness
+ *  alone (a completed child stays alive until idle exit). */
+function isConfirmedActive(agent: SubagentObservation): boolean {
+	return agent?.alive === true && typeof agent.state === "string" && isRunningAgentState(agent.state);
 }
 
 function messageOf(error: unknown): string {

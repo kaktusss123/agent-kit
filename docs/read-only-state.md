@@ -96,8 +96,12 @@ type SubagentsResult =
   list, and it never throws to the consumer. The published `read` is
   synchronous.
 - `activity` is Core's own classification of confirmed activity:
-  `"active"` when at least one observation has `alive: true`, otherwise
-  `"idle"`. There is no third value: when the source is unavailable, or the
+  `"active"` when at least one observation has `alive: true` **and** a
+  non-terminal state (`starting`, `running`, `waiting_input` — the runtime's
+  own running set in `extensions/subagents/running-agents-push.ts`), otherwise
+  `"idle"`. Process liveness alone is not activity: a child that settled into
+  `completed`/`failed`/`cancelled` keeps a live process until idle exit and
+  must not make the background look busy. There is no third value: when the source is unavailable, or the
   read failed, `activity` does not exist — the consumer must treat background
   activity as **unknown** and keep its ordinary idle policy. Unknown is never
   rendered as confirmed idle and never as a zero.
@@ -143,7 +147,7 @@ and must not add them to parent usage twice.
 ```ts
 type TaskWorkspaceResult =
   | { status: "ok"; generation: number; projection: CurrentTaskProjection }
-  | { status: "unavailable"; reason: "no_session" }
+  | { status: "unavailable"; reason: "no_session" | "session_changed" }
   | { status: "error"; error: { code: "projection_failed"; message: string } };
 ```
 
@@ -154,6 +158,10 @@ type TaskWorkspaceResult =
 - `status: "unavailable"` with `reason: "no_session"` means this process has no
   live session bound: before the first `session_start`, or after
   `session_shutdown`. It is not "no task".
+- `status: "unavailable"` with `reason: "session_changed"` means the session was
+  switched, reloaded or shut down while this projection was being computed. The
+  source rejects that completion itself, so a stale answer never carries a
+  projection that a consumer could mistake for current.
 - `status: "ok"` carries the projection; "no association" is
   `projection.state: "none"`, an association whose workspace vanished is
   `"missing"` (identity retained, `repos: []`), and a live association is
@@ -189,17 +197,27 @@ the subagents source.
 
 ### Session generation
 
-Every `session_start` binds the session and increments a monotonic generation
-(0 = this process never bound one; it never decreases and never resets).
-`read()` captures the binding current at read start, and the result carries
-that binding's `generation`. `sessionGeneration()` reports the generation
-currently bound.
+The generation counter lives in the shared registry, so it is **process-wide**
+and shared by every loader graph: a reloaded graph and an older graph that is
+still finishing a read can never mint the same number. It increases on every
+session bind and on every session end (clear/shutdown), never decreases and
+never resets; 0 means this process never bound a session. `read()` captures the
+binding and the generation at read start, the result carries that
+`generation`, and `sessionGeneration()` reports the process-wide current value.
 
-Consumer rules:
+Staleness is enforced by the source, not delegated to the consumer: a read that
+finishes after the binding or the generation changed answers
+`unavailable`/`session_changed` instead of a projection.
 
-- discard a result whose `generation` is not the currently bound
-  `sessionGeneration()` (the session switched, reloaded, or shut down while the
-  projection was being computed); never present it as current;
+Consumer rules (both are required, and the second one covers a source object
+that was replaced while the read was in flight):
+
+- discard a `session_changed` answer and any answer whose `generation` is not
+  the `sessionGeneration()` of the record you just resolved;
+- re-resolve the registry slot after the read resolves and require it to be the
+  same record object (`registry.taskWorkspace === record`) before presenting
+  the result: a reloaded graph publishing a new record makes every result of
+  the previous record stale, even when no session was bound in between;
 - never carry a projection, workspace path, or child list across a session
   switch: a new session means a new binding, new generation, and a fresh read.
 
@@ -222,6 +240,43 @@ This is the registration-ownership rule both sources implement:
 A reloaded source replaces the previous one atomically from the consumer's
 point of view: the registry slot is overwritten in one assignment, so a reader
 sees either the old record or the new one, never a half-built mix.
+
+## Claude CLI task source (read-only)
+
+Hosts that have no Pi extension (Claude Code) reach the same projection through
+the explicitly configured public CLI. It is a second binding of the same
+`current.ts` computation, not a second implementation:
+
+```
+agent-kit task current '{"cwd":"<abs>","selections":[{"task":"…","worktree":"…"}]}'
+```
+
+The parameters are the caller's verified session facts: `cwd` is a parameter,
+not the process cwd, and `selections` are the session's successful
+`ensure_task_repo` tasks in order (last wins). The CLI never invents a session,
+never reads another session's history, and performs no owner matching.
+
+```json
+{ "version": 1, "state": "none|ok|missing", "identity": "…|null",
+  "workspace": "…|null", "source": "cwd|session|null", "repos": [ … ] }
+```
+
+- `version` identifies the answer and is checked exactly by the consumer. It is
+  additive: every projection field keeps the meaning documented above, so a
+  reader that predates the field is unaffected. A changed meaning bumps the
+  version; do not negotiate, do not guess from field presence.
+- One JSON object on stdout, always. Exit codes: `0` — the projection was
+  computed (including `state: "none"` and `state: "missing"`); `1` — tool error,
+  the object is `{"status":"error","message":…}`; `2` — usage error (missing or
+  malformed parameters), the object is `{"status":"usage_error",…}`.
+- CLI absence, a non-zero exit, an incompatible `version`, or unparseable
+  output make **only this projection** unavailable. They are not a session
+  failure, do not justify restarting the harness, and must not become a
+  permanent per-poll shell call of a missing binary: probe once per runtime,
+  diagnose once, and keep the rest of the panel working.
+- The mutation commands (`ensure`, `remove-lane`, `teardown`, `commit`) and the
+  `hook` subcommand are explicitly **not** part of this read-only contract and
+  are unchanged by it.
 
 ## Read authorization
 
@@ -253,7 +308,8 @@ by the child runtime.
 | --- | --- |
 | Both copies (subagents, task-workspace) publish into one shared registry and agree on symbol/versions; discovery needs no Core import | `extensions/subagents/read-only-state-contract.test.ts` |
 | Publisher: empty vs rich observations, activity classification, error vs empty, ownership on reload/shutdown, version gating | `extensions/subagents/read-only-state.test.ts` |
-| Task source: publish/bind/generation, `unavailable` vs `none`, injected projection failure, stale-generation capture, owner-enrichment through the subagents slot | `extensions/task-workspace/read-only-state.test.ts` |
+| Task source: publish/bind/generation, `unavailable` vs `none`, injected projection failure, source-rejected stale completion, cross-graph generation uniqueness, owner-enrichment through the subagents slot | `extensions/task-workspace/read-only-state.test.ts` |
+| CLI binding: exact `version` on every read-only answer, unchanged projection fields and usage/error contract | `extensions/task-workspace/cli.test.ts` |
 
 Not part of this contract: the legacy `agentkit.inspection` seam
 (`extensions/subagents/inspection-seam.ts`), the task-workspace presence

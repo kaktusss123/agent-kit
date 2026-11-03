@@ -152,8 +152,21 @@ describe("task current (read-only projection)", () => {
     for (const params of [{ cwd: source }, { cwd: source, selections: [] }]) {
       const r = current(source, taskRoot, params);
       expect(r.code).toBe(0);
-      expect(r.json).toEqual({ state: "none", identity: null, workspace: null, source: null, repos: [] });
+      // The versioned envelope keeps every projection field and meaning.
+      expect(r.json).toEqual({ version: 1, state: "none", identity: null, workspace: null, source: null, repos: [] });
     }
+  });
+
+  test("every read-only answer carries the exact CLI contract version", () => {
+    const { source, taskRoot } = makeRepo(fresh("cur-version"));
+    const none = current(source, taskRoot, { cwd: source });
+    expect(none.json?.version).toBe(1);
+    const e = ensureTask(source, taskRoot, "feat/cur_version");
+    const ok = current(source, taskRoot, { cwd: source, selections: [{ task: e.task, worktree: e.worktree }] });
+    expect(ok.json?.version).toBe(1);
+    expect(ok.json).toMatchObject({ state: "ok", identity: "feat/cur_version" });
+    const missing = current(source, taskRoot, { cwd: source, selections: [{ task: "feat_gone", worktree: join(taskRoot, "feat_gone", "x") }] });
+    expect(missing.json).toMatchObject({ version: 1, state: "missing" });
   });
 
   test("a selection of a real workspace → ok with repo facts and empty owners", () => {

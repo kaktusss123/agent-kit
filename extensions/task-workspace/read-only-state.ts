@@ -19,10 +19,13 @@
  *   process — before `session_start` or after `session_shutdown`) or `error`.
  *   "No association" is a projection `state: "none"`, not `unavailable`, and
  *   never a fabricated empty workspace;
- * - every read captures the binding that was current when it started and
- *   reports that binding's monotonic session generation, so a result produced
- *   for a previous session can never be presented as the current one after a
- *   session switch or `/reload`;
+ * - session generations are PROCESS-wide (the counter lives in the shared
+ *   registry), so two loader graphs — an old one completing a read and a
+ *   reloaded one binding a session — can never mint the same number;
+ * - every read captures the binding and the generation at read start, and the
+ *   source itself rejects a stale completion: if the bound session or the
+ *   generation changed while the projection was being computed, the answer is
+ *   `unavailable`/`session_changed`, never a projection presented as current;
  * - registration ownership: only the graph that published the current record
  *   may withdraw it, and a new graph's publication wins, so a stale shutdown
  *   cannot remove a newer source;
@@ -71,7 +74,7 @@ export interface TaskWorkspaceProjectionInput extends TaskWorkspaceSession {
 
 export type TaskWorkspaceReadResult =
   | { status: "ok"; generation: number; projection: CurrentTaskProjection }
-  | { status: "unavailable"; reason: "no_session" }
+  | { status: "unavailable"; reason: "no_session" | "session_changed" }
   | { status: "error"; error: { code: string; message: string } };
 
 export interface TaskWorkspaceSourceRecord {
@@ -79,7 +82,8 @@ export interface TaskWorkspaceSourceRecord {
   version: number;
   /** Registration owner token. Readers treat it as opaque and never compare it. */
   owner: unknown;
-  /** Generation of the session the source is currently bound to; 0 before the first bind. */
+  /** Process-wide session generation: the last bind or session end in this
+   *  process, 0 before the first one. Never decreases, never repeats. */
   sessionGeneration(): number;
   read(): Promise<TaskWorkspaceReadResult>;
 }
@@ -89,6 +93,8 @@ interface ReadOnlyStateRegistry {
   schemaVersion: number;
   subagents?: unknown;
   taskWorkspace?: TaskWorkspaceSourceRecord;
+  /** Process-wide monotonic session generation, shared by every loader graph. */
+  taskWorkspaceGeneration?: number;
 }
 
 type Projector = (input: TaskWorkspaceProjectionInput) => Promise<CurrentTaskProjection>;
@@ -129,22 +135,25 @@ export function publishTaskWorkspaceStateSource(opts: {
   registry.taskWorkspace = {
     version: TASK_WORKSPACE_SOURCE_VERSION,
     owner: instanceToken,
-    sessionGeneration: () => generation,
+    sessionGeneration: currentGeneration,
     read,
   };
 }
 
 /**
  * Withdraw this graph's record on shutdown; a newer graph's record survives.
- * The bound session of this graph is dropped as well, so nothing of the
- * closing session can answer a later read.
+ * The bound session of this graph is dropped, and ending a live session
+ * advances the process generation so an in-flight read of that session cannot
+ * complete as current.
  */
 export function withdrawTaskWorkspaceStateSource(): void {
   const registry = globalScope[READ_ONLY_STATE_KEY];
   if (registry && registry.taskWorkspace?.owner === instanceToken) {
     registry.taskWorkspace = undefined;
   }
+  const hadSession = boundSession !== undefined;
   boundSession = undefined;
+  if (hadSession) bumpGeneration();
 }
 
 /**
@@ -154,18 +163,35 @@ export function withdrawTaskWorkspaceStateSource(): void {
  */
 export function bindTaskWorkspaceSession(session: TaskWorkspaceSession): number {
   boundSession = session;
-  generation += 1;
-  return generation;
+  return bumpGeneration();
 }
 
 /** Process has no live session bound (before `session_start`, after shutdown). */
 export function clearTaskWorkspaceSession(): void {
+  const hadSession = boundSession !== undefined;
   boundSession = undefined;
+  if (hadSession) bumpGeneration();
 }
 
-/** Current session generation; 0 when this process never bound a session. */
+/** Current process-wide session generation; 0 before the first bind. */
 export function taskWorkspaceSessionGeneration(): number {
-  return generation;
+  return currentGeneration();
+}
+
+/** Advance the shared counter; the local mirror keeps the source usable even
+ *  if the registry is unreadable (it is then simply not published). */
+function bumpGeneration(): number {
+  const registry = registryForWrite();
+  const next = Math.max(generation, registry?.taskWorkspaceGeneration ?? 0) + 1;
+  if (registry) registry.taskWorkspaceGeneration = next;
+  generation = next;
+  return next;
+}
+
+/** Process-wide generation as last published by any graph of this process. */
+function currentGeneration(): number {
+  const registry = globalScope[READ_ONLY_STATE_KEY];
+  return Math.max(generation, registry?.taskWorkspaceGeneration ?? 0);
 }
 
 /** Read the published source exactly as a foreign consumer would. */
@@ -175,16 +201,25 @@ function read(): Promise<TaskWorkspaceReadResult> {
   if (!session || root === undefined) {
     return Promise.resolve({ status: "unavailable", reason: "no_session" });
   }
+  const generationAtRead = currentGeneration();
   const input: TaskWorkspaceProjectionInput = {
     cwd: session.cwd,
     branchEntries: session.branchEntries,
-    generation,
+    generation: generationAtRead,
     taskRoot: root,
   };
   return Promise.resolve()
     .then(() => projector(input))
     .then(
-      (projection): TaskWorkspaceReadResult => ({ status: "ok", generation: input.generation, projection }),
+      (projection): TaskWorkspaceReadResult => {
+        // Stale completion: the session was switched, reloaded or shut down
+        // while this projection was computed. The source refuses to report it
+        // as current, whatever the consumer compares afterwards.
+        if (boundSession !== session || currentGeneration() !== generationAtRead) {
+          return { status: "unavailable", reason: "session_changed" };
+        }
+        return { status: "ok", generation: generationAtRead, projection };
+      },
       (e): TaskWorkspaceReadResult => ({
         status: "error",
         error: { code: "projection_failed", message: e instanceof Error ? e.message : String(e) },

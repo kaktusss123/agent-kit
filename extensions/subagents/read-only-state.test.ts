@@ -77,12 +77,26 @@ describe("subagents read-only source: publication", () => {
 		expect(result.agents).toEqual([rich]);
 	});
 
-	test("activity is confirmed, never assumed: idle only without a live child", () => {
+	test("activity is confirmed, never assumed: idle only without a live working child", () => {
 		source.publishSubagentStateSource(() => [
 			{ id: "a", label: "a", state: "completed", alive: false },
 			{ id: "b", label: "b", state: "waiting_input", alive: true },
 		]);
 		expect(slot().read().activity).toBe("active");
+	});
+
+	test("a settled child kept alive for idle exit is not confirmed activity", () => {
+		// Terminal state with a live process: the runtime keeps the record alive
+		// until idle exit, so liveness alone would over-report background work.
+		source.publishSubagentStateSource(() => [
+			{ id: "done", label: "done", state: "completed", alive: true },
+			{ id: "cancelled", label: "cancelled", state: "cancelled", alive: true },
+		]);
+		expect(slot().read()).toMatchObject({ status: "ok", activity: "idle" });
+		for (const state of ["starting", "running", "waiting_input"]) {
+			source.publishSubagentStateSource(() => [{ id: "x", label: "x", state, alive: true }]);
+			expect(slot().read().activity).toBe("active");
+		}
 	});
 });
 
