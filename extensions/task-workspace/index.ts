@@ -58,6 +58,7 @@ import { resolveTaskRoot } from "./task-root.ts";
 import {
   SESSION_SELECTION_ENTRY_TYPE,
   isRecordableEnsureStatus,
+  type SessionSelectionEntry,
 } from "./current.ts";
 import {
   checkpointCommit,
@@ -70,6 +71,12 @@ import {
   clearTaskWorkspaceInspectionSurface,
   markTaskWorkspaceInspectionSurface,
 } from "./inspection-surface.ts";
+import {
+  bindTaskWorkspaceSession,
+  clearTaskWorkspaceSession,
+  publishTaskWorkspaceStateSource,
+  withdrawTaskWorkspaceStateSource,
+} from "./read-only-state.ts";
 import { BOOTSTRAP_CONFIG } from "./bootstrap-config.ts";
 export { BOOTSTRAP_CONFIG } from "./bootstrap-config.ts";
 import { guardManagedWriteTarget } from "./guard.ts";
@@ -227,7 +234,25 @@ export default function (pi: ExtensionAPI): void {
   // it is published at registration (every extension factory runs before Pi's
   // first session_start) and withdrawn on shutdown by the owning graph only.
   markTaskWorkspaceInspectionSurface();
+
+  // Public read-only task source (./read-only-state, contract:
+  // docs/read-only-state.md). Published here — a marker on its own is not a
+  // read surface — and bound to the live session on every session_start, so
+  // the source projects THIS session's selection with Core's own computation.
+  // A read before the first bind, or after shutdown, is `unavailable` and
+  // never a fabricated empty workspace.
+  publishTaskWorkspaceStateSource({ taskRoot: TASK_ROOT });
+  pi.on("session_start", (_event, ctx) => {
+    const manager = ctx.sessionManager as { getBranch?: () => unknown[] } | undefined;
+    bindTaskWorkspaceSession({
+      cwd: ctx.cwd,
+      branchEntries: () => (manager?.getBranch?.() ?? []) as SessionSelectionEntry[],
+    });
+  });
+
   pi.on("session_shutdown", () => {
+    clearTaskWorkspaceSession();
+    withdrawTaskWorkspaceStateSource();
     clearTaskWorkspaceInspectionSurface();
   });
 

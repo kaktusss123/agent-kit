@@ -90,6 +90,10 @@ import { resolveTaskRoot } from "../task-workspace/task-root.ts";
 import type { AgentResult, AgentSnapshot } from "./types.ts";
 import { setSubagentInspectionSource } from "./inspection-seam.ts";
 import {
+	publishSubagentStateSource,
+	withdrawSubagentStateSource,
+} from "./read-only-state.ts";
+import {
 	attachRunningAgentsPush,
 	type RunningAgentsPush,
 	type RunningAgentsPushContext,
@@ -339,12 +343,15 @@ export default function (pi: ExtensionAPI) {
 		return runs;
 	}
 
-	// The machine inspection extension reads through this seam; it never owns
-	// runtime state and therefore cannot accidentally create a second registry.
-	setSubagentInspectionSource({
-		inspect: () => (runtime ? runtime.inspect() : []),
-		view: (snapshot) => agentDetailView(snapshot, runs?.runView(snapshot.id)),
-	});
+	// One projection feeds every reader: the inherited inspection seam (legacy
+	// channel) and the published read-only state source (docs/read-only-state.md).
+	// Both read the same runtime and never own it, so neither can create a second
+	// registry, and the public source loses no observation the seam carries.
+	const inspectSnapshots = () => (runtime ? runtime.inspect() : []);
+	const viewSnapshot = (snapshot: ReturnType<typeof inspectSnapshots>[number]) =>
+		agentDetailView(snapshot, runs?.runView(snapshot.id));
+	setSubagentInspectionSource({ inspect: inspectSnapshots, view: viewSnapshot });
+	publishSubagentStateSource(() => inspectSnapshots().map(viewSnapshot));
 
 	// Cost rollup: before the runtime exists, reconstruct this session's
 	// settled subagent spend from persisted results (resume case — the live
@@ -413,6 +420,9 @@ export default function (pi: ExtensionAPI) {
 		}
 		pushContext = undefined;
 		setSubagentInspectionSource(undefined);
+		// Owner-checked withdrawal: a source published by a newer graph (reload or
+		// session switch) survives this older graph's shutdown.
+		withdrawSubagentStateSource();
 	});
 
 	// Fresh model-role guidance: mid-session /subagent-role changes must reach
