@@ -113,12 +113,6 @@ export class LocalSubagentRuntime {
 	private readonly resultsDir: string;
 	private readonly timeouts: ChildTimeouts;
 	private readonly workspaceListeners = new Set<(ev: SubagentModelEvent) => void>();
-	/**
-	 * Runtime-wide record mutation listeners (running-agents push and future
-	 * telemetry). Notifications are advisory and cheap: subscribers recompute
-	 * from `inspect()`, and a subscriber error is swallowed.
-	 */
-	private readonly recordsListeners = new Set<() => void>();
 	/** Main session file written into persisted results (cost attribution). */
 	private readonly parentSession?: string;
 	private readonly onCostChange?: (total: number) => void;
@@ -221,7 +215,6 @@ export class LocalSubagentRuntime {
 		};
 		const host: ChildAgentHost = {
 			emit: (ev, routeOpts) => this.routeEvent(id, opts.eventRoute, ev, routeOpts),
-			changed: () => this.notifyRecordsChanged(),
 			persistResult: (facts) => this.writeResult(facts),
 			persistMarker: (facts) => this.writeMarker(facts),
 			costReported: (agentId, cost) => this.recordCost(agentId, cost),
@@ -230,7 +223,6 @@ export class LocalSubagentRuntime {
 		const child = new ChildAgentProcess(spec, this.timeouts, host);
 		this.children.set(id, child);
 		opts.onCreated?.(child.snapshot());
-		this.notifyRecordsChanged();
 
 		// Spawn-time partial marker (F003): persist a minimal "running" record
 		// AT process creation. If the parent dies before the child settles,
@@ -560,29 +552,6 @@ export class LocalSubagentRuntime {
 	}
 
 	/**
-	 * Subscribe to runtime-wide record mutations: spawn, logical state
-	 * transitions (including waiting_input and its resolution), terminal
-	 * settlement, process exit, cancel/retire, and shutdown. Subscribers
-	 * recompute from `inspect()`; they must be cheap and must never throw
-	 * (errors are swallowed so telemetry cannot break the runtime). Returns
-	 * an unsubscribe function.
-	 */
-	onRecordsChanged(cb: () => void): () => void {
-		this.recordsListeners.add(cb);
-		return () => this.recordsListeners.delete(cb);
-	}
-
-	private notifyRecordsChanged(): void {
-		for (const cb of this.recordsListeners) {
-			try {
-				cb();
-			} catch {
-				// listener errors must not break the runtime
-			}
-		}
-	}
-
-	/**
 	 * Subscribe to lifecycle events of workspace-routed children (event
 	 * ownership: every child has exactly one event owner — workspace children
 	 * belong to the workspace run registry, generic children to the policy
@@ -674,14 +643,12 @@ export class LocalSubagentRuntime {
 		const live = [...this.children.values()].filter((c) => c.alive);
 		if (live.length === 0) return;
 		await Promise.all(live.map((c) => c.cancel()));
-		this.notifyRecordsChanged();
 	}
 
 	/** Kill all live children and latch the runtime shut (main shutdown). */
 	async shutdown(): Promise<void> {
 		this.shutDown = true;
 		await this.cancelAll();
-		this.notifyRecordsChanged();
 	}
 }
 

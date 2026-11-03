@@ -1199,7 +1199,7 @@ export function createWorkspaceRuns(
 
 // -------------------------------------------------------------------- helpers
 
-/** Shared narrow projection for status, inherited inspection and persisted history. */
+/** Shared compact projection for local status, the public source and persisted history. */
 export function compactRunView(view: WorkspaceRunView): RunHistory & {
 	deadlineMsLeft: number; progressAgeMs?: number; ladder?: { step: number; max: number };
 } {

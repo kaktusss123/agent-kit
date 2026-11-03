@@ -46,23 +46,18 @@ function usage() {
 	writeStdout(`agent-kit — install the personal agent framework into Pi and Claude Code
 
 Usage:
-  agent-kit install [--profile core|full] [<host>...]
+  agent-kit install [--profile core] [<host>...]
                         link the checkout into the selected hosts; named
                         hosts are added to the selection (default: all):
                         pi          -> ~/.pi/agent (skills, extensions,
                                        prompts, AGENTS.md)
                         claude-code -> ~/.claude (skills, rules/, the
                                        agent-kit plugin, commands/, agents/)
-                        --profile core (default) skips the work skills
-                        (WORK_SKILLS in bin/lib/entities.mjs, today
-                        kuber-nagibator); --profile full installs them too.
-                        Without --profile, work skills an earlier full
-                        install linked stay linked: an install adds what it
-                        owns and never removes one silently.
-  agent-kit update [--profile core|full]
+                        Core only; --profile core is optional.
+                        --profile full is rejected before any changes.
+  agent-kit update [--profile core]
                         git pull --ff-only in this checkout, then reconcile
-                        the selected hosts; without --profile the update keeps
-                        the currently linked set, work skills included
+                        the selected hosts with the pure Core delivery
   agent-kit snapshot <releases-dir>
                         write an immutable snapshot of the committed tree at
                         HEAD (extensions + node_modules) to
@@ -95,8 +90,14 @@ The repository layout is the desired state; entities are symlinked, never
 copied. Install is a reconcile operation: re-running it from another
 checkout or worktree repoints agent-kit's own links to that checkout.
 Links and files agent-kit does not own are never touched, and neither
-are the links of hosts that are not selected. The selection lives in
-$XDG_STATE_HOME/agent-kit/hosts. State left by
+are the links of hosts that are not selected.
+Existing full installations: verify the independent agent-kit-cloudru delivery
+and complete its migrate handoff BEFORE pulling/updating the OLD Core checkout.
+The old updater pulls before install: the new --profile full refusal cannot
+protect old symlink targets after that pull. See docs/split-plan.md.
+Retired inspection links are removed only with recorded exact-target ownership;
+foreign/user links and handed-off Cloudru links are left untouched.
+The selection lives in $XDG_STATE_HOME/agent-kit/hosts. State left by
 older multi-runtime versions of agent-kit is migrated once: links
 agent-kit provably owns are cleaned up or repointed, anything else is
 released.
@@ -119,11 +120,13 @@ function takeProfile(args) {
 				throw new FatalError(`--profile needs a value (profiles: ${PROFILES.join(" ")})`);
 			}
 			profile = args[i + 1];
+			validateProfile(profile);
 			args.splice(i, 2);
 			continue;
 		}
 		if (arg.startsWith(`${PROFILE_FLAG}=`)) {
 			profile = arg.slice(PROFILE_FLAG.length + 1);
+			validateProfile(profile);
 			args.splice(i, 1);
 			continue;
 		}
@@ -141,12 +144,10 @@ async function main(argv) {
 
 	switch (command) {
 		case "install": {
-			const profile = takeProfile(rest);
+			takeProfile(rest);
 			validateHosts(rest);
 			migrateLegacyState(paths.linkStateFile("pi"), paths.home);
-			// No --profile keeps the recorded work skills: the default core set
-			// for new entities, never a silent removal of an earlier full install.
-			return installHosts(paths, rest, profile ?? "preserve");
+			return installHosts(paths, rest);
 		}
 		case "uninstall":
 			validateHosts(rest);

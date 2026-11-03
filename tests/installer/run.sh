@@ -152,8 +152,8 @@ outside_skill() { # a real directory outside any checkout
 	echo external > "$SANDBOX/outside/real-skill/SKILL.md"
 }
 
-# The workspace-specific skill the `core` profile leaves out (WORK_SKILLS in
-# bin/lib/entities.mjs). Real name on purpose: the installer's list is explicit.
+# Synthetic retired resource used ONLY to exercise ownership migration.
+# The real corporate resource is not copied into this public fixture.
 add_work_skill() { # <checkout-dir>
 	mkdir -p "$1/skills/kuber-nagibator"
 	printf '# kuber-nagibator\n' > "$1/skills/kuber-nagibator/SKILL.md"
@@ -1319,16 +1319,31 @@ if OUT="$(AGENT_KIT_ROOT="$SANDBOX/kit/" "$SANDBOX/kit/bin/agent-kit" uninstall 
 pass
 
 # ==============================================================================
-# T43: the install profile. A bare install is `core`: the workspace-specific
-# skill is not linked into either host, everything else is. `--profile full`
-# links it into both hosts, and `status` reports which profile each host has.
+# T43: pure Core never delivers retired resources, even in a partial old tree.
 
-new_test "T43 core profile is the default, full adds work skills"
+new_test "T43 pure Core delivery"
 use_path_empty
 make_kit "$SANDBOX/kit"
 add_work_skill "$SANDBOX/kit"
+mkdir -p "$SANDBOX/kit/extensions/inspection-channel" "$SANDBOX/kit/extensions/inspection-provider"
+printf 'export default () => {};\n' > "$SANDBOX/kit/extensions/inspection-channel/index.ts"
+printf 'export default () => {};\n' > "$SANDBOX/kit/extensions/inspection-provider/index.ts"
+# A clean personal install may resolve its local Git root but cannot fetch,
+# clone or contact any network tool.
+mkdir -p "$SANDBOX/no-network"
+REAL_GIT="$(command -v git)"
+printf '#!/bin/sh\nif [ "$3" = rev-parse ]; then exec "%s" "$@"; fi\necho contacted >> "%s"\nexit 99\n' "$REAL_GIT" "$SANDBOX/network-attempts" > "$SANDBOX/no-network/git"
+chmod +x "$SANDBOX/no-network/git"
+for command in curl wget ssh; do
+	printf '#!/bin/sh\necho contacted >> "%s"\nexit 99\n' "$SANDBOX/network-attempts" > "$SANDBOX/no-network/$command"
+	chmod +x "$SANDBOX/no-network/$command"
+done
+PATH="$SANDBOX/no-network:$PATH"
 run_install
 	assert_eq "$RC" 0 "default install"
+	assert_no_file "$SANDBOX/network-attempts" "clean install performs no network operation"
+	assert_no_file "$PI_ROOT/extensions/inspection-channel" "no old inspector autoload"
+	assert_no_file "$PI_ROOT/extensions/inspection-provider" "no provider autoload"
 	assert_link "$PI_ROOT/skills/alpha" "$SANDBOX/kit/skills/alpha" "engineering skill linked into pi"
 	assert_link "$HOME/.claude/skills/alpha" "$SANDBOX/kit/skills/alpha" "engineering skill linked into claude"
 	assert_no_file "$PI_ROOT/skills/kuber-nagibator" "core profile leaves the work skill out of pi"
@@ -1339,73 +1354,62 @@ run_install
 	esac
 OUT="$(AGENT_KIT_ROOT="$SANDBOX/kit" "$SANDBOX/kit/bin/agent-kit" status 2>&1)"
 	case "$OUT" in
-	*"profile: core (work skills not installed)"*) : ;;
+	*"profile: core"*) : ;;
 	*) fail "status should report the installed core profile, got: $OUT" ;;
 	esac
-run_install --profile full
-	assert_eq "$RC" 0 "full install"
-	assert_link "$PI_ROOT/skills/kuber-nagibator" "$SANDBOX/kit/skills/kuber-nagibator" "full profile links the work skill into pi"
-	assert_link "$HOME/.claude/skills/kuber-nagibator" "$SANDBOX/kit/skills/kuber-nagibator" "full profile links the work skill into claude"
-	case "$OUT" in
-	*"profile: full"*) : ;;
-	*) fail "install should report the full profile, got: $OUT" ;;
-	esac
-	case "$OUT" in
-	*"link    skills/kuber-nagibator"*) : ;;
-	*) fail "full install should link the work skill, got: $OUT" ;;
-	esac
-OUT="$(AGENT_KIT_ROOT="$SANDBOX/kit" "$SANDBOX/kit/bin/agent-kit" status 2>&1)"
-	case "$OUT" in
-	*"profile: full (work skills: kuber-nagibator)"*) : ;;
-	*) fail "status should report the full profile, got: $OUT" ;;
-	esac
+run_install --profile core
+	assert_eq "$RC" 0 "explicit Core install"
+	assert_no_file "$PI_ROOT/skills/kuber-nagibator" "explicit Core still excludes retired resources"
 AGENT_KIT_ROOT="$SANDBOX/kit" "$SANDBOX/kit/bin/agent-kit" help 2>&1 | grep -q -- '--profile' \
 		|| fail "help should document --profile"
 pass
 
 # ==============================================================================
-# T44: backward compatibility. An install made by a previous version linked the
-# work skill unconditionally; re-running the new installer without a profile
-# must keep it (ownership decides), while a fresh `core` install never adds it.
-# The explicit core profile is the documented way to remove it.
+# T44: old ownership fixtures exercise pruning, not the actual old updater.
+# The real baseline pull chain is covered separately by the corporate harness.
 
-new_test "T44 bare install keeps an earlier full installation"
+seed_old_work_links() {
+	for root in "$PI_ROOT" "$HOME/.claude"; do
+		mkdir -p "$root/skills"
+		ln -s "$SANDBOX/kit/skills/kuber-nagibator" "$root/skills/kuber-nagibator"
+	done
+	printf 'skills/kuber-nagibator\t%s/skills/kuber-nagibator\n' "$SANDBOX/kit" >> "$STATE"
+	printf 'skills/kuber-nagibator\t%s/skills/kuber-nagibator\n' "$SANDBOX/kit" >> "$HOME/.local/state/agent-kit/links-claude-code.tsv"
+}
+
+new_test "T44 exact-owned retired links are pruned"
 use_path_empty
 make_kit "$SANDBOX/kit"
 add_work_skill "$SANDBOX/kit"
-run_install --profile full
-	assert_eq "$RC" 0 "test setup: the previous version's full install"
-	assert_link "$PI_ROOT/skills/kuber-nagibator" "$SANDBOX/kit/skills/kuber-nagibator" "test setup: work skill linked"
 run_install
-	assert_eq "$RC" 0 "reinstall without a profile"
-	assert_link "$PI_ROOT/skills/kuber-nagibator" "$SANDBOX/kit/skills/kuber-nagibator" "pi work skill survives a bare reinstall"
-	assert_link "$HOME/.claude/skills/kuber-nagibator" "$SANDBOX/kit/skills/kuber-nagibator" "claude work skill survives a bare reinstall"
-	assert_eq "$(awk -F '\t' '$1 == "skills/kuber-nagibator"' "$STATE" | grep -c .)" 1 "ownership record kept"
-	case "$OUT" in
-	*"keeping work skills installed earlier: kuber-nagibator"*) : ;;
-	*) fail "a bare install should say it keeps the work skill, got: $OUT" ;;
-	esac
-	case "$OUT" in
-	*"0 pruned"*) : ;;
-	*) fail "a bare install must not prune anything, got: $OUT" ;;
-	esac
-run_install --profile core
-	assert_eq "$RC" 0 "explicit core install"
-	assert_no_file "$PI_ROOT/skills/kuber-nagibator" "explicit core profile removes the owned work skill link"
-	assert_no_file "$HOME/.claude/skills/kuber-nagibator" "explicit core profile removes the claude work skill link"
-	assert_link "$PI_ROOT/skills/alpha" "$SANDBOX/kit/skills/alpha" "engineering skills stay linked"
+	assert_eq "$RC" 0 "fixture setup: Core install"
+seed_old_work_links
+for name in inspection-channel inspection-provider; do
+	ln -s "$SANDBOX/kit/extensions/$name" "$PI_ROOT/extensions/$name"
+	printf 'extensions/%s\t%s/extensions/%s\n' "$name" "$SANDBOX/kit" "$name" >> "$STATE"
+done
+run_install
+	assert_eq "$RC" 0 "reconcile legacy ownership fixture"
+	assert_no_file "$PI_ROOT/skills/kuber-nagibator" "exact-owned work link removed"
+	assert_no_file "$HOME/.claude/skills/kuber-nagibator" "exact-owned claude work link removed"
+	assert_no_file "$PI_ROOT/extensions/inspection-channel" "exact-owned old channel removed"
+	assert_no_file "$PI_ROOT/extensions/inspection-provider" "exact-owned old provider removed"
+	assert_eq "$(state_entries)" 6 "old entries released using unchanged two-field state format"
+run_install
+	assert_eq "$RC" 0 "repeat reconcile"
+	assert_link "$PI_ROOT/skills/alpha" "$SANDBOX/kit/skills/alpha" "Core resources preserved"
 pass
 
 # ==============================================================================
-# T45: uninstall is profile-blind: it removes everything the ownership record
-# says agent-kit installed, a full installation's work skills included
+# T45: uninstall is profile-blind and retains exact-target ownership checks.
 
-new_test "T45 uninstall removes full-profile links"
+new_test "T45 uninstall removes only owned retired links"
 use_path_empty
 make_kit "$SANDBOX/kit"
 add_work_skill "$SANDBOX/kit"
-run_install --profile full
-	assert_eq "$RC" 0 "full install"
+run_install
+	assert_eq "$RC" 0 "fixture setup: Core install"
+seed_old_work_links
 run_uninstall
 	assert_eq "$RC" 0 "uninstall"
 	assert_no_file "$PI_ROOT/skills/kuber-nagibator" "pi work skill link removed"
@@ -1416,11 +1420,11 @@ run_uninstall
 pass
 
 # ==============================================================================
-# T46: update does not change the profile on its own. A bare update reconciles
-# the set that is already linked (work skills included); only an explicit
-# --profile forwards a different one to the freshly pulled installer.
+# T46: normal Core update still pulls and reconciles; retired full is rejected
+# before a pull, even when followed by a second profile flag.
 
-new_test "T46 update keeps the installed profile"
+new_test "T46 Core update and early full refusal"
+use_path_empty
 make_kit "$SANDBOX/seed"
 add_work_skill "$SANDBOX/seed"
 git -C "$SANDBOX/seed" init -q -b main
@@ -1428,29 +1432,29 @@ git_commit_all "$SANDBOX/seed" init
 git init --bare -q -b main "$SANDBOX/origin.git"
 git -C "$SANDBOX/seed" push -q "$SANDBOX/origin.git" main
 git clone -q "$SANDBOX/origin.git" "$SANDBOX/kit"
-if OUT="$(AGENT_KIT_ROOT="$SANDBOX/kit" "$SANDBOX/kit/bin/agent-kit" install --profile full 2>&1)"; then RC=0; else RC=$?; fi
-	assert_eq "$RC" 0 "test setup: full install from the clone"
-	assert_link "$PI_ROOT/skills/kuber-nagibator" "$SANDBOX/kit/skills/kuber-nagibator" "test setup: work skill linked"
+run_install
+	assert_eq "$RC" 0 "Core install from clone"
+OLD_HEAD="$(git -C "$SANDBOX/kit" rev-parse HEAD)"
 # upstream grows while the local checkout stays behind
 mkdir -p "$SANDBOX/seed/skills/gamma"
 echo "# gamma" > "$SANDBOX/seed/skills/gamma/SKILL.md"
 git_commit_all "$SANDBOX/seed" "add gamma"
 git -C "$SANDBOX/seed" push -q "$SANDBOX/origin.git" main
-run_update
-	assert_eq "$RC" 0 "bare update over a full install"
-	assert_link "$PI_ROOT/skills/kuber-nagibator" "$SANDBOX/kit/skills/kuber-nagibator" "the update keeps the work skill linked"
-	assert_link "$PI_ROOT/skills/gamma" "$SANDBOX/kit/skills/gamma" "the update still links new entities"
+STATE_BEFORE="$(cat "$STATE")"
+run_update --profile full --profile core
+	assert_eq "$RC" 2 "full rejects even before a later core flag"
+	assert_eq "$(git -C "$SANDBOX/kit" rev-parse HEAD)" "$OLD_HEAD" "refused update did not pull"
+	assert_eq "$(cat "$STATE")" "$STATE_BEFORE" "refused update did not reconcile"
 	case "$OUT" in
-	*"keeping work skills installed earlier: kuber-nagibator"*) : ;;
-	*) fail "the update reconcile should keep the work skill, got: $OUT" ;;
+	*"BEFORE pulling/updating the OLD Core checkout"*) : ;;
+	*) fail "full refusal must explain old updater ordering, got: $OUT" ;;
 	esac
-run_update --profile core
-	assert_eq "$RC" 0 "update with an explicit profile"
-	assert_no_file "$PI_ROOT/skills/kuber-nagibator" "an explicit core update removes the work skill"
-	assert_no_file "$HOME/.claude/skills/kuber-nagibator" "the explicit core update reaches the claude host too"
 run_update
-	assert_eq "$RC" 0 "bare update after the explicit core switch"
-	assert_no_file "$PI_ROOT/skills/kuber-nagibator" "a bare update does not re-add the work skill"
+	assert_eq "$RC" 0 "bare Core update"
+	assert_link "$PI_ROOT/skills/gamma" "$SANDBOX/kit/skills/gamma" "update links new Core entities"
+	assert_no_file "$PI_ROOT/skills/kuber-nagibator" "update does not deliver work resource"
+run_update --profile core
+	assert_eq "$RC" 0 "explicit Core update"
 pass
 
 # ==============================================================================
@@ -1464,7 +1468,7 @@ add_work_skill "$SANDBOX/kit"
 run_install --profile kuber
 	assert_eq "$RC" 2 "an unknown profile is a usage error"
 	case "$OUT" in
-	*"unknown profile: 'kuber' (profiles: core full)"*) : ;;
+	*"unknown profile: 'kuber' (profiles: core)"*) : ;;
 	*) fail "expected the profile list in the error, got: $OUT" ;;
 	esac
 	assert_no_file "$PI_ROOT/skills/alpha" "a refused profile links nothing"
@@ -1475,8 +1479,48 @@ run_install --profile
 	*) fail "expected the missing value error, got: $OUT" ;;
 	esac
 run_install --profile=full
-	assert_eq "$RC" 0 "the --profile=<value> spelling works"
-	assert_link "$PI_ROOT/skills/kuber-nagibator" "$SANDBOX/kit/skills/kuber-nagibator" "full profile through the joined spelling"
+	assert_eq "$RC" 2 "joined full spelling is rejected"
+	assert_no_file "$PI_ROOT/skills/alpha" "full refusal links nothing"
+	assert_no_file "$STATE" "full refusal writes no state"
+	assert_no_file "$HOME/.local/bin/agent-kit" "full refusal does not bootstrap launcher"
+run_install --profile=core
+	assert_eq "$RC" 0 "joined Core spelling works"
+pass
+
+# ==============================================================================
+# T48: interrupted handoff and foreign/user targets are never removed or adopted
+# by name, including a stale Core row after the corporate symlink was switched.
+
+new_test "T48 handoff and foreign retired targets survive reconcile and uninstall"
+use_path_empty
+make_kit "$SANDBOX/kit"
+run_install
+	assert_eq "$RC" 0 "fixture setup"
+seed_old_work_links
+mkdir -p "$SANDBOX/corporate/skill" "$SANDBOX/user-inspector"
+printf 'fixture\n' > "$SANDBOX/corporate/skill/SKILL.md"
+ln -sfn "$SANDBOX/corporate/skill" "$PI_ROOT/skills/kuber-nagibator"
+ln -sfn "$SANDBOX/corporate/skill" "$HOME/.claude/skills/kuber-nagibator"
+# A stale ownership row is not authority over a changed symlink.
+ln -s "$SANDBOX/user-inspector" "$PI_ROOT/extensions/inspection-provider"
+printf 'extensions/inspection-provider\t%s/extensions/inspection-provider\n' "$SANDBOX/kit" >> "$STATE"
+# An unmanaged real file at a retired name must survive too.
+printf 'user file\n' > "$PI_ROOT/extensions/inspection-channel"
+run_install
+	assert_eq "$RC" 0 "reconcile releases stale ownership"
+	assert_link "$PI_ROOT/skills/kuber-nagibator" "$SANDBOX/corporate/skill" "incomplete handoff symlink preserved"
+	assert_link "$HOME/.claude/skills/kuber-nagibator" "$SANDBOX/corporate/skill" "claude handoff symlink preserved"
+	assert_link "$PI_ROOT/extensions/inspection-provider" "$SANDBOX/user-inspector" "redirected inspector preserved"
+	assert_eq "$(cat "$PI_ROOT/extensions/inspection-channel")" "user file" "unmanaged inspector file preserved"
+	assert_eq "$(state_entries)" 6 "retired ownership released, not adopted"
+run_install
+	assert_eq "$RC" 0 "repeat reconcile after handoff"
+run_uninstall
+	assert_eq "$RC" 0 "Core uninstall after handoff"
+	assert_link "$PI_ROOT/skills/kuber-nagibator" "$SANDBOX/corporate/skill" "Core uninstall preserves handoff"
+	assert_link "$HOME/.claude/skills/kuber-nagibator" "$SANDBOX/corporate/skill" "Core uninstall preserves claude handoff"
+	assert_link "$PI_ROOT/extensions/inspection-provider" "$SANDBOX/user-inspector" "Core uninstall preserves foreign inspector"
+	assert_eq "$(cat "$PI_ROOT/extensions/inspection-channel")" "user file" "Core uninstall preserves real file"
 pass
 
 printf '\n%d passed, %d failed\n' "$PASS" "$FAIL"

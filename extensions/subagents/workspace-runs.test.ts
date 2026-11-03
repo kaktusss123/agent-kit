@@ -25,8 +25,7 @@ import { envelopeFileName, type Envelope } from "./envelope.ts";
 import { saveProgress } from "./progress.ts";
 import { loadResult } from "./result-store.ts";
 import { agentDetailView } from "./index.ts";
-import { handleInspectionRequest } from "../inspection-channel/index.ts";
-import { inspectionRegistry, setSubagentInspectionSource } from "./inspection-seam.ts";
+import { publishSubagentStateSource, type ReadOnlyStateRegistry } from "./read-only-state.ts";
 import { resetOwnDeliveryMark, setOwnDeliveryWindowMs } from "./steering-wake.ts";
 import { attachDelivery } from "./wiring.ts";
 import {
@@ -1387,13 +1386,17 @@ describe("ZAVOD-39 continuous wait and progress", () => {
 			const id = h.agentId();
 			const deadline = h.runs.runView(id)!.deadlineAt;
 			const first = saveProgress(id, reportedProgress, h.tmp);
-			const previous = inspectionRegistry.subagents;
-			setSubagentInspectionSource({ inspect: () => h.runtime.inspect(), view: (s) => agentDetailView(s, h.runs.runView(s.id)) });
+			const scope = globalThis as { [key: symbol]: ReadOnlyStateRegistry | undefined };
+			const key = Symbol.for("agentkit.read-only-state.v1");
+			const previous = scope[key]?.subagents;
+			publishSubagentStateSource(() => h.runtime.inspect().map((s) => agentDetailView(s, h.runs.runView(s.id))));
 			try {
-				const read = await handleInspectionRequest('{"v":1,"id":"live","op":"snapshot","area":"subagents"}', { cwd: ws }) as any;
-				expect(read.result.data.agents[0].run).toMatchObject({ progress: first, deadlineAt: deadline });
-				expect(read.result.data.agents[0].run).not.toHaveProperty("git_facts");
-			} finally { inspectionRegistry.subagents = previous; }
+				const read = scope[key]!.subagents!.read();
+				expect(read.status).toBe("ok");
+				if (read.status !== "ok") throw new Error("public subagent read failed");
+				expect(read.agents[0].run).toMatchObject({ progress: first, deadlineAt: deadline });
+				expect(read.agents[0].run).not.toHaveProperty("git_facts");
+			} finally { scope[key]!.subagents = previous; }
 			const released = await pending;
 			expect(released.details).toMatchObject({ status: "running", agentId: id, deadlineAt: deadline, progress: first });
 			expect(String(released.details.reason)).toContain("wait_timeout");

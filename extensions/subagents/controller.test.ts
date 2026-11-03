@@ -4,6 +4,8 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { LocalSubagentRuntime } from "./controller.ts";
+import { agentDetailView } from "./index.ts";
+import { publishSubagentStateSource, withdrawSubagentStateSource, READ_ONLY_STATE_KEY } from "./read-only-state.ts";
 import { ProviderExtensionError } from "./provider-extensions.ts";
 import {
 	formatLiveSnapshot,
@@ -971,7 +973,21 @@ describe("live session stats", () => {
 			expect(snap.stats!.tokens).toMatchObject({ input: 50000, output: 10000, total: 105000 });
 			expect(snap.stats!.cost).toBe(0.4231);
 			expect(snap.stats!.contextUsage).toMatchObject({ tokens: 87481, contextWindow: 200000, percent: 44 });
+			// Exercise the real ChildAgentProcess.snapshot -> agentDetailView path:
+			// neither consumer mutations nor one poll may alter runtime accounting.
+			publishSubagentStateSource(() => runtime.inspect(id).map((row) => agentDetailView(row)));
+			const registry = (globalThis as any)[READ_ONLY_STATE_KEY];
+			const observed = registry.subagents.read().agents[0];
+			observed.stats.cost = 999;
+			observed.stats.tokens.total = 999;
+			observed.stats.contextUsage.percent = 999;
+			expect(runtime.inspect(id)[0].stats).toEqual(snap.stats);
+			expect(runtime.inspect(id)[0].stats!.cost).toBe(0.4231);
+			expect(runtime.inspect(id)[0].stats!.tokens.total).toBe(105000);
+			expect(runtime.inspect(id)[0].stats!.contextUsage!.percent).toBe(44);
+			expect(registry.subagents.read().agents[0].stats).toEqual(snap.stats);
 		} finally {
+			withdrawSubagentStateSource();
 			await runtime.shutdown();
 			cleanup();
 		}

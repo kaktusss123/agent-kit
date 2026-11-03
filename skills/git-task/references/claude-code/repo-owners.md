@@ -8,8 +8,11 @@ A RepoOwner is an Agent-tool subagent of type `repo-owner` (agent-kit's `claude-
 
 - the absolute managed worktree path as the owner's only home: every file path absolute under it, every Bash command run as `cd <worktree> && …` (a subagent's Bash cwd is not guaranteed to persist between calls);
 - intent, the `SPEC.md` path when it exists, the worker report contract from `references/repo-owners.md`, and the instruction to change only this repository;
+- an explicit instruction to read applicable `AGENTS.md` and `CLAUDE.md` files and the relevant project skills and task instructions for that worktree before changes; missing files are normal;
 - commits only through `agent-kit task commit` (`skills/git-commit/references/claude-code/checkpoint.md`);
 - when the session is unguarded, the manual routing rules from `references/claude-code/task-workspace.md` ("Without the guard") copied into the assignment verbatim — the owner does not load this reference by itself.
+
+A Bash `cd` gives commands access to that directory; it does not restart Claude or reload the worktree's harness settings, hooks, MCP servers, extensions, or permissions. Reading a skill as text does not register it natively. Do not copy executable configuration to simulate loading it. Untracked or gitignored files from the original checkout are not automatically present in the task worktree.
 
 Do not use `isolation: worktree` for owners: it creates a separate Claude-managed worktree on its own branch instead of the task worktree. Model choice: do not pass `model` on owner dispatches (the agent definition fixes it; an explicit user model choice still wins). Role mapping: `owner` is the `repo-owner` agent, `explore` is `Explore`, `helper` is `general-purpose` with no `model`, and `review` (the independent reviewer) is a fresh `general-purpose` subagent with `model: opus`.
 

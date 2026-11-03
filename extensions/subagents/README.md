@@ -54,8 +54,7 @@ usage, and failure reason live in a persisted result file
 (`$PI_CODING_AGENT_DIR/subagents/results/by-session/<key>/<id>.json`, default
 `~/.pi/agent/subagents/results/`), fetched lazily via `subagent op=result`.
 `<key>` is the first 32 lowercase hex chars of the SHA-256 of the exact
-`parentSession` string (UTF-8); ZAVOD derives the same key, so this is a
-cross-repo contract. Results without `parentSession`, and results written by
+`parentSession` string (UTF-8). Results without `parentSession`, and results written by
 older versions, live flat at `results/<id>.json`; nothing is moved or deleted.
 Readers merge the per-session directories and the flat one by id (a terminal
 record beats `running`; between equals the later `endedAt`, else `startedAt`,
@@ -82,111 +81,13 @@ plain-text answer resumes the same child tool call. There is deliberately no
 answer timeout: an unresolved decision surfaces as a cancellation (runtime
 cancel/deadline/shutdown), never as an instruction to guess.
 
-## External controller read (`agentkit-status`)
+## Public read-only state
 
-One model-free, read-only command for an EXTERNAL RPC controller (no LLM turn,
-no session writes, no runtime instantiation for an empty read):
-
-- **Invocation**: RPC `prompt "/agentkit-status <area>"` with area
-  `subagents | task | all` (default `all`). Executed immediately, even while
-  main is streaming.
-- **Wire transport**: the structured payload rides the standard extension UI
-  input dialog with the wire title `agentkit:status` (same transport as the
-  child `ask` dialog): `extension_ui_request {method:"input",
-  title:"agentkit:status", placeholder:"<JSON payload>", timeout:15000}`.
-- **Payload shape**: `{"v":1,"area":"<area>","data":{...}}` —
-  `subagents` → `data:{agents:[agentDetail,...]}` (exactly the `subagent
-  op=status` mapping via the shared `agentDetailView()` helper; empty list if
-  the runtime was never started), `task` → `data:{task:<taskStatus result>}`
-  (the `task_status` tool's structured result for the session cwd), `all` →
-  both keys. Unknown area → `{"v":1,"area":...,"error":"..."}` over the same
-  dialog path.
-- **Controller answer**: `{id, "cancelled": true}` — there is nothing to
-  answer; the dialog resolves and the read is done. The controller never
-  forwards this dialog to a user.
-- **Timeout semantics**: the dialog carries a finite `timeout: 15000` (ms).
-  With no controller answer the dialog auto-dismisses and the read terminates
-  with no side effects (fail closed) — it never hangs.
-- **Non-RPC modes**: a brief `notify` pointing at `/subagents`; no blocking
-  interactive workflow.
-
-Live wire verification: `node live/status-verify.mjs` (real `pi --mode rpc`
-with this worktree loaded explicitly; discovery, model-free reads, live
-plain/workspace child state, `op=status` cross-check, no-controller timeout).
-
-## Read-only inspection seam (ABI 1)
-
-The live runtime is published for read-only inspection consumers through one
-process-wide registry on `globalThis[Symbol.for("agentkit.inspection")]`, owned
-by `extensions/subagents/inspection-seam.ts`. The extension registers a source
-(`inspect()` → live snapshots, `view(snapshot)` → the shared `agentDetailView`
-record) at factory time; a newer module graph takes over, and only the owning
-graph can withdraw its entry. The entry point consumers use is
-`inspectSubagents()`, which returns the view records (empty when nothing is
-registered).
-
-The registry carries `abiVersion: 1`. Consumers outside Core (for example the
-optional ZIP v1 provider, `../inspection-provider/README.md`) must treat the
-registry as opaque unless `abiVersion` matches exactly and treat any other
-value as “Core not observable”: announcing a capability requires a positive,
-version-compatible seam, never a tool name or package identity. This is a
-read-only projection: it never exposes execution, cancellation, or spawn
-through the seam.
-
-## Running-agents push (`agentkit:running-agents`)
-
-Honest running-set telemetry for an external RPC controller: the extension
-PUSHES the set of non-terminal subagents over the only existing push channel
-(fire-and-forget extension UI `setStatus`) so the host can stop treating a Pi
-session whose main turn ended as idle while background children still work
-(zavod's node folds these frames into `RuntimeSummary.runningAgents` and
-guards its idle timer with them). The set is derived from the same live
-registry `inspect()` reads — never from disk markers or guesses.
-
-Wire contract v1 (frozen with the consumer):
-
-```json
-{"type":"extension_ui_request","id":"<pi uuid>","method":"setStatus",
- "statusKey":"agentkit:running-agents","statusText":"<JSON string>"}
-```
-
-`statusText` is a JSON-encoded string:
-
-```json
-{"v":1,
- "agents":[{"id":"sa-3-x1","label":"review","state":"running"}],
- "count":1,
- "truncated":false}
-```
-
-- **Running set**: logical states `starting`, `running`, `waiting_input`
-  (non-terminal) AND a live process (`AgentSnapshot.alive`), one row per
-  agent, each row exactly `id`/`label`/`state` (label falls back to id when
-  empty). Rows sorted by `startedAt` then `id` (deterministic frames). A
-  terminal transition (completed/failed/cancelled) or a process exit removes
-  the row and triggers a frame — no row outlives its agent. The liveness
-  check matters on its own: a clean self-exit can beat the settle fetch and
-  leave a non-terminal state behind, so state alone would keep a dead agent
-  in the set forever.
-- **`count`** is the TRUE number of running agents, even when rows are
-  truncated.
-- **Byte budget**: serialized `statusText` ≤ 64 KiB. When exceeded, the
-  earliest rows that fit are kept and `truncated:true`; `count` stays true.
-- **Emission**: only when the set signature changes (over sorted
-  `[id,state,label]`; identical signature → no frame), plus one frame at
-  runtime creation with the current set (usually empty) so the host sees the
-  channel live, plus an unconditional empty-set frame at runtime shutdown
-  (best-effort, before children are killed).
-- **RPC-only gate**: `ctx.mode === "rpc"` captured from the session_start
-  ctx. TUI/print never emit — no footer noise. A missing ctx/ui, a throwing
-  registry read, or a failing `setStatus` leaves the emitter inert; telemetry
-  never throws into spawn/lifecycle handlers.
-
-Pure formatting/dedup/budget logic lives in `running-agents-push.ts`
-(unit-tested without pi); the controller exposes a runtime-wide
-records-changed hook (`onRecordsChanged`) with notifications at spawn, state
-transitions (including `waiting_input` and its resolution), terminal
-settlement, cancel/retire, process exit, and shutdown.
+The loaded extension publishes an independent versioned source for child
+identity, lifecycle, confirmed activity, history references, usage, and progress.
+Discovery, result states, ownership, and reload behavior are defined in the
+[Core read-only state contract](../../docs/read-only-state.md). Source absence
+or read failure is unknown, not an empty child list or confirmed idle.
 
 ## Child environment
 
@@ -326,7 +227,7 @@ nothing started).
   output or reasoning. It is not approval or an ownership release. Missing
   progress is explicitly not reported; missing observed active tool means
   activity unknown, not thinking/hung. Progress and observed tool durations
-  remain separate in status, result, inherited inspection and `onUpdate`,
+  remain separate in status, result, the read-only source and `onUpdate`,
   including terminal/history views. See the additive consumer contract below.
 - **Envelope**: the child reports its product outcome via `report_result`
   (typebox-validated, atomic file handoff). Any later tool call invalidates
@@ -388,13 +289,11 @@ scenarios A1–A3b, A5–A9, A11–A14 plus the fail-closed profile proof L10 �
 missing entry → no process; broken capability → readiness fails, child
 killed, task never dispatched).
 
-## ZAVOD-39 additive consumer contract
+## Workspace progress and history
 
-All additions are optional; old snapshots, outcomes and history remain valid.
-The existing producer is `agentDetailView()` → inherited inspection
-`area=subagents` → `data.agents[].run` (also `subagent op=status`). No
-`task_current` changes or new transport. The same narrow projection appears
-in `onUpdate.details.run` and ongoing `op=result.details.run`.
+Progress is optional; old snapshots, outcomes and history remain valid.
+The narrow projection appears in the [public read-only source](../../docs/read-only-state.md),
+`subagent op=status`, `onUpdate.details.run` and ongoing `op=result.details.run`.
 
 ```ts
 type Progress = {
@@ -486,9 +385,8 @@ persistence rides the existing result path — the spawn-time `running` marker
 is rewritten on every accepted change, the terminal write keeps the fragment,
 and lost-run reconciliation (`run.state: "lost"`) retains it when well-formed
 (malformed optional values are dropped, never forwarded). The projection is
-available immediately in narrow inspection `area=subagents`
-(`data.agents[].lastAssistantText`, via `agentDetailView`), `subagent
-op=status`, `subagent op=result` (`details.result` root for plain agents) and
+available immediately in the public read-only source, `subagent op=status`,
+`subagent op=result` (`details.result` root for plain agents) and
 persisted history. Absence is meaningful: the child has produced no public
 speech yet — it is never inferred from silence about blockers or activity.
 

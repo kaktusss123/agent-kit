@@ -11,9 +11,9 @@
  * workspace are retained, repos are empty).
  *
  * Persistence is the existing session history — no manifest files and no
- * writable inspection API. The host binding appends one custom entry
+ * writable reader API. The host binding appends one custom entry
  * (customType `task-workspace.current`) per successful ensure_task_repo via
- * `pi.appendEntry`; the inspection channel passes the current session branch
+ * `pi.appendEntry`; the public task source passes the current session branch
  * entries (`ctx.sessionManager.getBranch()`, root → leaf) back into this
  * module. Because the entries live in the session tree, the association
  * survives resume, forks and compaction, follows branch switching, and can
@@ -21,7 +21,7 @@
  * replaces the earlier task (last entry wins).
  *
  * Host-independent: session entries and owner references arrive as plain
- * values; the inspection channel owns the pi wiring and filters settled or
+ * values; the public task source owns the Pi wiring and filters settled or
  * history agents out before matching. Repo facts come from ./git, and
  * failed Git reads are reported as unavailable instead of clean.
  */

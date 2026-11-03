@@ -14,9 +14,11 @@
  *   agent-kit task commit        '{"repo": …, "paths": […], "message": …, …}'
  *   agent-kit task current       '{"cwd": "<abs>", "selections": [{"task": …, "worktree": …}, …]}'
  *                                read-only, harness-neutral: the `task_current` projection (same as the
- *                                inspection channel's) for the given cwd and the session's successful
+ *                                public task source's) for the given cwd and the session's successful
  *                                ensure results (in order, last wins); no owner matching. `cwd` is a
- *                                parameter here, not the process cwd.
+ *                                parameter here, not the process cwd. The answer is versioned:
+ *                                `{ "version": 1, "state": …, "identity": …, … }` — see
+ *                                docs/read-only-state.md, "Claude CLI task source".
  *   agent-kit task hook session-start | pre-tool-use   (Claude Code hooks)
  *
  * The params argument may be `-` (read JSON from stdin). The session cwd is
@@ -51,9 +53,17 @@ const POLICY_PATH = join(SHIM_DIR, "policy.mjs");
 type Params = Record<string, unknown>;
 type Flow = (params: Params, cwd: string, taskRoot: string) => Promise<Record<string, unknown>>;
 
+/** Version of the read-only `current` answer. Exact match on the consumer side:
+ *  an unknown version makes only this projection unavailable, never the
+ *  session. For an additive answer keep the version; a changed meaning bumps it. */
+export const CURRENT_CLI_VERSION = 1;
+
 const FLOWS: Record<string, Flow> = {
-  current: (p, _cwd, taskRoot) =>
-    buildCurrentTaskProjection({
+  current: async (p, _cwd, taskRoot) => ({
+    // Additive envelope: the projection keeps every existing field and meaning,
+    // and `version` identifies the answer for a foreign read-only consumer.
+    version: CURRENT_CLI_VERSION,
+    ...(await buildCurrentTaskProjection({
       cwd: p.cwd as string,
       taskRoot,
       branchEntries: ((p.selections as { task: string; worktree: string }[] | undefined) ?? []).map((data) => ({
@@ -61,7 +71,8 @@ const FLOWS: Record<string, Flow> = {
         customType: SESSION_SELECTION_ENTRY_TYPE,
         data: { task: data.task, worktree: data.worktree },
       })),
-    }) as unknown as Promise<Record<string, unknown>>,
+    })),
+  }),
   status: (p, cwd, taskRoot) => taskStatus(p as { path?: string }, cwd, { taskRoot }),
   ensure: (p, cwd, taskRoot) =>
     ensureTaskRepo(p as unknown as Parameters<typeof ensureTaskRepo>[0], cwd, {

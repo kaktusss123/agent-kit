@@ -144,8 +144,6 @@ export interface ChildMarkerFacts {
 export interface ChildAgentHost {
 	/** Route one lifecycle event (workspace registry vs generic waiters/listeners). */
 	emit(ev: SubagentModelEvent, opts?: { background?: boolean }): void;
-	/** Advisory: this child's observable record changed. */
-	changed(): void;
 	/** Persist the terminal result (or a re-persisted one). */
 	persistResult(facts: ChildResultFacts): void;
 	/** Write/refresh the spawn-time running marker. */
@@ -520,7 +518,6 @@ export class ChildAgentProcess {
 				this.pendingQuestion = undefined;
 				if (this.state === "waiting_input") {
 					this.state = "running";
-					this.host.changed();
 				}
 				if (this.eventRoute === "workspace") {
 					this.host.emit({ kind: "input_resolved", agentId: this.id, label: this.spec.label });
@@ -545,7 +542,6 @@ export class ChildAgentProcess {
 			if (!this.cancelRequested && this.state !== "starting") {
 				this.state = "running";
 			}
-			this.host.changed();
 			return;
 		}
 
@@ -583,7 +579,6 @@ export class ChildAgentProcess {
 					}
 					this.onAccepted = undefined;
 					this.settleSpawn(ev.success === true);
-					this.host.changed();
 					if (ev.success !== true) {
 						this.lastError = `initial prompt rejected: ${String(ev.error ?? "unknown")}`;
 						this.finishWithFailure(this.lastError);
@@ -720,7 +715,6 @@ export class ChildAgentProcess {
 			question: this.pendingQuestion.question,
 			request,
 		});
-		this.host.changed();
 	}
 
 	/**
@@ -767,9 +761,6 @@ export class ChildAgentProcess {
 			// settled outcome into cancelled, never emit a second terminal event.
 			this.processKilledAt = Date.now();
 			this.persistResult();
-			// Process exit of an already-terminal record: no set change, the
-			// signature dedup suppresses the frame.
-			this.host.changed();
 			return;
 		}
 		this.exitCode = info.code;
@@ -795,11 +786,7 @@ export class ChildAgentProcess {
 		if (this.retireRequested) {
 			// Terminal retire: the process is killed after a settled terminal
 			// outcome. The record keeps its terminal state and result — retire
-			// never turns a completed/failed record into cancelled. The
-			// notification is normally a no-op for the running set (already
-			// terminal; signature dedup), but a retire of a still-running
-			// record is only visible through the process death.
-			this.host.changed();
+			// never turns a completed/failed record into cancelled.
 			return;
 		}
 		if (this.runActive) {
@@ -814,13 +801,9 @@ export class ChildAgentProcess {
 			this.finishWithFailure(this.lastError);
 			return;
 		}
-		// Clean self-exit after the last run settled: the record may still be
-		// non-terminal when the exit wins the race with the settle fetch (e.g.
-		// `agent_settled` then a clean exit before `get_last_assistant_text`
-		// answers). The state never terminalizes in that case, so the process
-		// death is the only thing that removes it from the running set —
-		// publish it. Signature dedup makes the call free when nothing changed.
-		this.host.changed();
+		// Clean self-exit can beat the settle fetch, leaving a non-terminal
+		// logical state. The snapshot's independent `alive` fact disproves
+		// confirmed activity in that case.
 	}
 
 	// ------------------------------------------------------ terminal settlement
@@ -843,7 +826,6 @@ export class ChildAgentProcess {
 			label: this.spec.label,
 			summary: summarizeText(this.finalText),
 		});
-		this.host.changed();
 		// F003 idle-exit: the settled child's process would otherwise live
 		// forever. Retirement uses retire semantics — record and event stay.
 		this.armIdleExit();
@@ -856,7 +838,6 @@ export class ChildAgentProcess {
 		this.endedAt = Date.now();
 		this.persistResult();
 		this.host.emit({ kind: "failed", agentId: this.id, label: this.spec.label, reason });
-		this.host.changed();
 		// A failed-but-alive child (e.g. error stopReason at settle) is reaped
 		// by the same idle-exit path as a completed one.
 		this.armIdleExit();
@@ -867,7 +848,6 @@ export class ChildAgentProcess {
 		this.state = state;
 		this.endedAt = this.endedAt ?? Date.now();
 		this.persistResult();
-		this.host.changed();
 	}
 
 	private persistResult(): void {
@@ -1008,7 +988,6 @@ export class ChildAgentProcess {
 		if (this.eventRoute === "workspace") {
 			this.host.emit({ kind: "input_resolved", agentId: this.id, label: this.spec.label });
 		}
-		this.host.changed();
 		this.conn.send({ type: "extension_ui_response", id: q.requestId, value: answer });
 	}
 
@@ -1037,7 +1016,6 @@ export class ChildAgentProcess {
 			// waiting here unboundedly hangs shutdown (and with it the
 			// worktree-lease release that follows it).
 		}
-		this.host.changed();
 	}
 
 	/**
@@ -1062,10 +1040,6 @@ export class ChildAgentProcess {
 			// Same as cancel(): no post-SIGKILL wait — 'close' may never
 			// arrive when a grandchild holds inherited stdio open.
 		}
-		// A retire of an already-terminal record changes no running set; the
-		// signature dedup suppresses the frame. Recorded as a mutation point
-		// because retire is the only process exit that preserves terminal state.
-		this.host.changed();
 	}
 
 	// ---------------------------------------------------------------- internals
@@ -1226,10 +1200,6 @@ export function buildChildLaunch(config: ChildLaunchConfig): {
 		PI_SUBAGENT_LABEL: config.label,
 		PI_SUBAGENT_RESULTS_DIR: config.resultsDir,
 	};
-	// The inspection channel belongs only to this Pi process. Never inherit
-	// its descriptors into either plain or workspace children.
-	delete env.AGENTKIT_INSPECT_REQUEST_FD;
-	delete env.AGENTKIT_INSPECT_RESPONSE_FD;
 	return { args, env };
 }
 

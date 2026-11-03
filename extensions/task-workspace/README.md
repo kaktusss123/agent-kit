@@ -7,19 +7,19 @@ default `~/.agent-kit/tasks`. The same task identity resolves to the same
 filesystem location for every session. All state lives in git (branches +
 worktrees); no manifest files.
 
-## Session-scoped current task (inspection contract)
+## Session-scoped current task
 
-The inherited inspection channel exposes `data.task.current` for the current inspected session only; `task_current` reads this projection without scanning the host-wide catalog, while legacy `task` and `all` retain their existing catalog fields and add `current`.
+The loaded extension publishes a versioned, read-only source of the computed
+current-session projection. Discovery, result states, lifecycle, and the
+read-only CLI binding are specified in [Core's public contract](../../docs/read-only-state.md).
 
 Schema: `{ state: "none" | "ok" | "missing", identity: string | null, workspace: string | null, source: "cwd" | "session" | null, repos: Repo[] }`. `identity` is the task identity — the Git branch of the canonical call, e.g. `feat/work` — and `workspace` is its absolute directory, whose name is the identity's reversible encoding (`feat/work` → `feat~2Fwork`, marker `~` because it is invalid in a Git ref and a `~2F` path component still loads as a Node ESM module), so distinct identities never share a directory. Directories written by an older spelling (the previous `%2F` escapes, then the original `/` → `_` flattening) stay where they are and are found by identity in that order; only a workspace that does not exist yet is created under the current spelling. Each repo has `{ name, path, kind: "canonical" | "lane", slot, classification, branch, detached, headSha, upstream, dirty: { staged, unstaged, available }, gitAvailable, owners: [{ id, label, state }] }`. Failed Git reads have `gitAvailable: false` and/or `dirty.available: false`; empty dirty arrays are not proof of clean state. Missing/none always has `repos: []`. Owner references are active RepoOwner runs from this session matched to the exact repository worktree.
 
 Selection uses a managed session cwd first, otherwise the most recent successful `ensure_task_repo` custom history entry on the current session branch. Entries are appended with `pi.appendEntry`, so branch switching and forks are isolated and compaction preserves the session history. For resumed histories predating custom entries, task-workspace narrowly recognizes successful `ensure_task_repo` tool results on that branch. No association means `none`; no host-catalog or branch-name fallback is performed.
 
-`task_current` is a version-1 inherited read-only snapshot area: `{v:1, area:"task_current", data:{task:{current}}}`. Its projection is session-scoped; while no session is bound (including after shutdown), cwd-derived snapshots are disabled. Selected workspace read failures return `snapshot_failed` rather than being mislabeled `missing`; `ENOENT` remains a truthful missing workspace. `task` and `all` retain their legacy catalog fields and add `data.task.current`.
-
-### Presence marker for external inspection
-
-The projection is also exposed, reduced to a narrower versioned contract, by the optional ZIP v1 provider (`../inspection-provider/README.md`). An importable projection module is not a loaded extension — Pi can run with `--no-extensions` and only explicit `-e` entries — so the provider announces its `taskWorkspace.current` capability only on a positive presence signal from this extension. That signal is `inspection-surface.ts`: a `globalThis[Symbol.for("agentkit.task-workspace.inspection")]` marker published at registration (`{version: 1, owner}`) and withdrawn on `session_shutdown` by the owning graph only. The marker says nothing about the data; it only proves that this extension really ran in this process.
+The projection is session-scoped; without a bound session the source reports
+unavailable rather than deriving a current task from cwd. Read failures are
+not mislabeled as a missing workspace.
 
 ## Surfaces
 
