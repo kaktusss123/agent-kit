@@ -27,7 +27,7 @@
  * forks per graph. The registry therefore lives on `globalThis` under a
  * registered symbol that every module copy shares.
  */
-import { isRunningAgentState } from "./running-agents-push.ts";
+import { isRunningAgentState } from "./running-state.ts";
 
 /** Registry symbol. The version suffix is part of the registry's identity: a
  *  shape change publishes under a new symbol instead of reinterpreting v1. */

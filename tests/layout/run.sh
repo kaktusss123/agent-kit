@@ -84,6 +84,10 @@ check "no /move in active workflow surface" \
 check "no legacy inspection channel delivery" test ! -e "$REPO/extensions/inspection-channel"
 check "no inspection provider delivery" test ! -e "$REPO/extensions/inspection-provider"
 check "no inspection-only subagent seam" test ! -e "$REPO/extensions/subagents/inspection-seam.ts"
+check "no retired running-agents push module" test ! -e "$REPO/extensions/subagents/running-agents-push.ts"
+check "no retired status verification script" test ! -e "$REPO/extensions/subagents/live/status-verify.mjs"
+check "no retired status command or running-agents export in executable extensions" \
+	bash -c "! grep -rEq 'agentkit-status|agentkit:status|agentkit:running-agents|running-agents-push' '$REPO/extensions' --include='*.ts' --exclude='*.test.ts'"
 check "no inspection-only task presence marker" test ! -e "$REPO/extensions/task-workspace/inspection-surface.ts"
 check "no corporate resource delivery" test ! -e "$REPO/skills/kuber-nagibator"
 check "Core executable extensions do not know retired transport or private registries" \

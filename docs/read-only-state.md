@@ -98,7 +98,7 @@ type SubagentsResult =
 - `activity` is Core's own classification of confirmed activity:
   `"active"` when at least one observation has `alive: true` **and** a
   non-terminal state (`starting`, `running`, `waiting_input` — the runtime's
-  own running set in `extensions/subagents/running-agents-push.ts`), otherwise
+  own running set in `extensions/subagents/running-state.ts`), otherwise
   `"idle"`. Process liveness alone is not activity: a child that settled into
   `completed`/`failed`/`cancelled` keeps a live process until idle exit and
   must not make the background look busy. There is no third value: when the source is unavailable, or the

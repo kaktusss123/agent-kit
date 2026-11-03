@@ -43,19 +43,14 @@ function makeChild(opts?: {
 	results: ChildResultFacts[];
 	markers: ChildMarkerFacts[];
 	costs: Array<{ agentId: string; cost: number }>;
-	changes: () => number;
 } {
 	const harness = createFakeSpawnFactory();
 	const events: SubagentModelEvent[] = [];
 	const results: ChildResultFacts[] = [];
 	const markers: ChildMarkerFacts[] = [];
 	const costs: Array<{ agentId: string; cost: number }> = [];
-	let changes = 0;
 	const host: ChildAgentHost = {
 		emit: (ev) => events.push(ev),
-		changed: () => {
-			changes++;
-		},
 		persistResult: (facts) => results.push(facts),
 		persistMarker: (facts) => markers.push(facts),
 		costReported: (agentId, cost) => costs.push({ agentId, cost }),
@@ -78,7 +73,7 @@ function makeChild(opts?: {
 		{ ...BASE_TIMEOUTS, ...opts?.timeouts },
 		host,
 	);
-	return { child, harness, events, results, markers, costs, changes: () => changes };
+	return { child, harness, events, results, markers, costs };
 }
 
 const prompts = (harness: FakeHarness) =>

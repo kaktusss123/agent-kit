@@ -34,10 +34,6 @@
  *   a fresh run when idle. The child transcript never enters main context.
  *   Detached workspace runs deliver their completion through the same channel.
  * - `/subagents` command: compact live status table.
- * - `agentkit-status` command: model-free, read-only structured status for an
- *   external RPC controller (areas subagents | task | all). The payload rides
- *   the standard extension UI input dialog under the wire title
- *   `agentkit:status`; see README ("External controller read").
  *
  * Escalation uses the standard RPC extension UI protocol: the child bridge's
  * `ask` tool (the canonical question contract, see ../ask/contract.ts) blocks
@@ -85,18 +81,11 @@ import {
 	SPAWN_MODEL_RULE,
 	SPAWN_MODEL_SECTION,
 } from "./spawn-guidance.ts";
-import { taskStatus } from "../task-workspace/flows.ts";
-import { resolveTaskRoot } from "../task-workspace/task-root.ts";
 import type { AgentResult, AgentSnapshot } from "./types.ts";
 import {
 	publishSubagentStateSource,
 	withdrawSubagentStateSource,
 } from "./read-only-state.ts";
-import {
-	attachRunningAgentsPush,
-	type RunningAgentsPush,
-	type RunningAgentsPushContext,
-} from "./running-agents-push.ts";
 
 // =============================================================================
 // Configuration
@@ -302,14 +291,6 @@ function resolveChildProviderEntries(model: string): string[] {
 export default function (pi: ExtensionAPI) {
 	let runtime: LocalSubagentRuntime | null = null;
 	let runs: WorkspaceRuns | null = null;
-	/** Running-agents push, attached when the runtime is first created. */
-	let runningAgentsPush: RunningAgentsPush | null = null;
-	/**
-	 * Latest session_start ctx for the push gate: mode + ui. Captured per
-	 * session (a session rebind may point at a different host); undefined
-	 * before the first session_start, which keeps the emitter inert.
-	 */
-	let pushContext: RunningAgentsPushContext | undefined;
 	/** Main session file for result attribution; set on session_start and lazily on tool entry. */
 	let parentSessionFile: string | undefined;
 
@@ -327,10 +308,6 @@ export default function (pi: ExtensionAPI) {
 				onCostChange: (total) => pi.events.emit("subagents:cost", { total }),
 			});
 			attachDelivery(pi, runtime);
-			// Running-agents push: derived from the same registry inspect() reads,
-			// emitted only in RPC mode. The creation frame goes out immediately
-			// (usually the empty set) so the host sees the channel live.
-			runningAgentsPush = attachRunningAgentsPush(runtime, pushContext);
 		}
 		return runtime;
 	}
@@ -359,11 +336,6 @@ export default function (pi: ExtensionAPI) {
 		parentSessionFile =
 			(ctx.sessionManager as { getSessionFile?: () => string | undefined } | undefined)?.getSessionFile?.() ??
 			parentSessionFile;
-		// Capture the push gate/transport from THIS session (mode + ui) and let
-		// a live emitter adopt it: a rebind may point at a different host, and
-		// the RPC-only rule must follow the current ctx, not the creating one.
-		pushContext = { mode: ctx.mode, ui: ctx.ui };
-		runningAgentsPush?.updateContext(pushContext);
 		if (runtime || !parentSessionFile) return;
 		const total = sumSessionCost(defaultResultsDir(), parentSessionFile);
 		if (total > 0) pi.events.emit("subagents:cost", { total });
@@ -400,10 +372,6 @@ export default function (pi: ExtensionAPI) {
 			const w = runs;
 			runtime = null;
 			runs = null;
-			// Best-effort empty frame BEFORE the children are killed: the host
-			// must not keep a stale running count once this runtime is gone.
-			runningAgentsPush?.shutdown();
-			runningAgentsPush = null;
 			let stopped = true;
 			try {
 				await r.shutdown();
@@ -414,7 +382,6 @@ export default function (pi: ExtensionAPI) {
 			}
 			if (stopped) w?.releaseAll();
 		}
-		pushContext = undefined;
 		// Owner-checked withdrawal: a source published by a newer graph (reload or
 		// session switch) survives this older graph's shutdown.
 		withdrawSubagentStateSource();
@@ -816,19 +783,6 @@ export default function (pi: ExtensionAPI) {
 		},
 	});
 
-	// ------------------------------------ external controller read (RPC)
-
-	// Read-only structured status for an EXTERNAL RPC controller (A8 seam):
-	// the payload rides the standard extension UI input dialog, keyed by wire
-	// title exactly like the child `ask` dialog. The controller matches the
-	// title, parses the JSON placeholder, and answers `cancelled` (there is
-	// nothing to answer); the finite timeout makes the read fail closed when
-	// no controller is listening. Model-free by construction: no LLM turn, no
-	// session writes, and the runtime is never instantiated just to answer an
-	// empty read.
-	const STATUS_WIRE_TITLE = "agentkit:status";
-	const STATUS_TIMEOUT_MS = 15000;
-
 	pi.registerCommand("subagent-role", {
 		description: "Show or change which model each subagent role (explore, helper, review, owner) uses on this machine",
 		getArgumentCompletions: (prefix: string) => {
@@ -843,45 +797,6 @@ export default function (pi: ExtensionAPI) {
 				registry: ctx.modelRegistry.getAll(),
 			});
 			ctx.ui.notify(result.text, result.kind);
-		},
-	});
-
-	pi.registerCommand("agentkit-status", {
-		description:
-			"Deprecated compatibility read for external RPC controllers (model-free; args: subagents | task | all, default all)",
-		getArgumentCompletions: (prefix) => {
-			const items = ["subagents", "task", "all"].map((v) => ({ value: v, label: v }));
-			const filtered = items.filter((i) => i.value.startsWith(prefix));
-			return filtered.length > 0 ? filtered : null;
-		},
-		handler: async (args, ctx) => {
-			const area = args.trim() || "all";
-			const payload: Record<string, unknown> = { v: 1, area };
-			if (area === "subagents" || area === "task" || area === "all") {
-				const data: Record<string, unknown> = {};
-				if (area === "subagents" || area === "all") {
-					// `runtime ? inspect : []`: the read must not start the runtime.
-					data.agents = (runtime ? runtime.inspect() : []).map((s) => agentDetailView(s, runs?.runView(s.id)));
-				}
-				if (area === "task" || area === "all") {
-					data.task = await taskStatus({}, ctx.cwd, { taskRoot: resolveTaskRoot() });
-				}
-				payload.data = data;
-			} else {
-				payload.error = `unknown area: ${area} (subagents | task | all)`;
-			}
-			if (ctx.mode === "rpc") {
-				// Wire transport: the payload is the dialog placeholder; the
-				// controller answers cancelled. Timeout keeps the read finite.
-				await ctx.ui.input(STATUS_WIRE_TITLE, JSON.stringify(payload), { timeout: STATUS_TIMEOUT_MS });
-			} else if (typeof payload.error === "string") {
-				ctx.ui.notify(`agentkit-status: ${payload.error}`, "error");
-			} else {
-				ctx.ui.notify(
-					"agentkit-status serves external RPC controllers; use /subagents for a human-readable view.",
-					"info",
-				);
-			}
 		},
 	});
 
@@ -951,7 +866,7 @@ function clipSnapshot(s: ReturnType<LocalSubagentRuntime["inspect"]>[number]) {
 /**
  * One agent's structured status detail: the clipped snapshot plus, for a
  * run-owned (workspace) agent, a compact view of its run. The single mapping
- * behind `subagent op=status`, `agentkit-status` and the public state source,
+ * behind `subagent op=status` and the public state source,
  * so the surfaces cannot drift. Terminal projection includes only runtime status,
  * reason and product status/summary (full outcomes stay on `subagent op=result`).
  */
