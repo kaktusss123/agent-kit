@@ -16,8 +16,7 @@ import * as path from "node:path";
 import registerExtension, { agentDetailView } from "./index.ts";
 import type { AgentSnapshot } from "./types.ts";
 import type { WorkspaceRunView } from "./workspace-runs.ts";
-import { handleInspectionRequest } from "../inspection-channel/index.ts";
-import { inspectionRegistry, setSubagentInspectionSource } from "./inspection-seam.ts";
+import { publishSubagentStateSource, type ReadOnlyStateRegistry } from "./read-only-state.ts";
 
 interface CommandDef {
 	description?: string;
@@ -371,8 +370,10 @@ describe("agentDetailView (shared with subagent op=status)", () => {
 		});
 	});
 
-	test("inherited inspection reads the shared projection without changing state or delivering messages", async () => {
-		const previous = inspectionRegistry.subagents;
+	test("public source reads the shared projection without changing state or delivering messages", () => {
+		const scope = globalThis as { [key: symbol]: ReadOnlyStateRegistry | undefined };
+		const key = Symbol.for("agentkit.read-only-state.v1");
+		const previous = scope[key]?.subagents;
 		const { pi, messages } = makePi();
 		registerExtension(pi);
 		const snapshots = [snap({ id: "plain" }), snap({ id: "owner", state: "completed", alive: false })];
@@ -385,30 +386,27 @@ describe("agentDetailView (shared with subagent op=status)", () => {
 		};
 		const before = structuredClone({ snapshots, view });
 		let reads = 0;
-		setSubagentInspectionSource({
-			inspect: () => { reads++; return snapshots; },
-			view: (snapshot) => agentDetailView(snapshot, snapshot.id === "owner" ? view : undefined),
+		publishSubagentStateSource(() => {
+			reads++;
+			return snapshots.map((snapshot) => agentDetailView(snapshot, snapshot.id === "owner" ? view : undefined));
 		});
 		try {
-			for (const id of ["first", "second"]) {
-				expect(await handleInspectionRequest(JSON.stringify({ v: 1, id, op: "snapshot", area: "subagents" }), { cwd: "/tmp" })).toEqual({
-					v: 1, id, ok: true, result: { v: 1, area: "subagents", data: { agents: [
+			for (const _ of ["first", "second"]) {
+				expect(scope[key]!.subagents!.read()).toEqual({
+					status: "ok", activity: "active", agents: [
 						{ ...snapshots[0], task: `${"x".repeat(200)}…` },
 						{ ...snapshots[1], task: `${"x".repeat(200)}…`, run: {
 							workspace: "/tmp/ws", state: "settled", status: "done", deadlineMsLeft: 0,
 							terminal: { status: "done", result: { status: "partial", summary: "Remaining work" } },
 						} },
-					] } },
+					],
 				});
 			}
-			expect(await handleInspectionRequest('{"v":1,"id":"control","op":"cancel","area":"subagents"}', { cwd: "/tmp" })).toMatchObject({
-				ok: false, error: { code: "unknown_op" },
-			});
 			expect(reads).toBe(2);
 			expect({ snapshots, view }).toEqual(before);
 			expect(messages).toEqual([]);
 		} finally {
-			inspectionRegistry.subagents = previous;
+			scope[key]!.subagents = previous;
 		}
 	});
 });

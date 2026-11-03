@@ -81,8 +81,6 @@ test("actual Pi entry graphs publish independent sources and survive stale shutd
   } finally {
     for (const extension of loaded) await emit(extension, "session_shutdown");
     delete scope[KEY];
-    delete scope[Symbol.for("agentkit.inspection")];
-    delete scope[Symbol.for("agentkit.task-workspace.inspection")];
     if (previousRoot === undefined) delete process.env.AGENT_TASK_ROOT;
     else process.env.AGENT_TASK_ROOT = previousRoot;
     rmSync(scratch, { recursive: true, force: true });

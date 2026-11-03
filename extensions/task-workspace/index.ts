@@ -68,10 +68,6 @@ import {
   teardownTaskRepo,
 } from "./flows.ts";
 import {
-  clearTaskWorkspaceInspectionSurface,
-  markTaskWorkspaceInspectionSurface,
-} from "./inspection-surface.ts";
-import {
   bindTaskWorkspaceSession,
   clearTaskWorkspaceSession,
   publishTaskWorkspaceStateSource,
@@ -113,11 +109,11 @@ function errorResult(e: unknown): Record<string, unknown> {
   return { status: "error", message: (e as Error).message };
 }
 
-/** Session-current persistence (the ZAVOD-5 selection contract): one custom
- *  session-history entry per SUCCESSFUL ensure_task_repo, recorded through
- *  pi.appendEntry. The inspection channel reconstructs the session-scoped
- *  current-task projection from these entries via the session manager's
- *  current branch — no manifest files, no writable inspection API. Failed
+/** Session-current persistence: one custom session-history entry per
+ *  SUCCESSFUL ensure_task_repo, recorded through pi.appendEntry. The public
+ *  task source reconstructs the session-scoped current-task projection from
+ *  these entries via the session manager's current branch — no manifest files
+ *  and no writable reader API. Failed
  *  calls never append, so they never replace the current task. Best-effort:
  *  a persistence failure must not fail an already-successful ensure; the
  *  projection then truthfully reports no session association. */
@@ -228,13 +224,6 @@ export default function (pi: ExtensionAPI): void {
   // and never reads the environment itself.
   const TASK_ROOT = resolveTaskRoot();
 
-  // Read-only inspection presence (./inspection-surface): consumers announce
-  // the session-scoped `current` projection to another process only when this
-  // extension really ran in THIS process. Presence is process-wide state, so
-  // it is published at registration (every extension factory runs before Pi's
-  // first session_start) and withdrawn on shutdown by the owning graph only.
-  markTaskWorkspaceInspectionSurface();
-
   // Public read-only task source (./read-only-state, contract:
   // docs/read-only-state.md). Published here — a marker on its own is not a
   // read surface — and bound to the live session on every session_start, so
@@ -253,7 +242,6 @@ export default function (pi: ExtensionAPI): void {
   pi.on("session_shutdown", () => {
     clearTaskWorkspaceSession();
     withdrawTaskWorkspaceStateSource();
-    clearTaskWorkspaceInspectionSurface();
   });
 
   // ─── bash tool override (git PATH shim) ──────────────────────────────

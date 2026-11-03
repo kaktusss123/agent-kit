@@ -16,6 +16,12 @@
 - **расширения Pi** — субагенты, `ask`, todo, роли моделей субагентов, footer,
   web search и прочее.
 
+Это самостоятельный Core: он не поставляет инспекторы ZAVOD или корпоративные
+ресурсы и не требует ZAVOD или корпоративной сети. Независимые публичные
+источники чтения состояния описаны в [контракте](docs/read-only-state.md).
+Переход существующих установок требует согласованной миграции, а не только
+обновления этого checkout: [границы и порядок](docs/split-plan.md).
+
 Pi — основной host: всё, что требует расширений, живёт там. Claude Code
 получает skills, правила, `/spec` и `/dev`, а task-workspace runtime — в виде
 CLI `agent-kit task` и hooks skills-directory плагина `agent-kit`, который
@@ -34,10 +40,10 @@ git clone <url> ~/src/agent-kit
 ```
 
 `bin/agent-kit` — Node-скрипт без зависимостей: он работает сразу после
-`git clone`, без `npm install`, сборки и сети. Откат на прежнюю реализацию —
-запустить `bin/agent-kit` из предыдущего commit'а или из прежнего checkout'а:
-форматы state и симлинков не менялись, оба варианта читают одни и те же файлы.
-Подробности — [ADR-0012](docs/adr/adr-0012.md).
+`git clone`, без `npm install`, сборки и сети. Откат после разделения требует
+согласованного комплекта кода, конфигурации и владения ссылками, а не просто
+запуска старого установщика: [порядок миграции](docs/split-plan.md).
+Об устройстве установщика — [ADR-0012](docs/adr/adr-0012.md).
 
 `install` без аргументов линкует checkout в оба host'а и кладёт лаунчер
 `~/.local/bin/agent-kit` (симлинк на `bin/agent-kit` этого checkout'а):
@@ -57,13 +63,12 @@ git clone <url> ~/src/agent-kit
 второй позже.
 
 ```sh
-agent-kit install --profile core|full  # профиль: core (default) или full
 agent-kit install claude-code          # только Claude Code
 agent-kit install pi                   # добавить Pi к выбранным host'ам
 agent-kit install                      # обновить ссылки выбранных host'ов
 agent-kit update                       # git pull --ff-only в checkout'е, затем install
 agent-kit snapshot <dir>               # неизменяемый снимок HEAD для headless-хостов
-agent-kit status                       # выбор host'ов, профиль, состояние ссылок, лаунчер
+agent-kit status                       # выбор host'ов, состояние ссылок, лаунчер
 agent-kit uninstall pi                 # удалить ссылки одного host'а и убрать его из выбора
 agent-kit uninstall                    # удалить ссылки всех host'ов и забыть выбор
 ```
@@ -74,38 +79,12 @@ agent-kit uninstall                    # удалить ссылки всех ho
 сделанные до появления выбора, сохраняют оба host'а. Подробности —
 [ADR-0009](docs/adr/adr-0009.md).
 
-### Профили установки
-
-Рабочие навыки — узкоспециализированные навыки под конкретное рабочее
-окружение (сейчас `kuber-nagibator`), в отличие от общих инженерных. Их список
-задан явно в `bin/lib/entities.mjs` (`WORK_SKILLS`) и относится к будущему
-компоненту `agent-kit-cloudru`: на личной машине они раздувают список навыков,
-поэтому по умолчанию не ставятся.
-
-| Профиль | Что ставит |
-| --- | --- |
-| `core` (по умолчанию) | всё, кроме `WORK_SKILLS` |
-| `full` | то же плюс рабочие навыки |
-
-`uninstall` профиль не учитывает: удаляется всё, что записано в
-ownership-таблице, включая рабочие навыки, поставленные с `full`. `update` без
-флага профиль не меняет — он пересобирает тот же набор ссылок; `update
---profile core|full` передаёт профиль свежему установщику. `status` показывает
-фактический профиль каждого host'а по ownership-записи.
-
-Установка без флага на машине, где рабочий навык уже стоит (например, поставлен
-прежней версией), его не удаляет: профиль `core` только не добавляет рабочие
-навыки, а удаление решает ownership-таблица — и только для ссылки, которую
-agent-kit создал сам. Убрать рабочий навык можно явно:
-`agent-kit install --profile core`.
-
 Корни host'ов переопределяются через `PI_AGENT_DIR` и `CLAUDE_CONFIG_DIR`.
-
-Snapshot для headless-хостов от профиля не зависит: в снимок входит весь
-`extensions/` из коммита, включая провайдер инспекции; рабочие навыки не входили
-в него и раньше. План разделения репозитория на `agent-kit-core`,
-`agent-kit-inspection` и `agent-kit-cloudru` —
-[docs/split-plan.md](docs/split-plan.md).
+Корпоративные ресурсы устанавливаются отдельно; старый `--profile full`
+отклоняется с кодом 2 до изменения состояния или pull. Без флага и с
+`--profile core` устанавливается только Core. Для прежней full-установки сначала передайте
+ссылки и владение корпоративной поставке, **до pull и старого `agent-kit
+update`**: [порядок миграции](docs/split-plan.md).
 
 Модель владения. Инсталлер записывает, какие ссылки создал он сам
 (`~/.local/state/agent-kit/links*.tsv`; рядом лежит выбор host'ов `hosts`,
@@ -117,13 +96,12 @@ Snapshot для headless-хостов от профиля не зависит: �
 
 ## Snapshot для headless-хостов
 
-Headless-сессии (zavod) запускают pi с `--no-extensions` и явными путями
-`-e`, поэтому не читают живой checkout: им нужен неизменяемый набор
-расширений. `agent-kit snapshot <releases-dir>` создаёт такой набор и
-переключает на него стабильный указатель:
+Если headless-хосту нужен закреплённый набор расширений Core, команда
+`agent-kit snapshot <releases-dir>` создаёт снимок и переключает на него
+стабильный указатель. Снимок не поставляет внешнюю инспекцию:
 
 ```sh
-agent-kit snapshot ~/.local/share/zavod/agent-kit-releases
+agent-kit snapshot ~/.local/share/agent-kit-releases
 ```
 
 Снимок лежит в `<releases-dir>/<full HEAD sha>/` и содержит копию
@@ -373,8 +351,6 @@ trash-имя (длина которого больше не растёт) убе
 | [`continue-shortcut`](extensions/continue-shortcut/README.md) | Ввод `.` или `c` — скрытая команда «продолжай незаконченное» вместо сообщения |
 | [`update-check`](extensions/update-check/index.ts) | Тост при старте, если checkout отстал от upstream или стоит не на основной ветке |
 | `proxy-toggle.ts`, [`proxy`](extensions/proxy/proxy-lib.ts) | `/proxy on\|off\|status`, адрес из `PI_PROXY`; настройка доходит и до живых субагентов |
-| [`inspection-provider`](extensions/inspection-provider/README.md) | Read-only поставщик ZIP v1 (`children.snapshot`, `children.historyRef`, `usage.children`, `background.status`, `taskWorkspace.current`) в реестр моста ZAVOD; без реестра полностью инертен, без Core не объявляет Core-capabilities |
-| [`inspection-channel`](extensions/inspection-channel/README.md) | DEPRECATED: legacy area-канал инспекции субагентов и задач по унаследованным fd ([ADR-0006](docs/adr/adr-0006.md)); заменён `inspection-provider` для ZAVOD-узлов, для остальных не менялся |
 | [`agent-events`](extensions/agent-events/README.md) | Телеметрия жизненного цикла в Warp (OSC 777) |
 
 Субагенты запускаются как `pi --mode rpc --no-extensions` со своим
@@ -486,10 +462,6 @@ Claude Code получает:
 - [`security-review`](skills/security-review/SKILL.md) — security-линза
 - [`pr-babysitter`](skills/pr-babysitter/SKILL.md) — ночное дежурство по PR флота агентов: ревью, починка красного CI, мерж в порядке зависимостей и безопасный деплой без убийства живых workload'ов
 
-Эксплуатация:
-
-- [`kuber-nagibator`](skills/kuber-nagibator/SKILL.md) — доступ к data-plane кластерам DataPlatform через CLI `kn`: список кластеров, tunnel через control-plane, kubectl внутри кластера
-
 Дизайн:
 
 - [`simple-design`](skills/simple-design/SKILL.md) — минимально достаточный дизайн и где живут ответственность, состояние, интерфейсы и швы, когда сложность оправдана
@@ -565,12 +537,29 @@ ln -s .pi-test-runtime/node_modules/jiti node_modules/jiti
 изменяет проверяемое усечение, а симлинк не подходит проверкам `realpath`.
 Удаляйте только созданные проверкой временные каталоги.
 
+Дополнительная проверка согласованной передачи с отдельно подготовленной
+корпоративной поставкой:
+
+```sh
+AGENT_KIT_CLOUDRU_REPO=/path/to/verified/corporate-checkout \
+  tests/installer/handoff-chain.sh
+```
+
+Она читает закоммиченные деревья: реальный старый Core, текущий `HEAD` Core и
+`HEAD` явно указанной поставки. Установка, передача и настоящий старый
+`update` с pull выполняются только в одноразовом `HOME` с локальным Git remote.
+Проверяются отрицательный контроль без передачи и независимое удаление обоих
+продуктов. Это проверка на временных установках, не миграция рабочей машины;
+корпоративное содержимое в Core не копируется. Обычные проверки Core не требуют
+корпоративного checkout или сети.
+
 Live-проверки в
 `extensions/*/live/` запускают настоящий `pi` и в обычный прогон не входят.
 
 ## Документация
 
-- [`docs/split-plan.md`](docs/split-plan.md) — план разделения на core / inspection / cloudru (профили установки, миграция ссылок, критерии выделения)
+- [`docs/split-plan.md`](docs/split-plan.md) — границы Core и безопасная миграция установок
+- [`docs/read-only-state.md`](docs/read-only-state.md) — публичный контракт чтения состояния Core
 - [`docs/design-progress.md`](docs/design-progress.md) — индекс архитектурных этапов A1–A9 и их статус
 - [`docs/adr/`](docs/adr/) — решения:
   - [0001](docs/adr/adr-0001.md) — agent-kit как самостоятельный Pi-first фреймворк
@@ -578,7 +567,7 @@ Live-проверки в
   - [0003](docs/adr/adr-0003.md) — проверка settled-состояния при `done` RepoOwner
   - [0004](docs/adr/adr-0004.md) — восстановление после падения через Pi session + Git, без durable Run runtime
   - [0005](docs/adr/adr-0005.md) — headless-режим на штатном `pi --mode rpc`
-  - [0006](docs/adr/adr-0006.md) — read-only канал инспекции
+  - [0006](docs/adr/adr-0006.md) — историческое решение о прежнем канале инспекции
   - [0007](docs/adr/adr-0007.md) — один checkout в несколько host'ов
   - [0008](docs/adr/adr-0008.md) — task-workspace runtime в Claude Code: CLI + плагин
   - [0009](docs/adr/adr-0009.md) — выбор host'ов при установке

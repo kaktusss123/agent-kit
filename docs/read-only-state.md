@@ -363,9 +363,7 @@ by the child runtime.
 | Task source: publish/bind/generation, `unavailable` vs `none`, injected projection failure, source-rejected stale completion, cross-graph generation uniqueness, owner-enrichment through the subagents slot | `extensions/task-workspace/read-only-state.test.ts` |
 | CLI binding: exact `version` on every read-only answer, unchanged projection fields and usage/error contract | `extensions/task-workspace/cli.test.ts` |
 
-Not part of this contract: the legacy `agentkit.inspection` seam
-(`extensions/subagents/inspection-seam.ts`), the task-workspace presence
-marker (`extensions/task-workspace/inspection-surface.ts`), the legacy
-inspection channel, and any inspection provider. Those are internal
-implementation surfaces with no foreign consumer contract and no removal in
-this checkpoint.
+The former `agentkit.inspection` seam, task-workspace presence marker,
+legacy inspection channel, and inspection provider are removed from the final
+Core split. They are not part of this contract; consumers use the independent
+read-only sources documented above.

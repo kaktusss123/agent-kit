@@ -79,5 +79,17 @@ check "active tree has no retired task-root/harness terminology" \
 check "no /move in active workflow surface" \
 	bash -c "! grep -rnqE '(^|[\`[:space:]])/move\b' '$REPO/skills' '$REPO/prompts'"
 
+# --- pure Core boundary ------------------------------------------------------
+
+check "no legacy inspection channel delivery" test ! -e "$REPO/extensions/inspection-channel"
+check "no inspection provider delivery" test ! -e "$REPO/extensions/inspection-provider"
+check "no inspection-only subagent seam" test ! -e "$REPO/extensions/subagents/inspection-seam.ts"
+check "no inspection-only task presence marker" test ! -e "$REPO/extensions/task-workspace/inspection-surface.ts"
+check "no corporate resource delivery" test ! -e "$REPO/skills/kuber-nagibator"
+check "Core executable extensions do not know retired transport or private registries" \
+	bash -c "! grep -rEq 'AGENTKIT_INSPECT_|zavod[.]inspection|agentkit[.]inspection|agentkit[.]task-workspace[.]inspection|inspection-seam[.]ts|inspection-surface[.]ts' '$REPO/extensions' --include='*.ts' --exclude='*.test.ts'"
+check "public read-only sources remain independently delivered" \
+	bash -c "test -f '$REPO/extensions/subagents/read-only-state.ts' && test -f '$REPO/extensions/task-workspace/read-only-state.ts' && test -f '$REPO/docs/read-only-state.md'"
+
 printf '\n%d passed, %d failed\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]

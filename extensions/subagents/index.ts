@@ -88,7 +88,6 @@ import {
 import { taskStatus } from "../task-workspace/flows.ts";
 import { resolveTaskRoot } from "../task-workspace/task-root.ts";
 import type { AgentResult, AgentSnapshot } from "./types.ts";
-import { setSubagentInspectionSource } from "./inspection-seam.ts";
 import {
 	publishSubagentStateSource,
 	withdrawSubagentStateSource,
@@ -343,14 +342,11 @@ export default function (pi: ExtensionAPI) {
 		return runs;
 	}
 
-	// One projection feeds every reader: the inherited inspection seam (legacy
-	// channel) and the published read-only state source (docs/read-only-state.md).
-	// Both read the same runtime and never own it, so neither can create a second
-	// registry, and the public source loses no observation the seam carries.
+	// The public source uses the same projection as local status, without owning
+	// or starting the runtime (contract: docs/read-only-state.md).
 	const inspectSnapshots = () => (runtime ? runtime.inspect() : []);
 	const viewSnapshot = (snapshot: ReturnType<typeof inspectSnapshots>[number]) =>
 		agentDetailView(snapshot, runs?.runView(snapshot.id));
-	setSubagentInspectionSource({ inspect: inspectSnapshots, view: viewSnapshot });
 	publishSubagentStateSource(() => inspectSnapshots().map(viewSnapshot));
 
 	// Cost rollup: before the runtime exists, reconstruct this session's
@@ -419,7 +415,6 @@ export default function (pi: ExtensionAPI) {
 			if (stopped) w?.releaseAll();
 		}
 		pushContext = undefined;
-		setSubagentInspectionSource(undefined);
 		// Owner-checked withdrawal: a source published by a newer graph (reload or
 		// session switch) survives this older graph's shutdown.
 		withdrawSubagentStateSource();
@@ -956,7 +951,7 @@ function clipSnapshot(s: ReturnType<LocalSubagentRuntime["inspect"]>[number]) {
 /**
  * One agent's structured status detail: the clipped snapshot plus, for a
  * run-owned (workspace) agent, a compact view of its run. The single mapping
- * behind `subagent op=status`, `agentkit-status` and inherited inspection,
+ * behind `subagent op=status`, `agentkit-status` and the public state source,
  * so the surfaces cannot drift. Terminal projection includes only runtime status,
  * reason and product status/summary (full outcomes stay on `subagent op=result`).
  */

@@ -46,8 +46,9 @@ export async function update(repo, profile) {
 	}
 
 	const installer = join(repo, "bin", "agent-kit");
-	// The profile is only forwarded when the command named one: a bare update
-	// reconciles the set that is already linked instead of quietly switching it.
+	// Only the accepted Core profile can reach this point. The dispatcher
+	// rejects retired profiles before any Git operation; old updaters do NOT
+	// have that protection, so corporate handoff must precede their pull.
 	const args = profile ? ["install", "--profile", profile] : ["install"];
 	return await runChild(installer, args, {
 		env: { ...process.env, AGENT_KIT_ROOT: repo },

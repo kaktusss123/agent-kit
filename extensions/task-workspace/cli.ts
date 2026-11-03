@@ -14,7 +14,7 @@
  *   agent-kit task commit        '{"repo": …, "paths": […], "message": …, …}'
  *   agent-kit task current       '{"cwd": "<abs>", "selections": [{"task": …, "worktree": …}, …]}'
  *                                read-only, harness-neutral: the `task_current` projection (same as the
- *                                inspection channel's) for the given cwd and the session's successful
+ *                                public task source's) for the given cwd and the session's successful
  *                                ensure results (in order, last wins); no owner matching. `cwd` is a
  *                                parameter here, not the process cwd. The answer is versioned:
  *                                `{ "version": 1, "state": …, "identity": …, … }` — see

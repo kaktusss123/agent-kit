@@ -71,10 +71,6 @@ async function spawnProfiled(
 describe("per-spawn additionalExtensions", () => {
 	test("profiled child argv carries repeated -e entries and keeps the base bridge", async () => {
 		const { harness, runtime, cleanup } = makeRuntime();
-		const previousRequestFd = process.env.AGENTKIT_INSPECT_REQUEST_FD;
-		const previousResponseFd = process.env.AGENTKIT_INSPECT_RESPONSE_FD;
-		process.env.AGENTKIT_INSPECT_REQUEST_FD = "41";
-		process.env.AGENTKIT_INSPECT_RESPONSE_FD = "42";
 		try {
 			const { pending, proc } = await spawnProfiled(runtime, harness);
 			const args = proc.spec.args;
@@ -85,26 +81,16 @@ describe("per-spawn additionalExtensions", () => {
 			// No readiness data travels to the child: the contract stays
 			// main-side, the probe only reports the observed tool set.
 			expect(proc.spec.env?.PI_SUBAGENT_READINESS_CONTRACT).toBeUndefined();
-			expect(proc.spec.env?.AGENTKIT_INSPECT_REQUEST_FD).toBeUndefined();
-			expect(proc.spec.env?.AGENTKIT_INSPECT_RESPONSE_FD).toBeUndefined();
 			await runtime.shutdown();
 			await pending.catch(() => {});
 			void autoAcceptPrompt;
 		} finally {
-			if (previousRequestFd === undefined) delete process.env.AGENTKIT_INSPECT_REQUEST_FD;
-			else process.env.AGENTKIT_INSPECT_REQUEST_FD = previousRequestFd;
-			if (previousResponseFd === undefined) delete process.env.AGENTKIT_INSPECT_RESPONSE_FD;
-			else process.env.AGENTKIT_INSPECT_RESPONSE_FD = previousResponseFd;
 			cleanup();
 		}
 	});
 
 	test("generic children have byte-identical argv (no extra -e, no readiness env)", async () => {
 		const { harness, runtime, cleanup } = makeRuntime();
-		const previousRequestFd = process.env.AGENTKIT_INSPECT_REQUEST_FD;
-		const previousResponseFd = process.env.AGENTKIT_INSPECT_RESPONSE_FD;
-		process.env.AGENTKIT_INSPECT_REQUEST_FD = "41";
-		process.env.AGENTKIT_INSPECT_RESPONSE_FD = "42";
 		try {
 			const pending = runtime.spawn({ task: "t", label: "g" });
 			await tick(5);
@@ -112,17 +98,10 @@ describe("per-spawn additionalExtensions", () => {
 			const exts = proc.spec.args.map((a, i) => (a === "-e" ? proc.spec.args[i + 1] : null)).filter(Boolean);
 			// The base profile (bridge + web_search) is the whole generic child.
 			expect(exts).toEqual(["/fake/bridge.ts", "/fake/web-search.ts"]);
-			// The inherited inspection channel is private to the parent in both
-			// generic and workspace spawn paths.
-			expect(proc.spec.env?.AGENTKIT_INSPECT_REQUEST_FD).toBeUndefined();
-			expect(proc.spec.env?.AGENTKIT_INSPECT_RESPONSE_FD).toBeUndefined();
+			expect(proc.spec.env?.PI_SUBAGENT_READINESS_CONTRACT).toBeUndefined();
 			await runtime.shutdown();
 			await pending.catch(() => {});
 		} finally {
-			if (previousRequestFd === undefined) delete process.env.AGENTKIT_INSPECT_REQUEST_FD;
-			else process.env.AGENTKIT_INSPECT_REQUEST_FD = previousRequestFd;
-			if (previousResponseFd === undefined) delete process.env.AGENTKIT_INSPECT_RESPONSE_FD;
-			else process.env.AGENTKIT_INSPECT_RESPONSE_FD = previousResponseFd;
 			cleanup();
 		}
 	});

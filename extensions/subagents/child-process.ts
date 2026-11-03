@@ -1226,10 +1226,6 @@ export function buildChildLaunch(config: ChildLaunchConfig): {
 		PI_SUBAGENT_LABEL: config.label,
 		PI_SUBAGENT_RESULTS_DIR: config.resultsDir,
 	};
-	// The inspection channel belongs only to this Pi process. Never inherit
-	// its descriptors into either plain or workspace children.
-	delete env.AGENTKIT_INSPECT_REQUEST_FD;
-	delete env.AGENTKIT_INSPECT_RESPONSE_FD;
 	return { args, env };
 }
 
