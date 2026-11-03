@@ -37,6 +37,22 @@ oh-my-pi's `ask` (reference contract) and shared by every role:
   `AskBackend` (rich dialog / RPC fallback / fail-closed).
 - `index.ts` — extension entry wiring the backend per execute context.
 
+## RPC invocation identity
+
+Each `rpcFallbackAsk` call creates one opaque UUID (36 characters) in the
+optional `invocationId` property of its `kind: "meta"` wire items. It stays
+unchanged across questions, multi-select toggles, free-form input back,
+review, per-question revision and revise-all. Identical repeated calls get
+different IDs. Clients can scope drafts by session, invocation and question;
+the current RPC request ID still addresses each response.
+
+This is runtime metadata only: it is not a model argument, answer, visible
+label, title or input placeholder. Wire version remains `v: 1`; existing
+extra-field-tolerant consumers ignore it. Legacy dialogs without the field
+remain parseable but cannot guarantee stable cross-dialog draft identity.
+The guarantee applies to newly produced dialogs from the updated RPC
+fallback; TUI and child-to-parent escalation are unchanged.
+
 ## Argument repair
 
 Both registration sites (Main `tool.ts`, child `bridge-ask.ts`) set
