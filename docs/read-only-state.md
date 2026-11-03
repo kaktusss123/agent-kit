@@ -110,8 +110,10 @@ type SubagentsResult =
 
 ### `AgentObservation` (one child)
 
-The record is Core's existing `agentDetailView` projection, published
-unchanged so no observation the current Core surfaces are lost. Fields are
+The record is Core's existing `agentDetailView` projection, published as a
+deeply detached snapshot so no observation the current Core surfaces are lost.
+Mutating a returned array or any nested object cannot mutate Core or a later
+read. Failure to clone a snapshot is `snapshot_failed`, not a partial result. Fields are
 optional except `id`, `label`, `state`, `alive`; a field that Core cannot know
 is absent (never `0`, `""` or `false` as a stand-in).
 
@@ -130,13 +132,57 @@ is absent (never `0`, `""` or `false` as a stand-in).
 | `sessionFile` | `string` | Child transcript path — a hint only, see "Read authorization". |
 | `sessionId` | `string` | Child session id. |
 | `pendingQuestion` | `string` | Rendered question while `waiting_input`. |
-| `lastError`, `signal` | `string` | Failure text and terminating signal. |
+| `lastError` | `string` | Failure text. |
+| `signal` | `string \| null` | Terminating signal; null while unknown or not signalled. |
 | `exitCode` | `number \| null` | Process exit code; `null` while unknown/running. |
 | `stats` | `{ tokens: { input, output, total, cacheRead?, cacheWrite? }, cost?, contextUsage? }` | Child-only spend and context fill. Absent until the child reports once, so absent is unknown, not zero. |
 | `activeTool` | `{ name, summary?, startedAt, endedAt? }` | Tool currently executing in the child. |
 | `recentActivity` | `{ name, summary?, startedAt, endedAt? }[]` | Bounded newest-last finished tools. Telemetry, not a log. |
 | `lastAssistantText` | `{ text, updatedAt }` | Bounded last public assistant text. Absent until the first accepted message. |
-| `run` | `{ workspace, state, deadlineMsLeft, deadlineAt?, progress?, progressAgeMs?, status?, terminal?, ladder? }` | Compact workspace-run view, present only for run-owned (workspace) children. `state` is the run lifecycle state; `result` is a bounded terminal projection. |
+| `run` | `RunObservation` (below) | Compact workspace-run view, present only for run-owned (workspace) children. The bounded product result is at `run.terminal.result`, never `run.result`. |
+
+Exact nested declarations (all token counts are numbers of tokens, not bytes):
+
+```ts
+type SessionStats = {
+  tokens: { input: number; output: number; total: number; cacheRead?: number; cacheWrite?: number };
+  cost?: number; // cumulative child-session cost in USD, not cents
+  contextUsage?: {
+    tokens?: number | null; // estimate; null immediately after compaction
+    contextWindow?: number; // model context limit in tokens
+    percent?: number | null; // percentage, 0..100 scale (not a fraction); null after compaction
+  };
+};
+type ProductStatus = "done" | "partial" | "blocked";
+type RunObservation = {
+  workspace: string;
+  state: "running" | "waiting_input" | "settling" | "terminating" | "settled";
+  deadlineMsLeft: number; // remaining milliseconds, clamped to >= 0
+  deadlineAt?: number; // epoch milliseconds
+  progress?: {
+    achieved: string;
+    currentWork: string;
+    blocker?: string; // absent if no blocker is known
+    nextStep: string;
+    updatedAt: number; // epoch milliseconds assigned by Core
+  };
+  progressAgeMs?: number; // non-negative milliseconds since progress.updatedAt
+  status?: ProductStatus; // present for settled runs, same as terminal.status
+  terminal?: {
+    status: ProductStatus; // runtime outcome, can differ from product result
+    reason?: string;
+    result?: { status: ProductStatus; summary: string }; // bounded product report
+  };
+  ladder?: { step: number; max: number }; // retry step, 1..max; current max is 3
+};
+```
+
+Progress strings are normalized (control characters removed, whitespace
+collapsed) and bounded to 1000 characters per input field. Unknown progress is
+absent. `terminal` is absent before settlement; `terminal.result` is absent
+when no valid report exists. No full report, verification array, Git facts or
+question payload is exposed by the compact run projection. `ladder` describes
+report-recovery attempts, not a child lifecycle or product status.
 
 `stats` never includes the parent session, and the source never sums children
 into a total. A consumer that displays a total sums the per-child rows itself
@@ -160,7 +206,8 @@ type TaskWorkspaceResult =
   `session_shutdown`. It is not "no task".
 - `status: "unavailable"` with `reason: "session_changed"` means the session was
   switched, reloaded or shut down while this projection was being computed. The
-  source rejects that completion itself, so a stale answer never carries a
+  source rejects that completion itself (including a projection that rejects
+  after the session changes), so a stale answer never carries a
   projection that a consumer could mistake for current.
 - `status: "ok"` carries the projection; "no association" is
   `projection.state: "none"`, an association whose workspace vanished is
@@ -200,7 +247,7 @@ the subagents source.
 The generation counter lives in the shared registry, so it is **process-wide**
 and shared by every loader graph: a reloaded graph and an older graph that is
 still finishing a read can never mint the same number. It increases on every
-session bind and on every session end (clear/shutdown), never decreases and
+session bind and on the current owner's session end (clear/shutdown), never decreases and
 never resets; 0 means this process never bound a session. `read()` captures the
 binding and the generation at read start, the result carries that
 `generation`, and `sessionGeneration()` reports the process-wide current value.
@@ -233,7 +280,11 @@ This is the registration-ownership rule both sources implement:
    graph's own**. A stale graph's shutdown therefore cannot delete the source
    published by a newer graph, and a stale graph cannot resurrect a withdrawn
    record by publishing after its own shutdown.
-4. After withdrawal the source is unavailable; a consumer treats it as unknown
+4. A stale graph may clear its own binding but cannot advance the shared
+   generation: its shutdown cannot invalidate an in-flight read of the new
+   owner. Successful and failed projections both check staleness before
+   returning their outcome.
+5. After withdrawal the source is unavailable; a consumer treats it as unknown
    and keeps its own lifecycle policy. It must not read the old projection
    again, cache it, or reconstruct it.
 
@@ -307,7 +358,8 @@ by the child runtime.
 | Guarantee | Test |
 | --- | --- |
 | Both copies (subagents, task-workspace) publish into one shared registry and agree on symbol/versions; discovery needs no Core import | `extensions/subagents/read-only-state-contract.test.ts` |
-| Publisher: empty vs rich observations, activity classification, error vs empty, ownership on reload/shutdown, version gating | `extensions/subagents/read-only-state.test.ts` |
+| Actual Pi entry loader, forced-transform jiti graphs, gated stale reads, stale shutdown, real isolated Pi RPC command-driven reload with zero model turns | `extensions/subagents/read-only-state-loader.test.ts` |
+| Publisher: empty vs rich observations, detached nested values, exact compact run shape, activity classification, error vs empty, ownership on reload/shutdown, version gating | `extensions/subagents/read-only-state.test.ts` |
 | Task source: publish/bind/generation, `unavailable` vs `none`, injected projection failure, source-rejected stale completion, cross-graph generation uniqueness, owner-enrichment through the subagents slot | `extensions/task-workspace/read-only-state.test.ts` |
 | CLI binding: exact `version` on every read-only answer, unchanged projection fields and usage/error contract | `extensions/task-workspace/cli.test.ts` |
 

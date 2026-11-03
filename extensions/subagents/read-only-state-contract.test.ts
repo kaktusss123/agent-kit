@@ -1,10 +1,9 @@
 /**
  * Contract test: the two Core sources are discovered through ONE registered
  * symbol, are independent, and the two module copies agree on the registry
- * identity. This is the cross-loader property expressed without a jiti graph:
- * the task-workspace copy and the subagents copy are separate module
- * instances (same as Pi's per-entry loader graphs), so agreement can only come
- * from the registered symbol and the documented versions.
+ * identity. This fast check uses native Node modules, not Pi's loader. The
+ * actual per-entry Pi/jiti graphs and isolated RPC reload are exercised by
+ * read-only-state-loader.test.ts; native imports alone do not prove them.
  */
 import { after as afterAll, describe, test } from "node:test";
 import { expect } from "../../tests/support/expect.ts";

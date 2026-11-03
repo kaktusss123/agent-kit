@@ -138,7 +138,14 @@ function readSnapshot(read: () => SubagentObservation[]): SubagentReadResult {
 	if (!Array.isArray(agents)) {
 		return { status: "error", error: { code: "invalid_snapshot", message: "the subagent projection is not a list" } };
 	}
-	const observations = agents as SubagentObservation[];
+	// Runtime snapshots can retain nested stats/activity references. A foreign
+	// reader receives detached values, never a write path into Core's state.
+	let observations: SubagentObservation[];
+	try {
+		observations = structuredClone(agents) as SubagentObservation[];
+	} catch (e) {
+		return { status: "error", error: { code: "snapshot_failed", message: messageOf(e) } };
+	}
 	return {
 		status: "ok",
 		activity: observations.some(isConfirmedActive) ? "active" : "idle",

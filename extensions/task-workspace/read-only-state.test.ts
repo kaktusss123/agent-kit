@@ -156,6 +156,22 @@ describe("task-workspace read-only source: session binding", () => {
 });
 
 describe("task-workspace read-only source: errors are distinct", () => {
+	test("a rejected projection from the previous binding is unavailable, not a current error", async () => {
+		let reject!: (error: Error) => void;
+		let enter!: () => void;
+		const started = new Promise<void>((resolve) => { enter = resolve; });
+		const gate = new Promise<never>((_resolve, fail) => { reject = fail; });
+		source.publishTaskWorkspaceStateSource({ taskRoot: "/tmp/reject", project: async () => {
+			enter();
+			return gate;
+		} });
+		source.bindTaskWorkspaceSession({ cwd: "/tmp/old", branchEntries: () => [] });
+		const pending = slot().read();
+		await started;
+		source.bindTaskWorkspaceSession({ cwd: "/tmp/new", branchEntries: () => [] });
+		reject(new Error("old projection failed"));
+		expect(await pending).toEqual({ status: "unavailable", reason: "session_changed" });
+	});
 	test("a failing projection is an explicit error result", async () => {
 		source.publishTaskWorkspaceStateSource({
 			taskRoot: "/tmp/error",
@@ -172,6 +188,34 @@ describe("task-workspace read-only source: errors are distinct", () => {
 });
 
 describe("task-workspace read-only source: reload ownership", () => {
+	for (const operation of ["clearTaskWorkspaceSession", "withdrawTaskWorkspaceStateSource"] as const) {
+		test(`stale ${operation} does not invalidate the new owner's pending read`, async () => {
+			const first = await import(`${modulePath}?copy=${operation}-old`);
+			const second = await import(`${modulePath}?copy=${operation}-new`);
+			first.publishTaskWorkspaceStateSource({ taskRoot: "/tmp/old" });
+			first.bindTaskWorkspaceSession({ cwd: "/tmp/old", branchEntries: () => [] });
+			let release!: () => void;
+			let enter!: () => void;
+			const gate = new Promise<void>((resolve) => { release = resolve; });
+			const started = new Promise<void>((resolve) => { enter = resolve; });
+			second.publishTaskWorkspaceStateSource({ taskRoot: "/tmp/new", project: async () => {
+				enter();
+				await gate;
+				return { state: "none", identity: null, workspace: null, source: null, repos: [] };
+			} });
+			second.bindTaskWorkspaceSession({ cwd: "/tmp/new", branchEntries: () => [] });
+			const current = slot();
+			const generation = current.sessionGeneration();
+			const pending = current.read();
+			await started;
+			first[operation]();
+			expect(slot()).toBe(current);
+			expect(current.sessionGeneration()).toBe(generation);
+			release();
+			expect((await pending).status).toBe("ok");
+			second.withdrawTaskWorkspaceStateSource();
+		});
+	}
 	test("a reloaded graph wins and a stale shutdown keeps it", async () => {
 		const first = (await import(`${modulePath}?copy=first`)) as typeof source;
 		const second = (await import(`${modulePath}?copy=second`)) as typeof source;

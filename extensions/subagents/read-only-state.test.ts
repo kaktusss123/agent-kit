@@ -6,6 +6,9 @@
 import { after as afterAll, beforeEach, describe, test } from "node:test";
 import { expect } from "../../tests/support/expect.ts";
 import * as path from "node:path";
+import { agentDetailView } from "./index.ts";
+import { compactRunView } from "./workspace-runs.ts";
+import type { AgentSnapshot } from "./types.ts";
 
 const KEY = Symbol.for("agentkit.read-only-state.v1");
 const modulePath = path.join(import.meta.dirname, "read-only-state.ts");
@@ -75,6 +78,43 @@ describe("subagents read-only source: publication", () => {
 		expect(result.activity).toBe("active");
 		// Identity, lifecycle, activity, history ref and spend all survive verbatim.
 		expect(result.agents).toEqual([rich]);
+	});
+
+	test("real detail projection detaches nested stats, progress and terminal result on every read", () => {
+		// ChildAgentProcess.snapshot retains this nested stats object; detail
+		// projection is shallow too. The public publisher owns detachment.
+		const snapshot: AgentSnapshot = {
+			id: "rich", label: "owner", state: "completed", alive: true,
+			task: "probe", cwd: "/tmp/ws", startedAt: 1, lastActivityAt: 2, elapsedMs: 1,
+			signal: null, exitCode: null,
+			stats: { tokens: { input: 5, output: 6, total: 11, cacheRead: 2, cacheWrite: 1 }, cost: 0.01,
+				contextUsage: { tokens: null, contextWindow: 200000, percent: null } },
+		};
+		const progress = { achieved: "checked", currentWork: "verify", nextStep: "report", updatedAt: 3 };
+		const run = {
+			workspace: "/tmp/ws", state: "settled", deadlineMsLeft: 0, deadlineAt: 100,
+			progress, progressAgeMs: 1, ladder: { step: 1, max: 3 },
+			terminal: { status: "done", result: { status: "done", summary: "complete" } },
+		} as Parameters<typeof compactRunView>[0];
+		const detail = agentDetailView(snapshot, run);
+		expect(detail.stats).toBe(snapshot.stats);
+		expect(detail.run).toEqual({
+			workspace: "/tmp/ws", state: "settled", deadlineMsLeft: 0, deadlineAt: 100,
+			progress, progressAgeMs: 1, ladder: { step: 1, max: 3 }, status: "done",
+			terminal: { status: "done", result: { status: "done", summary: "complete" } },
+		});
+		source.publishSubagentStateSource(() => [detail]);
+		const first = slot().read().agents![0] as typeof detail;
+		first.stats!.cost = 999;
+		first.stats!.tokens.total = 999;
+		first.stats!.contextUsage!.tokens = 999;
+		first.run!.progress!.achieved = "changed";
+		first.run!.terminal!.result!.summary = "changed";
+		first.run!.ladder!.step = 999;
+		expect(snapshot.stats!.cost).toBe(0.01);
+		expect(snapshot.stats!.tokens.total).toBe(11);
+		expect(snapshot.stats!.contextUsage!.tokens).toBeNull();
+		expect(slot().read().agents).toEqual([detail]);
 	});
 
 	test("activity is confirmed, never assumed: idle only without a live working child", () => {

@@ -148,12 +148,12 @@ export function publishTaskWorkspaceStateSource(opts: {
  */
 export function withdrawTaskWorkspaceStateSource(): void {
   const registry = globalScope[READ_ONLY_STATE_KEY];
-  if (registry && registry.taskWorkspace?.owner === instanceToken) {
-    registry.taskWorkspace = undefined;
-  }
+  const ownsSlot = registry?.taskWorkspace?.owner === instanceToken;
   const hadSession = boundSession !== undefined;
   boundSession = undefined;
-  if (hadSession) bumpGeneration();
+  // Only the current owner may end the process-wide session generation.
+  if (hadSession && ownsSlot) bumpGeneration();
+  if (ownsSlot) registry!.taskWorkspace = undefined;
 }
 
 /**
@@ -170,7 +170,7 @@ export function bindTaskWorkspaceSession(session: TaskWorkspaceSession): number 
 export function clearTaskWorkspaceSession(): void {
   const hadSession = boundSession !== undefined;
   boundSession = undefined;
-  if (hadSession) bumpGeneration();
+  if (hadSession && globalScope[READ_ONLY_STATE_KEY]?.taskWorkspace?.owner === instanceToken) bumpGeneration();
 }
 
 /** Current process-wide session generation; 0 before the first bind. */
@@ -220,10 +220,15 @@ function read(): Promise<TaskWorkspaceReadResult> {
         }
         return { status: "ok", generation: generationAtRead, projection };
       },
-      (e): TaskWorkspaceReadResult => ({
-        status: "error",
-        error: { code: "projection_failed", message: e instanceof Error ? e.message : String(e) },
-      }),
+      (e): TaskWorkspaceReadResult => {
+        if (boundSession !== session || currentGeneration() !== generationAtRead) {
+          return { status: "unavailable", reason: "session_changed" };
+        }
+        return {
+          status: "error",
+          error: { code: "projection_failed", message: e instanceof Error ? e.message : String(e) },
+        };
+      },
     );
 }
 

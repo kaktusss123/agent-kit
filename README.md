@@ -531,7 +531,41 @@ node --test --test-timeout=180000 'extensions/<name>/*.test.ts'  # одно ра
 
 Тестам расширений нужны пакеты Pi в `node_modules/` (gitignored): симлинки
 `@earendil-works/pi-coding-agent`, `pi-ai`, `pi-tui` и `typebox` на
-установленный Pi. В managed worktree runtime создаёт их сам. Live-проверки в
+установленный Pi. В managed worktree runtime создаёт их сам. Если установка
+Pi или её снимок неполны, ссылки не заменяют установку зависимостей. Для
+изолированной проверки можно установить согласованную версию в игнорируемый
+`node_modules/.pi-test-runtime` (версию взять из `pi --version`, не из старого
+снимка), не меняя установленный Pi:
+
+```sh
+npm install --prefix "$PWD/node_modules/.pi-test-runtime" \
+  --cache "$PWD/node_modules/.npm-cache" --no-save --package-lock=false \
+  --no-audit --no-fund @earendil-works/pi-coding-agent@1.5.0
+mkdir -p node_modules/@earendil-works
+# Remove only existing bootstrap symlinks at these exact destinations first;
+# do not delete their targets or replace real package directories.
+for pkg in pi-coding-agent pi-ai pi-tui; do
+  ln -s "../.pi-test-runtime/node_modules/@earendil-works/$pkg" "node_modules/@earendil-works/$pkg"
+done
+ln -s .pi-test-runtime/node_modules/typebox node_modules/typebox
+ln -s .pi-test-runtime/node_modules/jiti node_modules/jiti
+```
+
+`1.5.0` — проверенный пример, а не требование обновлять Pi. Его собственные
+зависимости фиксируют совместимые версии SDK, `chalk`, `jiti` и `typebox`.
+Контрактная проверка настоящего загрузчика и изолированного RPC без запросов
+к модели: `node --test extensions/subagents/read-only-state-loader.test.ts`.
+Она не пропускается при отсутствующих пакетах. Для полной изоляции остальных
+тестов задайте отдельные `HOME`, `TMPDIR` и `PI_AGENT_DIR`. CLI-тесты создают
+собственные репозитории под `$HOME/.cache`: фактический `HOME` не должен быть
+под `/tmp`, где guard намеренно разрешает изменения. `TMPDIR`, напротив,
+должен быть вне любого Git-дерева, иначе проверки обнаружения Git увидят
+родительский checkout. Для полного набора нужен короткий путь `HOME` (длинный
+путь изменяет проверяемое усечение); допустима короткая временная ссылка на
+изолированный каталог `node_modules/.verification-home`, не на профиль
+пользователя.
+
+Live-проверки в
 `extensions/*/live/` запускают настоящий `pi` и в обычный прогон не входят.
 
 ## Документация
