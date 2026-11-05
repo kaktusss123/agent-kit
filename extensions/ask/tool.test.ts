@@ -24,6 +24,7 @@ describe("ask tool parity across roles", () => {
 		expect(main.description).toBe(child.description);
 		expect(main.promptGuidelines).toEqual(child.promptGuidelines);
 		expect(main.executionMode).toBe("sequential");
+		expect(JSON.stringify(main.parameters)).not.toContain("invocationId");
 	});
 
 	test("child guard rejects reserved labels before the transport hop (F3)", async () => {
@@ -187,13 +188,13 @@ interface ScriptStep {
 }
 
 function scriptedUi(steps: ScriptStep[]) {
-	const calls: Array<{ kind: string; title: string; options?: string[] }> = [];
+	const calls: Array<{ kind: string; title: string; options?: string[]; placeholder?: string; signal?: AbortSignal }> = [];
 	let i = 0;
 	return {
 		calls,
 		ui: {
-			async select(title: string, options: string[]) {
-				calls.push({ kind: "select", title, options });
+			async select(title: string, options: string[], opts?: { signal?: AbortSignal }) {
+				calls.push({ kind: "select", title, options, signal: opts?.signal });
 				const step = steps[i++];
 				if (!step) throw new Error(`unexpected select: ${title}`);
 				if (step.expect.kind !== "select") throw new Error(`expected input, got select: ${title}`);
@@ -202,8 +203,8 @@ function scriptedUi(steps: ScriptStep[]) {
 				}
 				return typeof step.reply === "function" ? step.reply(title, options) : step.reply;
 			},
-			async input(title: string) {
-				calls.push({ kind: "input", title });
+			async input(title: string, placeholder?: string, opts?: { signal?: AbortSignal }) {
+				calls.push({ kind: "input", title, placeholder, signal: opts?.signal });
 				const step = steps[i++];
 				if (!step) throw new Error(`unexpected input: ${title}`);
 				if (step.expect.kind !== "input") throw new Error(`expected select, got input: ${title}`);
@@ -403,6 +404,103 @@ describe("rpcFallbackAsk wire format (ZAVOD-30 §2.1)", () => {
 		expect(tryParseWireItem(JSON.stringify({ v: 2, kind: "option", label: "x" }))).toBeUndefined();
 		const future = tryParseWireItem(JSON.stringify({ v: 1, kind: "fancy-new", label: "X" }));
 		expect(future?.label).toBe("X");
+	});
+});
+
+describe("rpcFallbackAsk invocation identity", () => {
+	test("keeps one opaque identity through toggles, input back, review and revisions", async () => {
+		const questions = [
+			...oneQuestion,
+			{ id: "s", question: "Scopes?", options: [{ label: "api" }, { label: "ui" }], multi: true },
+		];
+		const { ui, calls, left } = scriptedUi([
+			{ expect: { kind: "select", title: "Which db?" }, reply: pickOption("pg") },
+			{ expect: { kind: "select", title: "Scopes?" }, reply: pickOption("api") },
+			{ expect: { kind: "select", title: "Scopes?" }, reply: pickOption("api") },
+			{ expect: { kind: "select", title: "Scopes?" }, reply: pickOption("ui") },
+			{ expect: { kind: "select", title: "Scopes?" }, reply: pickOther() },
+			{ expect: { kind: "input", title: "Scopes?" }, reply: undefined },
+			{ expect: { kind: "select", title: "Scopes?" }, reply: pickOther() },
+			{ expect: { kind: "input", title: "Scopes?" }, reply: "   " },
+			{ expect: { kind: "select", title: "Scopes?" }, reply: pickDone() },
+			{ expect: { kind: "select", title: "Review your answers" }, reply: pickReviseQ(0) },
+			{ expect: { kind: "select", title: "Which db?" }, reply: pickOther() },
+			{ expect: { kind: "input", title: "Which db?" }, reply: "postgres 17" },
+			{ expect: { kind: "select", title: "Review your answers" }, reply: pickReviseAll() },
+			{ expect: { kind: "select", title: "Which db?" }, reply: pickOption("sqlite") },
+			{ expect: { kind: "select", title: "Scopes?" }, reply: pickOption("api") },
+			{ expect: { kind: "select", title: "Scopes?" }, reply: pickDone() },
+			{ expect: { kind: "select", title: "Review your answers" }, reply: pickSubmit() },
+		]);
+		const signal = new AbortController().signal;
+		const outcome = await rpcFallbackAsk(ui, questions, signal);
+		expect(left()).toHaveLength(0);
+		const dialogs = calls.filter((call) => call.kind === "select").map((call) => wireItems(call.options!));
+		const metas = dialogs.map((items) => {
+			const meta = items.filter((item) => item.kind === "meta");
+			expect(meta).toHaveLength(1);
+			return meta[0]!;
+		});
+		const invocationId = metas[0]!.invocationId;
+		expect(invocationId).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/);
+		expect(metas.map((meta) => meta.qid)).toEqual([
+			"db", "s", "s", "s", "s", "s", "s", "review", "db", "review", "db", "s", "s", "review",
+		]);
+		for (const meta of metas) expect(meta.invocationId).toBe(invocationId);
+		for (const call of calls) {
+			expect(call.title).not.toContain(invocationId);
+			expect(call.signal).toBe(signal);
+			if (call.kind === "input") expect(call.placeholder).toBeUndefined();
+		}
+		for (const items of dialogs) {
+			for (const item of items) {
+				if (item.kind !== "meta") expect(item).not.toHaveProperty("invocationId");
+				for (const text of [item.label, item.desc, item.preview, item.header]) {
+					if (text !== undefined) expect(text).not.toContain(invocationId);
+				}
+			}
+		}
+		expect(outcome).toEqual({
+			kind: "answers",
+			results: [
+				{ id: "db", question: "Which db?", options: ["pg", "sqlite"], multi: false, selectedOptions: ["sqlite"] },
+				{ id: "s", question: "Scopes?", options: ["api", "ui"], multi: true, selectedOptions: ["ui", "api"] },
+			],
+		});
+	});
+
+	test("identical calls with the same question id get distinct identities but unchanged answers", async () => {
+		const { ui, calls, left } = scriptedUi([
+			{ expect: { kind: "select" }, reply: pickOption("pg") },
+			{ expect: { kind: "select" }, reply: pickSubmit() },
+			{ expect: { kind: "select" }, reply: pickOption("pg") },
+			{ expect: { kind: "select" }, reply: pickSubmit() },
+		]);
+		const first = await rpcFallbackAsk(ui, oneQuestion, undefined);
+		const second = await rpcFallbackAsk(ui, oneQuestion, undefined);
+		expect(left()).toHaveLength(0);
+		expect(second).toEqual(first);
+		const metas = calls.map((call) => wireItems(call.options!).find((item) => item.kind === "meta")!);
+		expect(metas[0]!.invocationId).toBeDefined();
+		expect(metas[2]!.invocationId).toBeDefined();
+		expect(metas[0]!.invocationId).not.toBe(metas[2]!.invocationId);
+		expect(metas[1]!.invocationId).toBe(metas[0]!.invocationId);
+		expect(metas[3]!.invocationId).toBe(metas[2]!.invocationId);
+		// Identity is the only wire difference; controls still map by exact emitted strings.
+		const withoutIdentity = (options: string[]) => wireItems(options).map(({ invocationId, ...item }) => item);
+		expect(withoutIdentity(calls[0]!.options!)).toEqual(withoutIdentity(calls[2]!.options!));
+		expect(withoutIdentity(calls[1]!.options!)).toEqual(withoutIdentity(calls[3]!.options!));
+	});
+
+	test("existing v1 parser accepts meta with or without optional identity", () => {
+		const legacy = { v: 1, kind: "meta", label: "ask-v2", qid: "db", i: 0, n: 1 };
+		const parsedLegacy = tryParseWireItem(JSON.stringify(legacy));
+		expect(parsedLegacy).toEqual(legacy);
+		expect(parsedLegacy!.invocationId).toBeUndefined();
+		const invocationId = "80bde4c1-22e7-4eef-964a-25c4c09e66a1";
+		const parsedNew = tryParseWireItem(JSON.stringify({ ...legacy, invocationId }));
+		expect(parsedNew).toMatchObject(legacy);
+		expect(parsedNew!.invocationId).toBe(invocationId);
 	});
 });
 

@@ -12,6 +12,7 @@
  *
  * No pi imports: unit tests exercise the builder and the fallback with fakes.
  */
+import { randomUUID } from "node:crypto";
 import {
 	ASK_TOOL_DESCRIPTION,
 	ASK_TOOL_GUIDELINES,
@@ -304,6 +305,8 @@ export interface AskWireItem {
 	q?: number;
 	/** meta/revise-q only: question id ("review" for the review dialog). */
 	qid?: string;
+	/** Meta only: runtime-created UUID shared by every dialog of one fallback invocation. */
+	invocationId?: string;
 	/** meta only: question position (i) and total question count (n). */
 	i?: number;
 	n?: number;
@@ -394,6 +397,7 @@ function questionDialog(
 	answer: QuestionAnswer | undefined,
 	index: number,
 	total: number,
+	invocationId?: string,
 ): FallbackDialog {
 	const selected = answer?.selectedOptions ?? [];
 	const meta: AskWireItem = {
@@ -401,6 +405,7 @@ function questionDialog(
 		kind: "meta",
 		label: "ask-v2",
 		qid: question.id,
+		...(invocationId !== undefined ? { invocationId } : {}),
 		i: index,
 		n: total,
 		...(question.header !== undefined && question.header !== "" ? { header: question.header } : {}),
@@ -437,6 +442,7 @@ function questionDialog(
 function reviewDialog(
 	questions: AskQuestion[],
 	answers: ReadonlyArray<QuestionAnswer | undefined>,
+	invocationId?: string,
 ): FallbackDialog {
 	const summaries = reviewLines(
 		{ index: 0, mode: "review", cursor: 0, answers: [...answers], otherText: "" },
@@ -448,6 +454,7 @@ function reviewDialog(
 			kind: "meta",
 			label: "ask-v2 review",
 			qid: "review",
+			...(invocationId !== undefined ? { invocationId } : {}),
 			i: questions.length,
 			n: questions.length,
 		},
@@ -484,6 +491,7 @@ export async function rpcFallbackAsk(
 	questions: AskQuestion[],
 	signal: AbortSignal | undefined,
 ): Promise<AskOutcome> {
+	const invocationId = randomUUID();
 	// Answers by question position: duplicate ids must not share one record.
 	const answers: Array<QuestionAnswer | undefined> = [];
 	const writeAnswer = (index: number, answer: QuestionAnswer) => {
@@ -497,13 +505,13 @@ export async function rpcFallbackAsk(
 	});
 	for (let i = 0; i < questions.length; i++) {
 		const question = questions[i]!;
-		const result = await askOneFallback(ui, i, question, answers, writeAnswer, signal, questions.length);
+		const result = await askOneFallback(ui, i, question, answers, writeAnswer, signal, questions.length, invocationId);
 		if (result === "cancelled") return cancelled();
 	}
 	// Review before submit.
 	let unknownReviews = 0;
 	while (true) {
-		const dialog = reviewDialog(questions, answers);
+		const dialog = reviewDialog(questions, answers, invocationId);
 		const choice = await ui.select(dialog.title, dialog.options, { signal });
 		if (choice === undefined) return cancelled();
 		const action = dialog.actions[dialog.options.indexOf(choice)];
@@ -525,7 +533,7 @@ export async function rpcFallbackAsk(
 				action.type === "revise" ? [action.questionIndex] : questions.map((_, k) => k);
 			let stop: AskOutcome | undefined;
 			for (const k of targets) {
-				const result = await askOneFallback(ui, k, questions[k]!, answers, writeAnswer, signal, questions.length);
+				const result = await askOneFallback(ui, k, questions[k]!, answers, writeAnswer, signal, questions.length, invocationId);
 				if (result === "cancelled") {
 					stop = cancelled();
 					break;
@@ -548,11 +556,12 @@ async function askOneFallback(
 	writeAnswer: (index: number, answer: QuestionAnswer) => void,
 	signal: AbortSignal | undefined,
 	total: number,
+	invocationId: string,
 ): Promise<"answered" | "cancelled"> {
 	let unknownAnswers = 0;
 	while (true) {
 		const answer = answers[questionIndex];
-		const dialog = questionDialog(question, answer, questionIndex, total);
+		const dialog = questionDialog(question, answer, questionIndex, total, invocationId);
 		const choice = await ui.select(dialog.title, dialog.options, { signal });
 		if (choice === undefined) return "cancelled";
 		const action = dialog.actions[dialog.options.indexOf(choice)];
