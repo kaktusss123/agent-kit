@@ -15,7 +15,7 @@ Use absolute paths. The CLI session cwd is the shell's actual cwd.
 | `ensure` | `{ "branch": "<task branch>", "source_path": "<repo>" }`; optional authorized `base_ref`, `remote`; secondary lanes additionally `task`, `slot` |
 | `remove-lane` | `{ "task": "<identity>", "path": "<lane>" }` |
 | `teardown` | `{ "task": "<identity>" }` |
-| `commit` | See `skills/git-commit/references/codex/checkpoint.md` |
+| `commit` | See `$HOME/.agents/skills/git-commit/references/codex/checkpoint.md` |
 | `current` | `{ "cwd": "<absolute path>", "selections": [] }` (read-only projection) |
 
 Exit 0 means a structured result, not necessarily success: inspect `status`.
@@ -102,3 +102,6 @@ primary-checkout status remains unchanged. A guard block is a routing failure,
 never authority to retry the mutation through another tool or agent.
 
 Protocol source: https://github.com/openai/codex/tree/rust-v0.166.0/codex-rs/hooks
+
+Native v1/v2 tool names are defined by the tagged source, not current docs:
+https://github.com/openai/codex/blob/rust-v0.166.0/codex-rs/core/src/tools/handlers/multi_agents_spec.rs

@@ -7,7 +7,7 @@ description: "Codex specification entrypoint ($spec): establish task identity an
 
 Use the goal named with this invocation or already agreed in the conversation;
 ask if there is none. Read `$HOME/.agents/skills/git-task/SKILL.md` and its
-`skills/git-task/references/codex/workflow.md` binding before any Pi runtime references.
+`$HOME/.agents/skills/git-task/references/codex/workflow.md` binding before any Pi runtime references.
 Resolve `skill://<name>` through `$HOME/.agents/skills/<name>/SKILL.md`.
 
 Main owns discovery, user decisions and the canonical specification. Establish

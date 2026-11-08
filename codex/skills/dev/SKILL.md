@@ -6,7 +6,7 @@ description: "Codex implementation entrypoint ($dev): reuse managed worktrees, d
 # Implementation mode
 
 Use the named/agreed task; ask if there is none. Read
-`$HOME/.agents/skills/git-task/SKILL.md` and its `skills/git-task/references/codex/workflow.md`
+`$HOME/.agents/skills/git-task/SKILL.md` and its `$HOME/.agents/skills/git-task/references/codex/workflow.md`
 binding first. Resolve `skill://<name>` through
 `$HOME/.agents/skills/<name>/SKILL.md`; no Pi mechanics are required.
 
@@ -28,5 +28,5 @@ binding first. Resolve `skill://<name>` through
   need independent read-only review. Repair uses a fresh owner inspecting current
   state, not Main or the reviewer editing the candidate.
 - Checkpoints use `agent-kit task commit` and
-  `skills/git-commit/references/codex/checkpoint.md`. No push, installation or
+  `$HOME/.agents/skills/git-commit/references/codex/checkpoint.md`. No push, installation or
   deployment follows implicitly from a completed implementation.

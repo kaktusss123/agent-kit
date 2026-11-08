@@ -13,7 +13,7 @@ In Codex, read `references/codex/workflow.md` BEFORE any runtime reference below
 That binding replaces Pi tool/delegation mechanics throughout this skill: use the
 host-neutral `agent-kit task` CLI, native agent threads and manually read settled
 Git facts. Do not assume Pi workspace leases, report tools, roles or deadlines.
-For checkpoints read `skills/git-commit/references/codex/checkpoint.md`.
+For checkpoints read `$HOME/.agents/skills/git-commit/references/codex/checkpoint.md`.
 Shared identity, ownership, review and no-primary-write policy still applies.
 Where a host binding differs, it wins. The mandatory Pi references below apply
 to Pi; Claude Code additionally loads its own bindings.

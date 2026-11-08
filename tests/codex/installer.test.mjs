@@ -33,6 +33,12 @@ test('Codex-only fresh/repeat install, two explicit scope roots and independent 
   assert.equal(text(join(f.state, 'hosts')), 'codex\n');
   assert.equal(readlinkSync(join(f.shared, 'skills/git-task')), join(f.kit, 'skills/git-task'));
   assert.equal(readlinkSync(join(f.shared, 'skills/spec')), join(f.kit, 'codex/skills/spec'));
+  for (const file of ['skills/spec/SKILL.md', 'skills/dev/SKILL.md', 'skills/git-task/references/codex/workflow.md']) {
+    const content = text(join(f.shared, file));
+    const references = [...content.matchAll(/\$HOME\/\.agents\/skills\/[A-Za-z0-9._/-]+\.md/g)];
+    assert.ok(references.length, `missing installed-addressable references in ${file}`);
+    for (const [reference] of references) assert.ok(existsSync(reference.replace('$HOME', f.home)), `${file}: ${reference}`);
+  }
   assert.ok(text(join(f.config, 'AGENTS.md')).includes(text(join(f.kit, 'rules/AGENTS.md'))));
   assert.match(text(join(f.config, 'AGENTS.md')), /^# Codex host binding/);
   const hooks = JSON.parse(text(join(f.config, 'hooks.json')));
