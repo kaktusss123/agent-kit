@@ -20,6 +20,10 @@
 //     claude-code/commands/* -> commands/*      (/spec, /dev entrypoints)
 //     claude-code/agents/*   -> agents/*        (Explore, repo-owner subagents)
 //
+//   codex (two explicit scopes; see docs/codex.md):
+//     skills/* + codex/skills/* -> $HOME/.agents/skills/*
+//     generated rules/hooks    -> ${CODEX_HOME:-$HOME/.codex}/{AGENTS.md,hooks.json}
+//
 // The repository layout IS the desired state: no manifests, no lists. Entities
 // are symlinked, never copied; see lib/entities.mjs for the mapping and
 // lib/reconcile.mjs for the ownership rules. Ownership is tracked per host in
@@ -43,7 +47,7 @@ import { task } from "./lib/task.mjs";
 import { snapshot } from "./lib/snapshot.mjs";
 
 function usage() {
-	writeStdout(`agent-kit — install the personal agent framework into Pi and Claude Code
+	writeStdout(`agent-kit — install the personal agent framework into Pi, Claude Code and Codex
 
 Usage:
   agent-kit install [--profile core] [<host>...]
@@ -53,6 +57,8 @@ Usage:
                                        prompts, AGENTS.md)
                         claude-code -> ~/.claude (skills, rules/, the
                                        agent-kit plugin, commands/, agents/)
+                        codex       -> ~/.agents/skills (shared skills)
+                                       + $CODEX_HOME or ~/.codex (rules/hooks)
                         Core only; --profile core is optional.
                         --profile full is rejected before any changes.
   agent-kit update [--profile core]
@@ -83,11 +89,15 @@ Usage:
   agent-kit status      show the host selection, the installed profile, link
                         state and launcher ownership
   agent-kit task <op>   task-workspace CLI (status, ensure, remove-lane,
-                        teardown, commit, hook); JSON in, JSON out
+                        teardown, commit, hook); JSON in, JSON out;
+                        the core CLI is host-neutral
   agent-kit help        this text
 
 The repository layout is the desired state; entities are symlinked, never
-copied. Install is a reconcile operation: re-running it from another
+copied. Codex rules/hooks are generated into immutable state artifacts and
+linked into its config root; foreign rules/hooks are conflicts. Review/trust
+Codex hooks explicitly through /hooks; config.toml is never modified.
+Install is a reconcile operation: re-running it from another
 checkout or worktree repoints agent-kit's own links to that checkout.
 Links and files agent-kit does not own are never touched, and neither
 are the links of hosts that are not selected.

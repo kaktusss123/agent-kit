@@ -103,7 +103,7 @@ new_test() { # <name>
 	SANDBOX="$(cd "$SANDBOX" && pwd -P)"   # canonical: macOS /tmp is /private/tmp
 	export HOME="$SANDBOX/home"
 	mkdir -p "$HOME"
-	unset XDG_STATE_HOME PI_AGENT_DIR AGENT_TASK_ROOT AGENT_KIT_ROOT 2>/dev/null || true
+	unset XDG_STATE_HOME PI_AGENT_DIR CLAUDE_CONFIG_DIR CODEX_HOME AGENT_TASK_ROOT AGENT_KIT_ROOT 2>/dev/null || true
 	STATE="$HOME/.local/state/agent-kit/links.tsv"
 	CMD_STATE="$HOME/.local/state/agent-kit/command.tsv"
 	PI_ROOT="$HOME/.pi/agent"
@@ -498,7 +498,7 @@ use_path_empty
 make_kit "$SANDBOX/kit"
 	mkdir -p "$SANDBOX/cli"
 	ln -s "$SANDBOX/kit/bin/agent-kit" "$SANDBOX/cli/agent-kit"
-	if OUT="$("$SANDBOX/cli/agent-kit" install 2>&1)"; then RC=0; else RC=$?; fi
+	if OUT="$("$SANDBOX/cli/agent-kit" install pi claude-code 2>&1)"; then RC=0; else RC=$?; fi
 	[ "$VERBOSE" = 1 ] && printf '%s\n' "$OUT"
 	assert_eq "$RC" 0 "exit code"
 	assert_link "$PI_ROOT/skills/alpha" "$SANDBOX/kit/skills/alpha" "skill via symlinked CLI"
@@ -970,7 +970,7 @@ new_test "T32 legacy install without a selection file"
 use_path_empty
 make_kit "$SANDBOX/kit"
 use_selection_paths
-run_install
+run_install pi claude-code
 	assert_eq "$RC" 0 "base install"
 	rm "$SELECTION"
 run_install
@@ -1027,7 +1027,7 @@ run_status() {
 }
 run_status
 	case "$OUT" in
-	*"hosts: pi claude-code (default"*) : ;;
+	*"hosts: pi claude-code codex (default"*) : ;;
 	*) fail "fresh status should report the default selection, got: $OUT" ;;
 	esac
 run_install claude-code

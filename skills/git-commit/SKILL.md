@@ -7,6 +7,14 @@ description: "Safe repository checkpoint commit policy for implementation workfl
 
 Create a checkpoint from the repository state without broadening its scope.
 
+## Host binding first
+
+In Codex, read `references/codex/checkpoint.md` BEFORE the Pi checkpoint reference
+below. Use `agent-kit task commit` over the same checkpoint core; every mention
+of `checkpoint_commit` in this skill means that CLI operation in Codex. Do not
+fall back to raw Git because a Pi tool is absent. Shared safety/message policy
+still applies; the Codex binding replaces only host mechanics.
+
 ## Division of responsibility
 
 Judgment (model): whether a checkpoint is warranted, where it belongs, the semantic message, ticket policy, and choosing the exact intended path set.
