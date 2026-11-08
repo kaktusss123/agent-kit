@@ -14,6 +14,7 @@ import { dirname, join } from "node:path";
 import { desiredEntities, retiredWorkLinks, validateEntity } from "./entities.mjs";
 import { lstatOrNull, msg, readlinkOrNull, replaceSymlink, statOrNull, warn } from "./io.mjs";
 import { HOSTS, hostList } from "./paths.mjs";
+import { codexArtifacts, materializeCodexArtifacts } from "./codex.mjs";
 import {
 	loadCommandRecord,
 	loadLinkState,
@@ -29,8 +30,17 @@ function mentions(entries, rel) {
 
 export function reconcile(context) {
 	const owned = loadLinkState(context.stateFile);
-	const desired = desiredEntities(context.host, context.repo);
+	const desired = desiredEntities(context.host, context.repo, context.scope);
 	for (const entity of desired) validateEntity(context.repo, entity);
+	const artifacts = codexArtifacts(context);
+	// Generated sources are constructed here, never accepted from ownership
+	// records. All destinations remain strict root-relative paths.
+	const shadowedRules = context.host === "codex" && context.scope === "config" && lstatOrNull(join(context.root, "AGENTS.override.md"));
+	if (shadowedRules) {
+		msg("  conflict AGENTS.override.md shadows global rules; left untouched (rules are not active); hooks install independently");
+	}
+	materializeCodexArtifacts(artifacts);
+	desired.push(...artifacts);
 
 	msg("  profile: core");
 
@@ -39,7 +49,7 @@ export function reconcile(context) {
 		return 0;
 	}
 
-	let conflicts = 0;
+	let conflicts = shadowedRules ? 1 : 0;
 	let created = 0;
 	let updated = 0;
 	let kept = 0;
@@ -167,7 +177,7 @@ export function uninstall(context) {
 
 export function status(context, note = "") {
 	const owned = loadLinkState(context.stateFile);
-	const desired = desiredEntities(context.host, context.repo);
+	const desired = [...desiredEntities(context.host, context.repo, context.scope), ...codexArtifacts(context)];
 
 	let uptodate = 0;
 	let stale = 0;
@@ -191,7 +201,10 @@ export function status(context, note = "") {
 	}
 
 	const suffix = note ? ` (${note})` : "";
-	msg(`  ${context.host} root: ${context.root}${suffix}`);
+	msg(`  ${context.host}${context.scope ? ` ${context.scope}` : ""} root: ${context.root}${suffix}`);
+	if (context.host === "codex" && context.scope === "config" && lstatOrNull(join(context.root, "AGENTS.override.md"))) {
+		msg("    conflict: AGENTS.override.md shadows global rules; rules are not active");
+	}
 	msg("    profile: core");
 	if (retiredWorkLinks(owned).length > 0) {
 		msg("    migration required: complete the independent Cloudru handoff BEFORE updating the old Core checkout (docs/split-plan.md)");
@@ -217,7 +230,7 @@ export function statusAll(paths) {
 	msg(`hosts: ${selected.join(" ")} (${label})`);
 
 	for (const host of HOSTS) {
-		status(paths.hostContext(host), selected.includes(host) ? "" : "not selected");
+		for (const context of paths.hostContexts(host)) status(context, selected.includes(host) ? "" : "not selected");
 	}
 
 	const record = loadCommandRecord(paths.commandFile);
@@ -287,9 +300,11 @@ export function installHosts(paths, namedHosts) {
 			msg(`Skipping ${host} (not selected; 'agent-kit install ${host}' adds it)`);
 			continue;
 		}
-		const context = paths.hostContext(host);
-		msg(`Installing (${host} root: ${context.root}):`);
-		if (reconcile(context) !== 0) rc = 1;
+		for (const context of paths.hostContexts(host)) {
+			msg(`Installing (${host}${context.scope ? ` ${context.scope}` : ""} root: ${context.root}):`);
+			if (reconcile(context) !== 0) rc = 1;
+		}
+		if (host === "codex") msg("Codex hooks require explicit review/trust via /hooks; installation does not enable trust or edit config.toml.");
 	}
 	saveSelection(paths, selected);
 	bootstrapSelf(paths);
@@ -304,9 +319,10 @@ export function uninstallHosts(paths, namedHosts) {
 
 	for (const host of HOSTS) {
 		if (!targets.includes(host)) continue;
-		const context = paths.hostContext(host);
-		msg(`Uninstalling (${host} root: ${context.root}):`);
-		uninstall(context);
+		for (const context of paths.hostContexts(host)) {
+			msg(`Uninstalling (${host} root: ${context.root}):`);
+			uninstall(context);
+		}
 	}
 
 	if (namedHosts.length === 0) {

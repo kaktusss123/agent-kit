@@ -81,8 +81,13 @@ function single(repo, sourceRel, destRel, kind) {
 
 // Core has one delivery set. Ownership affects safe reconciliation, never
 // which retired resources are delivered.
-export function desiredEntities(host, repo) {
+export function desiredEntities(host, repo, scope) {
+	if (host === "codex" && scope === "config") return [];
 	const entities = category(repo, "skills", "skills");
+	if (host === "codex") {
+		entities.push(...category(repo, "codex/skills", "skills"));
+		return entities;
+	}
 	if (host === "pi") {
 		entities.push(...category(repo, "extensions", "extensions"));
 		entities.push(...category(repo, "prompts", "prompts"));

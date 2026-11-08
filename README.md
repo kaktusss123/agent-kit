@@ -1,7 +1,8 @@
 # agent-kit
 
 Личный агентный фреймворк для Pi (`@earendil-works/pi-coding-agent`)
-и Claude Code. Один git-репозиторий, который ставится в оба host'а
+и Claude Code, с поддержкой рабочего процесса Codex CLI. Один git-репозиторий,
+который ставится в выбранные среды
 симлинками и даёт:
 
 - **skills** — инструкции для агента по спецификации, реализации, ревью,
@@ -25,7 +26,10 @@
 Pi — основной host: всё, что требует расширений, живёт там. Claude Code
 получает skills, правила, `/spec` и `/dev`, а task-workspace runtime — в виде
 CLI `agent-kit task` и hooks skills-directory плагина `agent-kit`, который
-Claude Code грузит из `~/.claude/skills/agent-kit` сам.
+Claude Code грузит из `~/.claude/skills/agent-kit` сам. Codex получает общие
+навыки в `~/.agents/skills`, объединённые правила и hooks в `$CODEX_HOME` либо
+`~/.codex`, нативные `$spec` / `$dev` и то же ядро CLI, без расширений Pi.
+[Установка, доверие hooks, владение и ограничения Codex](docs/codex.md).
 
 ## Установка
 
@@ -45,7 +49,7 @@ git clone <url> ~/src/agent-kit
 запуска старого установщика: [порядок миграции](docs/split-plan.md).
 Об устройстве установщика — [ADR-0012](docs/adr/adr-0012.md).
 
-`install` без аргументов линкует checkout в оба host'а и кладёт лаунчер
+Свежий `install` без аргументов линкует checkout во все три среды и кладёт лаунчер
 `~/.local/bin/agent-kit` (симлинк на `bin/agent-kit` этого checkout'а):
 
 | Источник | Pi (`~/.pi/agent`) | Claude Code (`~/.claude`) |
@@ -59,8 +63,9 @@ git clone <url> ~/src/agent-kit
 | `claude-code/commands/*` | — | `commands/*` |
 | `claude-code/agents/*` | — | `agents/*` |
 
-Не каждой машине нужны оба host'а: можно поставить только один и добавить
-второй позже.
+Можно установить только нужные среды и добавить остальные позже. Для Codex:
+`agent-kit install codex` (общие `skills/*` и `codex/skills/*` →
+`$HOME/.agents/skills`; правила и hooks → `${CODEX_HOME:-$HOME/.codex}`).
 
 ```sh
 agent-kit install claude-code          # только Claude Code
@@ -75,11 +80,13 @@ agent-kit uninstall                    # удалить ссылки всех ho
 
 Выбор host'ов запоминается: `install` и `update` без аргументов работают только
 с выбранными host'ами и не трогают ссылки остальных. Если выбор пуст (свежая
-машина или все host'ы удалены по одному), `install` ставит оба. Установки,
-сделанные до появления выбора, сохраняют оба host'а. Подробности —
+машина или все host'ы удалены по одному), `install` ставит все три. Установки,
+сделанные до появления выбора, сохраняют среды с существующими записями владения;
+существующий выбор Pi/Claude не приобретает Codex автоматически. Подробности —
 [ADR-0009](docs/adr/adr-0009.md).
 
-Корни host'ов переопределяются через `PI_AGENT_DIR` и `CLAUDE_CONFIG_DIR`.
+Корни Pi/Claude переопределяются через `PI_AGENT_DIR` и `CLAUDE_CONFIG_DIR`.
+`CODEX_HOME` переносит только конфигурацию Codex; навыки остаются в `$HOME/.agents`.
 Корпоративные ресурсы устанавливаются отдельно; старый `--profile full`
 отклоняется с кодом 2 до изменения состояния или pull. Без флага и с
 `--profile core` устанавливается только Core. Для прежней full-установки сначала передайте
@@ -494,6 +501,7 @@ agent-kit их не ставит; для продуктового UI, дашбо
 tests/installer/run.sh [-v]     # инсталлер в песочнице $HOME
 tests/layout/run.sh             # запрещённые каталоги и инварианты раскладки
 tests/skills/run.sh             # frontmatter, references, ссылки skill://
+node --test tests/codex/*.test.mjs # изолированная установка, hooks, живое обнаружение без модели
 tests/snapshot/run.sh           # snapshot CLI: атомарность, блокировка, retention,
                                  # строгая проверка манифеста, отказ на грязном
                                  # checkout, SIGKILL и параллельные процессы

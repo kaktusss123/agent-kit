@@ -7,6 +7,17 @@ description: "Judgment layer for Git task workspaces: decide task mode vs read-o
 
 Decide whether the conversation is a task; establish its Git identity; route implementation across managed task worktrees and repository owners. Deterministic safety lives in the task-workspace runtime (the Pi extension; in Claude Code the `agent-kit task` CLI and the agent-kit plugin hooks over the same core); this skill is judgment only.
 
+## Host binding first
+
+In Codex, read `references/codex/workflow.md` BEFORE any runtime reference below.
+That binding replaces Pi tool/delegation mechanics throughout this skill: use the
+host-neutral `agent-kit task` CLI, native agent threads and manually read settled
+Git facts. Do not assume Pi workspace leases, report tools, roles or deadlines.
+For checkpoints read `$HOME/.agents/skills/git-commit/references/codex/checkpoint.md`.
+Shared identity, ownership, review and no-primary-write policy still applies.
+Where a host binding differs, it wins. The mandatory Pi references below apply
+to Pi; Claude Code additionally loads its own bindings.
+
 ## Mandatory references
 
 This skill states policy only. The runtime contracts it relies on are normative, not "see also":

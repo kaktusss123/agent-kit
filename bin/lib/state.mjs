@@ -75,7 +75,7 @@ export function loadSelection(paths) {
 	if (lines !== null) {
 		return { hosts: parseSelection(lines.join("\n")), source: "recorded" };
 	}
-	const derived = HOSTS.filter((host) => loadLinkState(paths.linkStateFile(host)).length > 0);
+	const derived = HOSTS.filter((host) => paths.hostContexts(host).some((context) => loadLinkState(context.stateFile).length > 0));
 	return { hosts: derived, source: "derived" };
 }
 
