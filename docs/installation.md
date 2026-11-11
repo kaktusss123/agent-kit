@@ -1,7 +1,9 @@
 # Установка и настройка
 
 Начало работы с клонированием репозитория: [README](../README.md#быстрый-старт).
-Нужны Node.js >= 24, `git` и отдельно установленный Pi, Claude Code или Codex CLI.
+Нужны Node.js >= 24, `git` и отдельно установленный
+[Pi](https://www.npmjs.com/package/@earendil-works/pi-coding-agent)
+(пакет `@earendil-works/pi-coding-agent`), Claude Code или Codex CLI.
 `bin/agent-kit` использует встроенные модули Node.js и работает без установки
 пакетов. `agent-kit task` и hooks используют тот же Node.js; Bun не нужен.
 
