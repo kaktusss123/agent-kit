@@ -362,8 +362,3 @@ by the child runtime.
 | Publisher: empty vs rich observations, detached nested values, exact compact run shape, activity classification, error vs empty, ownership on reload/shutdown, version gating | `extensions/subagents/read-only-state.test.ts` |
 | Task source: publish/bind/generation, `unavailable` vs `none`, injected projection failure, source-rejected stale completion, cross-graph generation uniqueness, owner-enrichment through the subagents slot | `extensions/task-workspace/read-only-state.test.ts` |
 | CLI binding: exact `version` on every read-only answer, unchanged projection fields and usage/error contract | `extensions/task-workspace/cli.test.ts` |
-
-The former `agentkit.inspection` seam, task-workspace presence marker,
-legacy inspection channel, and inspection provider are removed from the final
-Core split. They are not part of this contract; consumers use the independent
-read-only sources documented above.

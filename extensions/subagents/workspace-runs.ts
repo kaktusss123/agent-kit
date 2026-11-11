@@ -26,7 +26,7 @@
  * - settlement accepts only a fresh report_result envelope (staleness is
  *   enforced by the reporting bridge); terminal outcomes retire the child
  *   while preserving its record;
- * - settled-state verification (ADR-0003): a `done` product outcome is
+ * - settled-state verification: a `done` product outcome is
  *   accepted only when the worktree reads back settled after the child
  *   stopped (accessible repository, current HEAD, clean tree); otherwise
  *   the outcome downgrades to blocked with a done_rejected reason, and
@@ -113,8 +113,8 @@ export type ExternalStatus =
 	| "running";
 
 /**
- * Objective Git facts of the workspace, read mechanically by the runtime
- * (ADR-0002 §10) — never model-reported. `branch` is empty on detached HEAD.
+ * Objective Git facts of the workspace, read mechanically by the runtime,
+ * never model-reported. `branch` is empty on detached HEAD.
  */
 export interface GitFacts {
 	branch: string;
@@ -437,7 +437,7 @@ export function createWorkspaceRuns(
 			// the settled-state check below free of concurrent mutation.
 			await retireChild(run);
 			if (record.envelope.status === "done") {
-				// Settled-state verification (ADR-0003): a done outcome is
+				// Settled-state verification: a done outcome is
 				// accepted only when Git reads the worktree as settled —
 				// accessible repository, current HEAD, clean tree. Read after
 				// the child stopped, so it cannot mutate during the check.

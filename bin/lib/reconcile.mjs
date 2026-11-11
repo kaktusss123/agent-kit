@@ -207,7 +207,7 @@ export function status(context, note = "") {
 	}
 	msg("    profile: core");
 	if (retiredWorkLinks(owned).length > 0) {
-		msg("    migration required: complete the independent Cloudru handoff BEFORE updating the old Core checkout (docs/split-plan.md)");
+		msg("    managed resources outside the current delivery: install removes exact-target owned links and releases redirected links without deletion");
 	}
 	msg(`    repository wants ${desired.length} entity(ies)`);
 	msg(

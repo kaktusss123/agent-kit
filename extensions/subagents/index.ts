@@ -19,7 +19,7 @@
  *   call blocks until a terminal outcome (done/partial/blocked) or
  *   needs_input with live progress rendered into the tool call, and the run
  *   gets the enforced deadline, the report_result envelope contract, and
- *   settled-state verification (ADR-0003) — see ./workspace-runs.
+ *   settled-state verification — see ./workspace-runs.
  *
  * Surfaces:
  * - `subagent` tool (LLM): spawn / status / steer / follow_up / wait / result /

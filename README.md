@@ -111,17 +111,13 @@ agent-kit uninstall        # remove all owned host links and clear selection
 или `./bin/agent-kit status`. Установка из другого клона перенаправит
 собственные ссылки на него. [Корни и владение ссылками](docs/installation.md).
 
-Для прежней установки с `--profile full` сначала завершите передачу ссылок
-и владения, **до pull и старого `agent-kit update`**.
-[Порядок миграции](docs/split-plan.md) не относится к новым установкам.
-
 ## Подробности
 
 - [Установка и настройка сред](docs/installation.md)
 - [Рабочий процесс и инструменты Pi](docs/workflow.md)
 - [Снимки для headless-хостов](docs/snapshots.md)
 - [Публичные источники чтения состояния](docs/read-only-state.md)
-- [Архитектурные решения](docs/adr/) и README отдельных [расширений](extensions/)
+- [Текущая архитектура](docs/architecture.md) и README отдельных [расширений](extensions/)
 - [Участие в разработке и проверки](CONTRIBUTING.md)
 
 Код распространяется по [лицензии MIT](LICENSE).

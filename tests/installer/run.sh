@@ -1384,6 +1384,14 @@ add_work_skill "$SANDBOX/kit"
 run_install
 	assert_eq "$RC" 0 "fixture setup: Core install"
 seed_old_work_links
+STATE_BEFORE="$(cat "$STATE")"
+OUT="$(AGENT_KIT_ROOT="$SANDBOX/kit" "$SANDBOX/kit/bin/agent-kit" status 2>&1)"
+	case "$OUT" in
+	*"managed resources outside the current delivery: install removes exact-target owned links and releases redirected links without deletion"*) : ;;
+	*) fail "status must describe current ownership cleanup, got: $OUT" ;;
+	esac
+	assert_eq "$(cat "$STATE")" "$STATE_BEFORE" "status does not change ownership"
+	assert_link "$PI_ROOT/skills/kuber-nagibator" "$SANDBOX/kit/skills/kuber-nagibator" "status does not clean up links"
 for name in inspection-channel inspection-provider; do
 	ln -s "$SANDBOX/kit/extensions/$name" "$PI_ROOT/extensions/$name"
 	printf 'extensions/%s\t%s/extensions/%s\n' "$name" "$SANDBOX/kit" "$name" >> "$STATE"
@@ -1446,8 +1454,8 @@ run_update --profile full --profile core
 	assert_eq "$(git -C "$SANDBOX/kit" rev-parse HEAD)" "$OLD_HEAD" "refused update did not pull"
 	assert_eq "$(cat "$STATE")" "$STATE_BEFORE" "refused update did not reconcile"
 	case "$OUT" in
-	*"BEFORE pulling/updating the OLD Core checkout"*) : ;;
-	*) fail "full refusal must explain old updater ordering, got: $OUT" ;;
+	*"only the core profile is supported; corporate resources are not included."*"Omit --profile or use --profile core."*) : ;;
+	*) fail "full refusal must explain the supported profile, got: $OUT" ;;
 	esac
 run_update
 	assert_eq "$RC" 0 "bare Core update"

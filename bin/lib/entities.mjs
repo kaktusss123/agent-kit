@@ -24,10 +24,8 @@ export const PROFILES = Object.freeze(["core"]);
 
 export function validateProfile(name) {
 	if (name === "full") {
-		die("--profile full is retired: Core no longer delivers Cloudru resources. " +
-			"Use the independent agent-kit-cloudru installer. For an existing full installation, " +
-			"verify that delivery and complete its migrate handoff BEFORE pulling/updating the OLD Core checkout; " +
-			"the old updater pulls before install. See docs/split-plan.md.");
+		die("only the core profile is supported; corporate resources are not included. " +
+			"Omit --profile or use --profile core.");
 	}
 	if (!PROFILES.includes(name)) die(`unknown profile: '${name}' (profiles: ${PROFILES.join(" ")})`);
 }
