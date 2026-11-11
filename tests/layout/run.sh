@@ -4,7 +4,7 @@
 # runtimes/, bindings, runtime markers) must not reappear. One canonical tree
 # — skills/, extensions/, bin/, tests/, rules/ (+ prompts/ and scripts/ only
 # when a category actually has content) — is linked into every selected host
-# by the installer (ADR-0007, ADR-0009).
+# by the installer; see docs/architecture.md.
 #
 # Exit code: 0 when all checks pass, 1 otherwise.
 set -euo pipefail
@@ -58,7 +58,7 @@ check "installer names retired runtimes only in the legacy state module" \
 	bash -c "! grep -rliE '\\bomp\\b|opencode|runtimes/' '$REPO/bin' --exclude=legacy-state.mjs | grep -q ."
 check "installer declares a single Pi root" \
 	bash -c "grep -q 'PI_AGENT_DIR' '$REPO/bin/lib/paths.mjs' && grep -q 'join(home, \".pi\", \"agent\")' '$REPO/bin/lib/paths.mjs'"
-check "installer host arguments are limited to the known hosts (ADR-0009)" \
+check "installer host arguments are limited to the known hosts" \
 	bash -c "grep -q '^export const HOSTS = \[\"pi\", \"claude-code\", \"codex\"\];$' '$REPO/bin/lib/paths.mjs' && awk '/case \"install\":/,/case \"uninstall\":/' '$REPO/bin/agent-kit' | grep -q 'validateHosts(rest)'"
 check "installer declares the claude-code root" \
 	bash -c "grep -q 'CLAUDE_CONFIG_DIR' '$REPO/bin/lib/paths.mjs' && grep -q 'join(home, \".claude\")' '$REPO/bin/lib/paths.mjs'"

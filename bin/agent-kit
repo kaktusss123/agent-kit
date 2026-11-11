@@ -2,8 +2,8 @@
 //
 // agent-kit — install the agent framework assets into the selected hosts.
 //
-// One install links the same checkout into each selected host (ADR-0007, host
-// selection: ADR-0009):
+// One install links the same checkout into each selected host; see
+// docs/architecture.md#владение-состоянием:
 //
 //   pi (root $PI_AGENT_DIR, default ~/.pi/agent):
 //     skills/*        -> skills/*
@@ -101,16 +101,10 @@ Install is a reconcile operation: re-running it from another
 checkout or worktree repoints agent-kit's own links to that checkout.
 Links and files agent-kit does not own are never touched, and neither
 are the links of hosts that are not selected.
-Existing full installations: verify the independent agent-kit-cloudru delivery
-and complete its migrate handoff BEFORE pulling/updating the OLD Core checkout.
-The old updater pulls before install: the new --profile full refusal cannot
-protect old symlink targets after that pull. See docs/split-plan.md.
-Retired inspection links are removed only with recorded exact-target ownership;
-foreign/user links and handed-off Cloudru links are left untouched.
-The selection lives in $XDG_STATE_HOME/agent-kit/hosts. State left by
-older multi-runtime versions of agent-kit is migrated once: links
-agent-kit provably owns are cleaned up or repointed, anything else is
-released.
+Only the core profile is supported; corporate resources are not included.
+Install removes managed resources outside the current delivery only when their
+link targets still match recorded ownership; redirected links are released
+without deletion. The selection lives in $XDG_STATE_HOME/agent-kit/hosts.
 `);
 }
 
