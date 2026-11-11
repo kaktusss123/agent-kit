@@ -27,7 +27,7 @@ describe("resolveCodexCredential — missing auth", () => {
 
 describe("resolveCodexCredential — account id resolution", () => {
 	test("missing account id from both stored credential and token yields missing_account_id", async () => {
-		const error = await resolveCodexCredential(tokenSource("opaque-token"), () => ({ type: "oauth", accountId: "  " })).catch(
+		const error = await resolveCodexCredential(tokenSource("opaque-token"), () => ({ type: "oauth", access: "opaque-token", accountId: "  " })).catch(
 			(e: unknown) => e,
 		);
 		expect((error as { kind?: string }).kind).toBe("missing_account_id");
@@ -38,12 +38,16 @@ describe("resolveCodexCredential — account id resolution", () => {
 		const reader: StoredCredentialReader = provider => provider === "openai-codex"
 			? { type: "oauth", accountId: "acct_stored", access: "opaque-token" } : undefined;
 		const credential = await resolveCodexCredential(tokenSource("opaque-token"), reader);
-		expect(credential.account).toBe("acct_stored");
+		expect(credential.provider).toBe("openai-codex");
+		if (credential.provider === "openai-codex") expect(credential.account).toBe("acct_stored");
 	});
 
-	test("falls back to the token JWT claim when no stored credential is available", async () => {
-		const credential = await resolveCodexCredential(tokenSource(tokenWithAccount("acct_token")), null);
-		expect(credential.account).toBe("acct_token");
+	test("uses the matching OAuth token JWT claim without a stored account id", async () => {
+		const token = tokenWithAccount("acct_token");
+		const credential = await resolveCodexCredential(tokenSource(token), provider => provider === "openai-codex"
+			? { type: "oauth", access: token } : undefined);
+		expect(credential.provider).toBe("openai-codex");
+		if (credential.provider === "openai-codex") expect(credential.account).toBe("acct_token");
 	});
 
 	test("ignores non-oauth stored credentials", async () => {

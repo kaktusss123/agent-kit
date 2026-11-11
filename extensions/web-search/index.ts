@@ -1,12 +1,12 @@
 /**
- * web_search — hosted web search over the ChatGPT Codex backend, wired to pi's
- * existing `openai` or legacy `openai-codex` OAuth credential.
+ * web_search — hosted web search with pi's existing `openai` or legacy
+ * `openai-codex` OAuth credential and its matching Responses transport.
  *
- * Flow: `web_search(query)` → Codex Responses (`/codex/responses`) with the
+ * Flow: `web_search(query)` → native OpenAI or legacy Codex Responses with the
  * hosted `web_search` tool forced → synthesized answer + source URLs/citations
  * → compact model-facing text, full result in `details`.
  *
- * Minimal subset of oh-my-pi's web-search subsystem: single provider (Codex),
+ * Minimal subset of oh-my-pi's web-search subsystem: two fixed OAuth transports,
  * single query per call, no provider registry/fallback chain, no query-syntax
  * parser, no settings subsystem. Auth goes through pi's ModelRegistry — no
  * token env vars, no own OAuth flow, no credential storage.
@@ -18,7 +18,7 @@ import { Text, truncateToWidth } from "@earendil-works/pi-tui";
 import type { Component } from "@earendil-works/pi-tui";
 import { Type } from "typebox";
 import { loadStoredCredentialReader, OAUTH_LOGIN_HINT, resolveCodexCredential } from "./auth.ts";
-import { runWebSearch, WebSearchError, type SearchSource, type WebSearchResult } from "./codex.ts";
+import { runWebSearch, WebSearchError, type SearchCredential, type SearchSource, type WebSearchResult } from "./codex.ts";
 import { formatErrorForModel, formatForModel, type SearchContextSize } from "./format.ts";
 
 // =============================================================================
@@ -60,7 +60,7 @@ interface WebSearchArgs {
 	search_context_size?: SearchContextSize;
 }
 
-const TOOL_DESCRIPTION = `Web search: current information from the web beyond your knowledge cutoff, via the ChatGPT Codex backend with its hosted web_search tool.
+const TOOL_DESCRIPTION = `Web search: current information from the web beyond your knowledge cutoff, via OpenAI ChatGPT OAuth or legacy Codex OAuth with the hosted web_search tool.
 
 - SHOULD prefer primary sources (official docs, papers, release notes); corroborate key claims across sources.
 - MUST cite the returned source URLs in your final response when you use their content.
@@ -190,7 +190,7 @@ export default function (pi: ExtensionAPI) {
 		name: "web_search",
 		label: "Web Search",
 		description: TOOL_DESCRIPTION,
-		promptSnippet: "Search the web via the ChatGPT Codex subscription; returns an answer with source URLs",
+		promptSnippet: "Search the web via ChatGPT OAuth; returns an answer with source URLs",
 		parameters: WebSearchParams,
 
 		async execute(_toolCallId, params: WebSearchArgs, signal, _onUpdate, ctx) {
@@ -207,15 +207,12 @@ export default function (pi: ExtensionAPI) {
 			const searchContextSize = params.search_context_size ?? CONFIG.defaultSearchContextSize;
 
 			// Credential: pi's stored OpenAI OAuth, refreshed only by pi.
-			let token: string;
-			let account: string;
+			let credential: SearchCredential;
 			try {
-				const credential = await resolveCodexCredential(
+				credential = await resolveCodexCredential(
 					ctx.modelRegistry,
 					await loadStoredCredentialReader(),
 				);
-				token = credential.token;
-				account = credential.account;
 			} catch (error) {
 				return errorResult(
 					params,
@@ -231,8 +228,7 @@ export default function (pi: ExtensionAPI) {
 					const result = await runWebSearch({
 						query,
 						model,
-						token,
-						account,
+						credential,
 						searchContextSize,
 						signal,
 						timeoutMs: CONFIG.timeoutMs,

@@ -2,8 +2,8 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import { resolveCodexCredential, type StoredCredentialReader } from "./auth.ts";
 
-function jwt(account: unknown): string {
-	return `header.${Buffer.from(JSON.stringify({ "https://api.openai.com/auth": { chatgpt_account_id: account } })).toString("base64url")}.signature`;
+function jwt(claims: object): string {
+	return `header.${Buffer.from(JSON.stringify({ "https://api.openai.com/auth": claims })).toString("base64url")}.signature`;
 }
 
 function fixture(tokens: Record<string, string | undefined>, stored: Record<string, { type: string; accountId?: unknown; access?: unknown }>) {
@@ -15,99 +15,74 @@ function fixture(tokens: Record<string, string | undefined>, stored: Record<stri
 	};
 }
 
-test("only new openai OAuth resolves its JWT account through Pi", async () => {
-	const f = fixture({ openai: jwt("new-account") }, { openai: { type: "oauth" } });
-	assert.deepEqual(await resolveCodexCredential(f.source, f.reader), { token: jwt("new-account"), account: "new-account" });
-	assert.deepEqual(f.calls, ["openai"]);
-});
-
-const legacyToken = jwt("legacy-account");
+const newToken = jwt({ per_user_salt: "synthetic-salt", encrypted_auth_metadata: "synthetic-encrypted-data" });
+const newStored = { type: "oauth", access: newToken };
+const legacyToken = jwt({ chatgpt_account_id: "legacy-account" });
 const legacyStored = { type: "oauth", access: legacyToken, accountId: "legacy-account" };
+const newCredential = { provider: "openai", token: newToken };
+const legacyCredential = { provider: "openai-codex", token: legacyToken, account: "legacy-account" };
 
-test("only legacy OAuth remains usable", async () => {
-	const f = fixture({ "openai-codex": legacyToken }, { "openai-codex": legacyStored });
-	assert.deepEqual(await resolveCodexCredential(f.source, f.reader), { token: legacyToken, account: "legacy-account" });
-	assert.deepEqual(f.calls, ["openai-codex"]);
-});
-
-test("both OAuth providers prefer new OpenAI without looking up legacy's bearer", async () => {
-	const token = jwt("new-account");
-	const f = fixture({ openai: token, "openai-codex": legacyToken }, {
-		openai: { type: "oauth", access: token }, "openai-codex": legacyStored,
+test("new encrypted OAuth needs no account identity and wins over legacy", async () => {
+	const f = fixture({ openai: newToken, "openai-codex": legacyToken }, {
+		openai: newStored, "openai-codex": legacyStored,
 	});
-	assert.deepEqual(await resolveCodexCredential(f.source, f.reader), { token, account: "new-account" });
+	assert.deepEqual(await resolveCodexCredential(f.source, f.reader), newCredential);
 	assert.deepEqual(f.calls, ["openai"]);
 });
 
-const inapplicableCredentials: Array<{ type: string; access?: string; accountId?: unknown }> = [
-	{ type: "api_key", accountId: "wrong-account" },
-	{ type: "oauth", access: "opaque", accountId: " " },
-	{ type: "oauth", access: "opaque", accountId: 123 },
-	{ type: "oauth", access: "opaque" },
-	{ type: "oauth", access: jwt("token-account"), accountId: "different-account" },
-];
-for (const [index, openai] of inapplicableCredentials.entries()) {
-	test(`inapplicable new credential ${index + 1} falls back to complete legacy pair`, async () => {
-		const f = fixture({ openai: openai.access ?? "sk-api-key", "openai-codex": legacyToken }, {
-			openai, "openai-codex": legacyStored,
+test("new opaque OAuth ignores irrelevant account metadata", async () => {
+	const f = fixture({ openai: "opaque" }, { openai: { type: "oauth", access: "opaque", accountId: 123 } });
+	assert.deepEqual(await resolveCodexCredential(f.source, f.reader), { provider: "openai", token: "opaque" });
+});
+
+for (const [name, record, resolved] of [
+	["API key", { type: "api_key", access: "sk-key" }, "sk-key"],
+	["API-key override", newStored, "sk-key"],
+	["JWT-shaped override", newStored, jwt({ chatgpt_account_id: "wrong-account" })],
+	["missing bearer", newStored, undefined],
+	["missing credential", undefined, newToken],
+] as const) {
+	test(`${name} on new provider falls back to complete legacy pair`, async () => {
+		const f = fixture({ openai: resolved, "openai-codex": legacyToken }, {
+			...(record ? { openai: record } : {}), "openai-codex": legacyStored,
 		});
-		assert.deepEqual(await resolveCodexCredential(f.source, f.reader), { token: legacyToken, account: "legacy-account" });
-		if (openai.type === "api_key") assert.deepEqual(f.calls, ["openai-codex"]);
+		assert.deepEqual(await resolveCodexCredential(f.source, f.reader), legacyCredential);
 	});
 }
 
-test("API-key override cannot borrow stored OAuth identity", async () => {
-	const f = fixture({ openai: "sk-runtime-key", "openai-codex": legacyToken }, {
-		openai: { type: "oauth", access: "actual-oauth-token", accountId: "new-account" },
-		"openai-codex": legacyStored,
-	});
-	assert.deepEqual(await resolveCodexCredential(f.source, f.reader), { token: legacyToken, account: "legacy-account" });
+test("neither transport is safe without stored OAuth metadata", async () => {
+	const f = fixture({ openai: newToken, "openai-codex": legacyToken }, {});
+	await assert.rejects(resolveCodexCredential(f.source, null), { kind: "missing_auth" });
+	assert.deepEqual(f.calls, []);
 });
 
-test("opaque OAuth token uses only its matching provider's stored identity", async () => {
-	const f = fixture({ openai: "opaque-oauth" }, {
-		openai: { type: "oauth", access: "opaque-oauth", accountId: " new-account " },
-		"openai-codex": legacyStored,
-	});
-	assert.deepEqual(await resolveCodexCredential(f.source, f.reader), { token: "opaque-oauth", account: "new-account" });
-});
-
-test("encrypted new OAuth identity falls back without borrowing legacy account metadata", async () => {
-	const token = `h.${Buffer.from(JSON.stringify({ "https://api.openai.com/auth": {
-		per_user_salt: "synthetic-salt", encrypted_auth_metadata: "synthetic-encrypted-data",
-	} })).toString("base64url")}.s`;
-	const f = fixture({ openai: token, "openai-codex": legacyToken }, {
-		openai: { type: "oauth", access: token }, "openai-codex": legacyStored,
-	});
-	assert.deepEqual(await resolveCodexCredential(f.source, f.reader), { token: legacyToken, account: "legacy-account" });
-});
-
-test("new token cannot borrow legacy identity when both tokens lack one", async () => {
-	const f = fixture({ openai: "opaque-new" }, {
-		openai: { type: "oauth", access: "opaque-new" }, "openai-codex": legacyStored,
+test("legacy account must match its own token and not the new provider", async () => {
+	const f = fixture({ "openai-codex": "opaque-legacy" }, {
+		openai: { ...newStored, accountId: "new-account" },
+		"openai-codex": { type: "oauth", access: "opaque-legacy" },
 	});
 	await assert.rejects(resolveCodexCredential(f.source, f.reader), { kind: "missing_account_id" });
 });
 
-test("missing new bearer falls back to legacy", async () => {
+test("conflicting legacy JWT and stored identity are rejected", async () => {
 	const f = fixture({ "openai-codex": legacyToken }, {
-		openai: { type: "oauth" }, "openai-codex": legacyStored,
+		"openai-codex": { ...legacyStored, accountId: "different-account" },
 	});
-	assert.deepEqual(await resolveCodexCredential(f.source, f.reader), { token: legacyToken, account: "legacy-account" });
+	await assert.rejects(resolveCodexCredential(f.source, f.reader), { kind: "missing_account_id" });
 });
 
-test("without credential metadata new API keys are never queried", async () => {
-	const f = fixture({ openai: "sk-key", "openai-codex": legacyToken }, {});
-	assert.deepEqual(await resolveCodexCredential(f.source, null), { token: legacyToken, account: "legacy-account" });
-	assert.deepEqual(f.calls, ["openai-codex"]);
+test("legacy JWT claim cannot bypass stored OAuth access match", async () => {
+	const f = fixture({ "openai-codex": legacyToken }, {
+		"openai-codex": { ...legacyStored, access: "different-token" },
+	});
+	await assert.rejects(resolveCodexCredential(f.source, f.reader), { kind: "missing_auth" });
 });
 
-test("metadata is read after Pi refreshes the access token", async () => {
-	const stored = { type: "oauth", access: "old-token", accountId: "old-account" };
+test("metadata is re-read after Pi refreshes the access token", async () => {
+	const stored = { type: "oauth", access: "old-token" };
 	const credential = await resolveCodexCredential({ async getApiKeyForProvider() {
-		stored.access = "new-token";
-		stored.accountId = "new-account";
-		return stored.access;
+		stored.access = newToken;
+		return newToken;
 	} }, provider => provider === "openai" ? stored : undefined);
-	assert.deepEqual(credential, { token: "new-token", account: "new-account" });
+	assert.deepEqual(credential, newCredential);
 });

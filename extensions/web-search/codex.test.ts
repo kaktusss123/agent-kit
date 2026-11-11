@@ -21,8 +21,7 @@ function baseOptions(overrides: Partial<RunWebSearchOptions> = {}): RunWebSearch
 	return {
 		query: "latest stable Rust release",
 		model: "gpt-test",
-		token: "token",
-		account: "acct_123",
+		credential: { provider: "openai-codex", token: "token", account: "acct_123" },
 		fetchImpl: async () => {
 			throw new Error("no fetch configured");
 		},
@@ -108,7 +107,7 @@ describe("runWebSearch — successful search", () => {
 		let capturedBody: Record<string, unknown> = {};
 		await runWebSearch(
 			baseOptions({
-				token: tokenWithClaims({ chatgpt_account_id: "acct_123" }),
+				credential: { provider: "openai-codex", token: tokenWithClaims({ chatgpt_account_id: "acct_123" }), account: "acct_123" },
 				searchContextSize: "medium",
 				fetchImpl: async (input, init) => {
 					capturedUrl = String(input);
