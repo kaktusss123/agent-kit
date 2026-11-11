@@ -9,6 +9,10 @@ class FakePi {
 	private name?: string;
 	setTitleCalls: string[] = [];
 	completeCalls = 0;
+	/** Options argument of every modelRegistry.complete call, in order. */
+	completeOptions: any[] = [];
+	/** Current conversation id reported by the fake session manager. */
+	sessionId = "sess-current";
 	readonly model = { provider: "p", id: "m" };
 
 	on(event: string, handler: Handler): void {
@@ -35,8 +39,9 @@ function tuiContext(pi: FakePi) {
 		modelRegistry: {
 			find: () => undefined,
 			hasConfiguredAuth: () => false,
-			complete: async () => {
+			complete: async (_model: any, _context: any, options: any) => {
 				pi.completeCalls++;
+				pi.completeOptions.push(options);
 				return {
 					stopReason: "stop",
 					content: [{ type: "text", text: "Fix flaky login" }],
@@ -47,6 +52,9 @@ function tuiContext(pi: FakePi) {
 			setTitle: (name: string) => {
 				pi.setTitleCalls.push(name);
 			},
+		},
+		sessionManager: {
+			getSessionId: () => pi.sessionId,
 		},
 	};
 }
@@ -85,5 +93,41 @@ describe("session-title before_agent_start boundary", () => {
 		await flush();
 		expect(pi.completeCalls).toBe(1);
 		expect(pi.getSessionName()).toBe("Fix flaky login");
+	});
+});
+
+describe("session-title OpenCode Go session id", () => {
+	test("title call passes the current conversation session id", async () => {
+		const pi = new FakePi();
+		sessionTitleExtension(pi as never);
+		const ctx = tuiContext(pi);
+
+		pi.emit({ type: "before_agent_start", prompt: "Fix the flaky login test" }, ctx);
+		await flush();
+
+		expect(pi.completeOptions.length).toBe(1);
+		expect(pi.completeOptions[0].sessionId).toBe("sess-current");
+	});
+
+	test("rebind follows the session manager to the new session id", async () => {
+		const pi = new FakePi();
+		sessionTitleExtension(pi as never);
+		const ctx = tuiContext(pi);
+
+		pi.emit({ type: "before_agent_start", prompt: "First task" }, ctx);
+		await flush();
+		expect(pi.completeOptions[0].sessionId).toBe("sess-current");
+
+		// /new, /resume, /fork rebind both the session manager and the attempt,
+		// while pi clears the session name; the next prompt names the new session
+		// and must carry its id, not the previous conversation's.
+		pi.sessionId = "sess-next";
+		pi.emit({ type: "session_start" }, ctx);
+		pi.setSessionName("");
+		pi.emit({ type: "before_agent_start", prompt: "Second task" }, ctx);
+		await flush();
+
+		expect(pi.completeOptions.length).toBe(2);
+		expect(pi.completeOptions[1].sessionId).toBe("sess-next");
 	});
 });

@@ -112,7 +112,17 @@ async function generateTitle(prompt: string, ctx: ExtensionContext, pi: Extensio
 				},
 			],
 		},
-		{ signal: AbortSignal.timeout(TITLE_TIMEOUT_MS), maxTokens: TITLE_MAX_TOKENS, cacheRetention: "none" },
+		{
+			signal: AbortSignal.timeout(TITLE_TIMEOUT_MS),
+			maxTokens: TITLE_MAX_TOKENS,
+			cacheRetention: "none",
+			// Real per-conversation id from ReadonlySessionManager: the same id pi's
+			// main loop sends as x-opencode-session for this conversation. OpenCode Go
+			// answers a header-less request with HTTP 400 MissingSessionID and groups
+			// routing and prompt caching per this id.
+			// https://opencode.ai/v2/docs/console/go/#where-can-i-use-it
+			sessionId: ctx.sessionManager.getSessionId(),
+		},
 	);
 	if (response.stopReason === "aborted" || response.stopReason === "error") return;
 
