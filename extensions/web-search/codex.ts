@@ -3,7 +3,7 @@
  *
  * One query in, one answer + source list out. The request goes to the official
  * ChatGPT Codex backend (`https://chatgpt.com/backend-api/codex/responses`)
- * using the OAuth bearer supplied by pi's `/login openai-codex` credential.
+ * using the OAuth bearer supplied by pi's OpenAI or legacy Codex credential.
  *
  * Request shape follows the current backend contract (classic top-level hosted
  * tools; see oh-my-pi #7666 — Responses-Lite's `additional_tools` placement is
@@ -25,7 +25,7 @@ import type { SearchContextSize } from "./format.ts";
 
 /**
  * Failure taxonomy surfaced to the model/user:
- * - `missing_auth` — no `/login openai-codex` credential in pi
+ * - `missing_auth` — no usable OpenAI/legacy Codex OAuth credential in pi
  * - `missing_account_id` — credential carries no ChatGPT account id
  * - `auth` — backend rejected the credential (401/403)
  * - `unsupported_model` — the ChatGPT account cannot use the requested model
@@ -125,7 +125,7 @@ export interface RunWebSearchOptions {
 	query: string;
 	/** Codex model id to run the search with (resolved by the caller). */
 	model: string;
-	/** OAuth access token from pi's `/login openai-codex` credential. */
+	/** OAuth access token from pi's OpenAI or legacy Codex credential. */
 	token: string;
 	/** ChatGPT account id (stored credential claim or JWT claim). */
 	account: string;

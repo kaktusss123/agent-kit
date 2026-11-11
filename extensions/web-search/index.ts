@@ -1,6 +1,6 @@
 /**
  * web_search — hosted web search over the ChatGPT Codex backend, wired to pi's
- * existing `/login openai-codex` OAuth credential.
+ * existing `openai` or legacy `openai-codex` OAuth credential.
  *
  * Flow: `web_search(query)` → Codex Responses (`/codex/responses`) with the
  * hosted `web_search` tool forced → synthesized answer + source URLs/citations
@@ -17,7 +17,7 @@ import type { ExtensionAPI, Theme } from "@earendil-works/pi-coding-agent";
 import { Text, truncateToWidth } from "@earendil-works/pi-tui";
 import type { Component } from "@earendil-works/pi-tui";
 import { Type } from "typebox";
-import { loadStoredCredentialReader, resolveCodexCredential } from "./auth.ts";
+import { loadStoredCredentialReader, OAUTH_LOGIN_HINT, resolveCodexCredential } from "./auth.ts";
 import { runWebSearch, WebSearchError, type SearchSource, type WebSearchResult } from "./codex.ts";
 import { formatErrorForModel, formatForModel, type SearchContextSize } from "./format.ts";
 
@@ -28,7 +28,7 @@ import { formatErrorForModel, formatForModel, type SearchContextSize } from "./f
 const CONFIG = {
 	/**
 	 * Model candidates used when the session's active model is not an
-	 * openai-codex model. Tried in order; advances on `unsupported_model`
+	 * openai/openai-codex model. Tried in order; advances on `unsupported_model`
 	 * (account lacks the SKU) and `no_web_search` (model answered without
 	 * searching). Keep this list short and account-safe.
 	 */
@@ -159,7 +159,7 @@ interface ModelResolution {
 }
 
 function resolveModelCandidates(activeModelId: string | undefined, activeProvider: string | undefined): ModelResolution {
-	if (activeModelId && activeProvider === "openai-codex") {
+	if (activeModelId && (activeProvider === "openai" || activeProvider === "openai-codex")) {
 		return { candidates: [activeModelId], fromActiveModel: true };
 	}
 	return { candidates: [...CONFIG.fallbackModels], fromActiveModel: false };
@@ -206,7 +206,7 @@ export default function (pi: ExtensionAPI) {
 
 			const searchContextSize = params.search_context_size ?? CONFIG.defaultSearchContextSize;
 
-			// Credential: pi's stored /login openai-codex OAuth, refreshed by pi.
+			// Credential: pi's stored OpenAI OAuth, refreshed only by pi.
 			let token: string;
 			let account: string;
 			try {
@@ -257,7 +257,9 @@ export default function (pi: ExtensionAPI) {
 						error instanceof WebSearchError
 							? error
 							: new WebSearchError("backend", error instanceof Error ? error.message : String(error));
-					lastError = searchError;
+					lastError = searchError.kind === "auth"
+						? new WebSearchError("auth", `${searchError.message} ${OAUTH_LOGIN_HINT}`, searchError.status)
+						: searchError;
 					if (index === candidates.length - 1 || !shouldAdvanceCandidate(searchError, fromActiveModel)) break;
 				}
 			}
