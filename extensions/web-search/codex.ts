@@ -1,9 +1,9 @@
 /**
- * ChatGPT Codex hosted web search over the Responses backend.
+ * OAuth hosted web search over the OpenAI or legacy Codex Responses backend.
  *
- * One query in, one answer + source list out. The request goes to the official
- * ChatGPT Codex backend (`https://chatgpt.com/backend-api/codex/responses`)
- * using the OAuth bearer supplied by pi's `/login openai-codex` credential.
+ * New OpenAI OAuth uses the native Responses endpoint without account headers.
+ * Legacy Codex uses its own endpoint and matching ChatGPT account identity.
+ * One query in, one answer + source list out; Pi supplies the OAuth bearer.
  *
  * Request shape follows the current backend contract (classic top-level hosted
  * tools; see oh-my-pi #7666 — Responses-Lite's `additional_tools` placement is
@@ -25,15 +25,15 @@ import type { SearchContextSize } from "./format.ts";
 
 /**
  * Failure taxonomy surfaced to the model/user:
- * - `missing_auth` — no `/login openai-codex` credential in pi
- * - `missing_account_id` — credential carries no ChatGPT account id
+ * - `missing_auth` — no usable OpenAI/legacy Codex OAuth credential in pi
+ * - `missing_account_id` — legacy Codex credential carries no ChatGPT account id
  * - `auth` — backend rejected the credential (401/403)
  * - `unsupported_model` — the ChatGPT account cannot use the requested model
  * - `rate_limit` — 429 / quota
  * - `timeout` — bounded timeout fired
  * - `network` — connection-level failure
  * - `no_web_search` — backend answered without running the hosted search
- * - `backend` — anything else from the Codex backend
+ * - `backend` — anything else from the Responses backend
  */
 export type WebSearchErrorKind =
 	| "missing_auth"
@@ -121,14 +121,16 @@ export interface WebSearchResult {
 	usage?: { inputTokens: number; outputTokens: number; totalTokens: number };
 }
 
+/** Only constructed after matching Pi's resolved bearer to stored OAuth. */
+export type SearchCredential =
+	| { provider: "openai"; token: string }
+	| { provider: "openai-codex"; token: string; account: string };
+
 export interface RunWebSearchOptions {
 	query: string;
-	/** Codex model id to run the search with (resolved by the caller). */
+	/** Model id to run the search with (resolved by the caller). */
 	model: string;
-	/** OAuth access token from pi's `/login openai-codex` credential. */
-	token: string;
-	/** ChatGPT account id (stored credential claim or JWT claim). */
-	account: string;
+	credential: SearchCredential;
 	searchContextSize?: SearchContextSize;
 	signal?: AbortSignal;
 	/** Hard deadline for the whole search. Default 120s. */
@@ -141,6 +143,7 @@ export interface RunWebSearchOptions {
 // Wire constants
 // ============================================================================
 
+export const OPENAI_RESPONSES_URL = "https://api.openai.com/v1/responses";
 export const CODEX_RESPONSES_URL = "https://chatgpt.com/backend-api/codex/responses";
 const JWT_CLAIM_PATH = "https://api.openai.com/auth";
 export const DEFAULT_TIMEOUT_MS = 120_000;
@@ -152,15 +155,17 @@ function userAgent(): string {
 	return `pi (${process.platform} ${process.version}; ${process.arch}) web-search-extension`;
 }
 
-function buildHeaders(token: string, account: string): Headers {
+function buildHeaders(credential: SearchCredential): Headers {
+	const { token } = credential;
 	const headers = new Headers();
 	headers.set("Authorization", `Bearer ${token}`);
-	headers.set("chatgpt-account-id", account);
+	headers.set("Accept", "text/event-stream");
+	headers.set("Content-Type", "application/json");
+	if (credential.provider === "openai") return headers;
+	headers.set("chatgpt-account-id", credential.account);
 	headers.set("originator", "pi");
 	headers.set("User-Agent", userAgent());
 	headers.set("OpenAI-Beta", "responses=experimental");
-	headers.set("Accept", "text/event-stream");
-	headers.set("Content-Type", "application/json");
 	// Region-pinned enterprise workspaces reject requests whose egress does not
 	// match the token's residency unless the client declares it (oh-my-pi wire).
 	const residency = jwtClaim(token, "chatgpt_data_residency") ?? jwtClaim(token, "chatgpt_compute_residency");
@@ -501,9 +506,9 @@ async function consumeSearchStream(
 			}
 		} else if (event.type === "error" || event.type === "response.failed") {
 			const { code, message } = extractSseError(data);
-			const detail = message || "Unknown Codex error";
+			const detail = message || "Unknown Responses error";
 			const kind = classifySseErrorMessage(detail);
-			throw new WebSearchError(kind, code ? `Codex error (${code}): ${detail}` : `Codex error: ${detail}`);
+			throw new WebSearchError(kind, code ? `Responses error (${code}): ${detail}` : `Responses error: ${detail}`);
 		}
 	}
 
@@ -512,7 +517,7 @@ async function consumeSearchStream(
 	if (!webSearchInvoked) {
 		throw new WebSearchError(
 			"no_web_search",
-			"Codex returned an answer without running web search (no web_search_call event); refusing to treat it as a search result",
+			"Responses backend returned an answer without running web search (no web_search_call event); refusing to treat it as a search result",
 		);
 	}
 
@@ -520,7 +525,7 @@ async function consumeSearchStream(
 	const streamedAnswer = streamedParts.join("").trim();
 	const answer = finalAnswer || streamedAnswer;
 	if (!answer && sources.length === 0) {
-		throw new WebSearchError("backend", "Codex web search returned no answer and no sources");
+		throw new WebSearchError("backend", "Web search returned no answer and no sources");
 	}
 	if (sources.length === 0 && answer) {
 		for (const source of extractTextSources(answer)) addSource(sources, source);
@@ -546,9 +551,10 @@ export async function runWebSearch(options: RunWebSearchOptions): Promise<WebSea
 		const fetchImpl = options.fetchImpl ?? fetch;
 		let response: Response;
 		try {
-			response = await fetchImpl(CODEX_RESPONSES_URL, {
+			const url = options.credential.provider === "openai" ? OPENAI_RESPONSES_URL : CODEX_RESPONSES_URL;
+			response = await fetchImpl(url, {
 				method: "POST",
-				headers: buildHeaders(options.token, options.account),
+				headers: buildHeaders(options.credential),
 				body: JSON.stringify(
 					buildRequestBody(options.query, options.model, options.searchContextSize ?? "high"),
 				),
@@ -563,12 +569,12 @@ export async function runWebSearch(options: RunWebSearchOptions): Promise<WebSea
 			const body = errorText.slice(0, 2000);
 			throw new WebSearchError(
 				classifyHttpStatus(response.status, body),
-				`Codex API error (${response.status}): ${body || response.statusText}`,
+				`${options.credential.provider} Responses error (${response.status}): ${body || response.statusText}`,
 				response.status,
 			);
 		}
 		if (!response.body) {
-			throw new WebSearchError("backend", "Codex API returned no response body");
+			throw new WebSearchError("backend", "Responses API returned no response body");
 		}
 
 		try {
@@ -578,7 +584,7 @@ export async function runWebSearch(options: RunWebSearchOptions): Promise<WebSea
 			if (deadline.signal.aborted) throw classifyAbort(error, deadline, options.signal);
 			throw new WebSearchError(
 				"backend",
-				error instanceof Error ? error.message : "Codex web search stream failed",
+				error instanceof Error ? error.message : "Web search stream failed",
 			);
 		}
 	} finally {

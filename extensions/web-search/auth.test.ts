@@ -12,8 +12,7 @@ function tokenWithAccount(accountId: string | null): string {
 function tokenSource(token: string | undefined): CodexTokenSource {
 	return {
 		async getApiKeyForProvider(provider) {
-			expect(provider).toBe("openai-codex");
-			return token;
+			return provider === "openai-codex" ? token : undefined;
 		},
 	};
 }
@@ -28,33 +27,35 @@ describe("resolveCodexCredential — missing auth", () => {
 
 describe("resolveCodexCredential — account id resolution", () => {
 	test("missing account id from both stored credential and token yields missing_account_id", async () => {
-		const error = await resolveCodexCredential(tokenSource("opaque-token"), () => ({ type: "oauth", accountId: "  " })).catch(
+		const error = await resolveCodexCredential(tokenSource("opaque-token"), () => ({ type: "oauth", access: "opaque-token", accountId: "  " })).catch(
 			(e: unknown) => e,
 		);
 		expect((error as { kind?: string }).kind).toBe("missing_account_id");
 		expect((error as Error).message).toContain("/login openai-codex");
 	});
 
-	test("prefers the stored OAuth credential account id", async () => {
-		const reader: StoredCredentialReader = provider => {
-			expect(provider).toBe("openai-codex");
-			return { type: "oauth", accountId: "acct_stored" };
-		};
-		const credential = await resolveCodexCredential(tokenSource(tokenWithAccount("acct_token")), reader);
-		expect(credential.account).toBe("acct_stored");
+	test("uses the matching stored OAuth credential account id for an opaque token", async () => {
+		const reader: StoredCredentialReader = provider => provider === "openai-codex"
+			? { type: "oauth", accountId: "acct_stored", access: "opaque-token" } : undefined;
+		const credential = await resolveCodexCredential(tokenSource("opaque-token"), reader);
+		expect(credential.provider).toBe("openai-codex");
+		if (credential.provider === "openai-codex") expect(credential.account).toBe("acct_stored");
 	});
 
-	test("falls back to the token JWT claim when no stored credential is available", async () => {
-		const credential = await resolveCodexCredential(tokenSource(tokenWithAccount("acct_token")), null);
-		expect(credential.account).toBe("acct_token");
+	test("uses the matching OAuth token JWT claim without a stored account id", async () => {
+		const token = tokenWithAccount("acct_token");
+		const credential = await resolveCodexCredential(tokenSource(token), provider => provider === "openai-codex"
+			? { type: "oauth", access: token } : undefined);
+		expect(credential.provider).toBe("openai-codex");
+		if (credential.provider === "openai-codex") expect(credential.account).toBe("acct_token");
 	});
 
 	test("ignores non-oauth stored credentials", async () => {
-		const credential = await resolveCodexCredential(tokenSource(tokenWithAccount("acct_token")), () => ({
+		const error = await resolveCodexCredential(tokenSource(tokenWithAccount("acct_token")), () => ({
 			type: "api_key",
 			accountId: "acct_bad",
-		}));
-		expect(credential.account).toBe("acct_token");
+		})).catch((e: unknown) => e);
+		expect((error as { kind?: string }).kind).toBe("missing_auth");
 	});
 });
 

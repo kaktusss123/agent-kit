@@ -27,7 +27,7 @@ export function formatForModel(result: WebSearchResult): string {
 	if (result.answer) {
 		parts.push(result.answer);
 	} else {
-		parts.push("(Codex returned sources without an answer text)");
+		parts.push("(Web search returned sources without an answer text)");
 	}
 
 	if (result.sources.length > 0) {

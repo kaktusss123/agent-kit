@@ -1,23 +1,24 @@
 /**
- * Codex credential resolution through pi's public APIs.
+ * OAuth search credential resolution through pi's public APIs.
  *
  * The bearer token always comes from `ModelRegistry.getApiKeyForProvider` —
- * pi's single refresh authority for the `/login openai-codex` credential.
+ * pi's single refresh authority for both `openai` and `openai-codex` OAuth.
  * This extension never stores, copies, or refreshes credentials itself.
  *
- * The ChatGPT account id is read from the stored OAuth credential via
- * `readStoredCredential` (public pi API, may lag the installed version —
- * resolved lazily), falling back to the `chatgpt_account_id` JWT claim of the
- * access token, which pi guarantees at login time.
+ * Both transports require the resolved token to match the stored OAuth record.
+ * Only legacy Codex needs a ChatGPT account id; new OpenAI grants need not
+ * expose one. Pi remains the sole credential storage and refresh authority.
  *
  * Auth resolution approach adapted from pi-codex-search
  * (https://github.com/Leechael/pi-codex-search), MIT License, Copyright (c) 2025.
  */
 
-import { WebSearchError } from "./codex.ts";
+import { WebSearchError, type SearchCredential } from "./codex.ts";
 
-const OPENAI_CODEX_PROVIDER = "openai-codex";
+const OAUTH_PROVIDERS = ["openai", "openai-codex"] as const;
 const JWT_CLAIM_PATH = "https://api.openai.com/auth";
+export const OAUTH_LOGIN_HINT =
+	"Run `/login openai` and choose Sign in with ChatGPT, or use legacy `/login openai-codex`. OpenAI API keys cannot enable this search backend.";
 
 /** Minimal surface of pi's ModelRegistry this extension depends on. */
 export interface CodexTokenSource {
@@ -27,6 +28,7 @@ export interface CodexTokenSource {
 interface StoredOAuthCredential {
 	type?: unknown;
 	accountId?: unknown;
+	access?: unknown;
 }
 
 export type StoredCredentialReader = (providerId: string) => StoredOAuthCredential | undefined;
@@ -61,39 +63,40 @@ export function extractAccountIdFromToken(token: string): string | undefined {
 	}
 }
 
-export interface CodexCredential {
-	token: string;
-	account: string;
-}
-
 /**
- * Resolves the Codex credential through pi. Throws:
- * - `missing_auth` when no `/login openai-codex` credential exists
- * - `missing_account_id` when neither the stored credential nor the token
- *   carries a ChatGPT account id
+ * Prefer new OpenAI OAuth, otherwise try legacy Codex. Never pair one
+ * provider's token with the other's account or send a configured API key.
+ * Without stored credential metadata neither transport can be used safely.
  */
 export async function resolveCodexCredential(
 	tokenSource: CodexTokenSource,
 	readStoredCredential: StoredCredentialReader | null,
-): Promise<CodexCredential> {
-	const token = await tokenSource.getApiKeyForProvider(OPENAI_CODEX_PROVIDER);
-	if (!token) {
-		throw new WebSearchError(
-			"missing_auth",
-			"No OpenAI Codex credentials found. Run `/login openai-codex` (ChatGPT Plus/Pro) to enable web search.",
-		);
-	}
+): Promise<SearchCredential> {
+	let missingAccount = false;
+	for (const provider of OAUTH_PROVIDERS) {
+		const before = readStoredCredential?.(provider);
+		if (before?.type !== "oauth") continue;
 
-	const stored = readStoredCredential?.(OPENAI_CODEX_PROVIDER);
-	if (stored && stored.type === "oauth" && typeof stored.accountId === "string" && stored.accountId.trim()) {
-		return { token, account: stored.accountId.trim() };
+		// Only Pi resolves/refreshes the bearer. Re-read metadata after refresh.
+		const token = await tokenSource.getApiKeyForProvider(provider);
+		if (!token) continue;
+		const stored = readStoredCredential?.(provider);
+		// A runtime/configured API key can override a saved OAuth credential.
+		// A JWT-shaped override is not proof of OAuth provenance either.
+		if (stored?.type !== "oauth" || stored.access !== token) continue;
+		if (provider === "openai") return { provider, token };
+		const fromToken = extractAccountIdFromToken(token);
+		const storedAccount = stored?.type === "oauth" && typeof stored.accountId === "string"
+			? stored.accountId.trim() : undefined;
+		if (fromToken && (!storedAccount || fromToken === storedAccount)) {
+			return { provider, token, account: fromToken };
+		}
+		if (!fromToken && storedAccount) return { provider, token, account: storedAccount };
+		missingAccount = true;
 	}
-
-	const fromToken = extractAccountIdFromToken(token);
-	if (fromToken) return { token, account: fromToken };
 
 	throw new WebSearchError(
-		"missing_account_id",
-		"Codex credential carries no ChatGPT account id. Re-run `/login openai-codex` to refresh it.",
+		missingAccount ? "missing_account_id" : "missing_auth",
+		`${missingAccount ? "No usable ChatGPT account id in the legacy Codex OAuth credential." : "No usable ChatGPT OAuth credentials found."} ${OAUTH_LOGIN_HINT}`,
 	);
 }
