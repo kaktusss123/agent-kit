@@ -1,6 +1,6 @@
 ---
 name: simple-design
-description: "Design or simplify software architecture, APIs, modules, workflows, agent systems, refactors, and technical plans with a hard bias toward the smallest sufficient solution. Use when: proposing abstractions, orchestration, frameworks, extensibility, state machines, or configuration; deciding where responsibility, state, interfaces, seams, and ownership live; planning a refactor that changes structure; a design risks accumulating speculative machinery. Not for: verifying that an implemented change matches its contract; use skill://code-review."
+description: "Use when: choosing or simplifying software structure, APIs, workflows, or a technical approach. Not for: only collecting environment/access facts, tracing existing behavior, or checking an implementation against its contract."
 ---
 
 # Simple Design

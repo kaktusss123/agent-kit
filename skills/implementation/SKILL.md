@@ -1,6 +1,6 @@
 ---
 name: implementation
-description: "General implementation discipline for building a feature or change from an agreed plan, spec, issue, or clear user request. Use when: before the first edit in a coding task; turning an agreed contract into minimal coherent diffs with vertical progress, fast feedback, and scope discipline; escalating when the requested contract conflicts with repository reality. Not for: designing the structure the change must fit; use skill://simple-design."
+description: "Use when: implementing a code change from a request or spec, including delegated work; load before the first edit. Not for: only researching, designing, reviewing, or editing prose."
 ---
 
 # Implementation
