@@ -79,4 +79,3 @@ AGENT_KIT_CLOUDRU_REPO=/path/to/verified/corporate-checkout \
 
 Live-проверки в
 `extensions/*/live/` запускают настоящий `pi` и в обычный прогон не входят.
-
