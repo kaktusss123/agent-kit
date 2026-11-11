@@ -1,6 +1,6 @@
 ---
 name: system-understanding
-description: "Trace how an existing subsystem actually works before designing or modifying it. Use when: file-name reconnaissance is insufficient; you need a causal model of entry points, data and control flow, state ownership, contracts, side effects, failure paths, and tests; an unfamiliar area must be understood before a change. Not for: recovering why the design exists historically; use skill://code-archaeology."
+description: "Use when: tracing current software behavior, data/control flow, or state ownership, including read-only investigations. Not for: analyzing development practice or session statistics, or explaining historical design decisions."
 ---
 
 # System understanding
