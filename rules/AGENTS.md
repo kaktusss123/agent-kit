@@ -14,6 +14,7 @@
 
 ## Communication
 
+* Messages to other agents, prose in tool arguments and files, and final answers may be read by humans. Use proper spacing between words and numbers; never remove spaces to save tokens. Preserve exact code, commands, paths, identifiers, and quotations.
 * Lead with the answer, result, decision, finding, or blocker.
 * Match the amount of detail to the task. Short questions deserve short answers; complex decisions may need depth.
 * Assume a technically competent reader. Explain non-obvious reasoning, constraints, tradeoffs, and failure modes, not textbook background.

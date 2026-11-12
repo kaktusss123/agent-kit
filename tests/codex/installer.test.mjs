@@ -70,6 +70,10 @@ test('fresh default all hosts; existing selection never acquires Codex; CODEX_HO
   ok(f.cli(['uninstall']));
   ok(f.cli(['install']));
   assert.equal(text(join(f.state, 'hosts')), 'pi\nclaude-code\ncodex\n');
+  const sharedRules = text(join(f.kit, 'rules/AGENTS.md'));
+  assert.equal(text(join(f.home, '.pi/agent/AGENTS.md')), sharedRules);
+  assert.equal(text(join(f.home, '.claude/rules/agent-kit.md')), sharedRules);
+  assert.ok(text(join(f.env.CODEX_HOME, 'AGENTS.md')).includes(sharedRules));
 });
 test('foreign global rules/hooks/skills and redirected owned links survive install/uninstall', () => {
   const f = fresh();
