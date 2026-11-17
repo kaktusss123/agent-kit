@@ -58,13 +58,14 @@ test('publication contract permits proven PR-only CI without waiving pre-publica
 test('provisional publication is not readiness and description rules preserve pending evidence', () => {
   const skill = text('skills/full-send/SKILL.md');
   assert.match(skill, /all required checks and independent review must pass for the exact current base\/head before `READY` or merge/i);
-  assert.match(skill, /do not enable auto-merge or enter a merge queue until readiness and merge authority/i);
-  assert.match(skill, /full stop never permits either/i);
+  assert.match(skill, /do not enable auto-merge before readiness and merge authority/i);
+  assert.match(skill, /only controlled required-queue admission under Full send below may precede queue-only checks/i);
+  assert.match(skill, /full stop never permits either auto-merge or queue entry/i);
   const publication = text('skills/change-request/SKILL.md');
   assert.match(publication, /failed, missing, unknown or pending required checks remain readiness blockers after publication/i);
-  assert.match(publication, /no auto-merge or queue until readiness and merge authority/i);
-  assert.match(publication, /independent review must pass for the exact current candidate and target base/i);
-  assert.match(skill, /review-loop or council acceptance is blocked solely by proven PR-dependent checks/i);
+  assert.match(publication, /auto-merge requires readiness and merge authority/i);
+  assert.match(publication, /any required independent review must pass for the exact current candidate and target base/i);
+  assert.match(skill, /review-loop or council acceptance is blocked solely by proven PR- or queue-dependent checks/i);
   assert.match(skill, /retain that pending\/blocked result.*complete acceptance after those checks run/i);
   assert.match(skill, /do not consume rounds waiting for CI, reset the budget, or call provisional publication `PASS` or convergence/i);
   const description = text('skills/change-request/references/description.md');
@@ -73,6 +74,40 @@ test('provisional publication is not readiness and description rules preserve pe
   assert.match(description, /do not list them as passes or claim `READY`/i);
   assert.match(description, /known required-check failures, deferred-hook gaps and hard project publication restrictions still block creation/i);
   assert.match(description, /unknown policy or empty results do not prove that exception applies/i);
+});
+
+test('queue-only CI has a controlled full-send admission gate, not premature readiness', () => {
+  const skill = text('skills/full-send/SKILL.md');
+  const send = section(skill, 'Full send');
+  assert.match(send, /workflow configuration or authoritative forge evidence proves a required queue has queue-only CI \(for example `merge_group`\)/i);
+  assert.match(send, /full send may enter that controlled queue within its merge grant after all pre-queue checks and independent review pass for the current base\/head/i);
+  assert.match(send, /queue enforces all final required checks on the current merge-group revision before merging/i);
+  assert.match(send, /keep queue-only checks pending until they actually pass/i);
+  assert.match(send, /unknown policy or empty results do not prove this exception/i);
+  assert.match(send, /does not authorize arbitrary auto-merge before unverified CI/i);
+  assert.match(send, /queued or auto-enabled is not merged/i);
+  const stop = section(skill, 'Full stop');
+  assert.match(stop, /required check can only run after queue entry.*`BLOCKED`, not `READY`/i);
+  assert.match(stop, /full stop cannot obtain it by entering the queue/i);
+  const publication = text('skills/change-request/SKILL.md');
+  assert.match(publication, /this skill never merges or enters a queue/i);
+  assert.match(publication, /queue admission is not final readiness: final queue checks must pass before merge/i);
+  const description = text('skills/change-request/references/description.md');
+  assert.match(description, /queue-only checks may remain pending at controlled required-queue admission under full send after its pre-queue gates and independent review pass/i);
+  assert.match(description, /must pass on the current merge-group revision before merge/i);
+  assert.match(description, /full stop never enters the queue.*queue-only check as a blocker/i);
+});
+
+test('generic publication follows applicable review policy without weakening autonomous review', () => {
+  const publication = text('skills/change-request/SKILL.md');
+  assert.match(publication, /all required checks and any required independent review must pass/i);
+  assert.match(publication, /project's review policy and the `skill:\/\/git-task` review decision point outside autonomous modes/i);
+  assert.match(publication, /full send\/full stop retain their mandatory independent review/i);
+  const description = text('skills/change-request/references/description.md');
+  assert.match(description, /all required checks and any required independent review/i);
+  assert.match(description, /outside autonomous modes, follow project policy and the git-task review decision point, not a universal independent-review requirement/i);
+  assert.match(description, /full send\/full stop still require independent review/i);
+  assert.match(text('skills/full-send/SKILL.md'), /all required checks and independent review must pass for the exact current base\/head/i);
 });
 
 test('complex ordinary decisions may use non-binding read-only fresh-context advice', () => {
