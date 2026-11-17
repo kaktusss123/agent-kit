@@ -16,7 +16,7 @@ A Bash `cd` gives commands access to that directory; it does not restart Claude 
 
 Do not use `isolation: worktree` for owners: it creates a separate Claude-managed worktree on its own branch instead of the task worktree. Model choice: do not pass `model` on owner dispatches (the agent definition fixes it; an explicit user model choice still wins). Role mapping: `owner` is the `repo-owner` agent, `explore` is `Explore`, `helper` is `general-purpose` with no `model`, and `review` (the independent reviewer) is a fresh `general-purpose` subagent with `model: opus`.
 
-Parallel owners for independent repositories are parallel Agent calls in one message; dependent owners are dispatched in dependency order.
+Parallel owners for independent managed worktrees may run as parallel Agent calls, including deliberate named arena or swarm lanes of one repository with separate branches and outputs. Establish the repository's canonical worktree before creating lanes and assign integration ownership first; dispatch dependent owners in dependency order. At most one live owner may work in a physical worktree (including path aliases): Claude Code has no Pi cross-process lease, so the controller must enforce this and track active agents.
 
 ## During a run and questions
 

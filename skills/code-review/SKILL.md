@@ -40,6 +40,12 @@ For a `PASS` that depends on lifecycle, concurrency, ordering, or recovery behav
 
 Use specialized skills such as `skill://blast-radius` for non-obvious downstream risk when warranted.
 
+## Optional adversarial replay
+
+When a suspicious path merits more evidence, try a focused reproduction or independent replay against the exact base and candidate revisions, with stated inputs, assumptions and observable outcome. Include a control when useful. An independent replay should not inherit the author's expected result as its oracle. Report whether the behavior was reproduced, refuted, blocked or not attempted, and preserve the evidence.
+
+A concrete static finding with a demonstrated mechanism remains a finding even if a cheap runtime reproduction is unavailable. An unverified hypothesis is not a proven defect; label the uncertainty. Review is read-only and does not authorize product repair. If a reproduction requires writes, use an explicitly authorized isolated destination or managed candidate lane with its own owner; never write into the primary checkout or concurrently into the reviewed worktree. Do not require a fixed number of reviewers.
+
 ## Checkpoint verification mode
 
 Use this mode for fresh-context verification of a committed checkpoint, typically a candidate commit from an owner or a development slice. Do not also implement or repair it.

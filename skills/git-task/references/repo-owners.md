@@ -4,7 +4,7 @@ Deterministic contract of workspace-mode `subagent` spawns (subagents extension,
 
 ## One owner per worktree
 
-A managed worktree has at most one live RepoOwner on the host, independent of how many Pi processes exist. The right to write is a local lease next to the task workspace:
+A managed physical worktree has at most one live RepoOwner on the host, independent of how many Pi processes exist. Distinct managed worktrees of the same repository can have independent owners; deliberate arena/swarm lanes require distinct branches and assigned integration ownership. The right to write is a local lease next to the task workspace:
 
 - it is acquired before the child process exists and released only after the child has exited and the final Git read finished — cancellation, the run deadline, a hung stop, and a Main crash do not release it early;
 - the lease names the recording processes (Main and the dispatched child, each by pid and process start time), so a dead Main with a still-running child keeps the worktree locked, and a dead owner is recovered only when every recorded process is provably gone;

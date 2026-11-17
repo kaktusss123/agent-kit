@@ -23,6 +23,7 @@ import {
 } from "./fake-rpc.ts";
 import { envelopeFileName, type Envelope } from "./envelope.ts";
 import { saveProgress } from "./progress.ts";
+import { taskStatus } from "../task-workspace/flows.ts";
 import { loadResult } from "./result-store.ts";
 import { agentDetailView } from "./index.ts";
 import { publishSubagentStateSource, type ReadOnlyStateRegistry } from "./read-only-state.ts";
@@ -1675,6 +1676,78 @@ function foreignAcquireAttempt(taskRoot: string, workspace: string): Record<stri
 }
 
 describe("cross-process worktree ownership", () => {
+	test("managed same-repository lanes have independent owners, snapshots and output destinations", async () => {
+		const h = makeLayer();
+		try {
+			// Seed a local repository without any worktrees; all worktrees use the managed flow.
+			const source = path.join(path.dirname(h.taskRoot), "source-for-lanes");
+			fs.mkdirSync(source);
+			execFileSync("git", ["init", "-q", "-b", "main", source]);
+			execFileSync("git", ["-C", source, "config", "user.email", "t@example.invalid"]);
+			execFileSync("git", ["-C", source, "config", "user.name", "T"]);
+			fs.writeFileSync(path.join(source, "README.md"), "seed\n");
+			execFileSync("git", ["-C", source, "add", "README.md"]);
+			execFileSync("git", ["-C", source, "commit", "-qm", "init"]);
+			const snapshot = execFileSync("git", ["-C", source, "rev-parse", "main"], { encoding: "utf8" }).trim();
+			const task = "feat/parallel";
+			// Use the public task CLI: it owns the core's Git environment, unlike bash mutations.
+			const managed = (op: string, params: Record<string, unknown>) => JSON.parse(execFileSync(
+				process.execPath, [path.join(import.meta.dirname, "../task-workspace/cli.ts"), op, JSON.stringify(params)],
+				{ cwd: source, encoding: "utf8" },
+			)) as { status: string; worktree?: string };
+			const canonical = managed("ensure", { source_path: source, branch: task, base_ref: snapshot });
+			const lane = managed("ensure", { source_path: source, task, slot: "candidate-b", branch: "feat/parallel-b", base_ref: snapshot });
+			expect(canonical.status).toBe("created");
+			expect(lane.status).toBe("created");
+			const a = (canonical as { worktree: string }).worktree;
+			const b = (lane as { worktree: string }).worktree;
+			expect(a).not.toBe(b);
+			for (const ws of [a, b]) {
+				expect(execFileSync("git", ["-C", ws, "rev-parse", "HEAD"], { encoding: "utf8" }).trim()).toBe(snapshot);
+			}
+			expect(execFileSync("git", ["-C", a, "rev-parse", "--git-common-dir"], { encoding: "utf8" }).trim()).toBe(
+				execFileSync("git", ["-C", b, "rev-parse", "--git-common-dir"], { encoding: "utf8" }).trim(),
+			);
+			h.harness.onSpawn((proc) => {
+				confirmReadiness(proc, { tools: ["web_search", "task_status", "ensure_task_repo", "checkpoint_commit", "remove_task_lane", "report_result", "report_progress", "subagent"] });
+				autoAcceptPrompt(proc);
+			});
+			const results = await Promise.all([a, b].map((workspace) => dispatchCall(h, { workspace, task: "bounded candidate", waitTimeoutSec: 0.01 })));
+			expect(results.every((r) => r.details.status === "running" && r.details.dispatched === true)).toBe(true);
+			expect(h.harness.spawned).toHaveLength(2);
+			const ids = results.map((r) => r.details.agentId as string);
+			expect(ids[0]).not.toBe(ids[1]);
+			const status = await taskStatus({ path: a }, source, { taskRoot: h.taskRoot });
+			const repos = status.taskWorkspaces.find((w) => w.identity === task)!.repos;
+			expect(repos.map((r) => r.branch).sort()).toEqual([task, "feat/parallel-b"].sort());
+			expect(repos.every((r) => r.owner?.state === "owned")).toBe(true);
+			expect(repos.map((r) => r.kind).sort()).toEqual(["canonical", "lane"]);
+			const alias = path.join(path.dirname(a), "candidate-alias");
+			fs.symlinkSync(a, alias);
+			for (const workspace of [a, b, alias]) {
+				const duplicate = await dispatchCall(h, { workspace, task: "must not dispatch" });
+				expect(duplicate.details).toMatchObject({ status: "blocked", dispatched: false });
+			}
+			expect(h.harness.spawned).toHaveLength(2);
+			// A worker's output never appears in its peer's physical tree.
+			fs.writeFileSync(path.join(b, "candidate.txt"), "candidate b\n");
+			expect(fs.existsSync(path.join(a, "candidate.txt"))).toBe(false);
+			expect(managed("remove-lane", { task, path: b }).status).toBe("lane_dirty");
+			fs.unlinkSync(path.join(b, "candidate.txt"));
+			expect(managed("remove-lane", { task, path: b }).status).toBe("owner_active");
+			expect(managed("teardown", { task }).status).toBe("owner_active");
+			await h.runs.cancelRun(ids[0]!);
+			expect(h.runs.runView(ids[1]!)!.terminal).toBeUndefined();
+			expect((foreignAcquireAttempt(h.taskRoot, b)).ok).toBe(false);
+			await h.runs.cancelRun(ids[1]!);
+			fs.unlinkSync(alias);
+			expect(managed("remove-lane", { task, path: b }).status).toBe("removed");
+			expect(fs.existsSync(a)).toBe(true);
+			expect(managed("teardown", { task }).status).toBe("torn_down");
+			expect(execFileSync("git", ["-C", source, "status", "--porcelain"], { encoding: "utf8" }).trim()).toBe("");
+		} finally { await h.runtime.shutdown(); h.runs.releaseAll(); h.cleanup(); }
+	});
+
 	test("a second OS process is refused while the run owns the worktree, admitted after settlement", async () => {
 		const h = makeLayer();
 		try {

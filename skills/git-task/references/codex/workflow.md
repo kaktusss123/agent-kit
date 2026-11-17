@@ -36,8 +36,11 @@ implement in Main or the primary checkout. Do not assume Pi `subagent` ops,
 model-role aliases, workspace parameters or runtime report tools exist.
 
 Main owns discovery, user decisions, the canonical specification, review and
-integration. For each writable repository dispatch exactly one repository owner
-with `spawn_agent`. Its assignment must state the absolute managed worktree,
+integration. Normally dispatch one repository owner per writable repository;
+for deliberate named arena or swarm lanes, dispatch at most one live owner per
+physical managed worktree with `spawn_agent`, including when lanes share a
+repository. Establish the repository's canonical worktree before creating lanes;
+assign separate branches, outputs and integration ownership. Its assignment must state the absolute managed worktree,
 allowed repository, intent/SPEC path, base, constraints, required checks and
 checkpoint/post-commit verification. Tell it to read local project rules,
 `implementation`, `verification-design`, and the Codex checkpoint binding.
@@ -47,8 +50,8 @@ checkpoint must precede a dependent owner's mutations.
 Read-only researchers/reviewers are separate fresh agents explicitly forbidden
 from mutation. Do not pass model configuration unless requested by the user.
 Codex has no Pi ownership lease, readiness handshake, enforced deadline, terminal
-report envelope or `git_facts`. One active owner per repository is a controller
-policy: keep its thread ID; a wait timeout is not settlement or permission to
+report envelope or `git_facts`. At most one active owner per physical worktree
+(including path aliases) is a controller policy, not a cross-process lease: keep its thread ID; a wait timeout is not settlement or permission to
 start another writer. Use `send_input` for clarifications/steering, `wait_agent`
 to wait for the same run, and `resume_agent` only when continuing a closed thread.
 In the v2 catalog use `send_message` for active-thread messages and

@@ -14,6 +14,10 @@ Edit a specific text to remove AI patterns and add human voice. This skill is an
 3. Add soul (see next section).
 4. Self-audit: "What makes this obviously AI generated?" Fix remaining tells.
 
+## Technical documents
+
+When editing technical documentation, first identify the reader and the job: procedure, reference, or explanation. Put prerequisites and conditions before the steps they govern; make procedures actionable and keep reference material easy to locate. Preserve useful warnings, precise technical meaning and repository-specific formats. Apply stylistic preferences only where they serve the document's language and audience; do not impose English-specific grammar rules on other languages.
+
 ## Adding soul
 
 Removing patterns is half the job. Sterile, voiceless writing is just as obvious.

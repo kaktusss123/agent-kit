@@ -37,6 +37,8 @@ Guarantees: an existing local task branch is attached before remote selection or
 
 ## Secondary lanes
 
+Establish the repository's canonical worktree first, before any lane: lane identity and safe removal depend on its canonical sibling. For deliberate arena candidates or swarm writing slices, use `task` and explicit distinct `slot` and `branch` values for each additional managed lane. Record each returned absolute path and the integration destination; do not infer a `base_ref` or bypass `branch_in_use`. Pi leases are per physical worktree, not per repository; native Claude Code and Codex controllers must coordinate their own owners.
+
 `remove_task_lane(task, path)` removes one clean secondary lane from its managed workspace. Meaningful results: `removed`; `lane_rejected` (canonical worktrees and other invalid targets are refused); `lane_dirty` (uncommitted changes — clean up first); `worktree_remove_failed` / `branch_delete_blocked` (git refused; report, never force). Both removal and branch deletion are non-force operations.
 
 ## Mutation guard (workspace relationship)

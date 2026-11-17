@@ -12,6 +12,7 @@
 tests/installer/run.sh          # isolated HOME; add -v for installer output
 tests/layout/run.sh             # repository layout invariants
 tests/skills/run.sh             # frontmatter, references, skill:// links
+node --test tests/skills/*.test.mjs # real workflow installation for all hosts
 node --test tests/codex/*.test.mjs # isolated install, hooks, discovery without a model
 tests/snapshot/run.sh           # atomicity, locking, retention, manifest validation,
                                 # dirty-checkout refusal, SIGKILL, concurrency
@@ -60,6 +61,13 @@ ln -s .pi-test-runtime/node_modules/jiti node_modules/jiti
 `HOME` (например, свежий `mktemp -d /var/tmp/ak-home-XXXXXX`): длинный путь
 изменяет проверяемое усечение, а симлинк не подходит проверкам `realpath`.
 Удаляйте только созданные проверкой временные каталоги.
+
+Проектная карта выборочных проверок: `.agents/skills/verify/SKILL.md` и
+`features/README.md` рядом с ней. Pi и Codex обнаруживают её как проектный
+навык; в Claude Code прочитайте файл явно. Она не устанавливается как общий
+`verify` в другие проекты. Общее расширение Pi `skill-reflection` лишь
+добавляет совет на очередном пользовательском ходе; оно не запускает модель
+и не редактирует навыки. Подробности: `extensions/skill-reflection/README.md`.
 
 Live-проверки в
 `extensions/*/live/` запускают настоящий `pi` и в обычный прогон не входят.

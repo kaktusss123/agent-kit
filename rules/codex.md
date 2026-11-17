@@ -17,8 +17,9 @@ relative to that skill directory. Shared skills do not move with `CODEX_HOME`.
   of v1 messaging/continuation; use the actual exposed schema). There is no Pi workspace-spawn protocol, report tool,
   automatic deadline, readiness signal, ownership envelope, or model-role binding.
   Missing delegation blocks implementation: report it, never edit the primary.
-- Treat every child as read-only unless explicitly assigned the sole repository
-  owner role and an absolute managed worktree. Main never competes for writes.
+- Treat every child as read-only unless explicitly assigned the sole owner role
+  for an absolute physical managed worktree. Distinct deliberate lanes may have
+  separate owners for one repository; Main never competes for writes.
 - Installed hooks are not proof of active protection. Review/trust non-managed
   hooks explicitly through `/hooks`; do not edit config or bypass trust yourself.
   Disabled/untrusted hooks, host errors/timeouts, absolute Git executables, shell

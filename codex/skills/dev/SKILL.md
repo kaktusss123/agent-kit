@@ -1,6 +1,6 @@
 ---
 name: dev
-description: "Codex implementation entrypoint ($dev): reuse managed worktrees, dispatch one repository owner per writable repository, then review and integrate committed verified candidates. Use when implementing an agreed task or specification; not for specification, use $spec."
+description: "Codex implementation entrypoint ($dev): reuse managed worktrees, dispatch one owner per physical worktree, then review and integrate committed verified candidates. Use when implementing an agreed task or specification; not for specification, use $spec."
 ---
 
 # Implementation mode
@@ -12,9 +12,11 @@ binding first. Resolve `skill://<name>` through
 
 - Reuse canonical managed worktrees through `agent-kit task status` / `ensure`;
   load the task's `SPEC.md` when present. Never use the primary for task writes.
-- Dispatch exactly one repository owner per writable repository through native
-  `spawn_agent`; parallelize independent repositories, respect dependencies.
-  Main never edits task repositories. Missing delegation blocks implementation.
+- Dispatch at most one live owner per physical worktree through native
+  `spawn_agent`; normally use the canonical tree per repository. Deliberate
+  arena/swarm lanes may have separate owners, branches and outputs for one
+  repository. Assign integration ownership and respect dependencies. Main never
+  edits task repositories. Missing delegation blocks implementation.
 - Assign the absolute worktree, scope, contract/base, required skills/checks and
   checkpoint plus AFTER-COMMIT verification. No Pi lease or deadline is supplied.
 - Continue the same active thread with `send_input` and `wait_agent`; a timeout

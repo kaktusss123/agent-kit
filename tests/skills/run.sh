@@ -99,7 +99,7 @@ validate_skill() { # <skill-dir> <skills-root>
 	[ "$stale_links" -eq 0 ] && ok "$skill: all skill:// targets exist"
 }
 
-for skill_dir in "$SKILLS"/*/ "$SELF_DIR"/codex/skills/*/; do
+for skill_dir in "$SKILLS"/*/ "$SELF_DIR"/codex/skills/*/ "$SELF_DIR"/.agents/skills/*/; do
 	[ -d "$skill_dir" ] || continue
 	validate_skill "$skill_dir" "$SKILLS"
 done
@@ -179,13 +179,15 @@ for agent in "$SELF_DIR"/claude-code/agents/*.md; do
 	[ "$agent_bad" -eq 0 ] && ok "$name: skill links resolve"
 done
 
-# --- git-task: single-repo dev is RepoOwner-owned (no Main-owns-edits model) ----
+# --- git-task: ownership is per physical worktree, including explicit lanes ---
 
-if grep -q 'dispatch exactly one RepoOwner' "$SKILLS/git-task/SKILL.md" && \
-	! grep -qE 'implements directly|/move' "$SKILLS/git-task/SKILL.md"; then
-	ok "git-task: single-repo dev dispatches a RepoOwner"
+if grep -q 'at most one live RepoOwner per physical worktree' "$SKILLS/git-task/SKILL.md" && \
+	grep -q 'Main does not edit task repositories itself' "$SKILLS/git-task/SKILL.md" && \
+	grep -q 'arena or swarm lanes may have separate owners for the same repository' "$SKILLS/git-task/SKILL.md" && \
+	! grep -qE 'implements directly|/move|dispatch exactly one RepoOwner per writable repository' "$SKILLS/git-task/SKILL.md"; then
+	ok "git-task: one owner per physical worktree, explicit same-repo lanes, no Main edits"
 else
-	bad "git-task: single-repo dev must dispatch exactly one RepoOwner (no direct implementation, no /move)"
+	bad "git-task: preserve per-worktree ownership and route explicit same-repo lanes through owners"
 fi
 
 if grep -q 'role=explore' "$SELF_DIR/prompts/spec.md" && \
