@@ -26,7 +26,7 @@ test('live Codex 0.166.0 discovers installed shared symlink skills and combined 
     for (const expected of ['Codex host binding', 'Communication contract', 'Git task discipline', 'references/codex/workflow.md', 'spec', 'dev', `- \`r0\` = \`${join(home, '.agents/skills')}\``, '(file: r0/git-task/SKILL.md)', '(file: r0/spec/SKILL.md)', '(file: r0/dev/SKILL.md)']) {
       assert.ok(serialized.includes(expected), `missing ${expected}`);
     }
-    for (const name of ['arena', 'swarm', 'correct', 'reflect', 'benchmark-checklist', 'formal-verification']) {
+    for (const name of ['arena', 'swarm', 'correct', 'reflect', 'benchmark-checklist', 'formal-verification', 'modernize', 'full-send', 'council']) {
       assert.ok(serialized.includes(`(file: r0/${name}/SKILL.md)`), `missing installed ${name}`);
     }
     assert.ok(!serialized.includes(join(env.CODEX_HOME, 'skills/git-task')));

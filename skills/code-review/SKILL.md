@@ -1,6 +1,6 @@
 ---
 name: code-review
-description: "Review a proposed or implemented change against two independent questions: does it satisfy the intended spec/request, and is the engineering sound for the repository. Use when: reviewing a diff or PR/MR; verifying a committed checkpoint in a fresh context; orchestrating independent review with assigned lenses. Not for: repairing the change in the same pass; use skill://git-task for repair routing."
+description: "Review a proposed or implemented change against two independent questions: does it satisfy the intended spec/request, and is the engineering sound for the repository. Use when: reviewing a diff or PR/MR; verifying a committed checkpoint in a fresh context; running a bounded review-loop; orchestrating independent review with assigned lenses. Not for: repairing the change in the same pass; use skill://git-task for repair routing."
 ---
 
 # Code review
@@ -39,6 +39,10 @@ Check the changed code and necessary surrounding context for:
 For a `PASS` that depends on lifecycle, concurrency, ordering, or recovery behavior, cite at least one executed check: a focused test, a repro script, or a real call. If no such check ran, the verdict is `PASS (static only)`.
 
 Use specialized skills such as `skill://blast-radius` for non-obvious downstream risk when warranted.
+
+## Optional review-loop
+
+For an explicitly requested iterative independent review, read `references/review-loop.md`. A normal review remains a single pass; a council participant performs one assigned assessment, not a nested loop.
 
 ## Optional adversarial replay
 

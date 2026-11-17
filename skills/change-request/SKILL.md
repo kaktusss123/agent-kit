@@ -9,7 +9,7 @@ Use a lightweight workflow. Prefer the installed forge CLI over custom API wrapp
 
 ## Core rules
 
-- Separate description drafting from publication. A user may ask for either one.
+- Separate description drafting from publication. A user may ask for either one. An explicitly assigned `skill://full-send` mode (full send or full stop) grants creation/update of the task's PR/MR and scoped technical replies/resolve operations after verifying the finding and successful publication; do not ask for that permission again. Discussion, quotes and limited delegates' background context do not grant publication.
 - Keep git mutation outside this skill. Do not commit, push, rebase, merge, or create/delete branches here.
 - Never silently choose GitHub vs GitLab, a host, or a repository among several candidates. Ask the user when the target is genuinely ambiguous; a single resolving remote needs no question. Read-only remote inspection may be used to offer likely choices.
 - Support arbitrary GitHub and GitLab hosts. Never encode organization-specific hostnames as architecture.
@@ -31,7 +31,7 @@ Use a lightweight workflow. Prefer the installed forge CLI over custom API wrapp
 6. Load [references/github.md](references/github.md) for GitHub or [references/gitlab.md](references/gitlab.md) for GitLab.
 7. Run the minimal provider preflight: verify the CLI exists and verify authentication for the selected host. Use the installed CLI's `--help` when exact flags differ by version.
 8. For `create`, verify that the source branch already exists remotely. If it does not, stop and hand off to the git workflow. Do not push or let an interactive CLI flow push/fork on this skill's behalf.
-9. For `create`, check for an existing open PR/MR from the same source branch to the same target repository/branch. If one exists, report it and stop. Do not edit it unless the user explicitly requests `update`.
+9. For `create`, check for an existing open PR/MR from the same source branch to the same target repository/branch. If one exists, report it and stop; never silently convert `create` into `update`. Under an explicit autonomous grant allowing both, resolve the operation as `update` at step 1 when that exact PR/MR already exists, rather than asking again.
 10. For `update`, inspect the existing PR/MR first. Change only the fields requested by the user. If replacing the description would discard unrelated manual content and the user's intent is not explicit, show the conflict and ask before overwriting.
 11. Execute the requested provider operation non-interactively where practical, supplying explicit repository, branches, title, and description, per the provider reference's mandatory flags.
 12. Return the resulting PR/MR URL. If the CLI fails, return the original failure output and do not invent a diagnosis that the CLI did not establish.
@@ -46,6 +46,8 @@ Treat verification as a publication gate, not a place to advertise failures.
 - A deferred-hook gap recorded by the git workflow still blocks creation until the deferred check is re-run and passes; the gap stays visible in task reports and unpublished drafts meanwhile.
 - Do not invent a universal test command or require metrics the project does not provide.
 - A description may still be drafted before publication readiness is established.
+- Distinguish a repository with no configured hosted CI (report that fact) from unknown policy or an empty/transient checks response (not ready). Never claim a green pipeline where none ran. Checks and review apply to the current candidate and target base; re-check after either changes.
+- Review readiness, publication authority and merge authority are separate. This skill does not merge. Full stop also forbids enabling auto-merge or entering a merge queue; inspect and preserve its no-merge state through `skill://full-send` before publication.
 
 ## References
 

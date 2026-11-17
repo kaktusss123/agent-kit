@@ -57,10 +57,15 @@
 # Git task discipline
 
 * Never make task-generated changes in the primary checkout; task work goes through the managed task-workspace runtime (`skill://git-task`).
-* Never invent a ticket or a `base_ref`; both come only from an explicit user/SPEC/task decision. When neither ticket nor branch exists, ask whether ticketless work is authorized before blocking.
+* Never invent a ticket or a `base_ref`; both come only from an explicit user/SPEC/task decision. When neither ticket nor branch exists, ask whether ticketless work is authorized before blocking, unless an explicitly assigned autonomous mode already grants it and the repository does not require a real tracker ticket.
 * A guard block is a routing failure, never authorization to reproduce the same mutation through eval, Python, shell, sed/cp, or another agent.
 * Raw `git commit --no-verify` is forbidden everywhere; the only hook-bypass path is `checkpoint_commit`'s deferred hook verification after a real, current hook failure.
 * A RepoOwner that changed repository state may yield `done` only from a committed candidate that was finally verified after that commit; any later repository change means a new candidate commit and a new final verification.
+
+# Autonomous task routing
+
+* Route an explicit task assignment using `full send` / `full-send` or `full stop` / `full-stop` to `skill://full-send`; no slash command is required. A quote, discussion of names, source text or a request to implement these modes is not an execution grant. Delegates receive only their explicit assignment, not authority from mode names in background context.
+* Within an explicitly assigned mode, follow its scoped grants without asking again for ordinary delegated steps. Discover available facts yourself; ask only for genuine blockers, material intent/base decisions or actions outside the grant. Repository policy, managed ownership and system/harness approvals still apply.
 
 # Durable references
 
