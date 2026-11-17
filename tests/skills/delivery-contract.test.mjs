@@ -35,6 +35,60 @@ test('full stop forbids merging and lease pushes are limited to the owned branch
   assert.match(skill, /ungranted production consequence blocks/i);
 });
 
+test('publication contract permits proven PR-only CI without waiving pre-publication gates', () => {
+  for (const path of ['skills/full-send/SKILL.md', 'skills/change-request/SKILL.md']) {
+    const skill = text(path);
+    assert.match(skill, /all available local verification evidence, the candidate commit and hook results/i);
+    assert.match(skill, /required local checks must pass/i);
+    assert.match(skill, /required checks that do not depend on PR\/MR publication must pass before creation, including branch CI available after push/i);
+    assert.match(skill, /known required-check failures, deferred-hook gaps and explicit hard project publication restrictions.*block creation/i);
+    assert.match(skill, /workflow configuration or authoritative forge evidence.*branch filters and draft behavior/i);
+    assert.match(skill, /unknown policy or an empty\/transient checks response.*(?:not proof|does not prove).*PR-only CI/i);
+    assert.match(skill, /(?:existing scoped grant permits|existing scoped publication authority permits) provisional create\/update/i);
+    assert.match(skill, /prefer draft only when (?:the|that) workflow runs on drafts; otherwise use an authorized ordinary PR\/MR with honest pending status/i);
+    assert.match(skill, /a draft that skips (?:the required )?CI is not a solution/i);
+    assert.match(skill, /(?:override|bypass).*hard (?:pre-publication|project publication) rule/i);
+  }
+  const publication = text('skills/change-request/SKILL.md');
+  assert.match(publication, /unexplained missing checks still block publication/i);
+  assert.match(publication, /exception does not grant publication authority/i);
+  assert.doesNotMatch(publication, /any are known to be failing or incomplete, do not create/i);
+});
+
+test('provisional publication is not readiness and description rules preserve pending evidence', () => {
+  const skill = text('skills/full-send/SKILL.md');
+  assert.match(skill, /all required checks and independent review must pass for the exact current base\/head before `READY` or merge/i);
+  assert.match(skill, /do not enable auto-merge or enter a merge queue until readiness and merge authority/i);
+  assert.match(skill, /full stop never permits either/i);
+  const publication = text('skills/change-request/SKILL.md');
+  assert.match(publication, /failed, missing, unknown or pending required checks remain readiness blockers after publication/i);
+  assert.match(publication, /no auto-merge or queue until readiness and merge authority/i);
+  assert.match(publication, /independent review must pass for the exact current candidate and target base/i);
+  assert.match(skill, /review-loop or council acceptance is blocked solely by proven PR-dependent checks/i);
+  assert.match(skill, /retain that pending\/blocked result.*complete acceptance after those checks run/i);
+  assert.match(skill, /do not consume rounds waiting for CI, reset the budget, or call provisional publication `PASS` or convergence/i);
+  const description = text('skills/change-request/references/description.md');
+  assert.match(description, /provisional publication for proven PR-dependent CI/i);
+  assert.match(description, /pending checks and their trigger evidence in `Review notes`/i);
+  assert.match(description, /do not list them as passes or claim `READY`/i);
+  assert.match(description, /known required-check failures, deferred-hook gaps and hard project publication restrictions still block creation/i);
+  assert.match(description, /unknown policy or empty results do not prove that exception applies/i);
+});
+
+test('complex ordinary decisions may use non-binding read-only fresh-context advice', () => {
+  for (const path of ['skills/full-send/SKILL.md', 'skills/specification/SKILL.md']) {
+    const skill = text(path);
+    assert.match(skill, /for a complex ordinary decision, you may/i);
+    assert.match(skill, /fresh-context subagent/i);
+    assert.match(skill, /goal, constraints and established facts.*without priming the expected answer/i);
+    assert.match(skill, /advisory assignment bounded and read-only/i);
+    assert.match(skill, /(?:inherits no|no inherited) execution, push or merge grant/i);
+    assert.match(skill, /consider its arguments.*risks/i);
+    assert.match(skill, /not binding: the controller remains responsible and may reject it with reasons/i);
+    assert.match(skill, /optional, not a mandatory council or per-choice approval gate/i);
+  }
+});
+
 test('council requires current mandatory assessments and blockers override scores', () => {
   const skill = text('skills/council/SKILL.md');
   const convergence = section(skill, 'Convergence and report');

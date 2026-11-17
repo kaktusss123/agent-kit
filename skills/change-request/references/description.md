@@ -94,11 +94,11 @@ Include dependency or repository-hygiene changes only when they are part of the 
 
 ## Verification
 
-Verification lists positive facts. Publication readiness is handled before creating the PR/MR.
+Verification lists positive facts. Pre-publication gates are checked before creating the PR/MR; completed acceptance is a separate readiness gate under the parent skill's `Publication readiness` rules.
 
-Include only facts supported by evidence already available from the project workflow. Omit unavailable metrics instead of writing `N/A`, `not run`, `unknown`, skipped checks, or failures.
+Include only facts supported by evidence already available from the project workflow. Omit unavailable metrics instead of writing `N/A`, `not run`, `unknown`, skipped checks, or failures as verification results.
 
-A material limitation of an optional or advisory check (for example tooling the environment cannot run) may be noted briefly in `Review notes` so reviewers are not misled; it never substitutes for a required check, and an unresolved required check still blocks creation.
+A material limitation of an optional or advisory check (for example tooling the environment cannot run) may be noted briefly in `Review notes` so reviewers are not misled; it never substitutes for a required check. Known required-check failures, deferred-hook gaps and hard project publication restrictions still block creation. When the parent skill permits provisional publication for proven PR-dependent CI, explicitly identify those pending checks and their trigger evidence in `Review notes`; do not list them as passes or claim `READY`. Unknown policy or empty results do not prove that exception applies. All required checks and independent review on the exact current base/head must pass before readiness or merge.
 
 Use this order when the facts are available:
 

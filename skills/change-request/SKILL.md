@@ -38,16 +38,16 @@ Use a lightweight workflow. Prefer the installed forge CLI over custom API wrapp
 
 ## Publication readiness
 
-Treat verification as a publication gate, not a place to advertise failures.
+Separate pre-publication gates from PR-dependent readiness and merge checks; publication is not completed acceptance.
 
-- If the current project/workflow defines required checks and any are known to be failing or incomplete, do not create the PR/MR.
-- Do not put failed, skipped, unknown, or not-run required checks into the PR/MR description as if they passed.
-- Material limitations of optional or advisory checks (unavailable tooling, environment limits) may be noted briefly in `Review notes` per [references/description.md](references/description.md); they never substitute for a required check.
-- A deferred-hook gap recorded by the git workflow still blocks creation until the deferred check is re-run and passes; the gap stays visible in task reports and unpublished drafts meanwhile.
-- Do not invent a universal test command or require metrics the project does not provide.
-- A description may still be drafted before publication readiness is established.
-- Distinguish a repository with no configured hosted CI (report that fact) from unknown policy or an empty/transient checks response (not ready). Never claim a green pipeline where none ran. Checks and review apply to the current candidate and target base; re-check after either changes.
-- Review readiness, publication authority and merge authority are separate. This skill does not merge. Full stop also forbids enabling auto-merge or entering a merge queue; inspect and preserve its no-merge state through `skill://full-send` before publication.
+- Before publication, obtain all available local verification evidence, the candidate commit and hook results through the git workflow. Required local checks must pass. Required checks that do not depend on PR/MR publication must pass before creation, including branch CI available after push. Known required-check failures, deferred-hook gaps and explicit hard project publication restrictions block creation; a pending remote check cannot waive them. A deferred check must be re-run and pass before creation.
+- Establish the actual required checks and their triggers from workflow configuration or authoritative forge evidence, including branch filters and draft behavior. Unknown policy or an empty/transient checks response does not prove PR-only CI or the absence of CI. Unexplained missing checks still block publication.
+- If pre-publication gates pass and evidence proves the remaining required CI can run only after PR/MR publication, existing scoped publication authority permits provisional create/update to obtain that evidence. Do not ask again for already delegated creation. Prefer draft only when that workflow runs on drafts; otherwise use an authorized ordinary PR/MR with honest pending status. A draft that skips the required CI is not a solution. This exception does not grant publication authority or override a project's hard pre-publication rule.
+- In a provisional PR/MR, list proven passes in `Verification` and identify the pending PR-dependent checks and their trigger evidence in `Review notes`. Never present failed, skipped, unknown, not-run or pending checks as passed, or label the change `READY` before acceptance.
+- All required checks and independent review must pass for the exact current candidate and target base before `READY` or merge; re-check after either changes. Failed, missing, unknown or pending required checks remain readiness blockers after publication. No auto-merge or queue until readiness and merge authority; this skill never merges. Full stop never merges, enables auto-merge or enters a queue; inspect and preserve its no-merge state through `skill://full-send` before publication.
+- Distinguish an established absence of configured hosted CI (report that fact) from unknown policy or an empty/transient response. Never claim a green pipeline where none ran.
+- Material limitations of optional or advisory checks (unavailable tooling, environment limits) may be noted briefly in `Review notes` per [references/description.md](references/description.md); they never substitute for a required check. Do not invent a universal test command or require metrics the project does not provide.
+- A description may still be drafted before publication readiness is established. Review readiness, publication authority and merge authority are separate.
 
 ## References
 

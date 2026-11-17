@@ -15,6 +15,8 @@ Facts are the agent's job to discover. Normally, decisions belong to the user wh
 - Never turn a recommendation outside delegated authority into a decision silently; state it as a recommendation and ask when the answer changes the result. For an ordinary choice already delegated by the explicit autonomous mode, decide and explain without another approval request.
 - Ask only decisions that materially change the result, with the meaningful options, tradeoffs, and your recommendation.
 
+For a complex ordinary decision, you may seek a fresh-context subagent's outside opinion: provide the goal, constraints and established facts without priming the expected answer. Keep the advisory assignment bounded and read-only, with no inherited execution, push or merge grant. Consider its arguments and risks, but the recommendation is not binding: the controller remains responsible and may reject it with reasons. This is optional, not a mandatory council or per-choice approval gate, and cannot expand delegated authority.
+
 Resolve the frontier of decisions whose prerequisites are already settled before asking downstream questions; prefer a small coherent round over a questionnaire.
 
 ## Before writing
