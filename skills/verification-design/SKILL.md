@@ -53,6 +53,16 @@ Determine and record:
 
 Prefer existing harnesses. Do not invent a second testing stack when Playwright, pytest, an integration CLI, curl scripts, or similar already solve the problem. Store the guidance where the repository keeps agent/project guidance, name exact commands/selectors/endpoints and the expected evidence, keep secrets and personal paths out of shared files. Run one representative end-to-end path using the written instructions: a guide that has never been executed is a draft.
 
+## Project-local verification map
+
+For a project that needs repeatable scenario coverage, generate and maintain a **project-specific** verification skill committed with that project, not a single prewritten skill for every project. Follow its existing skill convention. If none exists, prefer `.agents/skills/verify/`: Pi 1.5.0 and [Codex CLI 0.166.0](https://developers.openai.com/codex/skills/) discover project `.agents/skills/` from the working directory to the repository root. [Claude Code](https://code.claude.com/docs/en/skills) documents `.claude/skills/`, not this shared project path: explicitly read `.agents/skills/verify/SKILL.md` there, or use an authorized project-local binding to the same source. Verify discovery for each supported host and its configuration; do not claim universal automatic loading.
+
+Create `SKILL.md`, `features/README.md` and a small set of focused scenario files under `features/`. The skill points to the index and the existing harness contract above rather than duplicating launch, doctor, drive, evidence, isolation or cleanup instructions. The index maps user entry points and capabilities to scenarios, including known gaps. Each scenario gives prerequisites, exact steps or commands, expected observable state and side effects, evidence to retain, and relevant gotchas. Include both success and important failure paths where applicable. Use project-real commands, not generic placeholders, and execute a representative scenario before calling the map ready.
+
+Select scenarios relevant to a change and its risks; the map is a recipe and coverage guide, not a mandatory full sweep. On maintenance, distinguish stale instructions from harness gaps and product regressions. Preserve evidence after cleanup and never weaken an expected outcome to conceal a bug. Record gaps or blocked checks explicitly.
+
+Adapted from ideas in [pstack create-verification-skill](https://github.com/cursor/plugins/tree/e1cc03121a0e71129a4fb730d7c5528a0a3e43c8/pstack/skills/create-verification-skill), Lauren Tan, 2026.
+
 A task workflow (`skill://git-task`) may consume this capability when choosing task-specific gates; the capability itself must remain directly useful on its own.
 
 ## Output

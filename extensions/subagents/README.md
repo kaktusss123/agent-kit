@@ -216,8 +216,12 @@ nothing started).
   last progress, and deadline left. It does not release ownership, stop the
   child, or extend its absolute deadline. Terminal/needs_input already
   observed at release take priority; completion still arrives as an event.
-- **Ownership**: canonical worktree paths are reserved synchronously before
-  dispatch; duplicate concurrent spawns (including aliases) fail closed.
+- **Ownership**: realpath-resolved managed worktree paths are reserved before
+  dispatch; duplicate concurrent spawns for the same physical worktree,
+  including aliases, fail closed. Distinct managed worktrees of the same
+  repository may have independent owners. Establish the canonical worktree
+  first, then explicit named lanes with separate branches and outputs for
+  deliberate arena candidates or swarm slices; designate integration ownership.
   Ownership is held through physical child stop and runtime Git reads. During
   reads, queries return a nonterminal settling/terminating state, never
   incomplete Git facts or a premature terminal; notification is sent once.

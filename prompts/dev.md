@@ -11,7 +11,7 @@ Work per `skill://git-task`:
 
 - Resolve or continue the task identity and reuse the existing canonical managed worktree(s).
 - Load and follow `SPEC.md` from the task workspace when it exists.
-- Dispatch exactly one RepoOwner per writable repository — `subagent` op `spawn` with `workspace=<worktree>` rooted at that repository's managed worktree (parallel for independent repositories, dependency-ordered otherwise). Main does not edit task repositories itself.
+- Dispatch at most one live RepoOwner per physical worktree via `subagent` op `spawn` with `workspace=<worktree>`. Normally use the canonical worktree per repository; deliberate arena/swarm lanes may have separate owners, branches and destinations for the same repository. Assign integration ownership and respect dependencies. Main does not edit task repositories itself.
 - Consume the structured results, perform task-level review and integration verification, and repair through a fresh owner that first inspects current state. Handle `needs_input` per the runtime protocol.
 - After each final-verified committed candidate, make the independent-review decision explicitly: Main's own review suffices for local, low-risk changes; substantial candidates expect an independent fresh-context reviewer — a plain `subagent` spawn with `role=review` (policy: `skill://git-task`).
 

@@ -11,7 +11,7 @@ Work per `skill://git-task` (Claude Code contracts: its `references/claude-code/
 
 - Resolve or continue the task identity and reuse the existing canonical managed worktree(s) (`agent-kit task status`, `agent-kit task ensure`).
 - Load and follow `SPEC.md` from the task workspace when it exists.
-- Dispatch exactly one RepoOwner per writable repository — an Agent-tool subagent whose assignment names that repository's managed worktree as its only home (parallel for independent repositories, dependency-ordered otherwise). Main does not edit task repositories itself.
+- Dispatch at most one live RepoOwner per physical worktree — an Agent-tool subagent assigned that managed worktree as its only home. Normally use the canonical worktree per repository; deliberate arena/swarm lanes may have separate owners, branches and destinations for the same repository. Assign integration ownership and respect dependencies. Main does not edit task repositories itself.
 - After each owner returns, read the objective git facts with `agent-kit task status` before trusting its report; a question from an owner is answered by continuing the same agent with SendMessage. Repair through a fresh owner that first inspects current state.
 - After each final-verified committed candidate, make the independent-review decision explicitly: Main's own review suffices for local, low-risk changes; substantial candidates expect an independent fresh-context reviewer subagent (policy: `skill://git-task`).
 

@@ -26,7 +26,15 @@ test('live Codex 0.166.0 discovers installed shared symlink skills and combined 
     for (const expected of ['Codex host binding', 'Communication contract', 'Git task discipline', 'references/codex/workflow.md', 'spec', 'dev', `- \`r0\` = \`${join(home, '.agents/skills')}\``, '(file: r0/git-task/SKILL.md)', '(file: r0/spec/SKILL.md)', '(file: r0/dev/SKILL.md)']) {
       assert.ok(serialized.includes(expected), `missing ${expected}`);
     }
+    for (const name of ['arena', 'swarm', 'correct', 'reflect', 'benchmark-checklist', 'formal-verification']) {
+      assert.ok(serialized.includes(`(file: r0/${name}/SKILL.md)`), `missing installed ${name}`);
+    }
     assert.ok(!serialized.includes(join(env.CODEX_HOME, 'skills/git-task')));
+    const project = spawnSync('codex', ['debug', 'prompt-input', 'Local project skill discovery check only.'], { cwd: resolve(import.meta.dirname, '../..'), env, encoding: 'utf8', timeout: 30000, maxBuffer: 8 * 1024 * 1024 });
+    assert.equal(project.status, 0, project.stderr);
+    const projectInput = JSON.stringify(JSON.parse(project.stdout));
+    assert.ok(projectInput.includes(resolve(import.meta.dirname, '../../.agents/skills')), 'missing project skill root');
+    assert.ok(/\(file: r[0-9]+\/verify\/SKILL\.md\)/.test(projectInput), 'missing project verification skill');
   } finally {
     rmSync(root, { recursive: true, force: true });
   }

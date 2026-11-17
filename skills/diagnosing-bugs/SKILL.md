@@ -34,7 +34,7 @@ Instrument only where it discriminates between hypotheses. Prefer debugger/inspe
 
 Turn the minimal repro into a regression test when a correct seam exists. Apply the smallest root-cause fix. Then run both the regression test and the original unminimized reproduction.
 
-For performance, measure before and after with the same harness.
+For performance, measure before and after with the same harness. Use `skill://benchmark-checklist` to check useful work, correctness, comparable tuning, repeated observations and user-path relevance; separate profiling from reported timing.
 
 ## Cleanup
 
