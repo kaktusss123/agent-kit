@@ -42,7 +42,7 @@ Never invent a ticket. Resolve in order:
    - exactly one → reuse it;
    - several → ask the user which one;
    - none → derive `<type>/<TICKET>_<slug_with_underscores>`; choose `feat`/`fix`/`chore` and a semantic slug from the task intent.
-3. Neither → ask the user whether a ticket exists and, if not, whether ticketless work is authorized. Do not state that a ticket is mandatory or raise `missing_ticket` before this question is answered. If the user explicitly approves ticketless work, proceed with a ticketless branch (`<type>/<slug_with_underscores>`); otherwise wait for the ticket. Never invent one.
+3. Neither → first inspect repository tracker policy. An explicit autonomous assignment through `skill://full-send` grants ticketless work for that task when the repository does not require a real tracker ticket; proceed with `<type>/<slug_with_underscores>` without another permission question. Otherwise ask whether a ticket exists and, if not, whether ticketless work is authorized. Do not claim a ticket is mandatory merely from naming conventions, or raise `missing_ticket` before resolving authority. Explicit ticketless permission never waives mandatory tracker policy. Never invent a ticket.
 
 ## Base selection
 
@@ -62,7 +62,7 @@ Establish the repository's canonical worktree before creating any secondary lane
 
 ## Git side effects and recovery
 
-Commit, push, deployment, and acceptance are different states. Before an external side effect, check only the prerequisites or SPEC gates explicitly linked to that side effect. An open deployment gate blocks a push that triggers deployment, but does not block an ordinary push for a draft MR; report the specific blocker instead of calling the side effect ready.
+Commit, push, deployment, and acceptance are different states. An explicit `skill://full-send` assignment can grant the scoped publication/merge chain (full stop excludes merge); a normal implementation request cannot. Before an external side effect, check only the prerequisites or SPEC gates explicitly linked to that side effect. An open deployment gate blocks a push that triggers deployment, but does not block an ordinary push for a draft MR; report the specific blocker instead of calling the side effect ready.
 
 A guard block is a routing failure, not permission to repeat the same mutation through `sed`, `cp`, `eval`, Python, or another agent. Manual tracked-file adaptation is allowed only as an explicit implementation decision (for example a conflict or backport), with the reason stated and the resulting diff re-verified.
 
@@ -104,4 +104,4 @@ Delegation follows context and independence — never create committer/branch-fi
 
 ## Checkpoints
 
-The commit contract is `skill://git-commit` and its `skills/git-commit/references/checkpoint.md`: exact intended paths, hooks run, no blanket staging, no push. A merge into a branch that triggers CI or a deploy is an external side effect; verify the run for that branch and the deployed revision, or state explicitly that the merge was unverified.
+The commit contract is `skill://git-commit` and its `skills/git-commit/references/checkpoint.md`: exact intended paths, hooks run, no blanket staging, no implicit push. A push is separate and requires its own authority, including an explicitly assigned full-send/full-stop task grant. A merge into a branch that triggers CI or a deploy is an external side effect; verify the run for that branch and the deployed revision, or state explicitly that the merge was unverified.

@@ -9,12 +9,44 @@
 наличия Cursor или его настроек. Автоматическое напоминание о рефлексии —
 отдельное расширение Pi, а не переносимый hook для всех сред.
 
-Ниже сохранено уведомление об авторских правах и разрешение MIT из источника.
+Навыки `modernize`, `full-send` (оба режима), `council` и режим `review-loop`
+в `code-review` адаптируют идеи
+[tstack](https://github.com/t3dotgg/tstack/tree/11e37a74d0a6868c121cd0910ab2b3bd9873b92a)
+(Theo Browne, 2026). Зафиксированный источник:
+`t3dotgg/tstack@11e37a74d0a6868c121cd0910ab2b3bd9873b92a`.
+Полномочия, остановки, выбор моделей и привязки к средам переработаны для
+agent-kit; инструменты T3 и отдельная среда исполнения не предполагаются.
+
+Ниже сохранены уведомления об авторских правах и разрешения MIT из источников.
 
 ```text
 MIT License
 
 Copyright (c) 2026 Lauren Tan
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+```
+
+```text
+MIT License
+
+Copyright (c) 2026 Theo Browne
 
 Permission is hereby granted, free of charge, to any person obtaining a copy
 of this software and associated documentation files (the "Software"), to deal

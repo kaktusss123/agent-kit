@@ -29,7 +29,7 @@ The by-hand procedure in this skill is the fallback for repositories outside any
 - Never use blanket staging such as `git add .` or `git add -A`; stage the exact intended path set.
 - Never stage likely secret files such as `.env`, `.env.*`, `*.pem`, `*.key`, or `credentials.json` unless the user explicitly identifies a safe tracked fixture that merely matches the pattern.
 - Preserve an existing staged set only when it is unambiguous. If the pre-staged set differs from the intended checkpoint paths, stop and ask instead of silently merging.
-- Never push. Pushing is a separate action, performed only on an explicit user request.
+- A checkpoint never pushes. Pushing is a separate action requiring an explicit user request or the scoped push grant of an explicitly assigned `skill://full-send` mode (full send or full stop). Do not re-ask for a push already delegated by that grant. It permits only the owned task branch; a rebase push may use `--force-with-lease=<ref>:<observed-remote-head>` only with exclusive branch ownership and no other live writer. Lease failure requires reassessment, never unconditional force. Check push-triggered production consequences and stronger policy before pushing.
 
 ## When a checkpoint is appropriate
 
@@ -46,10 +46,11 @@ A checkpoint is a coherent, explainable slice of completed work: implementation 
 Extract a ticket key — any uppercase `KEY-<number>` such as `EVODP-1234` — from the branch name, the user request, or the parent task.
 
 If no ticket is found, decide by repository context:
-- Ticket prefixes are the norm in recent subjects (`KEY-123:` style) → ticketed repo: stop with `missing_ticket` unless the user explicitly chose ticketless.
+- A documented mandatory tracker policy requires a real ticket; neither autonomous mode nor ticketless permission waives it.
+- Ticket prefixes are the norm in recent subjects (`KEY-123:` style), with no mandatory tracker policy → stop with `missing_ticket` unless ticketless work is authorized.
 - Otherwise → ticketless: commit without a ticket.
 
-Ticketless mode is explicit when the user or parent task says `--no-ticket`, `ticketless`, `no ticket`, or `без тикета`.
+Ticketless mode is explicit when the user or parent task says `--no-ticket`, `ticketless`, `no ticket`, or `без тикета`. An explicitly assigned `skill://full-send` mode also grants ticketless work for its task when no ticket was supplied and the repository does not require a real tracker ticket. A quoted mode name or a limited delegate's background context grants nothing.
 
 Use:
 - with ticket: `<type>(KEY-1234): <description>`

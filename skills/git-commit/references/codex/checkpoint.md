@@ -8,7 +8,7 @@ agent-kit task commit '{"repo":"<absolute managed worktree>","paths":["src/file"
 
 For complex JSON, send it on stdin with `agent-kit task commit -`. Follow the
 shared `git-commit` policy for ticket/branch/message judgment, explicit paths,
-secrets, no push and no raw `--no-verify`. The CLI runs the same checkpoint core
+secrets, no implicit push and no raw `--no-verify`. A separately authorized push (including a scoped autonomous-mode grant) remains outside this checkpoint operation. The CLI runs the same checkpoint core
 as Pi and Claude Code; it strips the routing shim for its own controlled Git
 operations. It does not require a Pi extension, plugin or Codex session state.
 Repository hooks run normally. Exit 0 still requires inspecting result status;
