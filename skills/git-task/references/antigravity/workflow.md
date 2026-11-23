@@ -25,14 +25,36 @@ inspect `status`. Exit 1 is a tool error (`status: "error"`); exit 2 is a usage
 error. `ensure` returns the managed worktree and task workspace paths — retain
 them verbatim and never substitute a hand-created worktree.
 
-### Sandbox note
+### Access to managed worktrees
 
-Antigravity runs `run_command` in Standard Sandbox Mode by default, which only
-allows read/write access inside the active workspace and `/tmp`. Because
-`~/.agent-kit/tasks` lives outside the workspace, `agent-kit task` commands
-will usually fail with `Operation not permitted` / `EPERM` inside the sandbox.
-Retry only that single `agent-kit task` command with `BypassSandbox: true`;
-never chain unrelated steps into an unsandboxed command.
+When the terminal sandbox is enabled, `Workspace: "inherit"` preserves the
+parent's workspace and permission scopes. Passing a path in a prompt does not
+grant access to it. Before dispatching a RepoOwner:
+
+1. If the worktree is outside the writable scope, request `write_file` for
+   the exact path returned by `agent-kit task ensure`. This also grants read
+   access. Use `ask_permission` with `Action: "write_file"`, the absolute
+   worktree path as `Target`, and a task-specific `Reason`. If the host has no
+   permission request tool, ask the user to add the same directory rule in
+   Antigravity's permissions UI.
+2. A linked worktree's `.git` file points to metadata outside the worktree.
+   Identify the paths with `git -C "<worktree>" rev-parse --absolute-git-dir`
+   and `git -C "<worktree>" rev-parse --path-format=absolute --git-common-dir`.
+   If the sandbox prevents discovery, use the host's command approval for
+   each read-only lookup. Request `read_file` on any Git metadata directory
+   outside the readable scope. A grant for the common Git directory covers
+   its descendants. Check with
+   `git --no-optional-locks -C "<worktree>" status --short` inside the
+   sandbox, which avoids refreshing the on-disk index.
+3. Dispatch after access is available. If approval is denied or unavailable,
+   report the path and failed operation. Read-only researchers require only
+   read access to the worktree and any Git metadata they inspect.
+
+When an `agent-kit task` operation needs access to the task registry,
+launcher, or writable Git metadata outside the sandbox, use native
+per-command approval for that operation. Keep builds and tests sandboxed.
+See Google's [terminal sandbox](https://antigravity.google/docs/sandbox) and
+[subagent permissions](https://antigravity.google/docs/subagents#permissions-and-configuration-inheritance).
 
 ## Native delegation
 
@@ -49,10 +71,10 @@ edits task repositories itself.
 Before dispatching the first owner in a session, define the `repo-owner`
 subagent type once with `define_subagent`:
 
-- `Name`: `"repo-owner"`
-- `Description`: `"RepoOwner for one managed task worktree returned by agent-kit task ensure."`
-- `EnableWriteTools`: `true`
-- `SystemPrompt`:
+- `name`: `"repo-owner"`
+- `description`: `"RepoOwner for one managed task worktree returned by agent-kit task ensure."`
+- `enable_write_tools`: `true`
+- `system_prompt`:
   - Your absolute managed worktree path from the assignment is your only home.
     Use absolute paths for every file read/write/edit, and run every shell
     command with `cd <worktree> && ...` or `git -C <worktree> ...`.
@@ -72,17 +94,27 @@ subagent type once with `define_subagent`:
     paths, commands/results, remaining gaps, contract conflicts). Report `done`
     only from a committed candidate verified AFTER that commit.
 
-Dispatch each owner with `invoke_subagent`:
+Dispatch each owner as an element of the `invoke_subagent` argument
+`Subagents`:
 
-- `TypeName`: `"repo-owner"`
-- `Workspace`: `"inherit"` (NEVER `"branch"` or `"share"` — `agent-kit task
-  ensure` already owns the physical managed worktree)
-- `Model`: `"inherit"` (unless the user explicitly requested another model)
-- `Role`: e.g. `"RepoOwner (<repo>)"`
-- `Prompt`: absolute managed worktree path, allowed repository, intent and
-  `SPEC.md` path when present, dispatched base SHA, constraints, required
-  skills (`implementation`, `tdd`, `verification-design`) and checks, and the
-  checkpoint + post-commit verification contract.
+```json
+{
+  "Subagents": [
+    {
+      "TypeName": "repo-owner",
+      "Workspace": "inherit",
+      "Role": "RepoOwner (<repo>)",
+      "Prompt": "<worktree, repository, intent, base SHA, constraints, and verification contract>"
+    }
+  ]
+}
+```
+
+Use `"inherit"` because `agent-kit task ensure` already manages the physical
+worktree. Include the absolute worktree path, allowed repository, intent and
+`SPEC.md` path when present, base SHA, constraints, required skills and checks,
+and the checkpoint and post-commit verification contract. See the
+[Antigravity tool schema](https://antigravity.google/docs/hooks#agent-collaboration).
 
 Enforce at most one live owner per physical worktree (including path aliases).
 Independent repositories — or deliberate named arena/swarm lanes with distinct
@@ -92,12 +124,13 @@ owners wait for the upstream contract-fixing checkpoint.
 ### Questions, continuation, and read-only subagents
 
 - Read-only researchers (during `/spec`) and independent fresh-context
-  reviewers (during `/dev`) use `invoke_subagent` with `TypeName: "research"`,
-  bounded to the absolute managed worktree path in the prompt. Never let an
-  implementing owner review its own candidate.
+  reviewers (during `/dev`) use `invoke_subagent` with `TypeName: "research"`
+  in the `Subagents` array, bounded to the absolute managed worktree path in
+  the prompt. Never let an implementing owner review its own candidate.
 - If an owner stops with a `blocked` question, resolve it in Main or ask the
-  user, then continue the SAME owner via `send_message` using its
-  `conversationId`. Do not spawn a fresh owner for an open question.
+  user, then continue the SAME owner via `send_message` with its conversation
+  ID in `Recipient` and the answer in `Message`. Do not spawn a fresh owner
+  for an open question.
 - Repair of a settled candidate uses a fresh `repo-owner` that first inspects
   the current worktree state — never Main or the reviewer patching the
   candidate.
@@ -110,7 +143,7 @@ objective Git facts itself before accepting `done`:
 ```sh
 agent-kit task status '{"path":"<absolute-worktree>"}'
 git -C <absolute-worktree> rev-parse HEAD
-git -C <absolute-worktree> status --short
+git --no-optional-locks -C <absolute-worktree> status --short
 ```
 
 Verify that `HEAD` moved to a new commit on the task branch, the worktree is

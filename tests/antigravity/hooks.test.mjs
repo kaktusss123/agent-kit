@@ -101,12 +101,26 @@ test('blocks raw git commit --no-verify in run_command and passes normal command
   });
   assert.equal(deniedShort.decision, 'deny');
 
+  const deniedAm = runHook({
+    toolCall: { name: 'run_command', args: { CommandLine: 'git am -n change.patch' } },
+  });
+  assert.equal(deniedAm.decision, 'deny');
+
   const ok = runHook({
     hookEventName: 'PreToolUse',
     cwd: managed,
     toolCall: { id: '7', name: 'run_command', args: { CommandLine: 'git -C /repo status --short' } },
   });
   assert.equal(ok, null);
+});
+
+test('passes through Git operations using -n to prepare changes without committing', () => {
+  for (const subcommand of ['revert', 'cherry-pick']) {
+    const result = runHook({
+      toolCall: { name: 'run_command', args: { CommandLine: `git ${subcommand} -n HEAD` } },
+    });
+    assert.equal(result, null, `${subcommand} -n should pass through`);
+  }
 });
 
 test('malformed JSON fails open with empty stdout', () => {

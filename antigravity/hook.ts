@@ -23,7 +23,9 @@ const WRITE_TOOLS = new Set([
   "multi_replace_file_content",
 ]);
 
-const NO_VERIFY_RE = /(?:^|[\s;&|(])git(?:\s+(?:-[A-Za-z]|--[a-z-]+(?:=\S+)?|-C\s+\S+))*\s+(?:commit|merge|cherry-pick|revert|am)\b[^;&|\n]*\s(?:--no-verify|-n)(?=\s|$|[;&|)])/;
+// The short flag bypasses hooks for commit and am. Other commands give it
+// different meanings, including --no-commit in revert and cherry-pick.
+const NO_VERIFY_RE = /(?:^|[\s;&|(])git(?:\s+(?:-[A-Za-z]|--[a-z-]+(?:=\S+)?|-C\s+\S+))*\s+(?:(?:commit|merge|cherry-pick|revert|am)\b[^;&|\n]*\s--no-verify|(?:commit|am)\b[^;&|\n]*\s-n)(?=\s|$|[;&|)])/;
 
 function deny(reason: string): RecordValue {
   return { decision: "deny", reason };

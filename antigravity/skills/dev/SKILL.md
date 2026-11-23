@@ -27,23 +27,26 @@ first. Resolve `skill://<name>` through
   managed worktree(s) (`agent-kit task status`, `agent-kit task ensure`). Load
   and follow `SPEC.md` from the task workspace when it exists. Never use the
   primary checkout for task writes.
-- Define `repo-owner` once per session via `define_subagent` (with
-  `EnableWriteTools: true`) and dispatch at most one live RepoOwner per
-  physical worktree via `invoke_subagent` (`TypeName: "repo-owner"`,
-  `Workspace: "inherit"`). Never use `Workspace: "branch"` or `"share"` for
-  managed task worktrees. Normally use the canonical worktree per repository;
-  deliberate arena/swarm lanes may have separate owners, branches, and outputs
-  for one repository. Assign integration ownership and respect dependencies.
+- Verify or request scoped access to each managed worktree and its Git
+  metadata before dispatch, following the workflow binding. Define
+  `repo-owner` once per session via `define_subagent` with
+  `enable_write_tools: true`. Dispatch through `invoke_subagent` with a
+  `Subagents` entry using `TypeName: "repo-owner"` and `Workspace: "inherit"`.
+  Dispatch at most one live RepoOwner per physical worktree. Normally use
+  the canonical worktree per repository. Deliberate arena/swarm lanes may
+  have separate owners, branches, and outputs for one repository. Assign
+  integration ownership and respect dependencies.
 - Give each owner its absolute managed worktree path, allowed repository,
   intent / `SPEC.md` path, base SHA, required skills/checks, and checkpoint
   plus AFTER-COMMIT verification requirements (`agent-kit task commit` per
   `$HOME/.gemini/config/skills/git-commit/references/antigravity/checkpoint.md`).
 - If an owner returns a `blocked` question, resolve it in Main or ask the user,
-  then continue the SAME owner via `send_message` using its `conversationId`.
+  then continue the SAME owner via `send_message` using its conversation ID
+  as `Recipient` and the answer as `Message`.
 - After each owner returns, read settled Git facts yourself before trusting its
   report: `agent-kit task status`, `git -C <worktree> rev-parse HEAD`, and
-  `git -C <worktree> status --short`. Accept `done` only from a clean committed
-  candidate verified after that commit.
+  `git --no-optional-locks -C <worktree> status --short`. Accept `done` only
+  from a clean committed candidate verified after that commit.
 - Make an explicit own-review versus independent fresh-context reviewer
   decision per `skill://git-task` and `skill://code-review`: Main's own review
   suffices for local, low-risk changes; substantial candidates expect a fresh
