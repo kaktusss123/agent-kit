@@ -1027,7 +1027,7 @@ run_status() {
 }
 run_status
 	case "$OUT" in
-	*"hosts: pi claude-code codex (default"*) : ;;
+	*"hosts: pi claude-code codex antigravity (default"*) : ;;
 	*) fail "fresh status should report the default selection, got: $OUT" ;;
 	esac
 run_install claude-code

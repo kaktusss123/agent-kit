@@ -17,7 +17,7 @@ import { homedir } from "node:os";
 import { dirname, join, posix } from "node:path";
 import { die, statOrNull } from "./io.mjs";
 
-export const HOSTS = ["pi", "claude-code", "codex"];
+export const HOSTS = ["pi", "claude-code", "codex", "antigravity"];
 
 // A recorded destination must name exactly the path it appears to name: no
 // traversal, no control characters that a line-based record cannot carry, and
@@ -94,6 +94,7 @@ export function resolvePaths(entryPath) {
 	const piRoot = env.PI_AGENT_DIR || join(home, ".pi", "agent");
 	const claudeRoot = env.CLAUDE_CONFIG_DIR || join(home, ".claude");
 	const codexRoot = env.CODEX_HOME || join(home, ".codex");
+	const antigravityRoot = env.ANTIGRAVITY_CONFIG_DIR || join(home, ".gemini", "config");
 	const sharedRoot = join(home, ".agents");
 
 	// pi keeps links.tsv for compatibility with installs made before the second
@@ -117,6 +118,9 @@ export function resolvePaths(entryPath) {
 			if (host === "codex") return [
 				{ host, scope: "config", root: codexRoot, repo, stateDir, stateFile: linkStateFile(host) },
 				{ host, scope: "skills", root: sharedRoot, repo, stateDir, stateFile: linkStateFile("codex-skills") },
+			];
+			if (host === "antigravity") return [
+				{ host, root: antigravityRoot, repo, stateDir, stateFile: linkStateFile(host) },
 			];
 			return [{ host, root: host === "pi" ? piRoot : claudeRoot, repo, stateFile: linkStateFile(host) }];
 		},

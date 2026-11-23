@@ -57,14 +57,17 @@ agent-kit status
 ```sh
 ./bin/agent-kit install claude-code
 ./bin/agent-kit install codex
+./bin/agent-kit install antigravity
 ```
 
 Pi получает весь набор расширений и промптов. Claude Code получает навыки,
 правила, команды `/spec` и `/dev`, определения субагентов и плагин с hooks.
 Codex получает навыки, объединённые правила, `$spec` / `$dev` и hooks,
-но не расширения Pi. У всех трёх общее ядро `agent-kit task`; гарантии
-делегирования различаются. См. [установку](docs/installation.md) и
-[ограничения Codex](docs/codex.md).
+но не расширения Pi. Antigravity получает общие навыки, `/spec` и `/dev`,
+а также плагин `agent-kit` с объединёнными правилами и `PreToolUse` guard
+в `~/.gemini/config`. У всех сред общее ядро `agent-kit task`; гарантии
+делегирования различаются. См. [установку](docs/installation.md),
+[ограничения Codex](docs/codex.md) и [настройку Antigravity](docs/antigravity.md).
 
 В Codex явно проверьте и одобрите сторонние hooks через `/hooks`.
 В Claude Code управляемые настройки `allowManagedHooksOnly` могут запретить

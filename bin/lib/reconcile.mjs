@@ -15,6 +15,7 @@ import { desiredEntities, retiredWorkLinks, validateEntity } from "./entities.mj
 import { lstatOrNull, msg, readlinkOrNull, replaceSymlink, statOrNull, warn } from "./io.mjs";
 import { HOSTS, hostList } from "./paths.mjs";
 import { codexArtifacts, materializeCodexArtifacts } from "./codex.mjs";
+import { antigravityArtifacts, materializeAntigravityArtifacts } from "./antigravity.mjs";
 import {
 	loadCommandRecord,
 	loadLinkState,
@@ -33,6 +34,7 @@ export function reconcile(context) {
 	const desired = desiredEntities(context.host, context.repo, context.scope);
 	for (const entity of desired) validateEntity(context.repo, entity);
 	const artifacts = codexArtifacts(context);
+	const agyArtifacts = antigravityArtifacts(context);
 	// Generated sources are constructed here, never accepted from ownership
 	// records. All destinations remain strict root-relative paths.
 	const shadowedRules = context.host === "codex" && context.scope === "config" && lstatOrNull(join(context.root, "AGENTS.override.md"));
@@ -40,7 +42,8 @@ export function reconcile(context) {
 		msg("  conflict AGENTS.override.md shadows global rules; left untouched (rules are not active); hooks install independently");
 	}
 	materializeCodexArtifacts(artifacts);
-	desired.push(...artifacts);
+	materializeAntigravityArtifacts(agyArtifacts);
+	desired.push(...artifacts, ...agyArtifacts);
 
 	msg("  profile: core");
 
@@ -177,7 +180,11 @@ export function uninstall(context) {
 
 export function status(context, note = "") {
 	const owned = loadLinkState(context.stateFile);
-	const desired = [...desiredEntities(context.host, context.repo, context.scope), ...codexArtifacts(context)];
+	const desired = [
+		...desiredEntities(context.host, context.repo, context.scope),
+		...codexArtifacts(context),
+		...antigravityArtifacts(context),
+	];
 
 	let uptodate = 0;
 	let stale = 0;

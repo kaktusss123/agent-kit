@@ -24,6 +24,11 @@
 //     skills/* + codex/skills/* -> $HOME/.agents/skills/*
 //     generated rules/hooks    -> ${CODEX_HOME:-$HOME/.codex}/{AGENTS.md,hooks.json}
 //
+//   antigravity (root $ANTIGRAVITY_CONFIG_DIR, default ~/.gemini/config; see docs/antigravity.md):
+//     skills/* + antigravity/skills/* -> skills/*  (includes /spec, /dev)
+//     antigravity/plugin/plugin.json  -> plugins/agent-kit/plugin.json
+//     generated rules/hooks           -> plugins/agent-kit/{rules/AGENTS.md,hooks.json}
+//
 // The repository layout IS the desired state: no manifests, no lists. Entities
 // are symlinked, never copied; see lib/entities.mjs for the mapping and
 // lib/reconcile.mjs for the ownership rules. Ownership is tracked per host in
@@ -47,7 +52,7 @@ import { task } from "./lib/task.mjs";
 import { snapshot } from "./lib/snapshot.mjs";
 
 function usage() {
-	writeStdout(`agent-kit — install the personal agent framework into Pi, Claude Code and Codex
+	writeStdout(`agent-kit — install the personal agent framework into Pi, Claude Code, Codex and Antigravity
 
 Usage:
   agent-kit install [--profile core] [<host>...]
@@ -59,6 +64,8 @@ Usage:
                                        agent-kit plugin, commands/, agents/)
                         codex       -> ~/.agents/skills (shared skills)
                                        + $CODEX_HOME or ~/.codex (rules/hooks)
+                        antigravity -> ~/.gemini/config (skills incl. /spec,
+                                       /dev + plugins/agent-kit rules/hooks)
                         Core only; --profile core is optional.
                         --profile full is rejected before any changes.
   agent-kit update [--profile core]
