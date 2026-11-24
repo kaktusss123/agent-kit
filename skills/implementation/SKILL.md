@@ -28,7 +28,9 @@ A plan is authority for intent. It is not infallible evidence about current impl
 
 Use `skill://tdd` when a useful behavioral seam exists and test-first work will clarify the change. Do not force TDD on generated/config-only work where another deterministic loop is stronger.
 
-For a hard bug or performance regression, use `skill://diagnosing-bugs` instead of improvising a theory-first repair.
+For a hard bug, a performance regression, or a bug with an unclear cause or a recurring symptom, use `skill://diagnosing-bugs` before choosing where to edit. Trace the failure upstream and use a reproduction or a discriminating observation to locate the first violated invariant. Use `skill://code-archaeology` when the history of a boundary could change the diagnosis or fix.
+
+If the cause remains unproven or fixing it would exceed the agreed scope, report the gap. Describe any local mitigation as such.
 
 ## Handle conflicts explicitly
 
