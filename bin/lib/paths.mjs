@@ -94,7 +94,7 @@ export function resolvePaths(entryPath) {
 	const piRoot = env.PI_AGENT_DIR || join(home, ".pi", "agent");
 	const claudeRoot = env.CLAUDE_CONFIG_DIR || join(home, ".claude");
 	const codexRoot = env.CODEX_HOME || join(home, ".codex");
-	const antigravityRoot = env.ANTIGRAVITY_CONFIG_DIR || join(home, ".gemini", "config");
+	const antigravityRoot = join(home, ".gemini", "config");
 	const sharedRoot = join(home, ".agents");
 
 	// pi keeps links.tsv for compatibility with installs made before the second

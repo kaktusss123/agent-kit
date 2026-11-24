@@ -27,6 +27,30 @@ const WRITE_TOOLS = new Set([
 // different meanings, including --no-commit in revert and cherry-pick.
 const NO_VERIFY_RE = /(?:^|[\s;&|(])git(?:\s+(?:-[A-Za-z]|--[a-z-]+(?:=\S+)?|-C\s+\S+))*\s+(?:(?:commit|merge|cherry-pick|revert|am)\b[^;&|\n]*\s--no-verify|(?:commit|am)\b[^;&|\n]*\s-n)(?=\s|$|[;&|)])/;
 
+// The checkpoint binding passes JSON as a single-quoted argument or as a
+// literal here-document. Inspect surrounding commands, but not that data.
+const CHECKPOINT_ARGUMENT = /((?:^|[;&|\n])[ \t]*agent-kit[ \t]+task[ \t]+commit[ \t]+)'((?:[^']|'\\'')*)'(?=[ \t;&|\n)]|$)/g;
+const CHECKPOINT_HEREDOC = /(^[ \t]*agent-kit[ \t]+task[ \t]+commit[ \t]+-[ \t]+<<[ \t]*'([A-Za-z_][A-Za-z0-9_]*)'[ \t]*\r?\n)([\s\S]*?)(?=^\2\r?$)/gm;
+
+function isJsonObject(text: string): boolean {
+  try {
+    const value = JSON.parse(text);
+    return value !== null && typeof value === "object" && !Array.isArray(value);
+  } catch {
+    return false;
+  }
+}
+
+function withoutCheckpointData(command: string): string {
+  return command
+    .replace(CHECKPOINT_ARGUMENT, (match, prefix, payload) =>
+      isJsonObject(payload.replace(/'\\''/g, "'")) ? prefix + "''" : match,
+    )
+    .replace(CHECKPOINT_HEREDOC, (match, header, _delimiter, payload) =>
+      isJsonObject(payload) ? header : match,
+    );
+}
+
 function deny(reason: string): RecordValue {
   return { decision: "deny", reason };
 }
@@ -63,7 +87,7 @@ export function decision(input: unknown, opts?: { taskRoot?: string }): RecordVa
 
     if (name === "run_command") {
       const cmd = typeof args.CommandLine === "string" ? args.CommandLine : "";
-      if (cmd && NO_VERIFY_RE.test(cmd)) {
+      if (cmd && NO_VERIFY_RE.test(withoutCheckpointData(cmd))) {
         return deny(
           "Blocked: raw `git ... --no-verify` bypasses pre-commit hooks. Commit through `agent-kit task commit` (hooks run); for a genuine external hook blocker, retry via `agent-kit task commit` with `deferred_hook` evidence.",
         );

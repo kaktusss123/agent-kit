@@ -14,7 +14,7 @@ git clone https://github.com/kaktusss123/agent-kit.git ~/src/agent-kit
 `export PATH="$HOME/.local/bin:$PATH"` в конфигурацию оболочки. После этого
 работают `agent-kit status`, `agent-kit update` и `agent-kit uninstall antigravity`.
 
-Корень конфигурации: `${ANTIGRAVITY_CONFIG_DIR:-$HOME/.gemini/config}`.
+Antigravity загружает настройки из `~/.gemini/config`.
 Состояние владения хранится в `$XDG_STATE_HOME/agent-kit/links-antigravity.tsv`.
 Примечание: `agy plugin list` может отображать только `Components: 1 rule`,
 даже когда `plugins/agent-kit/hooks.json` активно и блокирует `PreToolUse`.

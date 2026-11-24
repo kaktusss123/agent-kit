@@ -23,7 +23,7 @@ function fresh() {
     cpSync(join(repo, dir), join(kit, dir), { recursive: true });
   }
   const env = { ...process.env, HOME: home, XDG_STATE_HOME: join(home, '.local/state'), PATH: stripShimFromPath(process.env.PATH ?? '') };
-  for (const key of ['AGENT_KIT_ROOT', 'CODEX_HOME', 'PI_AGENT_DIR', 'CLAUDE_CONFIG_DIR', 'ANTIGRAVITY_CONFIG_DIR', 'AGENT_TASK_ROOT']) {
+  for (const key of ['AGENT_KIT_ROOT', 'CODEX_HOME', 'PI_AGENT_DIR', 'CLAUDE_CONFIG_DIR', 'AGENT_TASK_ROOT']) {
     delete env[key];
   }
   function cli(args, checkout = kit) {
@@ -37,12 +37,15 @@ function text(path) { return readFileSync(path, 'utf8'); }
 
 test('Antigravity install links skills (/spec, /dev, shared) and agent-kit plugin without touching foreign config', () => {
   const f = fresh();
+  const alternateConfig = join(f.home, 'alternate-config');
+  f.env.ANTIGRAVITY_CONFIG_DIR = alternateConfig;
   mkdirSync(join(f.config, 'skills'), { recursive: true });
   writeFileSync(join(f.config, 'hooks.json'), '{"user-hook": {}}\n');
   symlinkSync('/foreign/orchestration', join(f.config, 'skills/orchestration'));
 
   ok(f.cli(['install', 'antigravity']));
   assert.equal(text(join(f.state, 'hosts')), 'antigravity\n');
+  assert.ok(!existsSync(alternateConfig));
 
   // Foreign files remain untouched.
   assert.equal(text(join(f.config, 'hooks.json')), '{"user-hook": {}}\n');

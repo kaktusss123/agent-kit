@@ -24,7 +24,7 @@
 //     skills/* + codex/skills/* -> $HOME/.agents/skills/*
 //     generated rules/hooks    -> ${CODEX_HOME:-$HOME/.codex}/{AGENTS.md,hooks.json}
 //
-//   antigravity (root $ANTIGRAVITY_CONFIG_DIR, default ~/.gemini/config; see docs/antigravity.md):
+//   antigravity (root ~/.gemini/config; see docs/antigravity.md):
 //     skills/* + antigravity/skills/* -> skills/*  (includes /spec, /dev)
 //     antigravity/plugin/plugin.json  -> plugins/agent-kit/plugin.json
 //     generated rules/hooks           -> plugins/agent-kit/{rules/AGENTS.md,hooks.json}

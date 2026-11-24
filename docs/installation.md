@@ -58,7 +58,7 @@ agent-kit uninstall
 [Генерация файлов, владение и доверие Codex](codex.md).
 
 Antigravity ставит общие навыки, `/spec`, `/dev` и плагин `plugins/agent-kit`
-в `${ANTIGRAVITY_CONFIG_DIR:-$HOME/.gemini/config}`. [Настройка Antigravity](antigravity.md).
+в `~/.gemini/config`. [Настройка Antigravity](antigravity.md).
 
 Лаунчер `~/.local/bin/agent-kit` ссылается на `bin/agent-kit` выбранного клона.
 Этот каталог должен быть в `PATH`. Если место лаунчера занято чужим файлом

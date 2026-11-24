@@ -4,6 +4,7 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { after, test } from 'node:test';
 import { stripShimFromPath } from '../../extensions/task-workspace/cli.ts';
+import { shellQuote } from '../../bin/lib/codex.mjs';
 
 const repo = resolve(import.meta.dirname, '../..');
 // Place fixture outside /tmp because guardManagedWriteTarget treats /tmp as scratch space.
@@ -126,6 +127,24 @@ test('passes through Git operations using -n to prepare changes without committi
     });
     assert.equal(blockedNoVerify.decision, 'deny', `${subcommand} --no-verify must still be denied`);
   }
+});
+
+test('treats checkpoint JSON as data and still checks surrounding commands', () => {
+  const payload = JSON.stringify({
+    repo: managed,
+    paths: ['tracked.txt'],
+    message: "docs: explain Git's git commit --no-verify policy",
+  });
+  const command = `agent-kit task commit ${shellQuote(payload)}`;
+  const heredoc = `agent-kit task commit - <<'JSON'\n${payload}\nJSON`;
+  const run = (CommandLine) => runHook({
+    toolCall: { name: 'run_command', args: { CommandLine } },
+  });
+
+  assert.equal(run(command), null);
+  assert.equal(run(heredoc), null);
+  assert.equal(run(`${command} && git commit --no-verify`).decision, 'deny');
+  assert.equal(run(`${heredoc}\ngit commit --no-verify`).decision, 'deny');
 });
 
 test('malformed JSON fails open with empty stdout', () => {
