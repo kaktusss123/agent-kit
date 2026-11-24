@@ -21,7 +21,7 @@ A plan is authority for intent. It is not infallible evidence about current impl
 
 - Establish a known baseline and continue only from a repository state you understand.
 - Prefer the smallest vertical slice that produces observable progress.
-- Reuse existing abstractions when they fit. Do not preserve a bad abstraction merely because it exists.
+- Before adding an abstraction or a parallel implementation, check whether reusing, simplifying, or removing existing code would meet the requirement while preserving required behavior. Justify each new concept with a current requirement or an observed constraint.
 - Avoid unrelated refactoring and parallel implementations.
 - Keep diffs easy to explain causally.
 - Run focused formatter, lint, type, test, or repro feedback while working when it can catch the current class of mistake.
@@ -38,4 +38,4 @@ Choose ordinary local engineering details yourself when they do not change the a
 
 ## Finish with evidence
 
-Run the checks that can observe the change. Inspect the final diff. Report what actually changed and what was actually verified. Do not claim checks you did not run.
+Run the checks that can observe the change and inspect the final diff. In the handoff, summarize the outcome and tie each material acceptance claim to a named check and its observed result. Flag unverified claims and any remaining risk that requires a human decision.
