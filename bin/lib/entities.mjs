@@ -104,6 +104,13 @@ export function desiredEntities(host, repo, scope) {
 		entities.push(...category(repo, "claude-code/agents", "agents"));
 		return entities;
 	}
+	if (host === "antigravity") {
+		entities.push(...category(repo, "antigravity/skills", "skills"));
+		entities.push(
+			...single(repo, "antigravity/plugin/plugin.json", "plugins/agent-kit/plugin.json", "file"),
+		);
+		return entities;
+	}
 	die(`unknown host: ${host}`);
 }
 

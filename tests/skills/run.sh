@@ -99,7 +99,7 @@ validate_skill() { # <skill-dir> <skills-root>
 	[ "$stale_links" -eq 0 ] && ok "$skill: all skill:// targets exist"
 }
 
-for skill_dir in "$SKILLS"/*/ "$SELF_DIR"/codex/skills/*/ "$SELF_DIR"/.agents/skills/*/; do
+for skill_dir in "$SKILLS"/*/ "$SELF_DIR"/codex/skills/*/ "$SELF_DIR"/antigravity/skills/*/ "$SELF_DIR"/.agents/skills/*/; do
 	[ -d "$skill_dir" ] || continue
 	validate_skill "$skill_dir" "$SKILLS"
 done

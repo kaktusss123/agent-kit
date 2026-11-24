@@ -14,6 +14,13 @@ That binding replaces Pi tool/delegation mechanics throughout this skill: use th
 host-neutral `agent-kit task` CLI, native agent threads and manually read settled
 Git facts. Do not assume Pi workspace leases, report tools, roles or deadlines.
 For checkpoints read `$HOME/.agents/skills/git-commit/references/codex/checkpoint.md`.
+
+In Antigravity, read `references/antigravity/workflow.md` BEFORE any runtime reference
+below. That binding maps the workflow onto the host-neutral `agent-kit task` CLI,
+Antigravity native subagents (`define_subagent` / `invoke_subagent` / `send_message`),
+and manually read settled Git facts. For checkpoints read
+`$HOME/.gemini/config/skills/git-commit/references/antigravity/checkpoint.md`.
+
 Shared identity, ownership, review and no-primary-write policy still applies.
 Where a host binding differs, it wins. The mandatory Pi references below apply
 to Pi; Claude Code additionally loads its own bindings.
