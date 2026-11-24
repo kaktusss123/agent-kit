@@ -14,6 +14,7 @@ tests/layout/run.sh             # repository layout invariants
 tests/skills/run.sh             # frontmatter, references, skill:// links
 node --test tests/skills/*.test.mjs # real workflow installation for all hosts
 node --test tests/codex/*.test.mjs # isolated install, hooks, discovery without a model
+node --test tests/antigravity/*.test.mjs # isolated Antigravity install and PreToolUse guard
 tests/snapshot/run.sh           # atomicity, locking, retention, manifest validation,
                                 # dirty-checkout refusal, SIGKILL, concurrency
 node --test --test-timeout=180000 'extensions/**/*.test.ts'

@@ -120,6 +120,11 @@ test('passes through Git operations using -n to prepare changes without committi
       toolCall: { name: 'run_command', args: { CommandLine: `git ${subcommand} -n HEAD` } },
     });
     assert.equal(result, null, `${subcommand} -n should pass through`);
+
+    const blockedNoVerify = runHook({
+      toolCall: { name: 'run_command', args: { CommandLine: `git -C /repo ${subcommand} --no-verify HEAD` } },
+    });
+    assert.equal(blockedNoVerify.decision, 'deny', `${subcommand} --no-verify must still be denied`);
   }
 });
 

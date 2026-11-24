@@ -29,11 +29,11 @@ first. Resolve `skill://<name>` through
   primary checkout for task writes.
 - Verify or request scoped access to each managed worktree and its Git
   metadata before dispatch, following the workflow binding. Define
-  `repo-owner` once per session via `define_subagent` with
-  `enable_write_tools: true`. Dispatch through `invoke_subagent` with a
-  `Subagents` entry using `TypeName: "repo-owner"` and `Workspace: "inherit"`.
-  Dispatch at most one live RepoOwner per physical worktree. Normally use
-  the canonical worktree per repository. Deliberate arena/swarm lanes may
+  `repo-owner` once per session via `define_subagent` with write tools
+  enabled, and dispatch via `invoke_subagent` with `TypeName: "repo-owner"`
+  and `Workspace: "inherit"` using the parameter schema declared in the current
+  session. Dispatch at most one live RepoOwner per physical worktree. Normally
+  use the canonical worktree per repository. Deliberate arena/swarm lanes may
   have separate owners, branches, and outputs for one repository. Assign
   integration ownership and respect dependencies.
 - Give each owner its absolute managed worktree path, allowed repository,

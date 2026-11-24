@@ -31,28 +31,32 @@ When the terminal sandbox is enabled, `Workspace: "inherit"` preserves the
 parent's workspace and permission scopes. Passing a path in a prompt does not
 grant access to it. Before dispatching a RepoOwner:
 
-1. If the worktree is outside the writable scope, request `write_file` for
-   the exact path returned by `agent-kit task ensure`. This also grants read
-   access. Use `ask_permission` with `Action: "write_file"`, the absolute
-   worktree path as `Target`, and a task-specific `Reason`. If the host has no
-   permission request tool, ask the user to add the same directory rule in
-   Antigravity's permissions UI.
-2. A linked worktree's `.git` file points to metadata outside the worktree.
-   Identify the paths with `git -C "<worktree>" rev-parse --absolute-git-dir`
-   and `git -C "<worktree>" rev-parse --path-format=absolute --git-common-dir`.
-   If the sandbox prevents discovery, use the host's command approval for
-   each read-only lookup. Request `read_file` on any Git metadata directory
-   outside the readable scope. A grant for the common Git directory covers
-   its descendants. Check with
-   `git --no-optional-locks -C "<worktree>" status --short` inside the
-   sandbox, which avoids refreshing the on-disk index.
-3. Dispatch after access is available. If approval is denied or unavailable,
-   report the path and failed operation. Read-only researchers require only
-   read access to the worktree and any Git metadata they inspect.
+1. If the worktree is outside the writable scope, grant `write_file` (which
+   also covers reading) for the exact path returned by `agent-kit task ensure`:
+   - If the host provides `ask_permission`, call it with `Action: "write_file"`,
+     the absolute worktree path as `Target`, and a task-specific `Reason`.
+   - On hosts without `ask_permission` (such as `agy` CLI), ask the user to
+     add `~/.agent-kit/tasks` (or the worktree path) in `/permissions` / the
+     permissions UI, or rely on per-operation host approval when the owner
+     writes files.
+2. In `agy` CLI Standard Sandbox Mode, `run_command` targeting a directory
+   outside the active workspace (`git -C "<worktree>" ...`,
+   `cd "<worktree>" && ...`, or `agent-kit task ...` touching
+   `~/.agent-kit/tasks`) fails with `Operation not permitted` / `EPERM`
+   (`uv_cwd`) unless the directory is allowed in `/permissions` or that single
+   command runs with `BypassSandbox: true`. Always try sandboxed first; if
+   blocked, retry ONLY the single blocked command with `BypassSandbox: true`
+   (or native per-command approval), and never chain unrelated steps into an
+   unsandboxed command.
+3. Dispatch after access is available or when per-operation approval is ready.
+   If approval is denied or unavailable, report the path and failed operation.
+   Read-only researchers require only read access to the worktree and any Git
+   metadata they inspect.
 
 When an `agent-kit task` operation needs access to the task registry,
-launcher, or writable Git metadata outside the sandbox, use native
-per-command approval for that operation. Keep builds and tests sandboxed.
+launcher, or writable Git metadata outside the sandbox, use `BypassSandbox: true`
+(native per-command approval) for that operation alone. Keep builds and tests
+sandboxed whenever possible.
 See Google's [terminal sandbox](https://antigravity.google/docs/sandbox) and
 [subagent permissions](https://antigravity.google/docs/subagents#permissions-and-configuration-inheritance).
 
@@ -69,12 +73,14 @@ integration. Repository mutation goes through RepoOwner subagents — Main never
 edits task repositories itself.
 
 Before dispatching the first owner in a session, define the `repo-owner`
-subagent type once with `define_subagent`:
+subagent type once with `define_subagent` (use the exact parameter casing
+declared in the current session — PascalCase in `agy` CLI, snake_case where
+declared by the host):
 
-- `name`: `"repo-owner"`
-- `description`: `"RepoOwner for one managed task worktree returned by agent-kit task ensure."`
-- `enable_write_tools`: `true`
-- `system_prompt`:
+- `Name`: `"repo-owner"`
+- `Description`: `"RepoOwner for one managed task worktree returned by agent-kit task ensure."`
+- `EnableWriteTools`: `true`
+- `SystemPrompt`:
   - Your absolute managed worktree path from the assignment is your only home.
     Use absolute paths for every file read/write/edit, and run every shell
     command with `cd <worktree> && ...` or `git -C <worktree> ...`.
@@ -94,27 +100,19 @@ subagent type once with `define_subagent`:
     paths, commands/results, remaining gaps, contract conflicts). Report `done`
     only from a committed candidate verified AFTER that commit.
 
-Dispatch each owner as an element of the `invoke_subagent` argument
-`Subagents`:
+Dispatch each owner via `invoke_subagent` using the parameter schema declared in
+the current session (`agy` CLI uses flat parameters; IDE/App surfaces may wrap
+them in a `Subagents` array):
 
-```json
-{
-  "Subagents": [
-    {
-      "TypeName": "repo-owner",
-      "Workspace": "inherit",
-      "Role": "RepoOwner (<repo>)",
-      "Prompt": "<worktree, repository, intent, base SHA, constraints, and verification contract>"
-    }
-  ]
-}
-```
-
-Use `"inherit"` because `agent-kit task ensure` already manages the physical
-worktree. Include the absolute worktree path, allowed repository, intent and
-`SPEC.md` path when present, base SHA, constraints, required skills and checks,
-and the checkpoint and post-commit verification contract. See the
-[Antigravity tool schema](https://antigravity.google/docs/hooks#agent-collaboration).
+- `TypeName`: `"repo-owner"`
+- `Workspace`: `"inherit"` (NEVER `"branch"` or `"share"` — `agent-kit task
+  ensure` already owns the physical managed worktree)
+- `Model`: `"inherit"` (unless the user explicitly requested another model)
+- `Role`: e.g. `"RepoOwner (<repo>)"`
+- `Prompt`: absolute managed worktree path, allowed repository, intent and
+  `SPEC.md` path when present, dispatched base SHA, constraints, required
+  skills (`implementation`, `tdd`, `verification-design`) and checks, and the
+  checkpoint + post-commit verification contract.
 
 Enforce at most one live owner per physical worktree (including path aliases).
 Independent repositories — or deliberate named arena/swarm lanes with distinct
@@ -125,8 +123,9 @@ owners wait for the upstream contract-fixing checkpoint.
 
 - Read-only researchers (during `/spec`) and independent fresh-context
   reviewers (during `/dev`) use `invoke_subagent` with `TypeName: "research"`
-  in the `Subagents` array, bounded to the absolute managed worktree path in
-  the prompt. Never let an implementing owner review its own candidate.
+  using the active `invoke_subagent` schema, bounded to the absolute managed
+  worktree path in the prompt. Never let an implementing owner review its own
+  candidate.
 - If an owner stops with a `blocked` question, resolve it in Main or ask the
   user, then continue the SAME owner via `send_message` with its conversation
   ID in `Recipient` and the answer in `Message`. Do not spawn a fresh owner

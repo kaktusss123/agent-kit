@@ -5,7 +5,7 @@ Read this binding before the shared rules below: Pi and Claude Code names in
 
 - `skill://<name>` resolves to `$HOME/.gemini/config/skills/<name>/SKILL.md`;
   read it and any referenced files relative to that skill directory using
-  `view_file`.
+  the active file-reading tool (`read_file` in `agy` CLI, `view_file` in IDE/App).
 - `/spec` and `/dev` are Antigravity skills (`spec` and `dev`) with the same
   workflow as in Pi and Claude Code.
 - "the ask tool" / `ask` maps to `ask_question` for structured choices, or a
@@ -23,19 +23,23 @@ Read this binding before the shared rules below: Pi and Claude Code names in
   `agent-kit task commit` over the shared core.
 - The task-workspace runtime is `agent-kit task <op> '<json>'` through
   `run_command` (`status`, `ensure`, `remove-lane`, `teardown`, `commit`,
-  `current`). Follow the workflow binding for scoped worktree access and
-  native per-command approval when a task operation needs access outside the
-  sandbox. If `agent-kit` is missing from `PATH`, report it instead of
-  emulating the runtime by hand.
+  `current`). Follow the workflow binding for scoped worktree access
+  (`/permissions` or `ask_permission` where available) and `BypassSandbox: true`
+  / native per-command approval when a task operation or worktree command needs
+  access outside the sandbox. If `agent-kit` is missing from `PATH`, report it
+  instead of emulating the runtime by hand.
 - Subagent delegation uses `define_subagent`, `invoke_subagent`,
   `send_message`, and `manage_subagents`:
   - `explore` / read-only research and independent reviewers -> built-in
     `research` subagent (read-only), bounded to an explicit absolute managed
     worktree path in the prompt.
   - `owner` (RepoOwner) -> define `repo-owner` once per session via
-    `define_subagent` (`enable_write_tools: true`). Verify worktree access
-    before dispatching the owner in `invoke_subagent`'s `Subagents` array
-    with `Workspace: "inherit"`.
+    `define_subagent` with write tools enabled (`EnableWriteTools: true`), and
+    invoke via `invoke_subagent` with `TypeName: "repo-owner"` and
+    `Workspace: "inherit"`. Verify worktree access before dispatch, and follow
+    the exact parameter schema declared in the current session (PascalCase and
+    flat arguments in `agy` CLI; snake_case or a `Subagents` array where
+    declared by the host).
   - Continue a waiting or blocked owner with `send_message` using its
     conversation ID as `Recipient` and the answer as `Message`.
   - There is no Pi ownership lease, readiness handshake, enforced deadline, or

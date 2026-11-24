@@ -18,9 +18,9 @@ agent-kit task commit - <<'JSON'
 JSON
 ```
 
-If the sandbox blocks the task registry, launcher, or writable Git metadata,
-use Antigravity's native per-command approval for the single
-`agent-kit task commit` call.
+If the sandbox blocks the task registry (`~/.agent-kit/tasks`), launcher, or
+writable Git metadata, retry only that single `agent-kit task commit` command
+with `BypassSandbox: true` (native per-command approval).
 
 Follow the shared `git-commit` policy (`skills/git-commit/SKILL.md` and
 `skills/git-commit/references/checkpoint.md`) for ticket/branch/message

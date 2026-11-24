@@ -27,9 +27,10 @@ before any Pi runtime references. Resolve `skill://<name>` through
   analysis. Never invent a ticket or `base_ref`.
 - Once the worktree exists, repository evidence comes from the managed
   worktree: read files and run inspection commands by its explicit absolute
-  path, or give bounded read-only research subagents (a `Subagents` entry with
-  `TypeName: "research"` in `invoke_subagent`) that absolute path as their only
-  root, with read access as described in the workflow binding. The dirty
+  path, or give bounded read-only research subagents (`invoke_subagent` with
+  `TypeName: "research"`, using the parameter schema declared in the current
+  session) that absolute path as their only root, with read access as
+  described in the workflow binding. The dirty
   source checkout is no longer repository evidence for this task, and the
   session cwd does not change.
 - Apply `skill://system-understanding`, `skill://engineering-research`,

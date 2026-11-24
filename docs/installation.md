@@ -3,7 +3,7 @@
 Начало работы с клонированием репозитория: [README](../README.md#быстрый-старт).
 Нужны Node.js >= 24, `git` и отдельно установленный
 [Pi](https://www.npmjs.com/package/@earendil-works/pi-coding-agent)
-(пакет `@earendil-works/pi-coding-agent`), Claude Code или Codex CLI.
+(пакет `@earendil-works/pi-coding-agent`), Claude Code, Codex CLI или Antigravity.
 `bin/agent-kit` использует встроенные модули Node.js и работает без установки
 пакетов. `agent-kit task` и hooks используют тот же Node.js; Bun не нужен.
 
@@ -15,11 +15,12 @@
 ./bin/agent-kit install pi
 ./bin/agent-kit install claude-code
 ./bin/agent-kit install codex
+./bin/agent-kit install antigravity
 ```
 
 Именованный `install` добавляет среды к сохранённому выбору. Последующие
 `install` и `update` без аргументов работают с этим выбором, не трогая остальные
-среды. Если выбора нет, `install` без аргументов устанавливает все три среды.
+среды. Если выбора нет, `install` без аргументов устанавливает все четыре среды.
 После удаления всех сред по одной поведение то же. Если файла выбора нет,
 выбор определяется существующими записями владения. Codex не добавляется
 автоматически к выбору Pi/Claude Code.
@@ -56,6 +57,9 @@ agent-kit uninstall
 `${CODEX_HOME:-$HOME/.codex}`. `CODEX_HOME` не переносит навыки.
 [Генерация файлов, владение и доверие Codex](codex.md).
 
+Antigravity ставит общие навыки, `/spec`, `/dev` и плагин `plugins/agent-kit`
+в `${ANTIGRAVITY_CONFIG_DIR:-$HOME/.gemini/config}`. [Настройка Antigravity](antigravity.md).
+
 Лаунчер `~/.local/bin/agent-kit` ссылается на `bin/agent-kit` выбранного клона.
 Этот каталог должен быть в `PATH`. Если место лаунчера занято чужим файлом
 или ссылкой, установщик лишь предупреждает и пропускает его; это само по себе
@@ -68,7 +72,8 @@ agent-kit uninstall
 
 Установщик хранит записи в `${XDG_STATE_HOME:-$HOME/.local/state}/agent-kit`:
 `links.tsv` для Pi, `links-claude-code.tsv` для Claude Code,
-`links-codex.tsv` и `links-codex-skills.tsv` для двух корней Codex.
+`links-codex.tsv` и `links-codex-skills.tsv` для двух корней Codex,
+`links-antigravity.tsv` для Antigravity.
 `hosts` содержит выбор сред, `command.tsv` содержит владение лаунчером.
 
 Операции удаления и перенаправления разрешены только для учтённой ссылки,

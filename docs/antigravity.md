@@ -6,14 +6,18 @@ Antigravity (CLI `agy`, App 2.0, IDE): общие навыки, правила �
 защитный `PreToolUse` hook.
 
 ```sh
-./bin/agent-kit install antigravity
-agent-kit status
-agent-kit update
-agent-kit uninstall antigravity
+git clone https://github.com/kaktusss123/agent-kit.git ~/src/agent-kit
+~/src/agent-kit/bin/agent-kit install antigravity
 ```
+
+Требуются Node.js >= 24 и `git`. Если `~/.local/bin` ещё не в `PATH`, добавьте
+`export PATH="$HOME/.local/bin:$PATH"` в конфигурацию оболочки. После этого
+работают `agent-kit status`, `agent-kit update` и `agent-kit uninstall antigravity`.
 
 Корень конфигурации: `${ANTIGRAVITY_CONFIG_DIR:-$HOME/.gemini/config}`.
 Состояние владения хранится в `$XDG_STATE_HOME/agent-kit/links-antigravity.tsv`.
+Примечание: `agy plugin list` может отображать только `Components: 1 rule`,
+даже когда `plugins/agent-kit/hooks.json` активно и блокирует `PreToolUse`.
 
 ## Что устанавливается
 
@@ -44,11 +48,12 @@ agent-kit uninstall antigravity
 
 PATH-shim для `git` в `run_command` намеренно не инжектируется, чтобы не ломать
 Standard Sandbox Mode в других репозиториях (где каталог `agent-kit` недоступен
-внутри песочницы). Перед запуском исполнителя `/dev` проверяет доступ к
-управляемому worktree и при необходимости запрашивает точечные разрешения
-на каталог worktree и чтение метаданных Git. Для мутирующих команд всегда
-используйте абсолютные пути управляемого worktree, `git -C <worktree>` и
-`agent-kit task commit`.
+внутри песочницы). Управляемые worktree создаются в `~/.agent-kit/tasks` вне
+рабочего каталога проекта, поэтому при первом `/spec` или `/dev` Antigravity
+запросит подтверждение (`BypassSandbox: true`) для `agent-kit task` и команд
+внутри worktree (либо добавьте правило для `~/.agent-kit/tasks` в `/permissions`).
+Для мутирующих команд всегда используйте абсолютные пути управляемого
+worktree, `git -C <worktree>` и `agent-kit task commit`.
 
 ## Проверки
 

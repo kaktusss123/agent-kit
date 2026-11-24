@@ -6,10 +6,20 @@
 import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
-import { lstatOrNull, writeFileAtomic } from "./io.mjs";
+import { lstatOrNull, statOrNull, writeFileAtomic } from "./io.mjs";
 import { shellQuote } from "./codex.mjs";
 
 const HOOK_MATCHER = "run_command|write_file|edit_file|write_to_file|replace_file_content|multi_replace_file_content";
+const CELLAR_NODE_RE = /^(.+)\/Cellar\/node\/[^/]+\/bin\/node$/;
+
+// Prefer the stable Homebrew bin symlink over a versioned Cellar binary so
+// `brew upgrade node` does not break generated hooks.json until reinstall.
+export function resolveStableNodePath(execPath = process.execPath) {
+	const match = CELLAR_NODE_RE.exec(execPath);
+	if (!match) return execPath;
+	const linked = `${match[1]}/bin/node`;
+	return statOrNull(linked)?.isFile() ? linked : execPath;
+}
 
 export function antigravityArtifacts(context) {
 	if (context.host !== "antigravity") return [];
@@ -30,7 +40,7 @@ export function antigravityArtifacts(context) {
 					hooks: [
 						{
 							type: "command",
-							command: `${shellQuote(process.execPath)} ${shellQuote(join(context.repo, "antigravity/hook.ts"))}`,
+							command: `${shellQuote(resolveStableNodePath())} ${shellQuote(join(context.repo, "antigravity/hook.ts"))}`,
 							timeout: 10,
 						},
 					],

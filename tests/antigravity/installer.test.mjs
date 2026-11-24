@@ -5,6 +5,7 @@ import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { afterEach, test } from 'node:test';
 import { stripShimFromPath } from '../../extensions/task-workspace/cli.ts';
+import { resolveStableNodePath } from '../../bin/lib/antigravity.mjs';
 
 const repo = resolve(import.meta.dirname, '../..');
 let sandbox;
@@ -90,4 +91,19 @@ test('Antigravity install links skills (/spec, /dev, shared) and agent-kit plugi
   assert.ok(!existsSync(join(pluginDir, 'rules/AGENTS.md')));
   assert.equal(text(join(f.config, 'hooks.json')), '{"user-hook": {}}\n');
   assert.equal(readlinkSync(join(f.config, 'skills/orchestration')), '/foreign/orchestration');
+});
+
+test('resolveStableNodePath prefers Homebrew bin symlink over versioned Cellar path', () => {
+  const f = fresh();
+  const prefix = join(f.home, 'homebrew');
+  const cellarNode = join(prefix, 'Cellar/node/26.0.0/bin/node');
+  const stableNode = join(prefix, 'bin/node');
+  mkdirSync(join(prefix, 'Cellar/node/26.0.0/bin'), { recursive: true });
+  mkdirSync(join(prefix, 'bin'), { recursive: true });
+  writeFileSync(cellarNode, '');
+
+  assert.equal(resolveStableNodePath(cellarNode), cellarNode);
+  symlinkSync(cellarNode, stableNode);
+  assert.equal(resolveStableNodePath(cellarNode), stableNode);
+  assert.equal(resolveStableNodePath('/usr/local/bin/node'), '/usr/local/bin/node');
 });
