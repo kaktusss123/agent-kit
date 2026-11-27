@@ -164,6 +164,35 @@ describe("renderTaskStatusResult — collapsed card", () => {
 		expect(out).toContain("no upstream");
 	});
 
+	test("a repo with omitted facts renders name and (other repo), no fabricated facts", () => {
+		const omitted = {
+			name: "other",
+			path: "/home/v/.agent-kit/tasks/feat_x/other",
+			kind: "canonical",
+			slot: null,
+			classification: "MANAGED_TASK_WORKTREE",
+			facts: "omitted",
+			owner: { state: "free" },
+		};
+		const ws = {
+			workspace: "/home/v/.agent-kit/tasks/feat_x",
+			key: "feat_x",
+			task: "feat_x",
+			repos: [repo({ facts: "full" }), omitted],
+			artifacts: [],
+		};
+		const out = plain(
+			renderTaskStatusResult(statusResult(statusDetails({ taskWorkspaces: [ws] })), NO_OPTIONS, theme),
+		);
+		const rows = out.split("\n");
+		const otherRow = rows.find((row) => row.includes("other"))!;
+		expect(otherRow).toContain("other · (other repo)");
+		expect(otherRow).not.toContain("no upstream");
+		expect(otherRow).not.toContain("clean");
+		expect(otherRow).not.toContain("(detached)");
+		expect(rows.find((row) => row.includes("agent-kit"))).toContain("feat/x @ 5728b58");
+	});
+
 	test("long task keys are capped with an ellipsis", () => {
 		const longKey = "feat_x".repeat(12);
 		const ws = { workspace: "/t/w", key: longKey, task: longKey, repos: [repo()], artifacts: [] };

@@ -21,10 +21,12 @@ import { existsSync, lstatSync, readFileSync, realpathSync } from "node:fs";
 import type { Readable } from "node:stream";
 import type {
   DirtyState,
+  FactsScope,
   InputRepoFacts,
   LinkedWorktreeFact,
   ManagedRepoStatus,
   PathClassification,
+  WorktreeGitFacts,
 } from "./types.ts";
 
 function streamText(stream: Readable): Promise<string> {
@@ -269,6 +271,7 @@ export function parseDirtyStatus(stdout: string): DirtyState {
   };
   for (const line of stdout.split("\n")) {
     if (!line) continue;
+    if (line.startsWith("# ")) continue; // --branch header lines, not entries
     if (line.startsWith("? ")) {
       // Untracked files are dirt too — the typical manual-change case.
       unstaged.push(line.slice(2));
@@ -287,6 +290,47 @@ export function parseDirtyStatus(stdout: string): DirtyState {
     staged: staged.slice(0, 50),
     unstaged: unstaged.slice(0, 50),
   };
+}
+
+/** Branch, HEAD, upstream and dirty state from ONE git process (a scan of
+ *  many worktrees is dominated by process spawn cost). `--no-ahead-behind`
+ *  skips the commit walk the facts never use. A failed read degrades to
+ *  empty facts, as the separate per-fact reads always did. */
+export async function getWorktreeGitFacts(worktree: string): Promise<WorktreeGitFacts> {
+  const r = await git(
+    worktree,
+    "status",
+    "--porcelain=v2",
+    "--branch",
+    "--no-renames",
+    "--no-ahead-behind",
+  );
+  if (!r.ok) return { branch: "", headSha: "", upstream: null, dirty: { staged: [], unstaged: [] } };
+  return parseBranchStatus(r.stdout);
+}
+
+/** Parse `git status --porcelain=v2 --branch --no-renames`. The headers keep
+ *  the conventions of the per-fact reads: `branch.head (detached)` → "" (like
+ *  `branch --show-current`), `branch.oid (initial)` → "" (unborn HEAD, like a
+ *  failed `rev-parse HEAD`), and `branch.upstream` is the short upstream name
+ *  (like `%(upstream:short)`), still reported when the remote branch is gone
+ *  because it reflects configuration, not the remote-tracking ref. Detached
+ *  HEAD has no upstream (null). */
+export function parseBranchStatus(stdout: string): WorktreeGitFacts {
+  let branch = "";
+  let headSha = "";
+  let upstream: string | null = null;
+  for (const line of stdout.split("\n")) {
+    if (!line.startsWith("# ")) continue;
+    const space = line.indexOf(" ", 2);
+    if (space < 0) continue;
+    const key = line.slice(2, space);
+    const value = line.slice(space + 1);
+    if (key === "branch.oid") headSha = value === "(initial)" ? "" : value;
+    else if (key === "branch.head") branch = value === "(detached)" ? "" : value;
+    else if (key === "branch.upstream") upstream = value || null;
+  }
+  return { branch, headSha, upstream, dirty: parseDirtyStatus(stdout) };
 }
 
 
@@ -407,6 +451,45 @@ export async function getRepoCommonDir(repoRoot: string): Promise<string | null>
     : null;
 }
 
+/** Strip the trailing line terminators Git itself strips from pointer files. */
+function pointerValue(content: string): string {
+  return content.replace(/[\r\n]+$/, "");
+}
+
+/**
+ * Realpath common Git dir of a linked worktree, read from its pointer files
+ * the way Git resolves them, without spawning git: `<worktree>/.git` holds
+ * `gitdir: <path>` (relative to the worktree), and `<gitdir>/commondir`
+ * (relative to the gitdir) names the shared dir; without that file the
+ * gitdir is its own common dir. Null when anything is missing or malformed,
+ * so the caller can fall back to asking Git.
+ */
+export function commonDirFromPointer(worktree: string, gitFileContent: string): string | null {
+  const pointer = pointerValue(gitFileContent);
+  if (!pointer.startsWith("gitdir: ")) return null;
+  const target = pointer.slice("gitdir: ".length);
+  if (!target || target.includes("\n")) return null;
+  try {
+    const gitdir = resolve(realpathSync(worktree), target);
+    const realGitdir = realpathSync(gitdir);
+    if (!existsSync(join(realGitdir, "HEAD"))) return null;
+    let common = realGitdir;
+    let commondir: string | null = null;
+    try {
+      commondir = pointerValue(readFileSync(join(realGitdir, "commondir"), "utf-8"));
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "ENOENT") return null;
+    }
+    if (commondir !== null) {
+      if (!commondir || commondir.includes("\n")) return null;
+      common = resolve(realGitdir, commondir);
+    }
+    return realpathSync(common);
+  } catch {
+    return null;
+  }
+}
+
 export function parseLaneName(name: string): { repo: string; slot: string } | null {
   const marker = name.lastIndexOf("__");
   if (marker <= 0 || marker === name.length - 2) return null;
@@ -449,17 +532,7 @@ export async function getLaneFacts(
   upstream: string | null;
   dirty: DirtyState;
 }> {
-  const branch = await getRepoBranch(path);
-  return {
-    task,
-    repo,
-    slot,
-    path,
-    branch,
-    headSha: await getRepoSha(path),
-    upstream: await getUpstream(path, branch),
-    dirty: await getSourceDirty(path),
-  };
+  return { task, repo, slot, path, ...(await getWorktreeGitFacts(path)) };
 }
 
 
@@ -496,7 +569,8 @@ export async function linkedWorktreeFacts(
       facts.push({
         name: sub,
         path: subPath,
-        commonDir: await getRepoCommonDir(subPath),
+        commonDir:
+          commonDirFromPointer(subPath, gitContent) ?? (await getRepoCommonDir(subPath)),
       });
     } catch (error) {
       if (options.strict) throw error;
@@ -537,45 +611,86 @@ export interface ScannedTaskWorkspace {
   artifacts: string[];
 }
 
+/** Concurrent worktree probes in one scan. Each probe is one git process;
+ *  a small fixed bound overlaps spawn latency without flooding the host. */
+const SCAN_CONCURRENCY = 8;
+
+/** `fn` over `items` with at most `limit` in flight; results keep input order. */
+async function mapConcurrent<T, R>(
+  items: readonly T[],
+  limit: number,
+  fn: (item: T) => Promise<R>,
+): Promise<R[]> {
+  const results = new Array<R>(items.length);
+  let next = 0;
+  const worker = async (): Promise<void> => {
+    while (next < items.length) {
+      const index = next++;
+      results[index] = await fn(items[index]!);
+    }
+  };
+  await Promise.all(Array.from({ length: Math.min(limit, items.length) }, worker));
+  return results;
+}
+
+/**
+ * Every managed task workspace with its linked worktrees, in directory
+ * listing order. Git facts (branch, HEAD, upstream, dirty) are collected
+ * only for worktrees inside `factsScope`: all of them, or those whose common
+ * Git dir equals the given one. Other worktrees are still listed with their
+ * identity and owner, marked `facts: "omitted"`.
+ */
 export async function scanTaskWorkspaces(
   taskRoot: string,
+  options: { factsScope?: FactsScope } = {},
 ): Promise<ScannedTaskWorkspace[]> {
-  const workspaces: ScannedTaskWorkspace[] = [];
-
+  const scope = options.factsScope ?? "all";
   let entries: string[];
   try {
     entries = await readdir(taskRoot);
   } catch {
-    return workspaces;
+    return [];
   }
 
+  const listed: { entry: string; wsPath: string; linked: Map<string, LinkedWorktreeFact> }[] = [];
   for (const entry of entries) {
     const wsPath = join(taskRoot, entry);
-
     const linkedList = await linkedWorktreeFacts(wsPath);
-    const linked = new Map<string, LinkedWorktreeFact>(
-      linkedList.map((f) => [f.name, { path: f.path, commonDir: f.commonDir }]),
-    );
+    if (linkedList.length === 0) continue;
+    listed.push({
+      entry,
+      wsPath,
+      linked: new Map(linkedList.map((f) => [f.name, { path: f.path, commonDir: f.commonDir }])),
+    });
+  }
 
+  const inScope = (worktree: LinkedWorktreeFact): boolean =>
+    scope === "all" || worktree.commonDir === scope.commonDir;
+  const probed = listed.flatMap(({ linked }) =>
+    [...linked.values()].filter(inScope).map((worktree) => worktree.path),
+  );
+  const probeResults = await mapConcurrent(probed, SCAN_CONCURRENCY, getWorktreeGitFacts);
+  const factsByPath = new Map(probed.map((path, index) => [path, probeResults[index]!]));
+
+  const workspaces: ScannedTaskWorkspace[] = [];
+  for (const { entry, wsPath, linked } of listed) {
     const repos: ManagedRepoStatus[] = [];
     for (const [sub, worktree] of linked) {
       const identity = laneIdentity(sub, linked);
-      const branch = await getRepoBranch(worktree.path);
-      repos.push({
+      const base = {
         name: sub,
         path: worktree.path,
         kind: identity.kind,
         slot: identity.slot,
-        classification: "MANAGED_TASK_WORKTREE",
-        branch,
-        headSha: await getRepoSha(worktree.path),
-        upstream: await getUpstream(worktree.path, branch),
-        dirty: await getSourceDirty(worktree.path),
-        owner: scanOwner(taskRoot, worktree.path),
-      });
+        classification: "MANAGED_TASK_WORKTREE" as const,
+      };
+      const facts = factsByPath.get(worktree.path);
+      repos.push(
+        facts
+          ? { ...base, facts: "full", ...facts, owner: scanOwner(taskRoot, worktree.path) }
+          : { ...base, facts: "omitted", owner: scanOwner(taskRoot, worktree.path) },
+      );
     }
-
-    if (repos.length === 0) continue;
 
     const artifacts: string[] = [];
     try {
