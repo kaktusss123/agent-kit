@@ -5,12 +5,22 @@
  * tree so the "outside git" request really is outside.
  */
 import { execFileSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, readdirSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import {
+  mkdirSync,
+  mkdtempSync,
+  readdirSync,
+  readFileSync,
+  realpathSync,
+  rmSync,
+  symlinkSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { after, before, describe, test } from "node:test";
 import { expect } from "../../tests/support/expect.ts";
 import {
+  commonDirFromPointer,
   getWorktreeGitFacts,
   linkedWorktreeFacts,
   parseBranchStatus,
@@ -160,13 +170,17 @@ describe("task_status scan", () => {
   test("the primary checkout scopes facts to its repository too", async () => {
     const status = await taskStatus({ path: repoB }, outside, { taskRoot });
     expect(status.factsScope).toEqual({ commonDir: realpathSync(join(repoB, ".git")) });
-    const facts = status.taskWorkspaces.flatMap((ws) => ws.repos.map((r) => [r.path, r.facts]));
-    expect(facts).toEqual([
-      [join(wsOne, "a"), "omitted"],
-      [join(wsOne, "a__lane"), "omitted"],
-      [join(wsOne, "b"), "full"],
-      [join(wsTwo, "b"), "full"],
-    ]);
+    const facts = new Map(
+      status.taskWorkspaces.flatMap((ws) => ws.repos.map((r) => [r.path, r.facts] as const)),
+    );
+    expect(facts).toEqual(
+      new Map([
+        [join(wsOne, "a"), "omitted"],
+        [join(wsOne, "a__lane"), "omitted"],
+        [join(wsOne, "b"), "full"],
+        [join(wsTwo, "b"), "full"],
+      ]),
+    );
   });
 
   test("order follows directory listing order, independent of probe completion", async () => {
@@ -181,9 +195,11 @@ describe("task_status scan", () => {
 
   test("common dir from the .git pointer files equals Git's own answer", async () => {
     const facts = await linkedWorktreeFacts(wsOne);
-    expect(facts.map((f) => f.name)).toEqual(["a", "a__lane", "b"]);
+    expect(facts.map((f) => f.name).sort()).toEqual(["a", "a__lane", "b"]);
     for (const fact of facts) {
-      expect(fact.commonDir, fact.name).toBe(gitCommonDir(fact.path));
+      const expected = gitCommonDir(fact.path);
+      expect(commonDirFromPointer(fact.path, readFileSync(join(fact.path, ".git"), "utf8")), fact.name).toBe(expected);
+      expect(fact.commonDir, fact.name).toBe(expected);
     }
   });
 
@@ -192,19 +208,46 @@ describe("task_status scan", () => {
     const wt = join(dir, "rel");
     sh(repoB, "worktree", "add", "-q", "--detach", wt, "main");
     const gitdir = join(repoB, ".git", "worktrees", "rel");
-    writeFileSync(join(wt, ".git"), `gitdir: ${join("..", "..", "repo-b", ".git", "worktrees", "rel")}\n`);
+    const pointer = `gitdir: ${join("..", "..", "repo-b", ".git", "worktrees", "rel")}\n`;
+    writeFileSync(join(wt, ".git"), pointer);
     expect(realpathSync(join(wt, "..", "..", "repo-b", ".git", "worktrees", "rel"))).toBe(realpathSync(gitdir));
+    const expected = realpathSync(join(repoB, ".git"));
+    expect(commonDirFromPointer(wt, pointer)).toBe(expected);
     const [fact] = await linkedWorktreeFacts(dir);
     expect(fact!.commonDir).toBe(gitCommonDir(wt));
-    expect(fact!.commonDir).toBe(realpathSync(join(repoB, ".git")));
+    expect(fact!.commonDir).toBe(expected);
+  });
+
+  test("relative gitdir and commondir pointers resolve through symlinked prefixes", async () => {
+    const nestedDir = join(base, "nested", "symlink-ws");
+    const wt = join(nestedDir, "sym");
+    sh(repoB, "worktree", "add", "-q", "--detach", wt, "main");
+    const gitdir = join(repoB, ".git", "worktrees", "sym");
+    const gitdirLink = join(base, "gitdir-link");
+    symlinkSync(gitdir, gitdirLink);
+    // Relative pointer crosses `..` out of nested/symlink-ws/sym into base/gitdir-link,
+    // whose target resolves its `../..` commondir relative to the physical gitdir.
+    const pointer = `gitdir: ${join("..", "..", "..", "gitdir-link")}\n`;
+    writeFileSync(join(wt, ".git"), pointer);
+    const wsLink = join(base, "ws-link");
+    symlinkSync(nestedDir, wsLink);
+    const aliasedWt = join(wsLink, "sym");
+    const expected = realpathSync(join(repoB, ".git"));
+    expect(commonDirFromPointer(aliasedWt, pointer)).toBe(expected);
+    const [fact] = await linkedWorktreeFacts(wsLink);
+    expect(fact!.commonDir).toBe(gitCommonDir(aliasedWt));
+    expect(fact!.commonDir).toBe(expected);
   });
 
   test("a dangling gitdir pointer degrades to an unknown common dir", async () => {
     const dir = join(base, "dangling-ws");
-    mkdirSync(join(dir, "broken"), { recursive: true });
-    writeFileSync(join(dir, "broken", ".git"), "gitdir: /nonexistent/worktrees/broken\n");
+    const broken = join(dir, "broken");
+    mkdirSync(broken, { recursive: true });
+    const pointer = "gitdir: /nonexistent/worktrees/broken\n";
+    writeFileSync(join(broken, ".git"), pointer);
+    expect(commonDirFromPointer(broken, pointer)).toBeNull();
     expect(await linkedWorktreeFacts(dir)).toEqual([
-      { name: "broken", path: join(dir, "broken"), commonDir: null },
+      { name: "broken", path: broken, commonDir: null },
     ]);
   });
 

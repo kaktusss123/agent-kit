@@ -1719,7 +1719,7 @@ describe("cross-process worktree ownership", () => {
 			expect(ids[0]).not.toBe(ids[1]);
 			const status = await taskStatus({ path: a }, source, { taskRoot: h.taskRoot });
 			const repos = status.taskWorkspaces.find((w) => w.identity === task)!.repos;
-			expect(repos.map((r) => r.branch).sort()).toEqual([task, "feat/parallel-b"].sort());
+			expect(repos.map((r) => (r.facts === "full" ? r.branch : null)).sort()).toEqual([task, "feat/parallel-b"].sort());
 			expect(repos.every((r) => r.owner?.state === "owned")).toBe(true);
 			expect(repos.map((r) => r.kind).sort()).toEqual(["canonical", "lane"]);
 			const alias = path.join(path.dirname(a), "candidate-alias");

@@ -464,24 +464,25 @@ function pointerValue(content: string): string {
  * gitdir is its own common dir. Null when anything is missing or malformed,
  * so the caller can fall back to asking Git.
  */
-function commonDirFromPointer(worktree: string, gitFileContent: string): string | null {
+export function commonDirFromPointer(worktree: string, gitFileContent: string): string | null {
   const pointer = pointerValue(gitFileContent);
   if (!pointer.startsWith("gitdir: ")) return null;
   const target = pointer.slice("gitdir: ".length);
   if (!target || target.includes("\n")) return null;
-  const gitdir = resolve(worktree, target);
   try {
-    if (!existsSync(join(gitdir, "HEAD"))) return null;
-    let common = gitdir;
+    const gitdir = resolve(realpathSync(worktree), target);
+    const realGitdir = realpathSync(gitdir);
+    if (!existsSync(join(realGitdir, "HEAD"))) return null;
+    let common = realGitdir;
     let commondir: string | null = null;
     try {
-      commondir = pointerValue(readFileSync(join(gitdir, "commondir"), "utf-8"));
+      commondir = pointerValue(readFileSync(join(realGitdir, "commondir"), "utf-8"));
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code !== "ENOENT") return null;
     }
     if (commondir !== null) {
       if (!commondir || commondir.includes("\n")) return null;
-      common = resolve(gitdir, commondir);
+      common = resolve(realGitdir, commondir);
     }
     return realpathSync(common);
   } catch {
