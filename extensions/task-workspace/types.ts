@@ -30,19 +30,36 @@ export type LinkedWorktreeFact = {
   commonDir: string | null;
 };
 
-export type ManagedRepoStatus = {
+/** Branch, HEAD, upstream and dirty state of one worktree. `branch` is ""
+ *  on detached HEAD, `headSha` is "" on an unborn branch, and an unreadable
+ *  worktree degrades to empty values rather than failing the scan. */
+export type WorktreeGitFacts = {
+  branch: string;
+  headSha: string;
+  upstream: string | null;
+  dirty: DirtyState;
+};
+
+type ManagedRepoIdentity = {
   name: string;
   path: string;
   kind: "canonical" | "lane";
   slot: string | null;
   classification: "MANAGED_TASK_WORKTREE";
-  branch: string;
-  headSha: string;
-  upstream: string | null;
-  dirty: DirtyState;
   /** Cross-process ownership of this worktree (diagnostics). */
   owner?: OwnerView;
 };
+
+/** One managed worktree in task_status. `facts: "omitted"` marks a worktree
+ *  of another repository than the requested one: its Git facts were not
+ *  collected, so the fields are absent rather than fabricated. */
+export type ManagedRepoStatus =
+  | (ManagedRepoIdentity & { facts: "full" } & WorktreeGitFacts)
+  | (ManagedRepoIdentity & { facts: "omitted" });
+
+/** Which worktrees task_status collected Git facts for: every one, or only
+ *  those sharing the requested repository's (realpath) common Git dir. */
+export type FactsScope = "all" | { commonDir: string };
 
 export type GitOperationClass =
   | "read-only"

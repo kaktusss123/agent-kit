@@ -96,10 +96,13 @@ export interface TaskWorkspaceRepoLike {
 	path: string;
 	kind: "canonical" | "lane";
 	slot: string | null;
-	branch: string;
-	headSha: string;
-	upstream: string | null;
-	dirty: DirtyState;
+	/** "omitted": a worktree of another repository; its Git facts were not
+	 *  collected and the four fields below are absent. */
+	facts?: "full" | "omitted";
+	branch?: string;
+	headSha?: string;
+	upstream?: string | null;
+	dirty?: DirtyState;
 	/** Cross-process ownership: who currently holds the right to write. */
 	owner?: {
 		state: string;
@@ -165,18 +168,22 @@ function repoRow(repo: TaskWorkspaceRepoLike, taskKey: string, theme: Theme): st
 		segments.push(capChars(forDisplay(taskKey), KEY_CAP));
 	}
 	segments.push(forDisplay(repo.name));
-	segments.push(
-		repo.branch
-			? theme.fg("muted", `${forDisplay(repo.branch)} @ ${sha7(repo.headSha)}`)
-			: theme.fg("dim", "(detached)"),
-	);
-	segments.push(
-		repo.upstream
-			? theme.fg("dim", `↑ ${forDisplay(repo.upstream)}`)
-			: theme.fg("dim", "no upstream"),
-	);
-	const dirty = dirtyText(repo.dirty);
-	segments.push(dirty === "clean" ? theme.fg("dim", dirty) : theme.fg("warning", dirty));
+	if (repo.facts === "omitted" || !repo.dirty) {
+		segments.push(theme.fg("dim", "(other repo)"));
+	} else {
+		segments.push(
+			repo.branch
+				? theme.fg("muted", `${forDisplay(repo.branch)} @ ${sha7(repo.headSha ?? "")}`)
+				: theme.fg("dim", "(detached)"),
+		);
+		segments.push(
+			repo.upstream
+				? theme.fg("dim", `↑ ${forDisplay(repo.upstream)}`)
+				: theme.fg("dim", "no upstream"),
+		);
+		const dirty = dirtyText(repo.dirty);
+		segments.push(dirty === "clean" ? theme.fg("dim", dirty) : theme.fg("warning", dirty));
+	}
 	if (repo.owner && repo.owner.state !== "free") {
 		segments.push(ownerText(repo.owner, theme));
 	}

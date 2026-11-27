@@ -30,7 +30,7 @@ After an owner returns, Main reads the objective facts itself — never asks the
 agent-kit task status '{"path": "<worktree>"}'
 ```
 
-The matching `taskWorkspaces[].repos[]` entry carries `branch`, `headSha`, `upstream`, and `dirty` (staged/unstaged). A `done` report is accepted only when HEAD moved to a new commit on the task branch and the tree is clean (untracked non-ignored files count as dirt); otherwise treat it as `blocked` (`done_rejected`) and repair through a fresh owner that first inspects the worktree.
+The matching `taskWorkspaces[].repos[]` entry (`facts: "full"`, because `path` names that worktree's repository) carries `branch`, `headSha`, `upstream`, and `dirty` (staged/unstaged). A `done` report is accepted only when HEAD moved to a new commit on the task branch and the tree is clean (untracked non-ignored files count as dirt); otherwise treat it as `blocked` (`done_rejected`) and repair through a fresh owner that first inspects the worktree.
 
 ## Failed task notification
 

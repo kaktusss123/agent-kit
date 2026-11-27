@@ -39,7 +39,7 @@ import { describeOwner, removeDeadOwnerRecord, type OwnerView } from "./owner-lo
 import { bootstrapWorktreeDependencies } from "./bootstrap.ts";
 import type { BootstrapConfig } from "./bootstrap.ts";
 import { isSecretPath } from "./guard.ts";
-import type { BootstrapResult, DirtyState, LinkedWorktreeFact } from "./types.ts";
+import type { BootstrapResult, DirtyState, FactsScope, LinkedWorktreeFact } from "./types.ts";
 
 const DEFERRED_PASS_RESULTS: Record<string, true> = {
   pass: true,
@@ -95,17 +95,25 @@ export async function taskStatus(
   let repoRoot = "";
   let branch = "";
   let isLinked = false;
+  // Git facts are collected only for worktrees of the requested repository;
+  // when it cannot be identified, for every worktree.
+  let factsScope: FactsScope = "all";
   if (classification !== "OUTSIDE_GIT") {
     const abs = expandPath(targetPath, cwd);
     const root = findGitRoot(abs);
     if (root) {
       repoRoot = root;
-      branch = await getRepoBranch(root);
+      const [rootBranch, commonDir] = await Promise.all([
+        getRepoBranch(root),
+        getRepoCommonDir(root),
+      ]);
+      branch = rootBranch;
       isLinked = isLinkedWorktree(root);
+      if (commonDir) factsScope = { commonDir };
     }
   }
 
-  const taskWorkspaces = await scanTaskWorkspaces(opts.taskRoot);
+  const taskWorkspaces = await scanTaskWorkspaces(opts.taskRoot, { factsScope });
 
   const result = {
     classification,
@@ -114,6 +122,7 @@ export async function taskStatus(
     branch,
     isLinkedWorktree: isLinked,
     taskRoot: opts.taskRoot,
+    factsScope,
     taskWorkspaces,
   };
 

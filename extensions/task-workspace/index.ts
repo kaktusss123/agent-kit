@@ -263,7 +263,7 @@ export default function (pi: ExtensionAPI): void {
     name: "task_status",
     label: "Task Status",
     description:
-      "Classify the current path and report current Git facts; list each managed task workspace with canonical-or-lane kind, slot, path, branch, HEAD, upstream, classification, dirty paths, and artifacts.",
+      "Classify the current path and report current Git facts; list each managed task workspace with canonical-or-lane kind, slot, path, classification, owner, and artifacts. Branch, HEAD, upstream, and dirty paths are included (facts: \"full\") only for worktrees of the repository containing the path; other repositories' worktrees are marked facts: \"omitted\". factsScope names that repository, or is \"all\" outside Git.",
     parameters: tb.Object({
       path: tb.Optional(
         tb.String({ description: "Path to classify (defaults to session cwd)" }),

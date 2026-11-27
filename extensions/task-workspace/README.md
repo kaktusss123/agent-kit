@@ -25,7 +25,13 @@ not mislabeled as a missing workspace.
 
 - **`task_status`** — classify the current path and report current Git facts;
   list each managed task workspace with canonical-or-lane kind, slot, path,
-  branch, HEAD, upstream, classification, dirty paths, and artifacts.
+  classification, owner, and artifacts. Branch, HEAD, upstream, and dirty paths
+  are collected (`facts: "full"`) only for worktrees of the repository that
+  contains the requested path; worktrees of other repositories are marked
+  `facts: "omitted"` without those fields. `factsScope` names the repository
+  (`{ commonDir }`) or is `"all"` when the path is outside Git. Each worktree
+  costs one `git status --porcelain=v2 --branch` process, run at most eight at
+  a time.
 - **`ensure_task_repo`** — attach a source repo to the task workspace as a git
   worktree. Reuses existing worktrees, attaches existing local branches before
   considering remotes, or fetches and creates from remote branches/defaults. A
